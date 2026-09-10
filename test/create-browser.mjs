@@ -64,7 +64,7 @@ try {
     await page.locator('.create-homerun').click();
     assert.match(page.url(), /\/create\/?$/);
     await currentStep(0);
-    assert.equal(await page.locator('.create-intro h1').textContent(), 'Draft the agreement');
+    assert.equal(await page.locator('.create-intro h1').textContent(), 'Design the game');
     assert.equal(await page.locator('label[for="create-name"]').textContent(), 'Title');
     assert.equal(await page.locator('.draft-preview .create-eyebrow').count(), 0);
     assert.equal(await page.locator('#create-raiseDays').count(), 0);
