@@ -54,6 +54,8 @@ export type TxSendOptions = {
   reverify?: (request: TxRequest) => Promise<unknown>
   /** Persist an unknown-submission marker immediately before the wallet write. */
   beforeWrite?: () => unknown | Promise<unknown>
+  /** Called if the final account gate aborts a persisted intent before the wallet write. */
+  onBeforeWriteAborted?: () => unknown | Promise<unknown>
   /** Called only for a typed, explicit wallet rejection of the write itself. */
   onWriteRejected?: () => unknown | Promise<unknown>
   /**
@@ -287,6 +289,7 @@ export function useSafeTx(chainId: number) {
           currentAccount: () => getAccount(wagmiConfig).address,
           reverify: options?.reverify,
           beforeWrite: options?.beforeWrite,
+          onBeforeWriteAborted: options?.onBeforeWriteAborted,
           onWriteRejected: options?.onWriteRejected,
           // Simulation is the safety gate: the exact reviewed call, args, and
           // value must succeed before a signature is requested. Only the

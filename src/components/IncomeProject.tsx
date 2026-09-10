@@ -10,15 +10,23 @@ import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-quer
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { erc20Abi, formatUnits, getAddress, isAddress, isAddressEqual, zeroAddress, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
+import Image from 'next/image'
 import { IncomeLoanTools } from '@/components/IncomeLoanTools'
 import { IncomeBridgeActions } from '@/components/IncomeBridgeActions'
 import { IncomeReservedTokens } from '@/components/IncomeReservedTokens'
 import { ProjectActivity } from '@/components/ProjectActivity'
+import { DisplayTokenAmount } from '@/components/DisplayTokenAmount'
 import { InitialIncomeClaim } from '@/components/InitialIncomeClaim'
 import { StickyHolder } from '@/components/StickyHolder'
 import { useSafeTx, txPhaseLabel, type TxRequest } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
-import { explorerTxUrl } from '@/lib/chainDisplay'
+import { displayChainName, explorerTxUrl } from '@/lib/chainDisplay'
+import { HomerunProjectLayout, OwnersTabs } from '@/components/HomerunProjectLayout'
+import { ProjectParticipants } from '@/components/ProjectParticipants'
+import { ProjectPayerAddresses } from '@/components/ProjectPayerAddresses'
+import { ProjectShop } from '@/components/ProjectShop'
+import { AvailableTransactions } from '@/components/AvailableTransactions'
+import { fetchFundProjectMetadata } from '@/lib/fund-project-metadata'
 import { parseAmount } from '@/lib/fund-contracts'
 import { readFundProjectState } from '@/lib/fund-state'
 import { readIncomeFundBinding } from '@/lib/income-fund-binding'
@@ -76,61 +84,107 @@ function matchingContext(state: IncomeProjectState, context: IncomeAccountingCon
   return current
 }
 
-/** Embeddable in a FUND project page or a dedicated INCOME route. All authority is read from the chain. */
-export function IncomeProject({ chainId, projectId, fundProjectId }: { chainId: JBChainId; projectId: bigint; fundProjectId?: bigint }) {
+export type IncomeProjectSlots = {
+  projectId?: bigint
+  fundProjectId?: bigint
+  state?: IncomeProjectState
+  title: string
+  description: string | null
+  logoUrl: string | null
+  notice: ReactNode
+  payment: ReactNode
+  activity: ReactNode
+  overview: ReactNode
+  stages: ReactNode
+  accountsYou: ReactNode
+  accountsAll: ReactNode
+  market: ReactNode
+  settlement: ReactNode
+  splits: ReactNode
+  loans: ReactNode
+  shop: ReactNode
+  extras: ReactNode
+}
+
+/** A single retained read supplies every slot, including a linked FUND page. */
+export function IncomeProjectRuntime({ chainId, projectId, fundProjectId, bindingUnavailable = false, children }: {
+  chainId: JBChainId; projectId?: bigint; fundProjectId?: bigint; bindingUnavailable?: boolean
+  children: (slots: IncomeProjectSlots) => ReactNode
+}) {
   const { address } = useWallet()
   const client = usePublicClient({ chainId }) as PublicClient | undefined
   const [lastState, setLastState] = useState<IncomeProjectState | null>(null)
   const source = useQuery({
-    queryKey: ['income-fund-binding', chainId, projectId.toString()], enabled: !!client && fundProjectId === undefined,
-    queryFn: () => readIncomeFundBinding(client!, { chainId, incomeProjectId: projectId }), staleTime: 300_000, retry: 1,
+    queryKey: ['income-fund-binding', chainId, projectId?.toString()], enabled: !!client && projectId !== undefined && fundProjectId === undefined,
+    queryFn: () => readIncomeFundBinding(client!, { chainId, incomeProjectId: projectId! }), staleTime: 300_000, retry: 1,
   })
   const resolvedFundId = fundProjectId ?? source.data ?? undefined
   const query = useQuery({
-    queryKey: ['income-project', chainId, projectId.toString(), address ?? null, fundProjectId?.toString()],
-    enabled: !!client,
-    queryFn: () => readIncomeProjectState(client!, { chainId, projectId, account: address, fundProjectId }),
+    queryKey: ['income-project', chainId, projectId?.toString(), address ?? null, fundProjectId?.toString()],
+    enabled: !!client && projectId !== undefined,
+    queryFn: () => readIncomeProjectState(client!, { chainId, projectId: projectId!, account: address, fundProjectId }),
     staleTime: 10_000, refetchInterval: 20_000, retry: 1, placeholderData: keepPreviousData,
   })
   useEffect(() => { if (query.data) setLastState(query.data) }, [query.data])
-  // Display prior reads through RPC failures and account changes so transaction
-  // receipt watchers survive. Retained data never authorizes another write.
-  const displayState = query.data ?? lastState
+  const retained = query.data ?? lastState
+  const displayState = retained?.chainId === chainId && retained.projectId === projectId ? retained : undefined
   const accountMatches = query.data?.account ? !!address && isAddressEqual(query.data.account, address) : !address
-  const writesUnavailable = query.isError || query.isPlaceholderData || !query.data || !accountMatches
-  return <section className="mt-8" aria-label="INCOME project">
-    <h2 className="mb-5 text-4xl">INCOME</h2>
+  const writesUnavailable = bindingUnavailable || query.isError || query.isPlaceholderData || !query.data || !accountMatches
+  const details = useQuery({ queryKey: ['fund-project-metadata', displayState?.projectUri], enabled: !!displayState?.projectUri, queryFn: () => fetchFundProjectMetadata(displayState!.projectUri), staleTime: 300_000, retry: 1 })
+  const notice = projectId === undefined ? null : <>
     {query.isPending && <p role="status">Reading the INCOME contracts…</p>}
     {query.isError && <div role="alert"><p>INCOME could not be verified. Its transactions are unavailable.</p><p className="mt-2 text-sm">{message(query.error)}</p><button type="button" className="btn-secondary mt-4" onClick={() => void query.refetch()}>Try again</button></div>}
+    {bindingUnavailable && <p role="status">The FUND connection is being reverified. Pending INCOME transactions remain tracked; new actions wait for verification.</p>}
     {fundProjectId === undefined && source.isError && <p className="mb-4 text-sm" role="alert">The original FUND connection could not be discovered. INCOME transactions remain available. <button type="button" className="underline" onClick={() => void source.refetch()}>Retry connection</button></p>}
-    {displayState && displayState.chainId === chainId && displayState.projectId === projectId && client && <fieldset key={`${chainId}:${projectId}`} aria-label="INCOME transactions" disabled={writesUnavailable} className="m-0 min-w-0 border-0 p-0"><IncomeActions state={displayState} client={client} fundProjectId={resolvedFundId} /></fieldset>}
-    <ProjectActivity chainId={chainId} projectId={projectId} />
-  </section>
+  </>
+  // This component stays in the same tree position while a linked ID/read loads.
+  return <IncomeActions state={displayState} client={client} fundProjectId={resolvedFundId} writesUnavailable={writesUnavailable} notice={notice} title={details.data?.name ?? `Revenue project ${projectId ?? ''}`} description={details.data?.description ?? null} logoUrl={details.data?.logoUrl ?? null} projectId={projectId} chainId={chainId}>{children}</IncomeActions>
 }
 
-function IncomeActions({ state, client, fundProjectId }: { state: IncomeProjectState; client: PublicClient; fundProjectId?: bigint }) {
-  const [selectedToken, setSelectedToken] = useState(state.accountingContexts.find(item => item.isPrimary)?.token)
-  const context = state.accountingContexts.find(item => item.token === selectedToken && item.isPrimary)
-  return <div className="grid gap-7">
-    <div className="rounded-md border border-[#c4cdbb] p-5">
-      <p className="text-sm">Project {state.projectId.toString()} verified at block {state.blockNumber.toString()}</p>
-      <p className="mt-3 text-2xl">Your balance: {units(state.totalBalance)} INCOME</p>
-      <p className="mt-2 text-sm">{units(state.creditBalance)} credits / {units(state.erc20Balance)} ERC-20 tokens</p>
-      <p className="mt-3 text-sm">INCOME is separate from FUND and does not grant an asset-sale claim.</p>
-      {!state.cashOutsAvailable && <p className="mt-3">Cash-outs and loans unlock at {new Date(Number(state.cashOutDelay) * 1_000).toLocaleString()}.</p>}
-      {state.accountingContexts.length > 0 && <label className="mt-5 grid max-w-sm gap-2 text-sm">Treasury currency<select className="min-h-11 rounded border border-[#bfc9b5] bg-white px-3 pr-9" value={selectedToken} onChange={event => setSelectedToken(event.target.value as Address)}>{state.accountingContexts.filter(item => item.isPrimary).map(item => <option key={item.token} value={item.token}>{item.symbol}</option>)}</select></label>}
-      {context && <p className="mt-3">{units(context.balance, context.decimals)} {context.symbol} in the treasury</p>}
-    </div>
-    {context && <div className="grid items-start gap-7 lg:grid-cols-2"><IncomePayment state={state} client={client} context={context} /><IncomeCashOut state={state} client={client} context={context} /></div>}
-    <IncomeTokenActions state={state} client={client} />
-    <IncomeBridgeActions state={state} />
-    {context && <div className="grid items-start gap-7 lg:grid-cols-2"><IncomeBorrow state={state} client={client} context={context} /><IncomeRepay state={state} client={client} /></div>}
-    <IncomeLoanTools state={state} client={client} />
-    <IncomeAutoIssue state={state} client={client} />
-    <IncomeReservedTokens state={state} client={client} />
-    {fundProjectId && <InitialIncomeClaim chainId={state.chainId} fundProjectId={fundProjectId} incomeProjectId={state.projectId} />}
-    <IncomeHolderRewards state={state} client={client} fundProjectId={fundProjectId} />
-  </div>
+export function IncomeProject({ chainId, projectId, fundProjectId }: { chainId: JBChainId; projectId: bigint; fundProjectId?: bigint }) {
+  return <IncomeProjectRuntime chainId={chainId} projectId={projectId} fundProjectId={fundProjectId}>{slots => <HomerunProjectLayout
+    title={slots.title}
+    logo={slots.logoUrl && <Image unoptimized src={slots.logoUrl} width={112} height={112} alt={`${slots.title} logo`} />}
+    metadata={[displayChainName(chainId), `INCOME #${projectId}`, slots.state?.metadata.pausePay ? 'Payments paused' : slots.state ? 'Revenue open' : 'Verifying contracts']}
+    notice={slots.notice}
+    actions={<AvailableTransactions stage="earning" />}
+    payment={slots.payment}
+    activity={slots.activity}
+    overview={<div className="grid gap-7"><Panel title="Description"><p className="whitespace-pre-line">{slots.description ?? 'Revenue funds this project’s treasury and issues INCOME according to its current onchain rules.'}</p></Panel>{slots.overview}</div>}
+    stages={slots.stages}
+    owners={<OwnersTabs accountsYou={slots.accountsYou} accountsAll={slots.accountsAll} market={slots.market} settlement={slots.settlement} splits={slots.splits} loans={slots.loans} />}
+    shop={slots.shop}
+    extras={slots.extras}
+    operators={<Panel title="INCOME administration"><p>INCOME follows its deployed revnet schedule. Allocations and loan operations are available to their beneficiaries under Owners.</p>{slots.fundProjectId && <a className="mt-4 inline-block underline" href={`/project/${chainId}/${slots.fundProjectId}`}>Open FUND operator controls →</a>}</Panel>}
+  />}</IncomeProjectRuntime>
+}
+
+function IncomeActions({ state, client, fundProjectId, writesUnavailable, notice, title, description, logoUrl, projectId, chainId, children }: {
+  state?: IncomeProjectState; client?: PublicClient; fundProjectId?: bigint; writesUnavailable: boolean; notice: ReactNode
+  title: string; description: string | null; logoUrl: string | null; projectId?: bigint; chainId: JBChainId
+  children: (slots: IncomeProjectSlots) => ReactNode
+}) {
+  const [selectedToken, setSelectedToken] = useState<Address | undefined>()
+  const primary = state?.accountingContexts.filter(item => item.isPrimary) ?? []
+  const context = primary.find(item => item.token === selectedToken) ?? primary[0]
+  const ready = !!state && !!client
+  const gate = (content: ReactNode) => <fieldset aria-label="INCOME transactions" disabled={writesUnavailable} className="m-0 grid min-w-0 gap-7 border-0 p-0">{content}</fieldset>
+  const currency = ready && primary.length > 0 && <label className="mb-5 grid gap-2 text-sm">INCOME treasury currency<select className="min-h-11 rounded border border-[#bfc9b5] bg-white px-3 pr-9" value={context?.token} onChange={event => setSelectedToken(event.target.value as Address)}>{primary.map(item => <option key={item.token} value={item.token}>{item.symbol}</option>)}</select></label>
+  return children({
+    projectId, fundProjectId, state, title, description, logoUrl, notice,
+    payment: gate(<>{ready && context ? <IncomePayment state={state} client={client} context={context} currency={currency} /> : <p>{projectId ? 'Loading INCOME payment options…' : 'INCOME has not been launched.'}</p>}</>),
+    activity: projectId && <ProjectActivity chainId={chainId} projectId={projectId} />,
+    overview: state && <Panel title="Revenue"><dl className="grid gap-5 sm:grid-cols-2"><div><dt>INCOME supply</dt><dd><DisplayTokenAmount value={state.totalSupply} /> INCOME</dd></div><div><dt>Payments</dt><dd>{state.metadata.pausePay ? 'Paused' : 'Open'}</dd></div>{state.accountingContexts.map(item => <div key={`${item.terminal}:${item.token}`}><dt>Treasury</dt><dd><DisplayTokenAmount value={item.balance} decimals={item.decimals} /> {item.symbol}</dd></div>)}</dl><p className="mt-4 text-sm">Verified at block {state.blockNumber.toString()}. INCOME is separate from FUND and does not grant an asset-sale claim.</p></Panel>,
+    stages: state && <Panel title="INCOME schedule"><dl className="grid gap-4"><div><dt>Current ruleset</dt><dd>{state.ruleset.id.toString()}</dd></div><div><dt>Started</dt><dd>{new Date(Number(state.ruleset.start) * 1_000).toLocaleString()}</dd></div><div><dt>Cash-outs and loans</dt><dd>{state.cashOutsAvailable ? 'Available under the current contract terms' : `Unlock ${new Date(Number(state.cashOutDelay) * 1_000).toLocaleString()}`}</dd></div></dl><p className="mt-4">Initial INCOME allocations and ongoing Sticky rewards are separate. Sticky rewards vest in four weekly rounds after a claim is materialized.</p></Panel>,
+    accountsYou: gate(ready && <><Panel title="Your INCOME"><p className="break-words text-2xl"><DisplayTokenAmount value={state.totalBalance} /> INCOME</p><p className="mt-2 text-sm"><DisplayTokenAmount value={state.creditBalance} /> credits / <DisplayTokenAmount value={state.erc20Balance} /> ERC-20 tokens</p></Panel><IncomeTokenActions state={state} client={client} />{fundProjectId && <InitialIncomeClaim chainId={state.chainId} fundProjectId={fundProjectId} incomeProjectId={state.projectId} />}<IncomeHolderRewards state={state} client={client} fundProjectId={fundProjectId} /></>),
+    accountsAll: projectId && <ProjectParticipants chainId={chainId} projectId={projectId} tokenLabel="INCOME" />,
+    market: gate(ready && context && <>{currency}<IncomeCashOut state={state} client={client} context={context} /></>),
+    settlement: gate(ready && <IncomeBridgeActions state={state} />),
+    splits: gate(ready && <><IncomeReservedTokens state={state} client={client} /><IncomeAutoIssue state={state} client={client} /></>),
+    loans: gate(ready && <>{currency}{context && <IncomeBorrow state={state} client={client} context={context} />}<IncomeRepay state={state} client={client} /><IncomeLoanTools state={state} client={client} /></>),
+    shop: projectId && <ProjectShop chainId={chainId} projectId={projectId} tokenLabel="INCOME" />,
+    extras: projectId && <ProjectPayerAddresses chainId={chainId} projectId={projectId} tokenLabel="INCOME" />,
+  })
 }
 
 function IncomeHolderRewards({ state, client, fundProjectId }: { state: IncomeProjectState; client: PublicClient; fundProjectId?: bigint }) {
@@ -159,7 +213,7 @@ function IncomeHolderRewards({ state, client, fundProjectId }: { state: IncomePr
   </Panel>
 }
 
-function IncomePayment({ state, client, context }: { state: IncomeProjectState; client: PublicClient; context: IncomeAccountingContext }) {
+function IncomePayment({ state, client, context, currency }: { state: IncomeProjectState; client: PublicClient; context: IncomeAccountingContext; currency?: ReactNode }) {
   const { address } = useWallet()
   const [input, setInput] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -208,6 +262,7 @@ function IncomePayment({ state, client, context }: { state: IncomeProjectState; 
     } catch (reason) { setError(message(reason)) } finally { setPreparing(false) }
   }
   return <Panel title="Pay the project">
+    {currency}
     <Field label={`Amount in ${context.symbol}`} value={input} onChange={setInput} />
     <p className="mt-4 text-sm">{zeroCustomerIssuance ? 'This payment gives you no INCOME. All new INCOME is allocated to the reserved recipients.' : minimum > 0n ? `Receive at least ${units(minimum)} INCOME with 1% maximum slippage. Reserved INCOME goes to the configured recipients.` : 'Enter an amount to get a live INCOME quote.'}</p>
     {quote.isError && <p role="alert" className="mt-3 text-sm">The payment quote is unavailable. {message(quote.error)}</p>}

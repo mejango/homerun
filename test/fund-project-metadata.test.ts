@@ -10,7 +10,7 @@ describe('FUND project metadata stays descriptive', () => {
     expect(metadata).toMatchObject({ name: 'Founder Haus', description: 'A place to build.', coverImageUri: 'ipfs://bafycover', logoUri: 'ipfs://bafylogo', homerun: { version: 1, kind: 'fund', incomeProject: null } })
     expect(metadata.homerun.setup).not.toHaveProperty('photo')
     expect(JSON.stringify(metadata)).not.toContain('local-only')
-    expect(parseFundProjectMetadata(metadata)).toMatchObject({ name: 'Founder Haus', coverUrl: 'https://juicebox.center/ipfs/bafycover', plan: { purchaseBudget: values.purchaseBudget } })
+    expect(parseFundProjectMetadata(metadata)).toMatchObject({ name: 'Founder Haus', coverUrl: 'https://juicebox.center/ipfs/bafycover', logoUrl: 'https://juicebox.center/ipfs/bafylogo', plan: { purchaseBudget: values.purchaseBudget } })
   })
 
   it('rejects unpublished local or external cover images', () => {
@@ -51,6 +51,7 @@ describe('FUND project metadata stays descriptive', () => {
 
   it('does not allow arbitrary image origins through project metadata', () => {
     expect(parseFundProjectMetadata({ logoUri: 'https://tracker.example/image' }).coverUrl).toBeNull()
+    expect(parseFundProjectMetadata({ logoUri: 'https://tracker.example/image' }).logoUrl).toBeNull()
     expect(parseFundProjectMetadata({ coverImageUri: 'https://tracker.example/image' }).coverUrl).toBeNull()
   })
 

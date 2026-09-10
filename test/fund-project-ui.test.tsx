@@ -7,6 +7,7 @@ import type { FundProjectState } from '../src/lib/fund-state'
 const runtime = vi.hoisted(() => ({
   address: '0x1111111111111111111111111111111111111111' as Address,
   query: {} as Record<string, unknown>,
+  incomeId: undefined as bigint | undefined,
   mounted: 0,
   unmounted: 0,
   phase: 'pending',
@@ -15,6 +16,11 @@ const runtime = vi.hoisted(() => ({
   invalidateQueries: vi.fn(),
 }))
 
+vi.mock('@/components/StickyHolder', () => ({ StickyHolder: () => <span>Sticky rewards</span> }))
+vi.mock('@/components/IncomeBridgeActions', () => ({ IncomeBridgeActions: () => <span>INCOME bridge</span> }))
+vi.mock('@/components/ProjectParticipants', () => ({ ProjectParticipants: () => <span>Indexed holders</span> }))
+vi.mock('@/components/ProjectPayerAddresses', () => ({ ProjectPayerAddresses: () => <span>Project payer addresses</span> }))
+vi.mock('@/components/ProjectShop', () => ({ ProjectShop: ({ tokenLabel }: { tokenLabel: string }) => <span data-testid={`shop-${tokenLabel}`}>Project shop</span> }))
 vi.mock('wagmi', () => ({ usePublicClient: () => ({ readContract: async () => runtime.delegated }) }))
 vi.mock('@/lib/fund-state', () => ({ readFundProjectState: async () => runtime.query.data }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address, isConnected: true }) }))
@@ -27,6 +33,7 @@ vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries: runtime.invalidateQueries }),
   useQuery: ({ queryKey }: { queryKey: unknown[] }) => queryKey[0] === 'fund-project'
     ? runtime.query
+    : queryKey[0] === 'income-binding' ? { data: runtime.incomeId, isError: false, isFetching: false }
     : queryKey[0] === 'fund-reward-activation' ? { data: runtime.delegated, isError: false, isFetching: false }
     : { data: undefined, isError: false, isFetching: false },
 }))
@@ -59,6 +66,9 @@ describe('live FUND transaction tracking survives refreshed data', () => {
   let root: Root
   let host: HTMLDivElement
   beforeEach(() => {
+    Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) })
+    window.history.replaceState(null, '', '/')
+    runtime.incomeId = undefined
     runtime.mounted = 0; runtime.unmounted = 0
     runtime.phase = 'pending'; runtime.delegated = zeroAddress
     runtime.send.mockReset().mockImplementation(async (_request, options) => { await options?.reverify?.(); return null })
@@ -67,7 +77,48 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   })
   afterEach(async () => { await act(async () => root.unmount()); host.remove() })
-  async function render() { await act(async () => root.render(<FundProject chainId={1} projectId="7" />)) }
+  async function tab(label: string) { const target = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(button => button.textContent === label); expect(target, `Missing ${label} tab`).toBeDefined(); await act(async () => target!.click()) }
+  async function render() {
+    await act(async () => root.render(<FundProject chainId={1} projectId="7" />))
+    for (const label of ['Owners', 'Market', 'Settlement', 'Operators', 'Overview']) await tab(label)
+  }
+
+  it('shows the project navigation before RPC reads finish and preserves the selected tab', async () => {
+    runtime.query = { ...runtime.query, data: undefined, isPending: true }
+    await act(async () => root.render(<FundProject chainId={1} projectId="7" />))
+    expect(host.querySelector('[aria-label="Project sections"]')).not.toBeNull()
+    await tab('Operators')
+    expect(runtime.mounted).toBe(0)
+    runtime.query = { ...runtime.query, data: state(), isPending: false }
+    await act(async () => root.render(<FundProject chainId={1} projectId="7" />))
+    expect([...host.querySelectorAll('[role="tab"]')].find(button => button.textContent === 'Operators')?.getAttribute('aria-selected')).toBe('true')
+    expect(host.querySelector('[data-testid="income"]')).not.toBeNull()
+    expect(runtime.send).not.toHaveBeenCalled()
+  })
+
+  it.each([undefined, 9n])('shows INCOME shop only for a verified linked project (%s)', async (incomeId) => {
+    runtime.incomeId = incomeId
+    await render()
+    await tab('Shop')
+    expect(host.querySelector('[data-testid="shop-FUND"]')).not.toBeNull()
+    expect(host.querySelector('[data-testid="shop-INCOME"]') !== null).toBe(incomeId !== undefined)
+    expect(runtime.send).not.toHaveBeenCalled()
+  })
+
+  it('keeps FUND submissions mounted when a linked INCOME project becomes discoverable', async () => {
+    await render()
+    const mounted = runtime.mounted
+    runtime.incomeId = 9n
+    await render()
+    expect(runtime.unmounted).toBe(0)
+    expect(runtime.mounted).toBe(mounted)
+    const choices = host.querySelector('[aria-label="Payment token"]')!
+    const buttons = [...choices.querySelectorAll<HTMLButtonElement>('button')]
+    expect(buttons.map(button => button.textContent)).toEqual(['FUND', 'INCOME'])
+    for (const button of [buttons[0], buttons[1], buttons[0]]) await act(async () => button.click())
+    expect(runtime.unmounted).toBe(0)
+    expect(host.textContent).toContain('Waiting for onchain confirmation')
+  })
 
   it('does not offer vanilla voting activation as the new Sticky reward path', async () => {
     runtime.phase = 'idle'

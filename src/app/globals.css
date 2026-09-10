@@ -15,3 +15,5 @@
 @import '../../web/home.css';
 @import '../components/transaction-runtime.css';
 @import './live.css';
+@import '../components/project-layout.css';
+@import '../components/project-demo.css';

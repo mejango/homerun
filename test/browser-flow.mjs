@@ -54,9 +54,29 @@ async function open() {
   const response = await page.goto(demoURL, { waitUntil: "domcontentloaded" });
   assert.equal(response.status(), 200);
   await expect(page.locator('.simulator')).toHaveAttribute('data-ready', 'true');
+  await tab("Stages");
   await expect(page.locator("#scenario-title")).toHaveText("Raise the money.");
+  await tab("Overview");
+}
+async function tab(name) {
+  const trigger = page.getByRole('tab', { name, exact: true });
+  await trigger.click();
+  await expect(trigger).toHaveAttribute('aria-selected', 'true');
+}
+async function owners(account = 'You') {
+  await tab('Owners');
+  await tab('Accounts');
+  await tab(account);
+}
+async function navigateTo(selector) {
+  if (/data-owner-action|#owner-tools/.test(selector)) await tab('Operators');
+  else if (/download-scenario|site-integration/.test(selector)) await tab('Extras');
+  else if (/data-ownership-chart|fund-ownership-preview/.test(selector)) await owners('All');
+  else if (/your-|quote-month|combined-cashout|loan-status|fund-details|fund-position-preview|data-chart-kind.*loan/.test(selector)) await owners();
+  else if (/field-|reserve-stress|monthly-rent-in|fund-total-supply|phase-panel|data-projection-chart|data-chart-kind/.test(selector)) await tab('Stages');
 }
 async function phase(name) {
+  await tab('Stages');
   const stage = ["earning", "liquidated"].includes(name) ? name : "raising";
   await page
     .locator(`.preview-base-buttons button[data-journey-phase="${stage}"]`)
@@ -68,6 +88,7 @@ async function phase(name) {
   );
 }
 async function reveal(selector) {
+  await navigateTo(selector);
   const locator = page.locator(selector);
   const ancestors = locator.locator("xpath=ancestor::details");
   for (let i = 0; i < (await ancestors.count()); i++) {
@@ -78,6 +99,7 @@ async function reveal(selector) {
   return locator;
 }
 async function field(key, value) {
+  await tab("Stages");
   const input = page.locator(`#field-${key}`);
   if (
     ["rentGrowthPercent", "costGrowthPercent"].includes(key) &&
@@ -114,6 +136,7 @@ async function screenshot(name) {
   });
 }
 async function download(selector) {
+  await navigateTo(selector);
   const [file] = await Promise.all([
     page.waitForEvent("download"),
     page.locator(selector).click(),
@@ -125,16 +148,15 @@ async function download(selector) {
 
 try {
   await check(
-    "The complete project body is server-rendered without JavaScript",
+    "The initial project overview and payment quote are server-rendered without JavaScript",
     async () => {
       const noJS = await browser.newContext({ javaScriptEnabled: false });
       const staticPage = await noJS.newPage();
       const response = await staticPage.goto(demoURL);
       assert.equal(response.status(), 200);
       await expect(staticPage.locator("h1")).toHaveText("Founder Haus");
-      await expect(staticPage.locator("#scenario-title")).toHaveText(
-        "Raise the money.",
-      );
+      await expect(staticPage.getByRole('heading', { name: 'Description', exact: true })).toBeVisible();
+      await expect(staticPage.locator('#project-journey')).toHaveAttribute('data-journey-phase', 'raising');
       await expect(staticPage.locator("#project-goal")).toHaveText(
         "$615,384.62",
       );
@@ -154,14 +176,11 @@ try {
         await page.locator(".preview-workbench > .assumptions").count(),
         1,
       );
-      assert.equal(
-        await page.locator("#pay-panel #contribution-section").count(),
-        1,
-      );
-      assert.equal(
-        await page.locator("#fund-position-preview").getAttribute("open"),
-        null,
-      );
+      assert.equal(await page.locator('.hpl-sidebar #pay-panel').count(), 1);
+      await owners();
+      assert.equal(await page.locator('#fund-position-preview #fund-details').count(), 1);
+      assert.equal(await page.locator('#pay-panel #fund-details').count(), 0);
+      assert.equal(await page.locator('#fund-details').getAttribute('open'), null);
       await reveal("#your-fund-tokens");
       await expect(page.locator("#your-fund-tokens")).toHaveText(
         "100,000,000 FUND",
@@ -357,7 +376,7 @@ try {
       await expect(page.locator("#fund-details")).toContainText(
         "Initial INCOME claims are separate and require no activation, staking or vesting",
       );
-      await page.locator("#fund-ownership-preview > summary").click();
+      await owners('All');
       for (const token of ["fund", "income"]) {
         const chart = page.locator(`[data-ownership-chart="${token}"]`);
         const total = Number(await chart.getAttribute("data-ownership-total"));
@@ -462,6 +481,7 @@ try {
     "Owner drafts expose blockers and preserve review before a scenario change",
     async () => {
       await open();
+      await tab("Operators");
       await page.locator("#owner-tools > summary").click();
       await page.locator("[data-owner-action=close_raise]").click();
       await expect(page.locator("#owner-dialog")).toContainText(
@@ -476,6 +496,7 @@ try {
       assert.equal(draft.executable, false);
       await dismiss("#owner-dialog");
       await field("raisedPercent", 100);
+      await tab('Operators');
       await page.locator("[data-owner-action=close_raise]").click();
       await expect(page.locator("#preview-owner-state")).toBeEnabled();
       await page.locator("#preview-owner-state").click();
@@ -495,6 +516,7 @@ try {
       ]) {
         await open();
         await phase(stage);
+        await tab("Operators");
         await page.locator("#owner-tools > summary").click();
         await page.locator(`[data-owner-action="${action}"]`).click();
         await expect(page.locator("#owner-dialog")).toContainText(
@@ -519,6 +541,7 @@ try {
         "true",
       );
       await expect(page.locator("#pay-review")).toBeDisabled();
+      await tab('Extras');
       await expect(page.locator("#download-scenario")).toBeDisabled();
       await page.locator("#reset-example").click();
       await expect(page.locator("#field-purchaseBudget")).toHaveValue(
@@ -548,6 +571,7 @@ try {
     "Field help supports keyboard, dismissal and narrow viewports",
     async () => {
       await open();
+      await tab('Stages');
       await page.locator("#field-purchaseBudget").focus();
       await expect(page.locator("#help-purchaseBudget")).toBeVisible();
       await page.keyboard.press("Escape");
@@ -575,7 +599,9 @@ try {
       await phase("earning");
       await reveal("[data-chart-kind=loan]");
       for (const name of ["cash", "loan"]) {
-        const chart = page.locator(`[data-chart-kind="${name}"]`);
+        if (name === 'cash') await tab('Stages');
+        else await owners();
+        const chart = page.locator(name === 'cash' ? '#phase-panel [data-chart-kind="cash"]' : '#fund-position-preview [data-chart-kind="loan"]');
         assert.ok((await chart.locator("svg").count()) > 0);
         const sliders = chart.locator("input[type=range]");
         if (await sliders.count()) await sliders.fill("5");
@@ -590,6 +616,7 @@ try {
     async () => {
       await open();
       await field("monthlyRent", 12345);
+      await tab('Extras');
       await page.locator(".site-integration > summary").click();
       await expect(
         page.locator(".site-integration textarea").first(),
@@ -616,6 +643,8 @@ try {
           "liquidated",
         ]) {
           await phase(stage);
+          assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= width + 1, `${stage} panel overflows ${width}px`);
+          await tab('Overview');
           const bounds = await page.evaluate(() => ({
             scroll: document.documentElement.scrollWidth,
             photo: document.querySelector(".deal-image").getBoundingClientRect()
@@ -663,7 +692,7 @@ try {
     await page.locator('#pay-amount').fill('2500');
     await expect(page.locator('#pay-output')).toHaveText('25,000,000');
     await expect(page.locator('#project-raised')).toHaveText('$0');
-    await expect(page.locator('.created-project-note')).toContainText('Local project preview');
+    await expect(page.locator('.demo-model-note')).toContainText('Local project preview');
     assert.ok(await page.locator('#created-asset-sketch').evaluate(canvas => canvas.width > 0 && canvas.height > 0));
     await page.evaluate(key => localStorage.removeItem(key), CREATED_PROJECTS_KEY);
   });

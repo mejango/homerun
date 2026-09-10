@@ -43,10 +43,8 @@ export default async function IncomePage({ params, searchParams }: IncomeRoutePr
   const fundProjectId = fundId(search.fund)
   return <div className="project-page live-contract-page">
     <a className="skip-link" href="#main">Skip to content</a>
-    <header className="site-header flex items-center justify-between gap-5"><Brand /><WalletButton /></header>
-    <main id="main" className="mx-auto max-w-[1220px] px-5 py-10 sm:py-14" tabIndex={-1}>
-      <p className="mb-3 text-sm">{displayChainName(chainId)}</p>
-      <h1 className="mb-5 text-5xl sm:text-6xl">Revenue project {projectId.toString()}</h1>
+    <header className="site-header flex items-center justify-between gap-5"><Brand tagline={false} /><WalletButton /></header>
+    <main id="main" className="mx-auto max-w-[1220px] px-5 py-8 sm:px-8 sm:py-10" tabIndex={-1}>
       <IncomeProject key={`${chainId}:${projectId}`} chainId={chainId} projectId={projectId} fundProjectId={fundProjectId} />
     </main>
   </div>

@@ -21,6 +21,7 @@ import { incomePaymentPreview } from "../../web/income-payment-preview.mjs";
 import { plannedOwnerActionDraft as modelOwnerActionDraft } from "../../web/owner-actions.mjs";
 import { SiteIntegration } from "./SiteIntegration";
 import { AvailableTransactions } from "./AvailableTransactions";
+import { HomerunProjectLayout, OwnersTabs } from "./HomerunProjectLayout";
 import {
   BudgetChart,
   CashHistoryChart,
@@ -419,103 +420,6 @@ function ProjectPhoto({
   );
 }
 
-/** Shared presentation accepts observed values and live controls without deriving them from the simulator. */
-export function ProjectPresentation({
-  name,
-  location,
-  photo,
-  assetType,
-  phase,
-  raised,
-  raiseGoal,
-  payment,
-  children,
-  demo = false,
-  note,
-}: {
-  name: string;
-  location?: string;
-  photo?: string;
-  assetType?: string;
-  phase: ProjectPhase;
-  raised?: string | number;
-  raiseGoal?: string | number;
-  payment: ReactNode;
-  children: ReactNode;
-  demo?: boolean;
-  note?: ReactNode;
-}) {
-  const formatted = (value?: string | number) =>
-    typeof value === "number" ? money(value) : (value ?? "—");
-  const progress =
-    typeof raised === "number" && typeof raiseGoal === "number" && raiseGoal > 0
-      ? percent((raised / raiseGoal) * 100)
-      : undefined;
-  return (
-    <>
-      <section className="deal-heading founder-heading">
-        <div>
-          <p
-            id="project-status"
-            className="project-status"
-            data-project-phase={phase}
-            role="status"
-          >
-            {statusLabels[phase]}
-          </p>
-          <h1>{name}</h1>
-          {location && <p className="asset-location">{location}</p>}
-          {note}
-          <div
-            id="project-raise-stats"
-            className="project-raise-stats"
-            aria-label="Fundraising overview"
-          >
-            <dl>
-              <div>
-                <dt>
-                  {["earning", "liquidated", "refunded"].includes(phase)
-                    ? "Originally raised"
-                    : "Raised"}
-                </dt>
-                <dd id="project-raised">{formatted(raised)}</dd>
-              </div>
-              <div>
-                <dt>Raise goal</dt>
-                <dd id="project-goal">{formatted(raiseGoal)}</dd>
-              </div>
-            </dl>
-            {progress && (
-              <p>
-                <strong id="project-funded">{progress}</strong> funded
-              </p>
-            )}
-          </div>
-        </div>
-        <ProjectJourney phase={phase} />
-        <ProjectPhoto
-          name={name}
-          photo={photo}
-          demo={demo}
-          assetType={assetType}
-        />
-      </section>
-      <div className="simulator-layout">
-        <aside
-          id="pay-panel"
-          className="pay-panel"
-          aria-label={demo ? "Contribution preview" : "Project transactions"}
-        >
-          {payment}
-        </aside>
-        <section className="process" aria-label="Investment process">
-          {children}
-        </section>
-      </div>
-    </>
-  );
-}
-
 function NumericField({
   name,
   label,
@@ -807,10 +711,10 @@ function TokenTerms({ p }: { p: Projection }) {
       </p>
       <p>
         At purchase, {number(p.revenuePremint)} INCOME tokens are shared among
-        all FUND holders in the same proportions, including inactive ERC20 balances
-        and unclaimed token credits. This initial claim requires no activation,
-        staking or vesting. Ongoing rewards are separate and require eligible
-        Sticky staking. Neither token has a promised repayment date.
+        all FUND holders in the same proportions, including inactive ERC20
+        balances and unclaimed token credits. This initial claim requires no
+        activation, staking or vesting. Ongoing rewards are separate and require
+        eligible Sticky staking. Neither token has a promised repayment date.
       </p>
       <dl className="math-values">
         <div>
@@ -835,10 +739,12 @@ function TokenTerms({ p }: { p: Projection }) {
         every {p.issuanceCutMonths} months for {p.issuanceCutYears} years, then
         stays fixed. This model uses the reserve first, then operator cash-outs
         for expenses, and assumes all FUND participates in Sticky with full
-        snapshot eligibility and fully vested rewards. Stock Sticky uses proportional
-        share-balance snapshots, with four weekly vesting rounds starting from the reward-claim round.
-        There is no minimum staking period or stake-age bonus. Staying staked
-        longer earns additional rounds. Live use requires a verified deployment. Actual loan effects are not included.
+        snapshot eligibility and fully vested rewards. Stock Sticky uses
+        proportional share-balance snapshots, with four weekly vesting rounds
+        starting from the reward-claim round. There is no minimum staking period
+        or stake-age bonus. Staying staked longer earns additional rounds. Live
+        use requires a verified deployment. Actual loan effects are not
+        included.
       </p>
     </details>
   );
@@ -869,8 +775,8 @@ function Allocation({ p }: { p: Projection }) {
       <p>
         These percentages divide new tokens. The FUND-staker allocation goes to
         eligible Sticky participants, including operators who stake. Projections
-        assume all FUND participates and is eligible at each snapshot with fully vested rewards; weekly
-        reward vesting is not modeled.
+        assume all FUND participates and is eligible at each snapshot with fully
+        vested rewards; weekly reward vesting is not modeled.
       </p>
     </figure>
   );
@@ -918,7 +824,6 @@ function PhasePanel({
         {phase === "earning" && revenueDescription && (
           <p className="revenue-description">{revenueDescription}</p>
         )}
-        <AvailableTransactions stage={phase} />
       </div>
       {phase === "raising" && (
         <>
@@ -1024,12 +929,12 @@ function PhasePanel({
                 value={p.closingFeeEstimate}
               />
               <p>
-                After purchase, all FUND holders share {number(p.revenuePremint)}{" "}
-                initial INCOME, including operators, inactive ERC20 balances and
-                unclaimed token credits. Initial claims require no activation,
-                staking or vesting. The INCOME revnet starts at $0,
-                then receives monthly revenue. FUND remains the separate asset
-                claim.
+                After purchase, all FUND holders share{" "}
+                {number(p.revenuePremint)} initial INCOME, including operators,
+                inactive ERC20 balances and unclaimed token credits. Initial
+                claims require no activation, staking or vesting. The INCOME
+                revnet starts at $0, then receives monthly revenue. FUND remains
+                the separate asset claim.
               </p>
             </>
           )}
@@ -1292,16 +1197,17 @@ function Contribution({
           {closed && (
             <>
               <p>
-                Eligible FUND stakers share {percent(p.currentStickySplitPercent)} of
-                new INCOME through Sticky. This projection assumes all FUND
-                participates and ongoing rewards are fully vested. Stock Sticky rewards
-                follow share balances at each snapshot and unlock in four weekly vesting rounds
-                from the reward-claim round; the projection omits that vesting schedule.
-                There is no minimum staking period or stake-age bonus. Staying
-                staked longer earns additional rounds. Live use requires a
-                verified deployment. Initial INCOME claims are separate and require
-                no activation, staking or vesting. FUND remains your claim on net
-                asset-sale proceeds.
+                Eligible FUND stakers share{" "}
+                {percent(p.currentStickySplitPercent)} of new INCOME through
+                Sticky. This projection assumes all FUND participates and
+                ongoing rewards are fully vested. Stock Sticky rewards follow
+                share balances at each snapshot and unlock in four weekly
+                vesting rounds from the reward-claim round; the projection omits
+                that vesting schedule. There is no minimum staking period or
+                stake-age bonus. Staying staked longer earns additional rounds.
+                Live use requires a verified deployment. Initial INCOME claims
+                are separate and require no activation, staking or vesting. FUND
+                remains your claim on net asset-sale proceeds.
               </p>
               <details className="holder-choices">
                 <summary>Loan estimate & terms</summary>
@@ -1479,14 +1385,12 @@ function PayPreview({
   contributionError,
   fundAmount,
   onFundAmount,
-  onMonthChange,
 }: {
   p: Projection | null;
   phase: ProjectPhase;
   contributionError: string;
   fundAmount: number;
   onFundAmount: (value: number) => void;
-  onMonthChange: (month: number) => void;
 }) {
   const [currency, setCurrency] = useState("USDC");
   const [fundRaw, setFundRaw] = useState(number(fundAmount));
@@ -1640,37 +1544,6 @@ function PayPreview({
       </form>
       {income && p && quote.enabled && quote.amount !== null && (
         <IncomePaymentDetails p={p} amount={quote.amount} />
-      )}
-      {p && !contributionError && (
-        <section
-          id="contribution-section"
-          className="pay-contribution"
-          aria-label="Contribution details"
-        >
-          <details id="fund-position-preview" className="pay-detail">
-            <summary>
-              {income ? "Fundraising contribution" : "Your contribution"}
-            </summary>
-            <div className="pay-detail-body">
-              <p className="pay-position-basis">
-                Based on {money(p.investment)}{" "}
-                {phase === "raising"
-                  ? "entered above"
-                  : "entered during fundraising"}
-                .
-              </p>
-              <Contribution p={p} onMonthChange={onMonthChange} />
-            </div>
-          </details>
-          <details id="fund-ownership-preview" className="pay-detail">
-            <summary>
-              {income ? "Ownership from fundraising" : "Who holds the tokens?"}
-            </summary>
-            <div className="pay-detail-body">
-              <OwnershipCharts projection={p} />
-            </div>
-          </details>
-        </section>
       )}
       {review && (
         <Modal
@@ -1870,9 +1743,494 @@ function DemoOwnerTools({
   );
 }
 
+function DemoOverview({
+  name,
+  project,
+  phase,
+  p,
+}: {
+  name: string;
+  project?: CreatedProject;
+  phase: ProjectPhase;
+  p: Projection | null;
+}) {
+  const description =
+    project?.values.description ||
+    (project
+      ? "An asset funded together, with FUND ownership and a separate INCOME revenue project."
+      : "A founders’ clubhouse in Jurerê Internacional, Florianópolis. Workspaces, events, a pool and wellness activities bring people together and give the property a way to earn revenue.");
+  return (
+    <div className="demo-overview">
+      <section className="demo-section demo-description">
+        <h2>Description</h2>
+        <p>{description}</p>
+      </section>
+      <ProjectPhoto
+        name={name}
+        photo={project?.values.photo}
+        demo={!project}
+        assetType={project?.values.assetType}
+      />
+      <section className="demo-section demo-overview-progress">
+        <div>
+          <h2>At a glance</h2>
+          {p && (
+            <div
+              id="project-raise-stats"
+              className="project-raise-stats"
+              aria-label="Fundraising overview"
+            >
+              <dl>
+                <div>
+                  <dt>
+                    {["earning", "liquidated", "refunded"].includes(phase)
+                      ? "Originally raised"
+                      : "Raised"}
+                  </dt>
+                  <dd id="project-raised">{money(p.raised)}</dd>
+                </div>
+                <div>
+                  <dt>Raise goal</dt>
+                  <dd id="project-goal">{money(p.raiseGoal)}</dd>
+                </div>
+              </dl>
+              <p>
+                <strong id="project-funded">
+                  {percent(
+                    p.raiseGoal > 0 ? (p.raised / p.raiseGoal) * 100 : 0,
+                  )}
+                </strong>{" "}
+                funded
+              </p>
+              {p.purchaseCompleted && (
+                <dl className="demo-revenue-stats">
+                  <div>
+                    <dt>Revenue received</dt>
+                    <dd>{money(p.cumulativeRent)}</dd>
+                  </div>
+                  <div>
+                    <dt>INCOME treasury</dt>
+                    <dd>{money(p.revCash)}</dd>
+                  </div>
+                </dl>
+              )}
+            </div>
+          )}
+        </div>
+        <ProjectJourney phase={phase} />
+      </section>
+      <section className="demo-section">
+        <h2>Fund it. Earn together.</h2>
+        <div className="demo-token-summary">
+          <div>
+            <h3>FUND</h3>
+            <p>
+              A share of the net proceeds when the asset is sold. The initial
+              INCOME allocation includes every FUND holder at the snapshot.
+            </p>
+          </div>
+          <div>
+            <h3>INCOME</h3>
+            <p>
+              A separate token backed by revenue. FUND holders can stake through
+              Sticky to earn ongoing INCOME rewards.
+            </p>
+          </div>
+        </div>
+      </section>
+      <div className="demo-model-note">
+        <p>
+          {project ? "Local project preview." : "Illustrative demo."} Figures
+          and actions are modeling previews. Ongoing rewards assume all FUND
+          participates in Sticky and rewards are fully vested; weekly reward
+          vesting is not modeled.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function DemoActivity({
+  p,
+  phase,
+}: {
+  p: Projection | null;
+  phase: ProjectPhase;
+}) {
+  const rows: { title: string; detail: string }[] = [];
+  if (p) {
+    if (phase === "liquidated")
+      rows.push({
+        title: "Asset sale modeled",
+        detail: `${money(p.fundSaleCash)} for FUND holders`,
+      });
+    if (p.purchaseCompleted) {
+      rows.push({
+        title: `Month ${p.monthsApplied} of revenue`,
+        detail: `${money(p.cumulativeRent)} received in this scenario`,
+      });
+      rows.push({
+        title: "Purchase modeled",
+        detail: `${money(p.purchaseBudget)} asset price`,
+      });
+    }
+    if (phase === "refunded")
+      rows.push({
+        title: "Refunds complete",
+        detail: `${money(p.refundedCash)} returned in this scenario`,
+      });
+    if (phase === "refunding")
+      rows.push({
+        title: "Refunds opened",
+        detail: `${money(p.refundableCash)} available in this scenario`,
+      });
+    rows.push({
+      title: phase === "raising" ? "Raise in progress" : "Fundraising",
+      detail: `${money(p.raised)} of ${money(p.raiseGoal)}`,
+    });
+  }
+  return (
+    <section className="demo-activity" aria-label="Scenario activity">
+      <h2>Activity</h2>
+      <p className="demo-activity-source">Modeled milestones</p>
+      {rows.length ? (
+        <ol>
+          {rows.map((row, index) => (
+            <li key={`${index}:${row.title}`}>
+              <span className="demo-activity-dot" aria-hidden="true" />
+              <div>
+                <h3>{row.title}</h3>
+                <p>{row.detail}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p>Check the modeling inputs to see this scenario.</p>
+      )}
+      <p className="demo-activity-note">
+        No transactions have been sent by this demo.
+      </p>
+    </section>
+  );
+}
+
+function DemoStageHistory({
+  p,
+  phase,
+}: {
+  p: Projection | null;
+  phase: ProjectPhase;
+}) {
+  const failed = phase === "refunding" || phase === "refunded";
+  const steps = failed
+    ? [
+        {
+          name: "Fundraise",
+          state: "Past",
+          detail: p
+            ? `${money(p.raised)} contributed`
+            : "Contributions collected",
+        },
+        {
+          name: "Refunds",
+          state: phase === "refunded" ? "Complete" : "Current",
+          detail:
+            phase === "refunded"
+              ? "Remaining funds returned. No asset was purchased."
+              : "Remaining funds become claimable by contributors.",
+        },
+      ]
+    : [
+        {
+          name: "Fundraise",
+          state: phase === "raising" || phase === "funded" ? "Current" : "Past",
+          detail:
+            phase === "raising"
+              ? "Collect contributions toward the purchase."
+              : "Close the raise and complete the purchase.",
+        },
+        {
+          name: "Income",
+          state:
+            phase === "earning"
+              ? "Current"
+              : phase === "liquidated"
+                ? "Past"
+                : "Upcoming",
+          detail: p?.purchaseCompleted
+            ? `${p.monthsApplied} months of revenue modeled.`
+            : "Launch INCOME, receive revenue and pay operating costs.",
+        },
+        {
+          name: "Asset sale",
+          state: phase === "liquidated" ? "Current" : "Eventually",
+          detail:
+            "Return net sale proceeds to FUND holders. INCOME remains separate.",
+        },
+      ];
+  return (
+    <section className="demo-section demo-stage-history">
+      <h2>The journey</h2>
+      <p>Where this scenario has been, and what comes next.</p>
+      <ol>
+        {steps.map((step, index) => (
+          <li key={step.name} data-stage-state={step.state.toLowerCase()}>
+            <span className="demo-stage-number" aria-hidden="true">
+              {index + 1}
+            </span>
+            <div>
+              <div className="demo-stage-label">
+                <h3>{step.name}</h3>
+                <span>{step.state}</span>
+              </div>
+              <p>{step.detail}</p>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+function DemoOutlook({ p, inputs }: { p: Projection; inputs: NetworkInputs }) {
+  const [months, setMonths] = useState(12);
+  const start = p.purchaseCompleted ? p.monthsApplied : 0;
+  const target = Math.min(360, start + months);
+  const future = useMemo(() => {
+    try {
+      return projectNetwork(
+        {
+          ...inputs,
+          investment: 0,
+          revenueMonths: target,
+          fundRewardMode: "holders",
+        },
+        "earning",
+      );
+    } catch {
+      return null;
+    }
+  }, [inputs, target]);
+  if (["refunding", "refunded", "liquidated"].includes(p.phase)) return null;
+  return (
+    <section className="demo-section demo-outlook">
+      <div className="demo-outlook-heading">
+        <div>
+          <h2>Looking ahead</h2>
+          <p>Assuming the asset is purchased and the revenue plan holds.</p>
+        </div>
+        <div
+          className="demo-outlook-range"
+          role="group"
+          aria-label="Projection horizon"
+        >
+          {[12, 36, 60].map((value) => (
+            <button
+              type="button"
+              key={value}
+              aria-pressed={months === value}
+              onClick={() => setMonths(value)}
+            >
+              {value / 12} {value === 12 ? "year" : "years"}
+            </button>
+          ))}
+        </div>
+      </div>
+      {future ? (
+        <>
+          <p className="demo-outlook-basis">
+            Modeling projection from month {start} to month {target}. The chart
+            includes the full modeled path from purchase.
+          </p>
+          <dl className="demo-outlook-values">
+            <div>
+              <dt>Revenue through month {target}</dt>
+              <dd>{money(future.cumulativeRent)}</dd>
+            </div>
+            <div>
+              <dt>INCOME treasury</dt>
+              <dd>{money(future.revCash)}</dd>
+            </div>
+            <div>
+              <dt>Cash reserve left</dt>
+              <dd>{money(future.opsReserveCash)}</dd>
+            </div>
+          </dl>
+          <CashHistoryChart projection={future} />
+        </>
+      ) : (
+        <p>Check the inputs before projecting future revenue.</p>
+      )}
+    </section>
+  );
+}
+
+function DemoOwners({
+  p,
+  error,
+  onMonthChange,
+}: {
+  p: Projection | null;
+  error: string;
+  onMonthChange: (month: number) => void;
+}) {
+  const unavailable = (
+    <section className="demo-section">
+      <p>{error || "Check the modeling inputs to see ownership."}</p>
+    </section>
+  );
+  const income = !!p?.purchaseCompleted;
+  return (
+    <OwnersTabs
+      accountsYou={
+        p && !error ? (
+          <section className="demo-section demo-account">
+            <h2>Your position</h2>
+            <p>
+              Based on a modeled contribution of {money(p.investment)}. This is
+              a preview account.
+            </p>
+            <dl className="demo-account-balances">
+              <div>
+                <dt>FUND</dt>
+                <dd>{tokenNumber(p.personalFundTokens)}</dd>
+              </div>
+              <div>
+                <dt>INCOME</dt>
+                <dd>
+                  {income ? tokenNumber(p.personalRevTokens) : "Not issued yet"}
+                </dd>
+              </div>
+            </dl>
+            <div id="fund-position-preview">
+              <Contribution p={p} onMonthChange={onMonthChange} />
+            </div>
+          </section>
+        ) : (
+          unavailable
+        )
+      }
+      accountsAll={
+        p ? (
+          <section className="demo-section">
+            <h2>All owners</h2>
+            <p>
+              Modeled ownership across contributors, operators and customers.
+              This demo represents groups, not indexed wallet accounts.
+            </p>
+            <div id="fund-ownership-preview">
+              <OwnershipCharts projection={p} />
+            </div>
+          </section>
+        ) : (
+          unavailable
+        )
+      }
+      market={
+        p ? (
+          <section className="demo-section">
+            <h2>Market</h2>
+            <p>
+              Preview cash-out values for your modeled position. Live quotes use
+              confirmed treasury balances.
+            </p>
+            <div className="demo-token-summary">
+              <div>
+                <h3>FUND</h3>
+                <strong>{money(p.personalFundCashout)}</strong>
+                <p>
+                  {p.phase === "funded" || p.phase === "earning"
+                    ? "Cash-outs are closed during purchase and operation."
+                    : "Estimated cash-out before protocol fees."}
+                </p>
+              </div>
+              <div>
+                <h3>INCOME</h3>
+                <strong>
+                  {income ? money(p.personalCashout) : "Not issued yet"}
+                </strong>
+                <p>
+                  Cash-outs return revenue backing and give up the tokens
+                  redeemed.
+                </p>
+              </div>
+            </div>
+          </section>
+        ) : (
+          unavailable
+        )
+      }
+      settlement={
+        <section className="demo-section">
+          <h2>Settlement</h2>
+          <p>
+            Linked live projects let holders bridge FUND and INCOME between
+            supported networks. Transfers are prepared on the source chain,
+            relayed, then claimed on the destination.
+          </p>
+          <p>This demo has no cross-chain transfers to settle.</p>
+        </section>
+      }
+      splits={
+        p ? (
+          <section className="demo-section">
+            <h2>Splits</h2>
+            <p>
+              New INCOME is allocated to operators, eligible FUND stakers and
+              customers.
+            </p>
+            <Allocation p={p} />
+            <TokenTerms p={p} />
+          </section>
+        ) : (
+          unavailable
+        )
+      }
+      loans={
+        p ? (
+          <section className="demo-section">
+            <h2>Loans</h2>
+            <p>
+              INCOME can be collateral for a Revnet loan when borrowing is
+              available. FUND stays separate.
+            </p>
+            {income ? (
+              <>
+                <dl className="demo-account-balances">
+                  <div>
+                    <dt>Estimated loan proceeds</dt>
+                    <dd>{money(p.personalLoanCash)}</dd>
+                  </div>
+                  <div>
+                    <dt>Assumed upfront fees</dt>
+                    <dd>{money(p.personalLoanFees)}</dd>
+                  </div>
+                </dl>
+                <BorrowingChart projection={p} />
+                <p>
+                  Borrowing and cashing out the same INCOME are alternatives.
+                  These are modeling estimates; a live loan requires a reviewed
+                  contract quote.
+                </p>
+              </>
+            ) : (
+              <p>Loan projections become available in the Income stage.</p>
+            )}
+          </section>
+        ) : (
+          unavailable
+        )
+      }
+    />
+  );
+}
+
 export function DemoProjectPage({ project }: { project?: CreatedProject }) {
   const [ready, setReady] = useState(false);
-  useEffect(() => { setReady(true); }, []);
+  useEffect(() => {
+    setReady(true);
+  }, []);
   const initial = useMemo(
     () =>
       project
@@ -2004,240 +2362,339 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
       </header>
       <main id="main" tabIndex={-1}>
         <div className="simulator" data-ready={ready}>
-          <section
-            key={reset}
-            className="preview-workbench"
-            aria-label="Preview settings"
-          >
-            <aside className="assumptions" aria-label="Asset numbers">
-              <h2>Asset assumptions</h2>
-              <form
-                id="projection-form"
-                onSubmit={(event) => event.preventDefault()}
+          <HomerunProjectLayout
+            title={name}
+            actions={<AvailableTransactions stage={phase} />}
+            logo={
+              project && !project.values.photo ? (
+                <span className="demo-project-initial" aria-hidden="true">
+                  {name.slice(0, 1)}
+                </span>
+              ) : (
+                <div className="demo-project-logo">
+                  <Image
+                    unoptimized
+                    src={project?.values.photo || photos[0].src}
+                    width={112}
+                    height={112}
+                    alt=""
+                  />
+                </div>
+              )
+            }
+            metadata={[
+              <span
+                key="status"
+                id="project-status"
+                className="project-status"
+                data-project-phase={phase}
+                role="status"
               >
-                <div className="core-inputs">
-                  {field("purchaseBudget", "Asset price", {
-                    min: 0.01,
-                    currency: true,
-                  })}
-                  {field("opsReserve", "Cash reserve", { currency: true })}
-                  {field("monthlyRent", "Monthly revenue", { currency: true })}
-                  {field("monthlyCosts", "Monthly expenses", {
-                    currency: true,
-                  })}
-                </div>
-                <button
-                  id="toggle-assumptions"
-                  type="button"
-                  className="quiet-button"
-                  aria-expanded={growth}
-                  aria-controls="assumptions-body"
-                  onClick={() => setGrowth(!growth)}
-                >
-                  Annual growth {growth ? "↑" : "↓"}
-                </button>
-                <div id="assumptions-body" hidden={!growth}>
-                  <div className="input-pair">
-                    {field("rentGrowthPercent", "Revenue growth / year", {
-                      min: -100,
-                      max: 100,
-                      percentage: true,
-                    })}
-                    {field("costGrowthPercent", "Expense growth / year", {
-                      min: -100,
-                      max: 100,
-                      percentage: true,
-                    })}
-                  </div>
-                </div>
-                {derived.error && (
-                  <p id="projection-error" role="alert">
-                    {derived.error}
-                  </p>
-                )}
-              </form>
-            </aside>
-            <section
-              id="preview-controls"
-              className="state-picker"
-              data-base={
-                fundraising
-                  ? "fundraise"
-                  : phase === "earning"
-                    ? "income"
-                    : "sale"
-              }
-              aria-labelledby="state-label"
-            >
-              <div className="picker-label">
-                <h2 id="state-label">
-                  Preview{" "}
-                  {fundraising
-                    ? "fundraising"
-                    : phase === "earning"
-                      ? "income"
-                      : "an asset sale"}
-                </h2>
-                <span>Changes the example only</span>
-              </div>
-              <div
-                className="preview-base-buttons"
-                role="group"
-                aria-label="Choose a preview stage"
-              >
-                {stageNames.map((label, index) => (
-                  <button
-                    type="button"
-                    key={label}
-                    data-journey-phase={stagePhases[index]}
-                    aria-pressed={
-                      stagePhases[index] === (fundraising ? "raising" : phase)
-                    }
-                    onClick={() => setPhase(stagePhases[index])}
-                  >
-                    <span aria-hidden="true">{index + 1}</span>
-                    {label}
-                  </button>
-                ))}
-              </div>
-              <div className="phase-buttons" hidden={!fundraising}>
-                {phases.slice(0, 4).map(([id, label]) => (
-                  <button
-                    type="button"
-                    key={id}
-                    data-phase={id}
-                    aria-pressed={phase === id}
-                    onClick={() => setPhase(id)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-              <div className="scenario-controls" hidden={phase === "funded"}>
-                <div
-                  id="raise-input"
-                  hidden={!["raising", "refunding", "refunded"].includes(phase)}
-                >
-                  {field("raisedPercent", "Fundraising progress", {
-                    max: 100,
-                    percentage: true,
-                  })}
-                </div>
-                <div id="revenue-input" hidden={fundraising}>
-                  {field("revenueMonths", "Months of revenue", {
-                    max: 360,
-                    integer: true,
-                  })}
-                </div>
-                <div id="sale-scenario" hidden={phase !== "liquidated"}>
-                  {field("salePrice", "Suppose the asset sells for", {
-                    currency: true,
-                  })}
-                </div>
-              </div>
-            </section>
-          </section>
-          <ProjectPresentation
-            name={name}
-            location={
+                {statusLabels[phase]}
+              </span>,
               project?.values.location ||
-              (project ? "" : "Jurerê Internacional, Florianópolis")
-            }
-            photo={project?.values.photo}
-            assetType={project?.values.assetType}
-            phase={phase}
-            raised={overview?.raised}
-            raiseGoal={overview?.raiseGoal}
-            demo={!project}
-            note={
-              <p className="created-project-note">
-                {project ? "Local project preview" : "Illustrative demo"} |
-                Figures and actions below are modeling previews. Ongoing rewards assume all FUND participates in Sticky and rewards are fully vested; weekly reward vesting is not modeled.
-              </p>
-            }
+                (project ? "" : "Jurerê Internacional, Florianópolis"),
+              project ? "Local preview" : "Demo",
+              "FUND / INCOME",
+            ].filter(Boolean)}
             payment={
-              <PayPreview
-                key={reset}
-                p={p}
+              <aside
+                id="pay-panel"
+                className="pay-panel"
+                aria-label="Contribution preview"
+              >
+                <PayPreview
+                  key={reset}
+                  p={p}
+                  phase={phase}
+                  contributionError={derived.personalError || derived.error}
+                  fundAmount={inputs.investment}
+                  onFundAmount={(value) => change("investment", value)}
+                />
+              </aside>
+            }
+            activity={<DemoActivity p={overview} phase={phase} />}
+            overview={
+              <DemoOverview
+                name={name}
+                project={project}
                 phase={phase}
-                contributionError={derived.personalError || derived.error}
-                fundAmount={inputs.investment}
-                onFundAmount={(value) => change("investment", value)}
+                p={overview}
+              />
+            }
+            stages={
+              <div className="demo-stages">
+                <DemoStageHistory p={overview} phase={phase} />
+                {p ? (
+                  <PhasePanel
+                    p={project ? overview! : p}
+                    inputs={inputs}
+                    revenueDescription={project?.values.revenueDescription}
+                  />
+                ) : (
+                  <div className="phase-panel">
+                    <h2>Check the assumptions.</h2>
+                    <p role="alert">{derived.error}</p>
+                  </div>
+                )}
+                <div className="process-navigation">
+                  <button
+                    id="next-state"
+                    type="button"
+                    className="quiet-button"
+                    disabled={!next || !p}
+                    onClick={() => next && setPhase(next[0])}
+                  >
+                    {next ? `${next[1]} →` : "End of this scenario"}
+                  </button>
+                </div>
+                <details className="demo-modeling-controls" open>
+                  <summary>Modeling inputs</summary>
+                  <section
+                    key={reset}
+                    className="preview-workbench"
+                    aria-label="Preview settings"
+                  >
+                    <aside className="assumptions" aria-label="Asset numbers">
+                      <h2>Asset assumptions</h2>
+                      <form
+                        id="projection-form"
+                        onSubmit={(event) => event.preventDefault()}
+                      >
+                        <div className="core-inputs">
+                          {field("purchaseBudget", "Asset price", {
+                            min: 0.01,
+                            currency: true,
+                          })}
+                          {field("opsReserve", "Cash reserve", {
+                            currency: true,
+                          })}
+                          {field("monthlyRent", "Monthly revenue", {
+                            currency: true,
+                          })}
+                          {field("monthlyCosts", "Monthly expenses", {
+                            currency: true,
+                          })}
+                        </div>
+                        <button
+                          id="toggle-assumptions"
+                          type="button"
+                          className="quiet-button"
+                          aria-expanded={growth}
+                          aria-controls="assumptions-body"
+                          onClick={() => setGrowth(!growth)}
+                        >
+                          Annual growth {growth ? "↑" : "↓"}
+                        </button>
+                        <div id="assumptions-body" hidden={!growth}>
+                          <div className="input-pair">
+                            {field(
+                              "rentGrowthPercent",
+                              "Revenue growth / year",
+                              {
+                                min: -100,
+                                max: 100,
+                                percentage: true,
+                              },
+                            )}
+                            {field(
+                              "costGrowthPercent",
+                              "Expense growth / year",
+                              {
+                                min: -100,
+                                max: 100,
+                                percentage: true,
+                              },
+                            )}
+                          </div>
+                        </div>
+                        {derived.error && (
+                          <p id="projection-error" role="alert">
+                            {derived.error}
+                          </p>
+                        )}
+                      </form>
+                    </aside>
+                    <section
+                      id="preview-controls"
+                      className="state-picker"
+                      data-base={
+                        fundraising
+                          ? "fundraise"
+                          : phase === "earning"
+                            ? "income"
+                            : "sale"
+                      }
+                      aria-labelledby="state-label"
+                    >
+                      <div className="picker-label">
+                        <h2 id="state-label">
+                          Preview{" "}
+                          {fundraising
+                            ? "fundraising"
+                            : phase === "earning"
+                              ? "income"
+                              : "an asset sale"}
+                        </h2>
+                        <span>Changes the example only</span>
+                      </div>
+                      <div
+                        className="preview-base-buttons"
+                        role="group"
+                        aria-label="Choose a preview stage"
+                      >
+                        {stageNames.map((label, index) => (
+                          <button
+                            type="button"
+                            key={label}
+                            data-journey-phase={stagePhases[index]}
+                            aria-pressed={
+                              stagePhases[index] ===
+                              (fundraising ? "raising" : phase)
+                            }
+                            onClick={() => setPhase(stagePhases[index])}
+                          >
+                            <span aria-hidden="true">{index + 1}</span>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="phase-buttons" hidden={!fundraising}>
+                        {phases.slice(0, 4).map(([id, label]) => (
+                          <button
+                            type="button"
+                            key={id}
+                            data-phase={id}
+                            aria-pressed={phase === id}
+                            onClick={() => setPhase(id)}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      <div
+                        className="scenario-controls"
+                        hidden={phase === "funded"}
+                      >
+                        <div
+                          id="raise-input"
+                          hidden={
+                            !["raising", "refunding", "refunded"].includes(
+                              phase,
+                            )
+                          }
+                        >
+                          {field("raisedPercent", "Fundraising progress", {
+                            max: 100,
+                            percentage: true,
+                          })}
+                        </div>
+                        <div id="revenue-input" hidden={fundraising}>
+                          {field("revenueMonths", "Months of revenue", {
+                            max: 360,
+                            integer: true,
+                          })}
+                        </div>
+                        <div id="sale-scenario" hidden={phase !== "liquidated"}>
+                          {field("salePrice", "Suppose the asset sells for", {
+                            currency: true,
+                          })}
+                        </div>
+                      </div>
+                    </section>
+                  </section>
+                </details>
+                {overview && <DemoOutlook p={overview} inputs={inputs} />}
+              </div>
+            }
+            owners={
+              <DemoOwners
+                p={p}
+                error={derived.personalError || derived.error}
                 onMonthChange={(value) => change("revenueMonths", value)}
               />
             }
-          >
-            {p ? (
-              <PhasePanel
-                p={project ? overview! : p}
-                inputs={inputs}
-                revenueDescription={project?.values.revenueDescription}
-              />
-            ) : (
-              <div className="phase-panel">
-                <h2>Check the assumptions.</h2>
-                <p role="alert">{derived.error}</p>
-                <AvailableTransactions stage={phase} />
-              </div>
-            )}
-            <div className="process-navigation">
-              <button
-                id="next-state"
-                type="button"
-                className="quiet-button"
-                disabled={!next || !p}
-                onClick={() => next && setPhase(next[0])}
-              >
-                {next ? `${next[1]} →` : "End of this scenario"}
-              </button>
-            </div>
-          </ProjectPresentation>
-          <div className="page-tools">
-            <button
-              id="download-scenario"
-              type="button"
-              className="quiet-button"
-              disabled={!p || Boolean(derived.personalError)}
-              onClick={() =>
-                download(
-                  JSON.stringify(
-                    {
-                      version: 1,
-                      projectName: name,
-                      mode: "illustrative-preview",
-                      phase,
-                      inputs,
-                      projection: p,
+            shop={
+              <section className="demo-section">
+                <h2>Shop</h2>
+                <p>
+                  No items are offered in this demo. Contributions to the raise
+                  and revenue payments use the Pay module.
+                </p>
+              </section>
+            }
+            extras={
+              <div className="demo-extras">
+                <section className="demo-section">
+                  <h2>Payer addresses</h2>
+                  <p>
+                    A live project can have dedicated addresses that forward
+                    payments to FUND or INCOME. The demo has no payment
+                    addresses.
+                  </p>
+                </section>
+                <div className="page-tools">
+                  <button
+                    id="download-scenario"
+                    type="button"
+                    className="quiet-button"
+                    disabled={!p || Boolean(derived.personalError)}
+                    onClick={() =>
+                      download(
+                        JSON.stringify(
+                          {
+                            version: 1,
+                            projectName: name,
+                            mode: "illustrative-preview",
+                            phase,
+                            inputs,
+                            projection: p,
+                          },
+                          null,
+                          2,
+                        ),
+                        "homerun-scenario.json",
+                      )
+                    }
+                  >
+                    Save scenario ↓
+                  </button>
+                </div>
+                <SiteIntegration
+                  configuration={{
+                    project: {
+                      name,
+                      location:
+                        project?.values.location ||
+                        "Jurerê Internacional, Florianópolis",
                     },
-                    null,
-                    2,
-                  ),
-                  "homerun-scenario.json",
-                )
-              }
-            >
-              Save scenario ↓
-            </button>
-            {p && (
-              <DemoOwnerTools
-                projection={project ? overview! : p}
-                onPhase={setPhase}
-              />
-            )}
-          </div>
-          <SiteIntegration
-            configuration={{
-              project: {
-                name,
-                location:
-                  project?.values.location ||
-                  "Jurerê Internacional, Florianópolis",
-              },
-              mode: "illustrative-preview",
-              phase,
-              modelingInputs: inputs,
-              ...(project ? { setupDraft: project.deployment } : {}),
-            }}
+                    mode: "illustrative-preview",
+                    phase,
+                    modelingInputs: inputs,
+                    ...(project ? { setupDraft: project.deployment } : {}),
+                  }}
+                />
+              </div>
+            }
+            operators={
+              <section className="demo-section demo-operators">
+                <h2>Operators</h2>
+                <p>
+                  Review the steps for this scenario. These drafts do not sign
+                  or send transactions.
+                </p>
+                {p ? (
+                  <DemoOwnerTools
+                    projection={project ? overview! : p}
+                    onPhase={setPhase}
+                  />
+                ) : (
+                  <p>
+                    Check the modeling inputs to prepare an operator action.
+                  </p>
+                )}
+              </section>
+            }
           />
         </div>
       </main>

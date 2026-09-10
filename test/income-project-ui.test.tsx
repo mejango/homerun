@@ -19,6 +19,9 @@ const runtime = vi.hoisted(() => ({
   readReserved: vi.fn(),
   invalidateQueries: vi.fn(), send: vi.fn(), readState: vi.fn(), autoIssuance: vi.fn(),
 }))
+vi.mock('@/components/ProjectParticipants', () => ({ ProjectParticipants: () => <span>Indexed holders</span> }))
+vi.mock('@/components/ProjectPayerAddresses', () => ({ ProjectPayerAddresses: () => <span>Project payer addresses</span> }))
+vi.mock('@/components/ProjectShop', () => ({ ProjectShop: () => <span>Project shop</span> }))
 vi.mock('wagmi', () => ({ usePublicClient: () => ({}) }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address, isConnected: true }) }))
 vi.mock('@/components/InitialIncomeClaim', () => ({ InitialIncomeClaim: ({ fundProjectId, incomeProjectId }: { fundProjectId: bigint; incomeProjectId: bigint }) => <div>Initial claim FUND {fundProjectId.toString()} INCOME {incomeProjectId.toString()}</div> }))
@@ -71,6 +74,8 @@ describe('INCOME transaction surfaces', () => {
   let root: Root
   let host: HTMLDivElement
   beforeEach(() => {
+    Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) })
+    window.history.replaceState(null, '', '/')
     runtime.mounted = 0; runtime.unmounted = 0; runtime.busy = false; runtime.phase = 'idle'; runtime.sticky = null
     runtime.stickyError = false; runtime.stickyMounted = 0; runtime.stickyUnmounted = 0
     runtime.discoveredFund = null; runtime.discoveryError = false
@@ -85,7 +90,9 @@ describe('INCOME transaction surfaces', () => {
     host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   })
   afterEach(async () => { await act(async () => root.unmount()); host.remove() })
-  async function render() { await act(async () => root.render(<IncomeProject chainId={1} projectId={7n} />)) }
+  async function tab(label: string) { const target = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(button => button.textContent === label); expect(target, `Missing ${label} tab`).toBeDefined(); await act(async () => target!.click()) }
+  async function visitActions() { for (const label of ['Owners', 'Accounts', 'You', 'Market', 'Settlement', 'Splits', 'Loans', 'Overview']) await tab(label) }
+  async function render() { await act(async () => root.render(<IncomeProject chainId={1} projectId={7n} />)); await visitActions() }
   function section(title: string) { return [...host.querySelectorAll('section')].find(element => element.querySelector('h3')?.textContent === title)! }
   function pendingReserved() {
     const current = state()
@@ -99,14 +106,14 @@ describe('INCOME transaction surfaces', () => {
 
   it('mounts initial claims separately and uses the verified Sticky project ID for ongoing rewards', async () => {
     runtime.sticky = { stickyProjectId: 91n }
-    await act(async () => root.render(<IncomeProject chainId={1} projectId={7n} fundProjectId={3n} />))
+    await act(async () => root.render(<IncomeProject chainId={1} projectId={7n} fundProjectId={3n} />)); await visitActions()
     expect(host.textContent).toContain('Initial claim FUND 3 INCOME 7')
     expect(host.textContent).toContain('Verified Sticky 91')
     expect(host.textContent).not.toContain('self-delegate')
   })
 
   it('does not offer a Sticky write target when the connection is unverified', async () => {
-    await act(async () => root.render(<IncomeProject chainId={1} projectId={7n} fundProjectId={3n} />))
+    await act(async () => root.render(<IncomeProject chainId={1} projectId={7n} fundProjectId={3n} />)); await visitActions()
     expect(host.textContent).toContain('Initial claim FUND 3 INCOME 7')
     expect(host.textContent).toContain('No verified Sticky reward connection')
     expect(host.textContent).not.toContain('Verified Sticky')
@@ -134,7 +141,7 @@ describe('INCOME transaction surfaces', () => {
   })
 
   it('retains Sticky receipt watchers through failed binding reads while disabling stale actions', async () => {
-    const renderWithFund = async (fundProjectId = 3n) => act(async () => root.render(<IncomeProject chainId={1} projectId={7n} fundProjectId={fundProjectId} />))
+    const renderWithFund = async (fundProjectId = 3n) => { await act(async () => root.render(<IncomeProject chainId={1} projectId={7n} fundProjectId={fundProjectId} />)); await visitActions() }
     runtime.sticky = { stickyProjectId: 91n }
     await renderWithFund()
     expect(runtime.stickyMounted).toBe(1)

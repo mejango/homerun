@@ -13,6 +13,8 @@ type ReviewedContractWriteOptions<TRequest extends { chainId: number }, TSimulat
   reverify?: (request: TRequest) => Promise<unknown>
   /** Persist recovery intent after simulation, before a wallet can broadcast. */
   beforeWrite?: () => unknown | Promise<unknown>
+  /** The persisted intent was rejected by a final gate before write was invoked. */
+  onBeforeWriteAborted?: () => unknown | Promise<unknown>
   /** Clear that intent only when the wallet explicitly rejects the write. */
   onWriteRejected?: () => unknown | Promise<unknown>
   write: (simulated: TSimulated) => Promise<THash>
@@ -40,6 +42,7 @@ export async function submitReviewedContractWrite<
   simulate,
   reverify,
   beforeWrite,
+  onBeforeWriteAborted,
   onWriteRejected,
   write,
   onPhase,
@@ -62,7 +65,14 @@ export async function submitReviewedContractWrite<
 
   if (beforeWrite) {
     await beforeWrite()
-    assertExpectedAccount(currentAccount(), expectedAccount, accountChangedError)
+    try {
+      assertExpectedAccount(currentAccount(), expectedAccount, accountChangedError)
+    } catch (error) {
+      // This is strictly before the wallet writer is invoked. An ambiguous
+      // write error must never reach this cleanup path.
+      await onBeforeWriteAborted?.()
+      throw error
+    }
   }
 
   onPhase?.('signing')

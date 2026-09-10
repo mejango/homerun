@@ -36,6 +36,7 @@ export type FundProjectMetadata = {
   description: string | null
   location: string | null
   coverUrl: string | null
+  logoUrl: string | null
   plan: {
     purchaseBudget: number | null
     opsReserve: number | null
@@ -79,6 +80,7 @@ export function parseFundProjectMetadata(value: unknown): FundProjectMetadata {
     description: text(metadata.description, 4_000),
     location: setup ? text(setup.location, 200) : null,
     coverUrl: fundIpfsUrl(metadata.coverImageUri) ?? fundIpfsUrl(metadata.logoUri),
+    logoUrl: fundIpfsUrl(metadata.logoUri),
     plan: setup ? {
       purchaseBudget: number(setup.purchaseBudget),
       opsReserve: number(setup.opsReserve),

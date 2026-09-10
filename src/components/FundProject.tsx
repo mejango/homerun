@@ -22,6 +22,14 @@ import { FundOperatorActions } from '@/components/FundOperatorActions'
 import { IncomeLaunch } from '@/components/IncomeLaunch'
 import { FundBridgeActions } from '@/components/FundBridgeActions'
 import { ProjectActivity } from '@/components/ProjectActivity'
+import { DisplayTokenAmount } from '@/components/DisplayTokenAmount'
+import { HomerunProjectLayout, OwnersTabs } from '@/components/HomerunProjectLayout'
+import { ProjectParticipants } from '@/components/ProjectParticipants'
+import { ProjectPayerAddresses } from '@/components/ProjectPayerAddresses'
+import { ProjectShop } from '@/components/ProjectShop'
+import { IncomeProjectRuntime, type IncomeProjectSlots } from '@/components/IncomeProject'
+import { AvailableTransactions } from '@/components/AvailableTransactions'
+import { readIncomeLaunchBinding } from '@/lib/income-launch'
 import { useSafeTx, txPhaseLabel, type TxRequest } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { displayChainName, explorerTxUrl } from '@/lib/chainDisplay'
@@ -102,23 +110,23 @@ export function FundProject({ chainId, projectId }: { chainId: JBChainId; projec
     staleTime: 300_000,
     retry: 1,
   })
-  return <div className="project-page live-contract-page">
+  const [lastIncomeId, setLastIncomeId] = useState<bigint | undefined>()
+  const incomeBinding = useQuery({ queryKey: ['income-binding', chainId, projectId], enabled: !!client, queryFn: () => readIncomeLaunchBinding(client!, chainId, id), staleTime: 10_000, refetchInterval: 15_000, retry: false })
+  useEffect(() => { if (incomeBinding.data) setLastIncomeId(incomeBinding.data) }, [incomeBinding.data])
+  const incomeId = incomeBinding.data ?? lastIncomeId
+  const notice = <>
+    {details.isError && <p className="mb-5 text-sm">Project details could not be loaded. The contract balances and permissions below are still read independently.</p>}
+    {query.isPending && <p role="status">Reading the project’s confirmed contract state…</p>}
+    {query.isError && <div role="alert"><p>Project data could not be verified. Transactions are unavailable until the reads recover.</p><p className="mt-2 text-sm">{errorMessage(query.error)}</p><button type="button" className="btn-secondary mt-4" onClick={() => void query.refetch()}>Try again</button></div>}
+    {incomeBinding.isError && <p role="status">The INCOME connection could not be refreshed. FUND balances and permissions are verified independently.</p>}
+  </>
+  return <IncomeProjectRuntime chainId={chainId} projectId={incomeId} fundProjectId={id} bindingUnavailable={incomeBinding.isError || !!lastIncomeId && !incomeBinding.data}>{income => <div className="project-page live-contract-page">
     <a className="skip-link" href="#main">Skip to content</a>
-    <header className="site-header flex items-center justify-between gap-5"><Brand /><WalletButton /></header>
-    <main id="main" className="mx-auto max-w-[1220px] px-5 py-10 sm:py-14" tabIndex={-1}>
-      <p className="mb-3 text-sm">{displayChainName(chainId)} / Project {projectId}</p>
-      <h1 className="mb-6 text-5xl sm:text-6xl">{details.data?.name ?? 'FUND project'}</h1>
-      {details.data?.location && <p className="mb-4">{details.data.location}</p>}
-      <p className="mb-8 max-w-3xl whitespace-pre-line">{details.data?.description ?? 'Fund the asset, manage its treasury, and use your FUND tokens. This link reads the project directly from the blockchain.'}</p>
-      {details.data?.coverUrl && <Image unoptimized src={details.data.coverUrl} width={1200} height={675} alt={details.data.name ? `${details.data.name} cover` : 'Project cover'} className="mb-8 max-h-[480px] w-full rounded-md object-cover" />}
-      {details.isError && <p className="mb-5 text-sm">Project details could not be loaded. The contract balances and permissions below are still read independently.</p>}
-      {query.isPending && <p role="status">Reading the project’s confirmed contract state…</p>}
-      {query.isError && <div role="alert"><p>Project data could not be verified. Transactions are unavailable until the reads recover.</p><p className="mt-2 text-sm">{errorMessage(query.error)}</p><button type="button" className="btn-secondary mt-4" onClick={() => void query.refetch()}>Try again</button></div>}
-      {displayState && client && <ProjectActions key={`${chainId}:${projectId}`} state={displayState} client={client} name={details.data?.name ?? undefined} plan={details.data?.plan} refreshing={query.isFetching} writesUnavailable={writesUnavailable} refresh={() => void query.refetch()} />}
-      {details.data?.plan && <PlannedIncome plan={details.data.plan} />}
-      <ProjectActivity chainId={chainId} projectId={projectId} />
+    <header className="site-header flex items-center justify-between gap-5"><Brand tagline={false} /><WalletButton /></header>
+    <main id="main" className="mx-auto max-w-[1220px] px-5 py-8 sm:px-8 sm:py-10" tabIndex={-1}>
+      <ProjectActions key={`${chainId}:${projectId}`} chainId={chainId} projectId={id} state={displayState ?? undefined} client={client} details={details.data} notice={<>{notice}{income.notice}</>} income={income} refreshing={query.isFetching} writesUnavailable={writesUnavailable} refresh={() => void query.refetch()} />
     </main>
-  </div>
+  </div>}</IncomeProjectRuntime>
 }
 
 function PlannedIncome({ plan }: { plan: NonNullable<FundProjectMetadata['plan']> }) {
@@ -134,51 +142,80 @@ function PlannedIncome({ plan }: { plan: NonNullable<FundProjectMetadata['plan']
   </section>
 }
 
-function ProjectActions({ state, client, name, plan, refreshing, writesUnavailable, refresh }: { state: FundProjectState; client: PublicClient; name?: string; plan?: FundProjectMetadata['plan']; refreshing: boolean; writesUnavailable: boolean; refresh: () => void }) {
+function ProjectActions({ chainId, projectId, state, client, details, notice, income, refreshing, writesUnavailable, refresh }: {
+  chainId: JBChainId; projectId: bigint; state?: FundProjectState; client?: PublicClient; details?: FundProjectMetadata; notice: ReactNode; income: IncomeProjectSlots
+  refreshing: boolean; writesUnavailable: boolean; refresh: () => void
+}) {
   const { address, isConnected } = useWallet()
   const [contextIndex, setContextIndex] = useState(0)
+  const [paymentToken, setPaymentToken] = useState<'fund' | 'income'>('fund')
+  const paymentChoice = useRef(false)
+  useEffect(() => { if (income.projectId && !paymentChoice.current) setPaymentToken('income') }, [income.projectId])
+  if (!state || !client) {
+    const pending = <p>Waiting for the project’s confirmed contract state.</p>
+    return <HomerunProjectLayout title={details?.name ?? 'FUND project'}
+      logo={details?.logoUrl && <Image unoptimized src={details.logoUrl} width={112} height={112} alt="Project logo" />}
+      metadata={[details?.location, displayChainName(chainId), `FUND #${projectId}`, 'Verifying contracts']}
+      notice={notice} actions={<AvailableTransactions stage="raising" />}
+      payment={<ActionSection title="Pay">{pending}</ActionSection>}
+      activity={<ProjectActivity chainId={chainId} projectId={projectId} />}
+      overview={<ActionSection title="Description"><p>{details?.description ?? 'Fund the asset, manage its treasury, and use your FUND tokens.'}</p>{pending}</ActionSection>}
+      stages={pending}
+      owners={<OwnersTabs accountsYou={pending} accountsAll={pending} market={pending} settlement={pending} splits={pending} loans={pending} />}
+      shop={pending} extras={pending} operators={pending}
+    />
+  }
   const context = state.accountingContexts[contextIndex] ?? state.accountingContexts[0]
   const totalBalance = state.creditBalance + state.erc20Balance
   const isOperator = !!address && Object.values(state.permissions).some(Boolean)
   const supported = state.supportedController && state.supportedTerminals && state.knownOwnerWrapper
-  return <div className="grid gap-7">
-    <section aria-label="Verified project state" className="rounded-md border border-[#c4cdbb] p-5 sm:p-7">
-      <div className="flex flex-wrap justify-between gap-3"><p className="text-sm">Verified at block {state.blockNumber.toString()}</p><button className="text-sm underline" type="button" disabled={refreshing} onClick={refresh}>{refreshing ? 'Refreshing…' : 'Refresh'}</button></div>
-      <dl className="mt-5 grid gap-5 sm:grid-cols-3">
-        <div><dt className="text-sm">Payments</dt><dd className="mt-2 text-xl">{state.metadata.pausePay ? 'Paused' : 'Open'}</dd></div>
-        <div><dt className="text-sm">Cash-out tax</dt><dd className="mt-2 text-xl">{state.metadata.cashOutTaxRate === 10_000 ? 'Cash-outs disabled' : `${state.metadata.cashOutTaxRate / 100}%`}</dd></div>
-        <div><dt className="text-sm">FUND supply</dt><dd className="mt-2 break-words text-xl">{units(state.totalSupply)}</dd></div>
-      </dl>
-      {context && <div className="mt-6 flex flex-wrap items-end gap-5">
-        <label className="grid gap-2 text-sm">Treasury currency<select value={contextIndex} onChange={event => setContextIndex(Number(event.target.value))} className="min-h-11 rounded border border-[#bfc9b5] bg-white px-3 pr-9">{state.accountingContexts.map((item, index) => <option key={`${item.terminal}:${item.token}`} value={index}>{item.symbol}</option>)}</select></label>
-        <p className="text-xl">{units(context.balance, context.decimals)} {context.symbol} in the treasury</p>
-      </div>}
-      {state.upcoming && state.upcoming.ruleset.id !== state.ruleset.id && <p className="mt-5">A different ruleset is scheduled. Its terms take effect at {new Date(Number(state.upcoming.ruleset.start) * 1000).toLocaleString()}.</p>}
-      <details className="mt-6 text-sm"><summary className="cursor-pointer">Contract addresses</summary><dl className="mt-3 grid gap-2 break-all"><div><dt>Project owner</dt><dd>{state.owner}</dd></div><div><dt>Operator</dt><dd>{state.operator ?? 'Not verified'}</dd></div><div><dt>Controller</dt><dd>{state.controller}</dd></div>{state.tokenAddress && <div><dt>FUND ERC-20</dt><dd>{state.tokenAddress}</dd></div>}</dl></details>
-    </section>
-    {!supported && <p role="alert">This project uses contract settings outside Homerun’s verified FUND integration. Transactions are unavailable here. {state.issues.join(' ')}</p>}
-    {!isConnected && <p>Connect your wallet to contribute, use your tokens, or access operator actions.</p>}
-    {writesUnavailable && <p role="status">New transactions are paused while current project permissions and balances are being verified. Submitted transactions continue to be tracked below.</p>}
-    <fieldset disabled={writesUnavailable || !supported} className="grid min-w-0 gap-7 border-0 p-0" aria-label="Project transactions">
-    {context ? <div className="grid items-start gap-7 lg:grid-cols-2">
-      <PaymentPanel state={state} client={client} contextIndex={contextIndex} />
-      <CashOutPanel state={state} client={client} contextIndex={contextIndex} />
-    </div> : <p>No supported payment terminal was verified for this project. Payment and cash-out actions are unavailable.</p>}
-    <ActionSection title="Your FUND">
-      {address ? <><p className="mb-3 break-words text-2xl">{units(totalBalance)} FUND</p><p className="mb-6 text-sm">{units(state.creditBalance)} internal credits / {units(state.erc20Balance)} ERC-20 tokens. Both count as FUND without staking.</p></> : <p className="mb-5">Connect a wallet to read your holdings.</p>}
-      <fieldset disabled={!address} className="min-w-0 border-0 p-0"><HolderActions state={state} client={client} /></fieldset>
-    </ActionSection>
-    <FundBridgeActions state={state} />
-    <details className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7" open={isOperator || undefined}>
-      <summary className="cursor-pointer text-3xl">Operator actions</summary>
-      <div className="mt-5">
-      {!isOperator && <p className="mb-5">Connect a wallet with verified project permissions to manage this project. Contract permissions are checked again before every transaction.</p>}
-      <fieldset disabled={!isOperator} className="min-w-0 border-0 p-0"><OperatorActions state={state} client={client} contextIndex={contextIndex} name={name} /></fieldset>
-      </div>
-    </details>
-    </fieldset>
-    <IncomeLaunch state={state} client={client} name={name} plannedAllocation={plan ? { operatorPercent: plan.operatorSplitPercent, fundStakerPercent: plan.fundHolderSplitPercent } : undefined} launchUnavailable={writesUnavailable || !supported} />
-  </div>
+  const name = details?.name ?? undefined, plan = details?.plan
+  const blocked = writesUnavailable || !supported
+  const gate = (children: ReactNode) => <fieldset disabled={blocked} className="grid min-w-0 gap-7 border-0 p-0" aria-label="Project transactions">{children}</fieldset>
+  const currency = context && <label className="grid gap-2 text-sm">FUND treasury currency<select value={contextIndex} onChange={event => setContextIndex(Number(event.target.value))} className="min-h-11 rounded border border-[#bfc9b5] bg-white px-3 pr-9">{state.accountingContexts.map((item, index) => <option key={`${item.terminal}:${item.token}`} value={index}>{item.symbol}</option>)}</select></label>
+  const verified = <section aria-label="Verified project state" className="rounded-md border border-[#c4cdbb] p-5 sm:p-7">
+    <div className="flex flex-wrap justify-between gap-3"><h2 className="text-3xl">The raise</h2><button className="text-sm underline" type="button" disabled={refreshing} onClick={refresh}>{refreshing ? 'Refreshing…' : 'Refresh'}</button></div>
+    <dl className="mt-5 grid gap-5 sm:grid-cols-2">
+      <div><dt className="text-sm">Contributions</dt><dd className="mt-2 text-xl">{state.metadata.pausePay ? 'Paused' : 'Open'}</dd></div>
+      <div><dt className="text-sm">Cash-out tax</dt><dd className="mt-2 text-xl">{state.metadata.cashOutTaxRate === 10_000 ? 'Cash-outs disabled' : `${state.metadata.cashOutTaxRate / 100}%`}</dd></div>
+      <div><dt className="text-sm">FUND supply</dt><dd className="mt-2 break-words text-xl"><DisplayTokenAmount value={state.totalSupply} /></dd></div>
+      {context && <div><dt className="text-sm">FUND treasury</dt><dd className="mt-2 text-xl"><DisplayTokenAmount value={context.balance} decimals={context.decimals} /> {context.symbol}</dd></div>}
+    </dl><p className="mt-5 text-sm">Verified at block {state.blockNumber.toString()}.</p>
+  </section>
+  const emptyIncome = <ActionSection title="INCOME"><p>INCOME has not been verified for this project yet. Its launch and recovery controls are under Operators.</p></ActionSection>
+  return <HomerunProjectLayout
+    title={name ?? 'FUND project'}
+    logo={details?.logoUrl && <Image unoptimized src={details.logoUrl} width={112} height={112} alt={name ? `${name} logo` : 'Project logo'} />}
+    metadata={[details?.location, displayChainName(state.chainId), `FUND #${state.projectId}`, income.projectId && `INCOME #${income.projectId}`, !supported ? 'Unsupported FUND configuration' : state.metadata.pausePay ? 'Contributions paused' : 'Raising funds'].filter(Boolean)}
+    notice={<>{notice}{!supported && <p role="alert">This project uses contract settings outside Homerun’s verified FUND integration. Transactions are unavailable here. {state.issues.join(' ')}</p>}{!isConnected && <p>Connect your wallet to contribute, use your tokens, or access operator actions.</p>}{writesUnavailable && <p role="status">New transactions are paused while current project permissions and balances are being verified. Submitted transactions continue to be tracked below.</p>}</>}
+    actions={<AvailableTransactions stage={income.projectId ? 'earning' : state.metadata.pausePay ? 'funded' : 'raising'} />}
+    payment={<>
+      {income.projectId && <div className="mb-5 flex gap-3" role="group" aria-label="Payment token"><button type="button" className={paymentToken === 'fund' ? 'btn-primary' : 'btn-secondary'} aria-pressed={paymentToken === 'fund'} onClick={() => { paymentChoice.current = true; setPaymentToken('fund') }}>FUND</button><button type="button" className={paymentToken === 'income' ? 'btn-primary' : 'btn-secondary'} aria-pressed={paymentToken === 'income'} onClick={() => { paymentChoice.current = true; setPaymentToken('income') }}>INCOME</button></div>}
+      <div hidden={paymentToken !== 'fund'} onFocusCapture={() => { paymentChoice.current = true }}>{gate(<>{context ? <PaymentPanel state={state} client={client} contextIndex={contextIndex} currency={currency} /> : <p>No supported payment terminal was verified for this project.</p>}</>)}</div>
+      <div hidden={paymentToken !== 'income'}>{income.projectId && income.payment}</div>
+    </>}
+    activity={<><div hidden={paymentToken !== 'fund'}><ProjectActivity chainId={state.chainId} projectId={state.projectId} /></div><div hidden={paymentToken !== 'income'}>{income.activity}</div></>}
+    overview={<div className="grid gap-7"><ActionSection title="Description"><p className="whitespace-pre-line">{details?.description ?? 'Fund the asset, manage its treasury, and use your FUND tokens.'}</p>{details?.coverUrl && <Image unoptimized src={details.coverUrl} width={1200} height={675} alt={name ? `${name} cover` : 'Project cover'} className="mt-5 max-h-[480px] w-full rounded-md object-cover" />}</ActionSection>{verified}{income.overview}</div>}
+    stages={<div className="grid gap-7"><ActionSection title="The project journey"><ol className="grid gap-5"><li><h3 className="text-2xl">1. Fundraise</h3><p className="mt-2">{state.metadata.pausePay ? 'Contributions are paused under the current rules.' : 'Contributions are open under the current rules.'} FUND represents participation in the asset raise and its eventual net sale proceeds.</p></li><li><h3 className="text-2xl">2. Income</h3><p className="mt-2">{income.projectId ? `INCOME project ${income.projectId} is connected on this network.` : 'After a successful purchase, the operator can launch INCOME and its initial holder allocation.'}</p></li><li><h3 className="text-2xl">3. Asset sale</h3><p className="mt-2">Net proceeds return to the FUND treasury. Holders use the cash-out terms active at that time.</p></li></ol><p className="mt-5 text-sm">Contract settings do not verify an offchain purchase, campaign failure, or asset sale. Indexed transactions appear in Activity.</p></ActionSection><ActionSection title="Current and upcoming rules"><p>Current ruleset {state.ruleset.id.toString()}, active since {new Date(Number(state.ruleset.start) * 1000).toLocaleString()}.</p>{state.upcoming && state.upcoming.ruleset.id !== state.ruleset.id ? <p className="mt-3">Ruleset {state.upcoming.ruleset.id.toString()} is scheduled for {new Date(Number(state.upcoming.ruleset.start) * 1000).toLocaleString()}.</p> : <p className="mt-3">No different upcoming ruleset is currently verified.</p>}</ActionSection>{plan && <PlannedIncome plan={plan} />}{income.stages}</div>}
+    owners={<OwnersTabs
+      accountsYou={<div className="grid gap-7">{gate(<ActionSection title="Your FUND">{address ? <><p className="mb-3 break-words text-2xl"><DisplayTokenAmount value={totalBalance} /> FUND</p><p className="mb-6 text-sm"><DisplayTokenAmount value={state.creditBalance} /> internal credits / <DisplayTokenAmount value={state.erc20Balance} /> ERC-20 tokens. Both count as FUND without staking.</p></> : <p className="mb-5">Connect a wallet to read your holdings.</p>}<fieldset disabled={!address} className="min-w-0 border-0 p-0"><HolderActions state={state} client={client} /></fieldset></ActionSection>)}{income.projectId ? income.accountsYou : emptyIncome}</div>}
+      accountsAll={<div className="grid gap-7"><ProjectParticipants chainId={state.chainId} projectId={state.projectId} tokenLabel="FUND" />{income.projectId ? income.accountsAll : emptyIncome}</div>}
+      market={<div className="grid gap-7">{gate(context && <>{currency}<CashOutPanel state={state} client={client} contextIndex={contextIndex} /></>)}{income.projectId ? income.market : emptyIncome}</div>}
+      settlement={<div className="grid gap-7">{gate(<FundBridgeActions state={state} />)}{income.projectId && income.settlement}</div>}
+      splits={<div className="grid gap-7"><FundSplitSummary state={state} />{income.projectId ? income.splits : emptyIncome}</div>}
+      loans={income.projectId ? income.loans : <ActionSection title="Loans"><p>Loans use INCOME as collateral. They become available after a verified INCOME launch under its contract terms.</p></ActionSection>}
+    />}
+    shop={<div className="grid gap-7"><section><h2 className="mb-5 text-3xl">FUND shop</h2><ProjectShop chainId={state.chainId} projectId={state.projectId} tokenLabel="FUND" /></section>{income.projectId && <section><h2 className="mb-5 text-3xl">INCOME shop</h2>{income.shop}</section>}</div>}
+    extras={<div className="grid gap-7"><ProjectPayerAddresses chainId={state.chainId} projectId={state.projectId} tokenLabel="FUND" />{income.extras}<ActionSection title="Contracts"><dl className="grid gap-3 break-all"><div><dt>Project owner</dt><dd>{state.owner}</dd></div><div><dt>Operator</dt><dd>{state.operator ?? 'Not verified'}</dd></div><div><dt>Controller</dt><dd>{state.controller}</dd></div>{state.tokenAddress && <div><dt>FUND ERC-20</dt><dd>{state.tokenAddress}</dd></div>}</dl></ActionSection></div>}
+    operators={<div className="grid gap-7">{gate(<ActionSection title="Operator actions">{!isOperator && <p className="mb-5">Connect a wallet with verified project permissions to manage this project. Contract permissions are checked again before every transaction.</p>}<fieldset disabled={!isOperator} className="min-w-0 border-0 p-0"><OperatorActions state={state} client={client} contextIndex={contextIndex} name={name} /></fieldset></ActionSection>)}<IncomeLaunch state={state} client={client} name={name} plannedAllocation={plan ? { operatorPercent: plan.operatorSplitPercent, fundStakerPercent: plan.fundHolderSplitPercent } : undefined} launchUnavailable={blocked} embedExistingProject={false} /></div>}
+  />
+}
+
+function FundSplitSummary({ state }: { state: FundProjectState }) {
+  const configuration = state.rulesetSnapshot?.configuration
+  if (!configuration) return <ActionSection title="FUND splits"><p>Current FUND splits could not be fully verified for this configuration.</p></ActionSection>
+  const groups = configuration.splitGroups
+  return <ActionSection title="FUND splits"><p className="mb-4 text-sm">Current configured recipients. INCOME allocations are separate from FUND ownership.</p>{groups.length ? groups.map((group, index) => <div key={index} className="mt-4"><h3 className="text-xl">Split group {group.groupId.toString()}</h3><dl className="mt-3 grid gap-3">{group.splits.map((split, splitIndex) => <div key={splitIndex} className="break-words"><dt>{split.projectId ? `Project ${split.projectId}` : split.beneficiary}</dt><dd>{split.percent / 10_000_000}%{split.hook !== zeroAddress ? `, hook ${split.hook}` : ''}</dd></div>)}</dl></div>) : <p>No payout or reserved-token splits are configured in this FUND ruleset.</p>}</ActionSection>
 }
 
 /** Invalidate only after successful execution, including Safe execution. */
@@ -209,7 +246,7 @@ async function freshState(client: PublicClient, state: FundProjectState, account
   return fresh
 }
 
-function PaymentPanel({ state, client, contextIndex }: { state: FundProjectState; client: PublicClient; contextIndex: number }) {
+function PaymentPanel({ state, client, contextIndex, currency }: { state: FundProjectState; client: PublicClient; contextIndex: number; currency?: ReactNode }) {
   const { address } = useWallet()
   const [amount, setAmount] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -274,6 +311,7 @@ function PaymentPanel({ state, client, contextIndex }: { state: FundProjectState
     } catch (reason) { setError(errorMessage(reason)) } finally { setPreparing(false) }
   }
   return <ActionSection title="Contribute">
+    {currency && <div className="mb-5">{currency}</div>}
     <Input label={`Amount in ${context.symbol}`} value={amount} onChange={setAmount} />
     {state.metadata.pausePay ? <p className="mt-4">This project has paused contributions.</p> : <p className="mt-4 text-sm">{minimum > 0n ? `At least ${units(minimum)} FUND at 1% maximum slippage.` : quote.isFetching ? 'Reading the payment quote…' : 'Enter an amount to see your FUND quote.'}</p>}
     {quote.isError && <p role="alert" className="mt-3 text-sm">A protected payment quote is unavailable. {errorMessage(quote.error)}</p>}

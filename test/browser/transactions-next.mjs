@@ -16,6 +16,7 @@ page.setDefaultNavigationTimeout(120000)
 const cta = page.getByRole('button', { name: 'Available transactions', exact: true })
 const dialog = page.getByRole('dialog', { name: 'Available transactions', exact: true })
 async function selectPhase(phase) {
+  await page.getByRole('tablist', { name: 'Project sections', exact: true }).getByRole('tab', { name: 'Stages', exact: true }).click()
   const primary = ['earning', 'liquidated'].includes(phase) ? phase : 'raising'
   await page.locator(`.preview-base-buttons button[data-journey-phase="${primary}"]`).click()
   if (primary === 'raising') await page.locator(`.phase-buttons button[data-phase="${phase}"]`).click()

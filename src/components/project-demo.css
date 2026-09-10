@@ -1,0 +1,371 @@
+.simulator .homerun-project-layout {
+  padding-top: 28px;
+}
+.homerun-project-layout .demo-section {
+  min-width: 0;
+}
+.homerun-project-layout .demo-section > h2,
+.homerun-project-layout .demo-section > div > h2 {
+  margin: 0 0 14px;
+  font-size: 28px;
+}
+.homerun-project-layout .demo-section p {
+  font-size: 14px;
+  line-height: 1.7;
+}
+.homerun-project-layout .demo-section > p + p {
+  margin-top: 12px;
+}
+.homerun-project-layout .demo-overview {
+  display: grid;
+  gap: 30px;
+}
+.homerun-project-layout .demo-description p {
+  white-space: pre-line;
+}
+.homerun-project-layout .demo-overview > .house-photo-button,
+.homerun-project-layout .demo-overview > .created-cover {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+}
+.homerun-project-layout .demo-overview > .house-photo-button img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.homerun-project-layout .demo-overview-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 230px;
+  gap: 20px;
+  align-items: center;
+  padding-block: 6px 24px;
+  border-bottom: 1px solid var(--line);
+}
+.homerun-project-layout .project-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.homerun-project-layout .project-raise-stats {
+  margin-top: 18px;
+}
+.homerun-project-layout .project-raise-stats dl {
+  gap: 20px 28px;
+}
+.homerun-project-layout .project-raise-stats dt {
+  font-size: 12px;
+}
+.homerun-project-layout .project-raise-stats dd {
+  font-size: 23px;
+}
+.homerun-project-layout .project-raise-stats p {
+  margin-top: 10px;
+  color: var(--green);
+}
+.homerun-project-layout .demo-revenue-stats {
+  margin-top: 22px;
+}
+.homerun-project-layout .pj-description {
+  font-size: 12px;
+}
+.homerun-project-layout .demo-token-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+}
+.homerun-project-layout .demo-token-summary h3 {
+  font: 500 15px/1.4 var(--sans);
+  margin-bottom: 8px;
+}
+.homerun-project-layout .demo-token-summary strong {
+  display: block;
+  font: 28px/1.3 var(--serif);
+  margin: 10px 0;
+}
+.homerun-project-layout .demo-model-note {
+  padding: 16px 18px;
+  background: #edf2f4;
+  border: 1px solid #cbd7db;
+  border-radius: 5px;
+}
+.homerun-project-layout .demo-model-note p {
+  color: #3f5b66;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.homerun-project-layout .demo-overview > .available-transactions-button {
+  justify-self: start;
+  margin-top: 0;
+}
+.homerun-project-layout .demo-project-initial {
+  display: grid;
+  place-items: center;
+  font: 48px/1 var(--serif);
+  color: var(--green);
+}
+.homerun-project-layout .demo-activity {
+  border-top: 1px solid var(--line);
+  padding-top: 22px;
+}
+.homerun-project-layout .demo-activity h2 {
+  font: 500 18px/1.4 var(--sans);
+  letter-spacing: 0;
+}
+.homerun-project-layout .demo-activity-source {
+  margin-top: 6px;
+  font-size: 12px;
+}
+.homerun-project-layout .demo-activity ol {
+  list-style: none;
+  margin: 18px 0;
+  padding: 0;
+}
+.homerun-project-layout .demo-activity li {
+  display: flex;
+  gap: 13px;
+  padding-block: 15px;
+  border-bottom: 1px solid var(--line);
+}
+.homerun-project-layout .demo-activity h3 {
+  font: 500 14px/1.5 var(--sans);
+  letter-spacing: 0;
+}
+.homerun-project-layout .demo-activity li p {
+  margin-top: 5px;
+  font-size: 12px;
+  line-height: 1.65;
+}
+.homerun-project-layout .demo-activity-dot {
+  flex: 0 0 8px;
+  height: 8px;
+  margin-top: 7px;
+  border-radius: 50%;
+  background: #849969;
+}
+.homerun-project-layout .demo-activity-note {
+  font-size: 12px;
+}
+.homerun-project-layout .demo-stages {
+  display: grid;
+  gap: 28px;
+}
+.homerun-project-layout .demo-stage-history ol {
+  list-style: none;
+  margin: 24px 0 0;
+  padding: 0;
+}
+.homerun-project-layout .demo-stage-history li {
+  display: flex;
+  gap: 16px;
+  padding: 0 0 25px;
+  position: relative;
+}
+.homerun-project-layout .demo-stage-history li:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: 15px;
+  top: 35px;
+  bottom: 5px;
+  width: 1px;
+  background: var(--line);
+}
+.homerun-project-layout .demo-stage-history li > div {
+  flex: 1;
+  min-width: 0;
+}
+.homerun-project-layout .demo-stage-number {
+  display: grid;
+  place-items: center;
+  flex: 0 0 32px;
+  height: 32px;
+  border: 1px solid #aab79d;
+  border-radius: 50%;
+  color: #52634b;
+  font-size: 13px;
+}
+.homerun-project-layout
+  .demo-stage-history
+  [data-stage-state="current"]
+  .demo-stage-number {
+  background: #42664d;
+  color: white;
+  border-color: #42664d;
+}
+.homerun-project-layout .demo-stage-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 3px;
+}
+.homerun-project-layout .demo-stage-label h3 {
+  font: 500 16px/1.5 var(--sans);
+  letter-spacing: 0;
+}
+.homerun-project-layout .demo-stage-label > span {
+  font-size: 12px;
+  color: var(--muted);
+}
+.homerun-project-layout .demo-stage-history li p {
+  margin-top: 5px;
+  font-size: 13px;
+}
+.homerun-project-layout .demo-stages .phase-panel {
+  box-shadow: none;
+  border-radius: 6px;
+  padding: 24px;
+}
+.homerun-project-layout .demo-stages .process-navigation {
+  margin-top: -14px;
+}
+.homerun-project-layout .demo-modeling-controls {
+  border: 1px solid #cbd7db;
+  border-radius: 5px;
+  background: #edf2f4;
+}
+.homerun-project-layout .demo-modeling-controls > summary {
+  padding: 16px 20px;
+  cursor: pointer;
+  color: #3f5b66;
+  font-size: 15px;
+  font-weight: 500;
+}
+.homerun-project-layout .preview-workbench {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "preview" "assumptions";
+  margin: 0;
+  border: 0;
+  background: transparent;
+}
+.homerun-project-layout .preview-workbench .assumptions {
+  padding: 20px;
+  border-top: 1px solid #cbd7db;
+}
+.homerun-project-layout .preview-workbench .core-inputs {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.homerun-project-layout .preview-workbench #preview-controls {
+  border: 0;
+  padding: 4px 20px 20px;
+}
+.homerun-project-layout .preview-workbench .field-control input {
+  font-size: 16px;
+}
+.homerun-project-layout .preview-workbench .field-label {
+  font-size: 13px;
+}
+.homerun-project-layout .demo-outlook {
+  padding-top: 28px;
+  border-top: 1px solid var(--line);
+}
+.homerun-project-layout .demo-outlook-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+.homerun-project-layout .demo-outlook-range {
+  display: flex;
+  gap: 4px;
+}
+.homerun-project-layout .demo-outlook-range button {
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid #b7c8cf;
+  border-radius: 4px;
+  background: transparent;
+  color: #3f5b66;
+  font: 13px var(--sans);
+}
+.homerun-project-layout .demo-outlook-range button[aria-pressed="true"] {
+  background: #3f5b66;
+  color: white;
+}
+.homerun-project-layout .demo-outlook-basis {
+  margin-top: 16px;
+  font-size: 12px;
+}
+.homerun-project-layout .demo-outlook-values,
+.homerun-project-layout .demo-account-balances {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+  margin: 24px 0;
+  padding: 20px;
+  border: 1px solid #cbd7db;
+  border-radius: 5px;
+  background: #edf2f4;
+}
+.homerun-project-layout .demo-outlook-values dt,
+.homerun-project-layout .demo-account-balances dt {
+  color: #3f5b66;
+  font-size: 12px;
+}
+.homerun-project-layout .demo-outlook-values dd,
+.homerun-project-layout .demo-account-balances dd {
+  margin: 6px 0 0;
+  font-size: 22px;
+  overflow-wrap: anywhere;
+}
+.homerun-project-layout .demo-account .outcomes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.homerun-project-layout .demo-account .outcome {
+  min-width: 0;
+}
+.homerun-project-layout .demo-account .outcome > strong {
+  font-size: 29px;
+}
+.homerun-project-layout .demo-operators > #owner-tools {
+  display: block;
+  margin-top: 24px;
+}
+.homerun-project-layout .demo-extras {
+  display: grid;
+  gap: 30px;
+}
+.homerun-project-layout .demo-extras .page-tools {
+  margin: 0;
+}
+
+@media (max-width: 1100px) {
+  .homerun-project-layout .demo-overview-progress {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .homerun-project-layout .demo-overview-progress #project-journey {
+    padding-top: 15px;
+  }
+}
+@media (max-width: 480px) {
+  .homerun-project-layout .demo-token-summary {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+  }
+  .homerun-project-layout .demo-outlook-values,
+  .homerun-project-layout .demo-account-balances {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .homerun-project-layout .demo-account .outcomes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .homerun-project-layout .demo-stages .phase-panel {
+    padding: 18px;
+  }
+  .homerun-project-layout .preview-workbench .core-inputs {
+    gap: 12px;
+  }
+  .homerun-project-layout .preview-workbench .assumptions {
+    padding: 16px;
+  }
+  .homerun-project-layout .preview-workbench #preview-controls {
+    padding-inline: 16px;
+  }
+}

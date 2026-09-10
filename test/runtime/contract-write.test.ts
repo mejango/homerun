@@ -168,11 +168,27 @@ describe('reviewed direct-write boundary', () => {
 
   it('blocks the wallet write if identity changes during asynchronous persistence', async () => {
     const run = harness()
+    const onBeforeWriteAborted = vi.fn()
     await expect(submitReviewedContractWrite({
       ...run.options,
       beforeWrite: async () => { await Promise.resolve(); run.setCurrent(BOB) },
+      onBeforeWriteAborted,
     })).rejects.toThrow(/account changed/i)
     expect(run.options.write).not.toHaveBeenCalled()
+    expect(onBeforeWriteAborted).toHaveBeenCalledOnce()
+  })
+
+  it('never invokes pre-wallet cleanup after a write starts or when persistence was not completed', async () => {
+    for (const gate of ['beforeWrite', 'write'] as const) {
+      const run = harness()
+      const onBeforeWriteAborted = vi.fn()
+      const beforeWrite = vi.fn(async () => {})
+      const error = new Error('Ambiguous transport error')
+      if (gate === 'beforeWrite') beforeWrite.mockRejectedValueOnce(error)
+      else run.options.write.mockRejectedValueOnce(error)
+      await expect(submitReviewedContractWrite({ ...run.options, beforeWrite, onBeforeWriteAborted })).rejects.toBe(error)
+      expect(onBeforeWriteAborted).not.toHaveBeenCalled()
+    }
   })
 
   it('allows intent cleanup only for a typed wallet rejection from the write', async () => {

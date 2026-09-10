@@ -1,6 +1,7 @@
 /** Automated WCAG 2 A/AA checks. Start npm run dev, then npm run test:a11y.
  * Uses installed Playwright/axe and Chrome. Overrides: BASE_URL,
- * PLAYWRIGHT_MODULE, AXE_MODULE, CHROME_PATH. Reduced motion avoids transient
+ * PLAYWRIGHT_MODULE, AXE_MODULE, CHROME_PATH. A11Y_SCOPE=project skips homepage checks.
+ * Reduced motion avoids transient
  * animation contrast. These checks do not replace manual accessibility review.
  */
 import { existsSync } from 'node:fs';
@@ -20,7 +21,18 @@ const homeURL = new URL('/', demoURL).href;
 const ownerActions = [['raising', 'close_raise'], ['raising', 'enable_refunds'], ['funded', 'complete_purchase'], ['earning', 'enable_sale_redemptions']];
 let violations = 0;
 let checks = 0;
+async function tab(name) {
+  const trigger = page.getByRole('tab', { name, exact: true });
+  await trigger.click();
+  await expect(trigger).toHaveAttribute('aria-selected', 'true');
+}
+async function owners(account = 'You') {
+  await tab('Owners');
+  await tab('Accounts');
+  await tab(account);
+}
 async function phase(value) {
+  await tab('Stages');
   const stage = ['earning', 'liquidated'].includes(value) ? value : 'raising';
   await page.locator(`.preview-base-buttons button[data-journey-phase="${stage}"]`).click();
   if (stage === 'raising') await page.locator(`[data-phase="${value}"]`).click();
@@ -30,7 +42,11 @@ async function closeDialog(id) {
   await page.keyboard.press('Escape');
   await expect(page.locator(id)).toHaveCount(0);
 }
-async function reveal(locator) {
+async function reveal(selector) {
+  if (/data-owner-action|#owner-tools/.test(selector)) await tab('Operators');
+  else if (/your-|quote-month|data-chart-kind.*loan/.test(selector)) await owners();
+  else if (/field-|reserve-stress|fund-total-supply/.test(selector)) await tab('Stages');
+  const locator = page.locator(selector);
   await expect(locator).toHaveCount(1);
   if (await locator.locator('xpath=ancestor::*[@id="assumptions-body"]').count() && await page.locator('#assumptions-body').isHidden()) await page.locator('#toggle-assumptions').click();
   const ancestors = locator.locator('xpath=ancestor::details');
@@ -49,15 +65,17 @@ async function analyze(label) {
   for (const violation of result.violations) process.stdout.write(JSON.stringify({ rule: violation.id, impact: violation.impact, nodes: violation.nodes.map(node => ({ selectors: node.target, summary: node.failureSummary })) }, null, 2) + '\n');
 }
 try {
-  await page.goto(homeURL);
-  await page.locator('#ballpark[data-ready="true"][data-motion="reduced"]').waitFor();
-  await analyze('homepage');
-  await page.setViewportSize({ width: 320, height: 844 });
-  await analyze('mobile homepage');
-  await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.goto(demoURL);
+  if (process.env.A11Y_SCOPE !== 'project') {
+    await page.goto(homeURL);
+    await page.locator('#ballpark[data-ready="true"][data-motion="reduced"]').waitFor();
+    await analyze('homepage');
+    await page.setViewportSize({ width: 320, height: 844 });
+    await analyze('mobile homepage');
+    await page.setViewportSize({ width: 1440, height: 1000 });
+  }
+  await page.goto(demoURL, { waitUntil: 'domcontentloaded' });
   await expect(page.locator('.simulator')).toHaveAttribute('data-ready', 'true');
-  await page.locator('#scenario-title').waitFor();
+  await page.getByRole('heading', { name: 'Description', exact: true }).waitFor();
   await page.locator('#open-house-gallery').click();
   await page.locator('#house-gallery-image').evaluate(image => image.decode());
   await analyze('Founder Haus photo gallery');
@@ -67,6 +85,18 @@ try {
   await analyze('mobile Founder Haus photo gallery');
   await closeDialog('#house-gallery');
   await page.setViewportSize({ width: 1440, height: 1000 });
+  for (const section of ['Overview', 'Stages', 'Owners', 'Shop', 'Extras', 'Operators']) {
+    await tab(section);
+    await analyze(`project tab: ${section}`);
+  }
+  await owners();
+  for (const section of ['Accounts', 'Market', 'Settlement', 'Splits', 'Loans']) {
+    await tab(section);
+    await analyze(`Owners: ${section}`);
+  }
+  await owners('All');
+  await analyze('Owners: Accounts All');
+  await owners();
   for (const value of ['raising', 'funded', 'refunding', 'refunded', 'earning', 'liquidated']) {
     await phase(value);
     await analyze(value);
@@ -79,7 +109,7 @@ try {
     await closeDialog('#pay-dialog');
   }
   await phase('earning');
-  await reveal(page.locator('#income-payment-results dl'));
+  await reveal('#income-payment-results dl');
   await analyze('expanded independent INCOME ownership and liquidity');
   await page.locator('#pay-amount').fill('250');
   await analyze('reactive independent INCOME payment details');
@@ -87,8 +117,8 @@ try {
   await analyze('invalid independent INCOME payment amount');
   await page.locator('#pay-amount').fill('100');
   await phase('liquidated');
-  await reveal(page.locator('[data-chart-kind="loan"] [data-chart-month]'));
-  await page.locator('[data-chart-kind="loan"] [data-chart-month]').focus();
+  await reveal('#fund-position-preview [data-chart-kind="loan"] [data-chart-month]');
+  await page.locator('#fund-position-preview [data-chart-kind="loan"] [data-chart-month]').focus();
   await analyze('keyboard chart inspection');
   await phase('raising');
   await page.locator('[data-projection-chart="budget"] button[data-budget-part="0"]').focus();
@@ -102,28 +132,31 @@ try {
   await analyze('invalid inputs');
   await page.locator('#reset-example').click();
   await phase('earning');
-  await reveal(page.locator('#your-loan-principal'));
-  await reveal(page.locator('#fund-total-supply'));
-  await reveal(page.locator('#reserve-stress table'));
+  await reveal('#your-loan-principal');
+  await analyze('expanded owner loan terms');
+  await reveal('#phase-panel #fund-total-supply');
+  await reveal('#reserve-stress table');
   await analyze('expanded token and loan terms');
-  await reveal(page.locator('#field-rentGrowthPercent'));
+  await reveal('#field-rentGrowthPercent');
   await analyze('expanded growth assumptions');
   await page.locator('#field-revenueMonths').fill('1');
+  await reveal('#your-sticky-tokens');
   await analyze('fully eligible Sticky reward projection');
+  await reveal('#quote-month');
   await page.locator('#quote-month').fill('-1');
   await expect(page.locator('#quote-month')).toHaveAttribute('min', '0');
   await analyze('bounded quote month input');
   await page.locator('#reset-example').click();
   for (const [value, action] of ownerActions) {
     await phase(value);
-    await reveal(page.locator(`[data-owner-action="${action}"]`));
+    await reveal(`[data-owner-action="${action}"]`);
     await page.locator(`[data-owner-action="${action}"]`).click();
     await analyze(`owner draft: ${action}`);
     await closeDialog('#owner-dialog');
   }
   await page.setViewportSize({ width: 390, height: 844 });
   await phase('earning');
-  await reveal(page.locator('#your-loan-principal'));
+  await reveal('#your-loan-principal');
   await analyze('mobile earning with loan terms');
   await page.locator('#pay-amount').focus();
   await analyze('mobile independent INCOME payment input');
@@ -143,14 +176,14 @@ try {
       await analyze(`${width}px payment review: ${value}`);
       await closeDialog('#pay-dialog');
       if (value === 'earning') {
-        await reveal(page.locator('#income-payment-results dl'));
+        await reveal('#income-payment-results dl');
         await analyze(`${width}px expanded INCOME payment details`);
       }
     }
     for (const [value, action] of ownerActions) {
       await phase(value);
       const trigger = page.locator(`[data-owner-action="${action}"]`);
-      await reveal(trigger);
+      await reveal(`[data-owner-action="${action}"]`);
       await trigger.click();
       await expect(page.locator('#owner-dialog[open]')).toBeVisible();
       await analyze(`${width}px owner draft: ${action}`);
