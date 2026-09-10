@@ -1,3 +1,4 @@
+import { colorDriftGLSL } from './color-drift.mjs';
 // All artwork is drawn in JavaScript: layered pencil strokes, clipped grain,
 // imperfect architectural lines, and a repeatable seed for stable resizing.
 const canvas = document.querySelector('#ballpark');
@@ -203,18 +204,11 @@ function prepareColorDrift() {
       void main() { uv = position * .5 + .5; gl_Position = vec4(position, 0., 1.); }`);
     const fragment = shader(gl.FRAGMENT_SHADER, `precision highp float;
       varying vec2 uv; uniform sampler2D artwork; uniform sampler2D shapes; uniform float time; uniform float amplitude; uniform float grouping; uniform float shapeMode;
+      ${colorDriftGLSL}
       void main() {
         vec3 base = texture2D(artwork, uv).rgb;
-        float grainPhase = fract(sin(dot(floor(gl_FragCoord.xy), vec2(12.9898,78.233))) * 43758.5453);
         vec2 shapePhase = texture2D(shapes, uv).rg * 6.2831853;
-        float groupedPhase = mix(shapePhase.r, shapePhase.g, smoothstep(.4, 1.0, grouping));
-        float shapeDrift = mix(grainPhase * 6.2831853, groupedPhase, smoothstep(0.0, .4, grouping));
-        vec2 blob = uv * mix(180.0, 5.0, sqrt(grouping));
-        float blobPhase = (sin(blob.x + sin(blob.y * .73)) + sin(blob.y * 1.17 + cos(blob.x * .61))) * 3.14159265;
-        float acidDrift = mix(grainPhase * 6.2831853, blobPhase, smoothstep(0.0, .15, grouping));
-        float phase = mix(acidDrift, shapeDrift, shapeMode);
-        vec3 drift = sin(vec3(phase) + vec3(0., .7, 1.4) + time * .78539816) * (amplitude / 255.0);
-        gl_FragColor = vec4(clamp(base + drift, 0., 1.), 1.);
+        gl_FragColor = vec4(driftColor(base, uv, gl_FragCoord.xy, shapePhase, time, amplitude, grouping, shapeMode), 1.);
       }`);
     if (!vertex || !fragment) return;
     colorProgram = gl.createProgram(); gl.attachShader(colorProgram, vertex); gl.attachShader(colorProgram, fragment); gl.linkProgram(colorProgram);
