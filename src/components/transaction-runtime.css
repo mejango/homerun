@@ -1,0 +1,115 @@
+/* Native dialog behavior from Juicebox Money's shared wallet/review shell.
+   Only visual tokens differ: Homerun keeps its paper, green, and modeling blue. */
+@theme {
+  --color-bone: #f7f5ef;
+  --color-ink: #293e35;
+  --color-bluebs-25: #edf2f4;
+  --color-bluebs-50: #e1eaed;
+  --color-bluebs-100: #cbd7db;
+  --color-bluebs-200: #b4c8cf;
+  --color-bluebs-500: #537584;
+  --color-bluebs-600: #3f5b66;
+  --color-bluebs-700: #344c56;
+  --color-bluebs-800: #293e47;
+  --color-smoke-75: #f0f1e8;
+  --color-smoke-200: #d8dece;
+  --color-smoke-300: #bdc8b4;
+  --color-smoke-500: #657460;
+  --color-smoke-600: #586650;
+  --color-smoke-700: #465640;
+  --color-grey-25: #fffefa;
+  --color-grey-50: #f7f5ef;
+  --color-grey-200: #e1e3d9;
+  --color-grey-300: #cbd0c3;
+  --color-grey-900: #293e35;
+  --color-split-50: #f8f0df;
+  --color-split-800: #79542b;
+  --color-error-500: #a23e31;
+  --font-sans: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-agrandir: Georgia, 'Times New Roman', serif;
+}
+
+/* Prototype pages still ship global unlayered element styles. Roll those back
+   inside the shared dialogs, allowing the reference utility classes to remain
+   authoritative for layout, readability, focus, and the confirmation footer. */
+dialog.modal-dialog,
+dialog.modal-dialog :where(*),
+dialog.ui-modal-host { all: revert-layer; }
+dialog.modal-dialog::backdrop,
+dialog.ui-modal-host::backdrop { all: revert-layer; }
+
+@layer components {
+  .modal-dialog, .ui-modal-host { box-sizing: border-box; font: 14px/1.6 var(--font-sans); }
+  .modal-dialog :where(*, ::before, ::after) {
+    box-sizing: border-box;
+    border-width: 0;
+    border-style: solid;
+    border-color: currentColor;
+  }
+  .modal-dialog :where(h1, h2, h3, h4, p, dl, dd, figure, ul, ol, pre) { margin: 0; }
+  .modal-dialog :where(h1, h2, h3, h4) { font-size: inherit; font-weight: inherit; }
+  .modal-dialog :where(button, input, select, textarea) { font: inherit; color: inherit; }
+  .modal-dialog :where(button) { padding: 0; }
+  .modal-dialog :where(a) { color: inherit; text-decoration: inherit; }
+  .modal-dialog :where(img, svg) { display: block; vertical-align: middle; }
+  .modal-dialog :where(img) { max-width: 100%; height: auto; }
+  .modal-dialog {
+    display: none;
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    max-height: none;
+    overflow-y: auto;
+    margin: 0;
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: #293e35;
+  }
+  .modal-dialog[open] { display: flex; }
+  .modal-dialog::backdrop { background: rgb(20 35 29 / .55); }
+  dialog[data-covered], dialog[data-covered]::backdrop { visibility: hidden; }
+  /* Para's warm-up iframe remains mounted while its native modal is closed. */
+  dialog.ui-modal-host {
+    display: block;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 0;
+    height: 0;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    overflow: visible;
+    background: transparent;
+    pointer-events: none;
+  }
+  dialog.ui-modal-host[open] { width: 100%; height: 100%; pointer-events: auto; }
+  dialog.ui-modal-host::backdrop { background: transparent; }
+  .modal-dialog .card { border: 1px solid #d8dece; border-radius: .75rem; background: #f7f5ef; }
+  .btn-primary, .btn-secondary, .btn-tertiary, .btn-ghost, .btn-link, .icon-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: .4rem;
+    font: inherit;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .btn-primary { border: 1px solid transparent; background: #42694e; color: white; }
+  .btn-primary:hover:not(:disabled) { background: #33543d; }
+  .btn-primary:disabled { background: #a9b9aa; cursor: not-allowed; }
+  .btn-secondary { border: 1px solid #bdc8b4; background: white; color: #293e35; }
+  .btn-secondary:hover:not(:disabled) { border-color: #6c8a73; background: #eef1e7; }
+  .btn-secondary:disabled { color: #889382; cursor: not-allowed; }
+  .btn-tertiary { border: 1px solid transparent; background: #edf2f4; color: #3f5b66; }
+  .btn-ghost, .btn-link, .icon-button { border: 0; background: transparent; color: #3f5b66; }
+  .btn-ghost:hover:not(:disabled), .icon-button:hover:not(:disabled) { background: #edf2f4; }
+  .btn-link:hover:not(:disabled) { color: #293e35; }
+  .icon-button { width: 44px; height: 44px; }
+  .modal-dialog :focus-visible { outline: 2px solid #3f5b66; outline-offset: 3px; }
+}

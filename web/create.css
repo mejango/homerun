@@ -1,4 +1,4 @@
-@import '/create-income-preview.css';
+@import './create-income-preview.css';
 
 .create-page .site-header { max-width: 1220px; position: relative; }
 .create-page .site-header::after { content: ''; position: absolute; bottom: 0; left: 32px; right: 32px; height: 1px; background: var(--line); }

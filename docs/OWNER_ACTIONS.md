@@ -1,5 +1,7 @@
 # Owner action drafts
 
+This document describes the demo's downloadable, non-executable drafts. The native live FUND operator controls and transaction verification are documented in [TRANSACTIONS.md](TRANSACTIONS.md). The accepted live policy allocates the initial 500,000 INCOME to all FUND balances and credits, then uses stock Sticky for ongoing proportional rewards with four weekly vesting rounds and no minimum staking period. The current `plannedOwnerActionDraft` adapter applies that policy to the demo; the historical pure-model comparisons described below retain their earlier assumptions. See [STICKY_REWARDS.md](STICKY_REWARDS.md).
+
 `web/owner-actions.mjs` prepares reviewable instructions for FH-FUND and the separate FH-INCOME network. The hybrid keeps the initial INCOME premint and adds ongoing INCOME for all FUND holders. The default holder-distribution integration is an unimplemented specification. An explicit staking comparison instead adds a third FUND Sticky project. The module does not connect a wallet, read a chain, prepare complete contract arguments or execute transactions. Every result has `executable: false`.
 
 Founder Haus is the concrete house example. The asset and revenue wording allows other use cases to be discussed; it does not establish ownership or enforce cash-flow rights for another asset. Internal `rev*` and `renter*` projection fields remain compatibility identifiers, while the displayed revenue token is FH-INCOME.

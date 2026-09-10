@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ownerActionDraft } from '../web/owner-actions.mjs';
+import { ownerActionDraft, plannedOwnerActionDraft } from '../web/owner-actions.mjs';
 import { projectNetwork } from '../web/network-model.mjs';
 
 const base = () => {
@@ -383,4 +383,60 @@ test('owner schedules reject invalid cut periods and non-finite compounded rates
     assert.throws(() => ownerActionDraft('complete_purchase', { ...projectNetwork({}, 'funded'), ...inputs }));
   }
   assert.throws(() => ownerActionDraft('complete_purchase', { ...projectNetwork({}, 'funded'), issuanceCutPercent: 99.99999999999999, issuanceCutYears: 30, issuanceCutMonths: 1 }));
+});
+
+
+test('current UI policy separates unrestricted initial claims from stock Sticky snapshot rewards', () => {
+  const projection = projectNetwork({ raisedPercent: 100 }, 'funded');
+  const before = JSON.stringify(projection);
+  const legacy = ownerActionDraft('complete_purchase', projection);
+  const draft = plannedOwnerActionDraft('complete_purchase', projection);
+  assert.equal(JSON.stringify(projection), before);
+  assert.equal(draft.executable, false);
+  assert.equal(draft.changes.operatorFundMint, legacy.changes.operatorFundMint);
+  assert.equal(draft.changes.revenueAllocation.totalRevenuePremint, 500_000);
+  assert.equal(draft.changes.revenueAllocation.includesOperatorFund, true);
+  assert.equal(draft.changes.revenueAllocation.includesUnclaimedFundCredits, true);
+  assert.equal(draft.changes.revenueAllocation.requiresActivation, false);
+  assert.equal(draft.changes.revenueAllocation.requiresStaking, false);
+  assert.equal(draft.changes.revenueAllocation.vestingMonths, 0);
+  assert.equal(draft.changes.fundSticky.requiresStaking, true);
+  assert.equal(draft.changes.fundSticky.eligibilityPolicy, 'snapshot-share-balance');
+  assert.equal(draft.changes.fundSticky.minimumStakeAgeSeconds, 0);
+  assert.equal(draft.changes.fundSticky.vestingRounds, 4);
+  assert.equal(draft.changes.fundSticky.roundSeconds, 604_800);
+  assert.equal(Object.hasOwn(draft.changes.fundSticky, 'vestingSeconds'), false);
+  assert.equal(draft.changes.fundSticky.vestingStartsAt, 'reward-claim-round');
+  assert.equal(draft.changes.fundSticky.enabled, false);
+  assert.equal(draft.changes.fundSticky.runtimeAvailability, 'requires-verified-deployment');
+  assert.equal(draft.changes.fundSticky.projectId, null);
+  assert.equal('fundHolderRewards' in draft.changes, false);
+  assert.equal('productionVesting' in draft.changes.fundSticky, false);
+  assert.equal('modeledVestingMonths' in draft.changes.fundSticky, false);
+  assert.deepEqual(draft.changes.revenuePolicy.stages.map(stage => stage.issuanceRevPerUSDC), legacy.changes.revenuePolicy.stages.map(stage => stage.issuanceRevPerUSDC));
+  assert(draft.steps.some(item => item.id === 'prepare_fund_sticky'));
+  assert(draft.steps.some(item => item.id === 'configure_sticky_reward_route'));
+  assert.doesNotMatch(JSON.stringify(draft), /automatic_fund_holders|No FUND staking|four-round|weekly reward snapshots/);
+  const snapshot = draft.steps.find(item => item.id === 'snapshot_all_fund');
+  assert.match(snapshot.description, /inactive ERC20 balances and unclaimed token credits/);
+  assert.match(snapshot.description, /no activation, staking or vesting/);
+});
+
+test('current sale review explains Sticky recovery without changing initial claims or minting tokens', () => {
+  const projection = projectNetwork({}, 'earning');
+  const draft = plannedOwnerActionDraft('enable_sale_redemptions', projection);
+  assert.equal(draft.executable, false);
+  assert.equal(draft.changes.revenuePremint, 0);
+  assert.equal(draft.changes.operatorFundMint, 0);
+  assert.equal(draft.changes.saleDeposit.mintsFund, false);
+  assert.equal(draft.changes.fundSticky.eligibilityPolicy, 'snapshot-share-balance');
+  assert.equal(draft.changes.fundSticky.minimumStakeAgeSeconds, 0);
+  assert.equal(draft.changes.fundSticky.vestingRounds, 4);
+  assert.equal(draft.changes.fundSticky.roundSeconds, 604_800);
+  assert.equal(Object.hasOwn(draft.changes.fundSticky, 'vestingSeconds'), false);
+  assert.equal(draft.changes.fundSticky.vestingStartsAt, 'reward-claim-round');
+  assert.equal(draft.changes.fundSticky.enabled, false);
+  assert.equal(draft.changes.fundSticky.runtimeAvailability, 'requires-verified-deployment');
+  assert(draft.steps.some(item => item.id === 'prepare_holder_unstaking'));
+  assert.doesNotMatch(JSON.stringify(draft), /no unstaking is required|four-round|weekly reward snapshots/);
 });

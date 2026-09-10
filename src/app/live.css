@@ -1,0 +1,22 @@
+ .contract-panel { border: 1px solid #c4cebf; border-radius: 6px; background: #fffefa; padding: 24px; margin: 24px 0; }
+.contract-panel h2, .contract-panel h3 { margin-top: 0; }
+.contract-panel label { display: block; margin: 18px 0 7px; }
+.contract-panel input, .contract-panel select { width: 100%; min-height: 44px; padding: 10px; border: 1px solid #bfcbbb; border-radius: 4px; background: white; font: inherit; }
+.contract-panel button, .wallet-button { min-height: 44px; padding: 10px 16px; border-radius: 4px; border: 1px solid #476950; background: #41664d; color: white; cursor: pointer; font: inherit; }
+.contract-panel button:disabled { opacity: .5; cursor: not-allowed; }
+.contract-panel a { overflow-wrap: anywhere; }
+.contract-panel [role='alert'] { color: #8c342d; }
+.contract-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
+.live-status { display: block; margin: 12px 0; }
+.wallet-menu { display: flex; flex-wrap: wrap; gap: 8px; }
+.live-project { max-width: 1220px; margin: 0 auto; padding: 28px 24px; }
+.live-project dl { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(100px, 1fr); gap: 12px; }
+.live-project dd { margin: 0; overflow-wrap: anywhere; }
+.live-contract-page main :is(h1, h2, h3, h4, summary.text-3xl) { font-family: var(--serif); font-weight: 400; line-height: 1.15; letter-spacing: -.025em; }
+.live-contract-page dd { margin-inline-start: 0; overflow-wrap: anywhere; }
+.live-contract-page input, .live-contract-page select, .live-contract-page textarea { font: inherit; }
+/* Legacy global button colors are unlayered; retain the shared wallet palette. */
+.btn-primary { color: #fffefa; }
+.btn-secondary { color: #3f5b66; }
+.home-project-link { margin-top: 24px; font-size: 12px; }
+@media(max-width:600px) { .contract-panel { padding: 18px; } .live-project { padding: 20px; } }

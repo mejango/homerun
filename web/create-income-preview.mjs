@@ -10,7 +10,9 @@ const number = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
 const percent = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
 const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
 
-/** Outstanding INCOME after the model's monthly issuance and operating cash-outs. */
+/** Outstanding INCOME assuming all FUND participates in Sticky and rewards are fully vested.
+ * The legacy holders calculation is the full-participation baseline, not live reward eligibility.
+ * The four weekly vesting rounds after an ongoing reward claim are not modeled here. */
 export function ownershipAtMonth(networkInputs = {}, month = 0) {
   if (!networkInputs || typeof networkInputs !== 'object' || Array.isArray(networkInputs)) {
     throw new TypeError('Income assumptions must be an object.');
@@ -61,7 +63,7 @@ export function initCreateIncomePreview(container) {
         </ul>
       </div>
       <div class="income-preview-revenue"><span>Revenue received</span><strong data-income-revenue>$0</strong></div>
-      <figcaption id="create-income-preview-note">Expenses use the cash reserve first, then operator token cash-outs. Customers and other FUND holders keep their tokens. Operator ownership includes their FUND share.</figcaption>
+      <figcaption id="create-income-preview-note">Expenses use the cash reserve first, then operator token cash-outs. Operator ownership includes their FUND share. Projections assume all FUND participates in Sticky and rewards are fully vested; weekly reward vesting is not modeled.</figcaption>
     </figure>`;
 
   const slider = container.querySelector('#create-income-months');

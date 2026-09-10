@@ -1,5 +1,5 @@
-@import '/pay-panel.css';
-@import '/pay-details.css';
+@import './pay-panel.css';
+@import './pay-details.css';
 
 /* The project shares the ballpark's paper, pencil greens and warm ochre. */
 .preview-workbench { display: grid; grid-template-columns: 330px minmax(0, 1fr); grid-template-areas: 'assumptions preview'; gap: 0; margin: 18px 0 26px; background: #edf2f1; border: 1px solid #cbd7db; border-radius: 4px; align-items: stretch; }
@@ -14,7 +14,7 @@
 .created-cover canvas, .created-cover img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .simulator:has(.created-cover) .deal-heading { grid-template-columns: minmax(0, 1fr) minmax(220px, 1fr) minmax(0, 430px); }
 .simulator:has(.created-cover) .deal-heading h1 { overflow-wrap: anywhere; }
-.simulator .deal-heading .created-project-note { font-size: 10px; color: #48636a; max-width: none; line-height: 1.6; }
+.simulator .deal-heading .created-project-note { font-size: 10px; color: #48636a; max-width: 320px; line-height: 1.6; }
 .simulator .deal-heading .created-project-note { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .created-network-symbols { display: inline-flex; align-items: center; gap: 5px; }
 .created-network-symbols img { display: block; width: 18px; height: 18px; border-radius: 50%; }

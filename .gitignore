@@ -8,3 +8,11 @@ test-results/
 .env.*
 .railway/
 .DS_Store
+
+.next/
+.next-*/
+next-env.d.ts
+*.tsbuildinfo
+public/assets/
+public/docs/
+/artifacts/

@@ -5,3 +5,9 @@ out
 cache
 test-results
 .env*
+
+.next
+.next-*
+artifacts
+public/assets
+public/docs

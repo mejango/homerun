@@ -1,6 +1,6 @@
-@import '/lifecycle.css';
-@import '/projection-charts.css';
-@import '/founder-haus.css';
+@import './lifecycle.css';
+@import './projection-charts.css';
+@import './founder-haus.css';
 
 .site-header, .simulator, footer { max-width: 1220px; }
 .site-header { height: 76px; }

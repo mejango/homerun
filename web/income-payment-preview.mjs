@@ -8,7 +8,7 @@ const TOKEN_LABELS = [
   ['existing', 'Existing INCOME', '#bbc7b0'],
   ['payer', 'Your new INCOME', '#285b3b'],
   ['operators', 'New operator allocation', '#b29e6e'],
-  ['stakers', 'New FUND-holder allocation', '#72958b'],
+  ['stakers', 'New FUND-staker allocation', '#72958b'],
 ];
 
 function finite(name, value, min = 0, max = Number.MAX_VALUE) {
@@ -52,10 +52,10 @@ export function incomePaymentPreview(p, amount) {
   const supplyBefore = finite('Outstanding INCOME', p.revSupply);
   const issuanceRate = finite('INCOME issuance rate', p.currentIssuanceRate);
   const operatorPercent = finite('Operator issuance allocation', p.currentOperatorSplitPercent, 0, 100);
-  const stakerPercent = finite('FUND-holder issuance allocation', p.currentStickySplitPercent, 0, 100);
+  const stakerPercent = finite('FUND-staker issuance allocation', p.currentStickySplitPercent, 0, 100);
   const payerPercent = finite('Payer issuance allocation', p.currentRenterSplitPercent, 0, 100);
   if (Math.abs(operatorPercent + stakerPercent + payerPercent - 100) > 1e-8) {
-    throw new RangeError('Operator, FUND-holder, and payer allocations must total 100 percent of new issuance.');
+    throw new RangeError('Operator, FUND-staker, and payer allocations must total 100 percent of new issuance.');
   }
   const paid = amountCents / 100;
   const totalMinted = finite('New INCOME issuance', paid * issuanceRate);
@@ -136,8 +136,8 @@ export function renderIncomePaymentDetails(p, amount) {
     <summary>Your tokens & share</summary><div class="income-payment-detail-body">
       <p>${context}.</p><p><strong data-income-payment-value="payer-tokens">${escape(quantity(preview.payerTokens))} INCOME</strong> for you, or <strong>${escape(percent(preview.payerSharePercent))}</strong> of outstanding INCOME.</p>
       ${allocationChart(preview)}<ul class="income-payment-legend">${legend}</ul>
-      <p>${currency.format(preview.amount)} creates ${escape(quantity(preview.totalMinted))} INCOME in total: ${escape(percent(preview.operatorPercent))} for operators, ${escape(percent(preview.stakerPercent))} for FUND holders, and ${escape(percent(preview.payerPercent))} for you.</p>
-      <p>Only your new customer INCOME from this payment is included. No FUND is issued. Your earlier holdings and FUND-holder rewards are separate.</p>
+      <p>${currency.format(preview.amount)} creates ${escape(quantity(preview.totalMinted))} INCOME in total: ${escape(percent(preview.operatorPercent))} for operators, ${escape(percent(preview.stakerPercent))} for eligible FUND stakers, and ${escape(percent(preview.payerPercent))} for you.</p>
+      <p>Only your new customer INCOME from this payment is included. No FUND is issued. Your initial INCOME allocation and ongoing Sticky rewards are separate. Projections assume all FUND participates in Sticky and rewards are fully vested.</p>
     </div>
   </details>
   <details class="income-payment-details" data-income-payment-details="liquidity">

@@ -79,7 +79,7 @@ test('no revenue retains the initial pie and zero supply has finite empty shares
   assert.deepEqual(tokens(empty), [0, 0, 0]);
 });
 
-test('personal contribution and obsolete staking settings cannot omit holders from the pie', () => {
+test('full-participation preview remains independent of personal contribution and comparison-mode staking inputs', () => {
   const state = ownershipAtMonth({
     ...noCosts,
     investment: 999_999_999,

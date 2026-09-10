@@ -4,8 +4,30 @@ test = "test"
 solc = "0.8.28"
 evm_version = "cancun"
 optimizer = true
+via_ir = true
 optimizer_runs = 200
 libs = ["../../nana-core-v6/node_modules", "../../nana-core-v6/lib"]
+allow_paths = ["../.."]
+remappings = [
+  "@bananapus/core-v6/=../../nana-core-v6/",
+  "@bananapus/721-hook-v6/=../../nana-721-hook-v6/",
+  "@bananapus/suckers-v6/=../../nana-suckers-v6/",
+  "@bananapus/buyback-hook-v6/=../../nana-buyback-hook-v6/",
+  "@bananapus/ownable-v6/=../../nana-ownable-v6/",
+  "@bananapus/permission-ids-v6/=../../nana-permission-ids-v6/",
+  "@bananapus/address-registry-v6/=../../nana-address-registry-v6/",
+  "@bananapus/distributor-v6/=../../nana-distributor-v6/",
+  "@bananapus/sticky-v6/=../JBSticky/",
+  "@bananapus/omnichain-deployers-v6/=../../nana-omnichain-deployers-v6/",
+  "@chainlink/contracts-ccip/=../../nana-suckers-v6/node_modules/@chainlink/contracts-ccip/",
+  "@rev-net/core-v6/=../../revnet-core-v6/",
+  "@croptop/core-v6/=../../croptop-core-v6/",
+  "lib/forge-std/=../../nana-core-v6/lib/forge-std/",
+  "@uniswap/v4-core/=../../revnet-core-v6/node_modules/@uniswap/v4-core/",
+  "@uniswap/permit2/=../../nana-core-v6/node_modules/@uniswap/permit2/",
+  "solady/=../../revnet-core-v6/node_modules/solady/",
+  "@prb/math/=../../revnet-core-v6/node_modules/@prb/math/",
+]
 
 [profile.default.fuzz]
 runs = 512

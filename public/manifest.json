@@ -1,0 +1,7 @@
+{
+  "name": "Homerun",
+  "short_name": "Homerun",
+  "description": "Fund an asset. Share what it earns.",
+  "iconPath": "/favicon.svg",
+  "safe_apps_permissions": []
+}

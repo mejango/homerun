@@ -471,3 +471,66 @@ export function ownerActionDraft(action, projection) {
   draft.eligible = draft.blockedReasons.length === 0;
   return draft;
 }
+
+/** Current Homerun policy for UI review drafts. Legacy comparison modes above
+ * remain available to model historical scenarios without changing their math.
+ */
+export function plannedOwnerActionDraft(action, projection) {
+  const draft = ownerActionDraft(action, { ...projection, fundRewardMode: 'holders' });
+  if (!['complete_purchase', 'enable_sale_redemptions'].includes(action)) return draft;
+
+  const fundSticky = {
+    mode: 'sticky',
+    acceptedToken: 'FUND',
+    projectId: null,
+    requiresStaking: true,
+    eligibilityPolicy: 'snapshot-share-balance',
+    minimumStakeAgeSeconds: 0,
+    vestingRounds: 4,
+    roundSeconds: 604_800,
+    vestingStartsAt: 'reward-claim-round',
+    eligibility: 'Stock Sticky rewards are proportional to share balances at each snapshot. There is no stake-age boost; longer participation earns additional rounds.',
+    runtimeAvailability: 'requires-verified-deployment',
+    enabled: false,
+    executable: false,
+    projectionAssumption: 'All FUND participates in Sticky and rewards are fully vested. The four weekly vesting rounds after reward claims are not modeled.',
+  };
+  delete draft.changes.fundHolderRewards;
+  draft.changes.fundSticky = fundSticky;
+  draft.requiresVerification = draft.requiresVerification.filter(item => !item.startsWith('Implement and verify a distributor for current FUND holders'));
+  draft.warnings = draft.warnings.filter(item => !item.startsWith('Automatic holder rewards') && !item.includes('no unstaking is required'));
+  draft.requiresVerification.push('Verify the stock Sticky deployment, proportional share-balance snapshots, reward claim and four weekly vesting rounds starting from the claim round, custody recovery and reward routing. There is no minimum staking period or stake-age boost; longer participation earns additional reward rounds. Initial INCOME has no vesting.');
+  draft.warnings.push('Ongoing rewards require opting into Sticky staking. These projections assume all FUND participates and ongoing rewards are fully vested; they do not model the four weekly vesting rounds after reward claims. The initial INCOME allocation is independent of Sticky.');
+
+  if (action === 'complete_purchase') {
+    const policy = revenuePolicy({ ...projection, fundRewardMode: 'staking' });
+    draft.changes.revenuePolicy = policy;
+    Object.assign(draft.changes.revenueAllocation, {
+      source: 'all FUND holders at one finalized post-operator-mint snapshot, including inactive ERC20 balances and unclaimed token credits',
+      requiresActivation: false,
+      requiresStaking: false,
+      vestingMonths: 0,
+    });
+    draft.steps = draft.steps.map(item => {
+      if (item.id === 'snapshot_all_fund') return step(item.id, item.title,
+        'Finalize all investor and operator FUND balances after the success mint, including inactive ERC20 balances and unclaimed token credits. Resolve beneficial holders without double-counting custody receipts. Initial INCOME claims require no activation, staking or vesting. Later transfers do not repeat this initial allocation.',
+        { revenueAllocation: draft.changes.revenueAllocation });
+      if (item.id === 'specify_holder_distribution') return step('prepare_fund_sticky', 'Review opt-in Sticky participation',
+        'Prepare the verified stock Sticky integration for ongoing rewards. Use proportional share-balance snapshots and four weekly vesting rounds starting from the reward-claim round. There is no minimum staking period or age-based weight boost. Keep the initial-allocation mechanism separate: every initial FUND snapshot holder can claim without staking or vesting.', { fundSticky });
+      if (item.id === 'configure_holder_reward_route') return step('configure_sticky_reward_route', 'Review the ongoing FUND-staker allocation',
+        'Route the reviewed ongoing INCOME allocation to eligible Sticky participants. Verify the deployed reward destination, permissions, reserved splits, rounding and every issuance stage. Verify ongoing rewards unlock over four weekly vesting rounds starting from the reward-claim round, not the FUND deposit. Each round is 604,800 seconds; 25% unlocks at each following boundary, so full release takes 21–28 elapsed days after materialization. Execution remains unavailable until the stock Sticky deployment is verified.',
+        { fundSticky, revenuePolicy: policy });
+      if (item.id === 'premint_revenue_once') return step(item.id, item.title,
+        `${item.description} The initial allocation covers inactive ERC20 balances and unclaimed FUND credits, without activation, staking or vesting.`,
+        { revenueAllocation: draft.changes.revenueAllocation, revenuePolicy: policy });
+      return item;
+    });
+  } else {
+    const index = draft.steps.findIndex(item => item.id === 'verify_sale_quotes');
+    draft.steps.splice(index < 0 ? draft.steps.length : index, 0,
+      step('prepare_holder_unstaking', 'Review recovery of staked FUND',
+        'Verify how a Sticky participant recovers their underlying FUND before redeeming asset-sale proceeds. Initial INCOME and ongoing reward claims remain separate; confirm each claim against its actual contract state and stock Sticky snapshot and reward-vesting policy.', { fundSticky }));
+    draft.warnings.push('FUND held directly can be redeemed against sale cash. A Sticky participant must first recover the underlying FUND using the verified unstaking path; the owner cannot perform a holder action without the required authorization.');
+  }
+  return draft;
+}

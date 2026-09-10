@@ -34,7 +34,7 @@ const LABELS = {
   monthlyCosts: 'Monthly expenses', operatorFundPercent: 'Operator FUND ownership',
   rentGrowthPercent: 'Target revenue growth rate',
   costGrowthPercent: 'Target expense growth rate',
-  operatorSplitPercent: 'Operator INCOME allocation', stickySplitPercent: 'FUND holder INCOME allocation',
+  operatorSplitPercent: 'Operator INCOME allocation', stickySplitPercent: 'FUND staker INCOME allocation',
 };
 const MAX_DOLLARS = 1_000_000_000;
 const MAX_PHOTO_LENGTH = 1_500_000;
@@ -171,7 +171,7 @@ export function deploymentDraft(raw) {
   const networks = plannedNetworks(values);
   return {
     kind: 'homerun-deployment-preview',
-    schemaVersion: 2,
+    schemaVersion: 3,
     execution: {
       enabled: false,
       mode: 'local-preview',
@@ -217,7 +217,7 @@ export function deploymentDraft(raw) {
       annualExpenseGrowthPercentAssumption: values.costGrowthPercent,
       issuanceAllocationPercent: {
         operators: values.operatorSplitPercent,
-        fundHolders: values.stickySplitPercent,
+        fundStakers: values.stickySplitPercent,
         customers: customerSplitPercent,
       },
       initialTokenPremintAssumption: networkInputs.revenuePremint,
@@ -226,15 +226,30 @@ export function deploymentDraft(raw) {
       issuanceCutPeriodMonthsAssumption: networkInputs.issuanceCutMonths,
       issuanceCutDurationYearsAssumption: networkInputs.issuanceCutYears,
       numberOfIssuanceCutsAssumption: Math.floor(networkInputs.issuanceCutYears * 12 / networkInputs.issuanceCutMonths),
-      holderRewards: {
-        mode: 'automatic', requiresStaking: false, vestingMonths: 0,
-        distribution: 'Pro rata to FUND holders, including operators, at each revenue payment.',
+      initialAllocation: {
+        tokens: networkInputs.revenuePremint,
+        distribution: 'Pro rata to all FUND holders, including operators, inactive ERC20 balances and unclaimed token credits.',
+        balanceSources: ['erc20', 'unclaimed-credits'],
+        requiresActivation: false, requiresStaking: false, vestingMonths: 0,
         implementationStatus: 'design-preview',
       },
+      holderRewards: {
+        mode: 'sticky', requiresStaking: true,
+        distribution: 'Ongoing INCOME to eligible FUND stakers using Sticky, including operators who stake.',
+        eligibilityPolicy: 'snapshot-share-balance',
+        minimumStakeAgeSeconds: 0,
+        vestingRounds: 4,
+        roundSeconds: 604_800,
+        vestingStartsAt: 'reward-claim-round',
+        eligibility: 'Stock Sticky rewards are proportional to share balances at each snapshot. There is no stake-age boost; longer participation earns additional rounds.',
+        runtimeAvailability: 'requires-verified-deployment',
+        enabled: false,
+      },
+      projectionAssumption: 'All FUND participates in Sticky and rewards are fully vested. The four weekly vesting rounds after reward claims are not modeled.',
     },
     preparation: [
       { stage: 'fundraise', description: 'Prepare the FUND project and fundraising terms for review.' },
-      { stage: 'income', description: 'After purchase, prepare the INCOME revnet and automatic FUND-holder reward distribution for review.' },
+      { stage: 'income', description: 'After purchase, prepare the INCOME revnet, the initial allocation to all FUND holders, and separate ongoing Sticky rewards for review. Use stock Sticky share-balance snapshots and four weekly vesting rounds starting from the reward-claim round, without a minimum staking period. Live use requires a verified deployment.' },
       { stage: 'asset-sale', description: 'Prepare sale distributions when the asset is sold.' },
     ],
   };

@@ -1,36 +1,44 @@
 /** Automated WCAG 2 A/AA checks. Start npm run dev, then npm run test:a11y.
- * Uses workspace Playwright/axe and macOS Chrome. Overrides: BASE_URL,
+ * Uses installed Playwright/axe and Chrome. Overrides: BASE_URL,
  * PLAYWRIGHT_MODULE, AXE_MODULE, CHROME_PATH. Reduced motion avoids transient
  * animation contrast. These checks do not replace manual accessibility review.
  */
+import { existsSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
-const moduleURL = (override, fallback) => override ? pathToFileURL(override) : new URL(fallback, import.meta.url);
-const { chromium } = await import(moduleURL(process.env.PLAYWRIGHT_MODULE, '../../../webclients/juicescan/node_modules/playwright/index.mjs').href);
-const { default: AxeBuilder } = await import(moduleURL(process.env.AXE_MODULE, '../../../webclients/juicescan/node_modules/@axe-core/playwright/dist/index.mjs').href);
-const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
+import { expect } from '@playwright/test';
+const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ? pathToFileURL(process.env.PLAYWRIGHT_MODULE).href : '@playwright/test');
+const { default: AxeBuilder } = await import(process.env.AXE_MODULE ? pathToFileURL(process.env.AXE_MODULE).href : '@axe-core/playwright');
+const systemChrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const executablePath = process.env.CHROME_PATH || (existsSync(systemChrome) ? systemChrome : undefined);
+const browser = await chromium.launch({ ...(executablePath ? { executablePath } : {}), headless: true });
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
 const page = await context.newPage();
-const demoURL = new URL('/founderhaus', process.env.BASE_URL || 'http://127.0.0.1:3010/').href;
+page.setDefaultTimeout(15_000);
+page.setDefaultNavigationTimeout(120_000);
+const demoURL = new URL('/founderhaus', process.env.BASE_URL || 'http://localhost:3010/').href;
 const homeURL = new URL('/', demoURL).href;
+const ownerActions = [['raising', 'close_raise'], ['raising', 'enable_refunds'], ['funded', 'complete_purchase'], ['earning', 'enable_sale_redemptions']];
 let violations = 0;
 let checks = 0;
 async function phase(value) {
-  if (['earning', 'liquidated'].includes(value)) {
-    await page.locator(`button[data-journey-phase="${value}"]`).click();
-  } else {
-    if (await page.locator(`[data-phase="${value}"]`).isHidden()) {
-      await page.locator('button[data-journey-phase="raising"]').click();
-    }
-    await page.locator(`[data-phase="${value}"]`).click();
-  }
+  const stage = ['earning', 'liquidated'].includes(value) ? value : 'raising';
+  await page.locator(`.preview-base-buttons button[data-journey-phase="${stage}"]`).click();
+  if (stage === 'raising') await page.locator(`[data-phase="${value}"]`).click();
+  await expect(page.locator('#project-journey')).toHaveAttribute('data-journey-phase', value);
+}
+async function closeDialog(id) {
+  await page.keyboard.press('Escape');
+  await expect(page.locator(id)).toHaveCount(0);
 }
 async function reveal(locator) {
+  await expect(locator).toHaveCount(1);
   if (await locator.locator('xpath=ancestor::*[@id="assumptions-body"]').count() && await page.locator('#assumptions-body').isHidden()) await page.locator('#toggle-assumptions').click();
   const ancestors = locator.locator('xpath=ancestor::details');
   for (let index = 0; index < await ancestors.count(); index++) {
     const details = ancestors.nth(index);
     if (await details.getAttribute('open') === null) await details.locator(':scope > summary').click();
   }
+  await expect(locator).toBeVisible();
 }
 async function analyze(label) {
   checks++;
@@ -42,21 +50,22 @@ async function analyze(label) {
 }
 try {
   await page.goto(homeURL);
-  await page.locator('#ballpark').waitFor();
+  await page.locator('#ballpark[data-ready="true"][data-motion="reduced"]').waitFor();
   await analyze('homepage');
   await page.setViewportSize({ width: 320, height: 844 });
   await analyze('mobile homepage');
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(demoURL);
+  await expect(page.locator('.simulator')).toHaveAttribute('data-ready', 'true');
   await page.locator('#scenario-title').waitFor();
   await page.locator('#open-house-gallery').click();
   await page.locator('#house-gallery-image').evaluate(image => image.decode());
   await analyze('Founder Haus photo gallery');
-  await page.keyboard.press('Escape');
+  await closeDialog('#house-gallery');
   await page.setViewportSize({ width: 320, height: 844 });
   await page.locator('#open-house-gallery').click();
   await analyze('mobile Founder Haus photo gallery');
-  await page.keyboard.press('Escape');
+  await closeDialog('#house-gallery');
   await page.setViewportSize({ width: 1440, height: 1000 });
   for (const value of ['raising', 'funded', 'refunding', 'refunded', 'earning', 'liquidated']) {
     await phase(value);
@@ -67,11 +76,10 @@ try {
     await page.locator('#pay-review').click();
     await page.locator('#pay-dialog').waitFor({ state: 'visible' });
     await analyze(`payment review: ${value}`);
-    await page.keyboard.press('Escape');
+    await closeDialog('#pay-dialog');
   }
   await phase('earning');
-  await reveal(page.locator('[data-income-payment-value="payer-tokens"]'));
-  await reveal(page.locator('[data-income-payment-value="cashout"]'));
+  await reveal(page.locator('#income-payment-results dl'));
   await analyze('expanded independent INCOME ownership and liquidity');
   await page.locator('#pay-amount').fill('250');
   await analyze('reactive independent INCOME payment details');
@@ -95,23 +103,23 @@ try {
   await page.locator('#reset-example').click();
   await phase('earning');
   await reveal(page.locator('#your-loan-principal'));
-  await reveal(page.locator('#operator-rev-percent'));
-  await reveal(page.locator('#reserve-stress > summary'));
-  await reveal(page.locator('#staking-terms > summary'));
+  await reveal(page.locator('#fund-total-supply'));
+  await reveal(page.locator('#reserve-stress table'));
   await analyze('expanded token and loan terms');
   await reveal(page.locator('#field-rentGrowthPercent'));
   await analyze('expanded growth assumptions');
   await page.locator('#field-revenueMonths').fill('1');
-  await analyze('immediate automatic FUND-holder rewards');
+  await analyze('fully eligible Sticky reward projection');
   await page.locator('#quote-month').fill('-1');
-  await analyze('invalid quote month');
+  await expect(page.locator('#quote-month')).toHaveAttribute('min', '0');
+  await analyze('bounded quote month input');
   await page.locator('#reset-example').click();
-  for (const [value, action] of [['raising', 'close_raise'], ['raising', 'enable_refunds'], ['funded', 'complete_purchase'], ['earning', 'enable_sale_redemptions']]) {
+  for (const [value, action] of ownerActions) {
     await phase(value);
     await reveal(page.locator(`[data-owner-action="${action}"]`));
     await page.locator(`[data-owner-action="${action}"]`).click();
     await analyze(`owner draft: ${action}`);
-    await page.locator('#close-owner-dialog').click();
+    await closeDialog('#owner-dialog');
   }
   await page.setViewportSize({ width: 390, height: 844 });
   await phase('earning');
@@ -122,19 +130,32 @@ try {
   await page.keyboard.press('Escape');
   for (const width of [390, 320]) {
     await page.setViewportSize({ width, height: 844 });
-    for (const value of ['raising', 'earning', 'refunding', 'liquidated']) {
+    for (const value of ['raising', 'funded', 'refunding', 'refunded', 'earning', 'liquidated']) {
       await phase(value);
-      await page.locator('button[data-journey-phase][aria-pressed="true"]').focus();
+      await page.locator('.preview-base-buttons button[data-journey-phase][aria-pressed="true"]').focus();
       await analyze(`${width}px journey and ${value} payment panel`);
+      if (['funded', 'refunded'].includes(value)) {
+        await expect(page.locator('#pay-review')).toBeDisabled();
+        continue;
+      }
       await page.locator('#pay-review').click();
       await page.locator('#pay-dialog').waitFor({ state: 'visible' });
       await analyze(`${width}px payment review: ${value}`);
-      await page.keyboard.press('Escape');
+      await closeDialog('#pay-dialog');
       if (value === 'earning') {
-        await reveal(page.locator('[data-income-payment-value="payer-tokens"]'));
-        await reveal(page.locator('[data-income-payment-value="cashout"]'));
+        await reveal(page.locator('#income-payment-results dl'));
         await analyze(`${width}px expanded INCOME payment details`);
       }
+    }
+    for (const [value, action] of ownerActions) {
+      await phase(value);
+      const trigger = page.locator(`[data-owner-action="${action}"]`);
+      await reveal(trigger);
+      await trigger.click();
+      await expect(page.locator('#owner-dialog[open]')).toBeVisible();
+      await analyze(`${width}px owner draft: ${action}`);
+      await closeDialog('#owner-dialog');
+      await expect(trigger).toBeFocused();
     }
   }
 } finally { await browser.close(); }

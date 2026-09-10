@@ -1,0 +1,90 @@
+# Homerun architecture and transaction parity
+
+Homerun uses the same application and wallet stack as Juicebox Money and Revnet Money: Next.js App Router, React, TypeScript, Wagmi, Viem, TanStack Query, and `@bananapus/nana-sdk-core`. The existing financial models and illustrated presentation remain Homerun-specific. The original static prototype is not a live-contract architecture and must not be treated as the production transaction layer.
+
+## Reference audit
+
+Audited the local Juicebox Money checkout at `01dcbbbc0c12a415238233c381893fa1d3811cc3` and Revnet Money at `e23a69e7ce060672d131bee461778179bcb026bf` on 2026-09-10. The copied runtime modules come from Juicebox Money, which already supports standard fundraising projects as well as Revnets. Both applications use the same SDK, wallet family, RPC transport, indexer, and mandatory transaction-review approach.
+
+| Concern | Reference source | Homerun boundary |
+| --- | --- | --- |
+| Server rendering and wallet state | Juicebox `src/providers/Providers.tsx`; Revnet `src/app/AppSpecificProviders.tsx` | Next renders page content without waiting for an embedded-wallet SDK. One SSR-enabled Wagmi config owns account, connector, chain switching, and writes. |
+| Embedded and external wallets | Juicebox `src/providers/*`, `src/hooks/useWallet.ts` | Lazy Para, WalletConnect, Coinbase, and Safe connectors; injected wallet discovery. Wallet vendor SDKs load when selected/restored. |
+| Query lifetime and persistence | Both `src/lib/query-persist.ts` | One QueryClient per render tree. Immutable or explicitly revalidated presentation data may persist. Balances, allowances, permissions, and other transaction gates must be read fresh. |
+| RPC reads | Both `src/lib/jbcenter-rpc.ts` | SDK `createJBCenterRpcProvider`, with retries for a load-balanced node behind a pinned block. Never substitute `latest` for a prerequisite block. |
+| Project indexing | Juicebox `src/lib/bendystraw.ts`, operation registry, `/api/bendystraw/[net]/query`; Revnet `src/lib/bendystraw/*` | Chain and V6 project IDs identify real projects. The reference Bendystraw client, persisted-query proxy, project activity, and account discovery are implemented. Current contract reads still authorize and quote writes. |
+| Metadata and cover photos | Both `src/lib/jbcenter-ipfs.ts` | SDK pinning yields a shared immutable IPFS URI before launch; localStorage is only draft/recovery storage. |
+| Reviewed writes | Juicebox `src/lib/contract-write.ts`, `src/hooks/useSafeTx.ts` | One exact request proceeds through review, chain switch, identity checks, state revalidation, simulation, gas estimation, wallet confirmation, and receipt tracking. |
+| Review surface | Juicebox `src/components/TransactionReviewProvider.tsx`, `TransactionReviewDialog.tsx`, `src/lib/transaction-review.ts` | The source review queue and full transaction decoder are reused. Chain, recipient, native value, decoded arguments, raw calldata, and an audit prompt are reviewable. Missing/cancelled review never authorizes a write. |
+| Safe execution | Juicebox `src/lib/safe-connector.ts`, `src/hooks/useSafeTx.ts` | A Safe proposal hash is not a transaction receipt. Wait for proposal execution, obtain the execution hash, and then verify the onchain receipt. |
+| Launch recovery | Juicebox `src/lib/launch-session.ts`, `src/components/create/CreateForm.tsx` | Persist the exact metadata URI, owner, shared salt, per-chain plans and statuses before sending. Resume known hashes, skip completed chains, and keep unconfirmed submissions unresolved rather than offering blind retries. |
+| Deployment provenance | Both `scripts/check-protocol-deployments.mjs` and pinned V6 fixtures | Use SDK-generated deployment addresses and ABI builders, with fixture parity to the protocol deployment artifacts. Display-only model parameters never become authorization or fund-access limits implicitly. |
+
+## Runtime reused in this repository
+
+The transaction review provider/dialog, shared native dialog shell, `contract-write`, `useSafeTx`, `safe-connector`, gas helpers, and the decoder's Safe ABI/read dependencies are copied from the reference. Homerun's paper/green/blue palette changes presentation only. The review implementation keeps decoded and raw payloads together; it does not trust a plain-language summary as proof of the encoded transaction.
+
+Two narrowly scoped confirmation corrections have regression coverage: receipt data must match the current transaction hash, so a retained receipt cannot confirm a later action; and an unavailable Safe execution lookup keeps a submitted proposal pending and blocks a duplicate send. A proven Safe execution failure remains a failed action. Neither correction bypasses review, simulation, account checks, or signing.
+
+The wallet shell adapts brand metadata, storage prefixes, and the connected-account button to Homerun. Juicebox-specific project-route and account-impersonation controls are omitted. Para remains lazy and is enabled only when its public app key is configured; an external-wallet dialog preserves access to injected, WalletConnect, Coinbase, and framed Safe connectors otherwise. The fallback injected connector is hidden only when a discovered injected wallet replaces it, so merely having a Coinbase connector does not make an older injected browser wallet unreachable. These are bounded presentation/configuration differences, not an alternative wallet or transaction implementation.
+
+The Safe app manifest at `/manifest.json` uses the same metadata shape and narrow CORS allowance as the reference apps, allowing Homerun to be added as a custom Safe app.
+
+Next's build configuration also retains the reference optional-peer aliases, the anchored Wagmi connector-barrel alias used by Para, SDK import optimization, and the vendored Coinbase heartbeat worker. These are required to build the same wallet dependencies without installing unrelated wallet ecosystems. Development and production use separate output directories to prevent one compiler replacing the other's chunks.
+
+Local browser tests use both `localhost` and `127.0.0.1`. Next 16 requires the numeric loopback hostname in `allowedDevOrigins` for its development WebSocket. Without it, the demo returned server HTML and JavaScript but never hydrated on that hostname. The narrow loopback allowlist restored hydration and live input updates; it does not change production origins or Center permissions.
+
+`useSafeTx(chainId)` exposes `send(request, options)`, `phase`, `busy`, `error`, `hash`, `safeProposalHash`, `receipt`, `confirmationUncertain`, and `reset`. Its `reverify` callback is where an action rechecks current ownership, delegated permissions, controller, terminal, balances, and other action-specific assumptions immediately before simulation. `send` returns the wallet's submission identifier; success is established by the receipt lifecycle, not by that return value.
+
+Recoverable workflows use the optional `beforeWrite` callback to persist an unknown-submission marker after review/revalidation/simulation and immediately before the wallet write. The callback is awaited, a persistence error blocks submission, and wallet identity is checked again afterward. Cancelling review never records an attempt. `onWriteRejected` can release that marker only for a typed Viem wallet rejection from the write itself; ambiguous transport failures leave it unresolved. These callbacks extend the shared submission boundary without bypassing any of its checks.
+
+For multi-step creation, use `submitReviewedContractWrite` with `requireContractTransactionReview` and the same Wagmi config/public clients. The reviewed request must be the request simulated, and only the simulation result goes to the writer. Fees are read just before submission on each chain. Parent workflows must persist recovery state and verify action-specific postconditions in addition to generic receipt success.
+
+## Initial FUND launch boundary
+
+Creation launches only the FUND fundraising project. INCOME deployment, operator-share issuance, initial INCOME distribution, and success/failure transitions belong to later operator actions with their own reviews and receipts. Those later actions must not be silently bundled into Create.
+
+The Juicebox standard launch path is `JB721TiersHookProjectDeployer.launchProjectFor` on one chain and `JBOmnichainDeployer.launchProjectFor` for linked multichain launches. The reference includes an empty store hook from day one. If Homerun uses a narrower controller/deployer path to omit unused store functionality, that is an explicit contract-deployment difference to review; it must not be described as source-identical launch orchestration.
+
+An all-chain launch is multiple independent transactions. Freeze shared salt, owner, start times and metadata once; confirm each chain separately. A successful receipt with no verified project ID remains unresolved. Read launch events only from the expected deployed contract emitters, then read the resulting project's owner/controller/terminals/ruleset before enabling holder and operator actions.
+
+## Configuration and remaining parity gates
+
+- Juicebox Center browser access depends on approved origins. Configure the actual `https://homerun.money` origin and the supported local origin. Never send `juicebox.money` as Homerun's origin or expose a server API key in a `NEXT_PUBLIC` variable.
+- Local origins `http://localhost:3010` and `http://localhost:3014` use development Center. The default development origin follows `npm run dev` on port 3010; other ports must set `NEXT_PUBLIC_SITE_URL` explicitly. The isolated deterministic review fixture makes no Center requests.
+- WalletConnect needs its own configured project ID. Para needs its configured public app key and environment. Without those configurations their corresponding integrations cannot be presented as available. Injected wallets must remain usable.
+- Shared project URLs must resolve from chain/project identity plus pinned metadata; the old `/project/?id=<local UUID>` records remain previews and are not an onchain source of truth.
+- SDK deployment fixtures, indexer schema/operation validation, fresh permission/read models, exact calldata builders, and contract-specific postconditions must be verified for every newly wired action. Merely installing matching packages does not establish equal reliability.
+- Pending transaction recovery, replaced transactions, RPC failure, wallet rejection/account changes, Safe asynchronous execution, multichain partial completion, and post-receipt indexer lag require transaction and browser coverage.
+- The copied core-write tests cover review order, mutation/cancellation, account checks, simulation gating, Safe proposal handling, reverted receipts, and gas headroom. They do not by themselves prove Homerun lifecycle policy, onchain deployment configuration, or production service availability.
+- The legacy standalone `src/Rooftop.sol` prototype is not the contract backend for this integration.
+
+The same stack is a baseline. Each live lifecycle operation still needs a concrete tested builder, a current permission check, exact review, simulation, recoverable submission, verified receipt, and refreshed onchain state before the UI claims that transition is complete.
+
+## Metadata, discovery, and indexing audit
+
+The reference create flows pin standard `JBProjectMetadata` through Center and pass its immutable URI into the launch. Juicebox's `src/components/create/CreateForm.tsx:1307` distinguishes `coverImageUri` from `logoUri`; Revnet's `src/app/create/helpers/pinProjectMetaData.ts` uses the SDK metadata type. Homerun's `buildFundProjectMetadata` now emits those standard fields and stores the descriptive model under the custom `homerun` extension. It strips the local photo payload before pinning. The reader prefers `coverImageUri` and supports earlier Homerun pins that used only `logoUri`. Metadata cannot supply live permissions, prove a successful asset purchase, or establish an INCOME deployment.
+
+Center signed intents are a separate optional facility for publishing discoverable, undeployed drafts. Neither audited reference frontend calls `/v1/intents` from its current create flow. `extensions/jbcenter/README.md:211` and `src/app.ts:681` describe a frozen per-chain calldata envelope, a wallet-signed content hash, idempotent publication, and receipt/trace-verified deployment binding. Adding this facility would require its own reviewed message-signing, durable publication recovery, and post-confirmation association; it is not a substitute for project metadata pinning or an indexing registration requirement. No intent was published during this audit.
+
+Standard V6 launches are automatically indexed by the local Bendystraw source. `bendystraw-v6/src/JBProjects.ts:14` handles `JBProjects:Create`; `src/JBController.ts:125` handles `LaunchRulesets` and later `SetUri`; `src/util/projectMetadata.ts:158` extracts standard metadata fields. Canonical V6 Projects and Controller deployments are configured for the four supported mainnets and their testnets. This establishes repository behavior, not the currently deployed indexers' version or sync status.
+
+Homerun now uses the reference Bendystraw data layer for project discovery, owned projects, combined credit/ERC-20 holdings, and project transaction history. Direct contract reads and IPFS metadata keep known project links usable before indexing. The implemented boundary is:
+
+1. Juicebox's `bendystraw.ts` transport and seven needed query documents are reused with `bendystraw-operation.ts`, operation ID/registry, browser/proxy helpers, and `/api/bendystraw/[net]/query/route.ts`. They preserve operation/data/variable validation, endpoint selection, the 32 KiB request bound, and cache policy. `scripts/check-bendystraw-schema.mjs 7 --offline` checks registry drift; without `--offline` it validates both public schemas.
+2. `ProjectActivity` resolves exact V6 identity, reads immediate per-project history, and discovers linked-chain history without blocking the first feed. Newest-page polling and older-page loading share the reference ordered/deduplicated merge. Failed refreshes retain existing events; a linked-feed failure retains the exact-project fallback. `AccountProjects` provides name/ticker/ID search and owned/held discovery with mainnet/testnet selection. Standard projects and Revnets both appear; query state is isolated by account and network, and indexed ownership never grants a permission.
+3. FUND and INCOME pages preserve direct current-block authority/balance/quote reads and their post-receipt refresh paths. Indexed identity only chooses a display feed. Failure to load the index leaves chain reads and transaction watchers independent. The reference's broader account activity feed, analytics, and NFT browsing are outside this initial component subset; this is shared transport/protocol identity parity, not a claim that every reference UI feature is copied.
+
+The reference endpoint defaults are `NEXT_PUBLIC_BENDYSTRAW_URL=https://bendystraw.up.railway.app` and `NEXT_PUBLIC_TESTNET_BENDYSTRAW_URL=https://testnet.bendystraw.xyz`. Reads through the same-origin proxy need no user API secret or Center intent registration. Center uploads still require the actual Homerun browser origin to be enabled in the deployed service; an allowlist change in the local Center checkout alone does not prove production access. The current metadata reader accepts bounded IPFS paths only, whereas the reference display layer also supports broader metadata URLs; unsupported metadata leaves contract operations independent and available when their own reads succeed.
+
+The metadata helper/parser pass completed with 15 metadata/UI tests, clean targeted reference lint, and a clean application typecheck. No external service mutation or live contract transaction was performed by this audit.
+
+## Runtime verification
+
+`npm run test:live -- test/runtime test/live/providers` runs the copied and targeted wallet/transaction suites. `test/runtime/review-browser.mjs` verifies the full review dialog at desktop and mobile widths, including the exact/raw payload, mandatory agreement, cancellation, native focus containment, and confirmation-control visibility. Start a separate Next server with `NEXT_PUBLIC_DETERMINISTIC_BROWSER=true NEXT_DIST_DIR=.next-review` to expose `/runtime-review-check`; the normal application returns 404 for that fixture. The fixture only approves or cancels an in-app review and has no wallet-write path.
+
+The runtime pass completed with 70 unit/component tests across 13 suites, clean targeted reference lint, passing browser checks at 1440px and 375px, and a verified 404 for the fixture on the normal server. These checks cover the shared runtime; lifecycle deployment/read/builders have their own validation requirements above.
+
+The indexer pass includes 31 passing client/proxy/account/activity tests and validation of all seven registered documents against both live Bendystraw schemas. The INCOME activity mount also passes its five existing transaction-lifetime UI tests.
+
+Actual Next browser validation on `localhost:3014` confirmed live project-name/ID search, rendered project activity, and successful unauthenticated same-origin identity/activity queries to both indexer environments. All observed query responses returned HTTP 200, no page JavaScript errors occurred, and the 390px layout had no horizontal overflow. Desktop/mobile screenshots were inspected. The browser check waits for React hydration before entering input; it does not mistake an unhydrated server-rendered field for a completed client interaction.

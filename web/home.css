@@ -1,4 +1,4 @@
-@import '/network.css';
+@import './network.css';
 
 .home-page .site-header { position: relative; z-index: 2; }
 .home-page .site-header::after { content: ''; position: absolute; bottom: 0; left: 32px; right: 32px; height: 1px; background: var(--line); }

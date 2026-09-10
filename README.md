@@ -1,143 +1,115 @@
-# Homerun ⚾︎
+# Homerun
 
 Fund and earn together.
 
-Site name: **Homerun ⚾︎**. Production domain: **homerun.money**. Hosted on Railway.
+Homerun combines an asset-funding **FUND** Juicebox with a separate **INCOME** Revnet. This checkout contains the native Next.js application, live FUND transaction integration, and an illustrative Founder Haus simulator. The deployment configuration targets Railway and `homerun.money`; implementation and local verification do not mean this revision has been deployed there.
 
-**Current design:** [FUND and INCOME have separate continuing rights](docs/NETWORK_DESIGN.md). The corporation owns the asset and the owner-controlled fundraising Juicebox. FUND participates equally per token in its eventual net sale distribution. At successful purchase, FUND holders receive an initial INCOME allocation without surrendering FUND. FUND holders receive ongoing INCOME automatically, in proportion to their FUND holdings, without staking or a vesting delay. Gross revenue enters the Revnet; newly issued INCOME goes to operations, FUND holders and the customers making revenue payments. Operators can redeem or borrow against available INCOME for expenses. The projection uses redemptions, with an investor-funded operating reserve covering early gaps; it does not simulate operator loans.
+## Application status
 
-Founder Haus remains the rental-house example. The website uses asset and revenue language so the flow also describes other income-producing assets. The preview calls the revenue token INCOME (FH-INCOME). Internal model keys and the earlier Rooftop reference-contract names remain unchanged.
+The application uses Next.js/React, Wagmi/Viem, TanStack Query, the Nana SDK deployment registry, Juicebox Center RPC/pinning services, and the shared wallet and mandatory transaction-review runtime from Juicebox Money. The comparison with Juicebox Money and Revnet Money, including remaining configuration and indexer requirements, is recorded in [ARCHITECTURE_PARITY.md](docs/ARCHITECTURE_PARITY.md). Matching the stack alone does not establish complete feature or reliability parity.
 
-The demo uses three photographs from the [official Founder Haus site](https://founderhaus.club/), with a gallery and concise venue details. [Source notes](docs/FOUNDER_HAUS_SOURCES.md) record the images and evidence. The financial figures remain scenario assumptions.
+- **`/create`** prepares and deploys only the initial FUND Juicebox. It does not deploy INCOME, issue the operator's success allocation, or grant asset withdrawals. A linked launch reviews and confirms each selected chain separately.
+- **`/project/<chainId>/<projectId>`** reads live project ownership, permissions, rulesets, treasury accounting and holder balances. Supported FUND actions include payments, credit/ERC20 transfers and claims, cash-outs, campaign rule changes, success minting, explicit withdrawal allowances, and balance deposits for refunds or asset-sale proceeds. Availability depends on fresh contract state and permissions.
+- **`/founderhaus`** is an illustrative model. Its payment and owner dialogs never submit transactions. Historical **`/project?id=<UUID>`** links remain browser-local previews, not shared deployed projects.
+- **`/projects`** finds indexed projects you own and tokens you hold, with search across standard Juiceboxes and Revnets. Project pages show indexed activity independently of their current contract reads.
+- **INCOME** uses a finalized, published global FUND snapshot, one initial-claim vault per chain, and stock Sticky for ongoing rewards. The snapshot includes linked-chain ownership and unsettled bridge claims. Each chain separately confirms its local share of the global allocation. The native launch and holder controls require verified deployments in the Nana registry. Existing canonical INCOME operations are accessible at `/income/<chainId>/<projectId>`. An INCOME URL or metadata field is not deployment evidence.
 
-The editable starting model budgets $500,000 for the house and $100,000 of usable operating cash. Including the assumed 2.5% outbound fee, that requires about $615,384.62 gross. Baseline rent is $10,000/month and expenses are $6,000/month. Operators receive 20% of post-success FUND supply; investors hold the remaining 80%. The hybrid keeps a **500,000 INCOME premint**, then allocates **70% of new INCOME to operations, 10% to FUND holders and 20% to customers**. The [design document](docs/NETWORK_DESIGN.md) explains the quarterly issuance reductions, automatic holder rewards, reserve checks and sale accounting. Issuance falls 5% every three months for two years: eight cuts, then a fixed rate.
+[TRANSACTIONS.md](docs/TRANSACTIONS.md) describes each contract operation, required evidence, recovery behavior and current boundary. Writes pass through review, account/chain checks, fresh prerequisites, simulation and wallet signing. A submitted hash or Safe proposal remains pending until actual execution and its receipt are verified. Local storage preserves drafts and recovery records; it cannot prove a transaction or project outcome.
 
-The website is a working local simulation with [reviewable owner action drafts](docs/OWNER_ACTIONS.md). It does not connect a wallet, queue a real ruleset, accept live investments, verify title or enforce corporate rights. `src/Rooftop.sol` is an earlier capped-redemption reference and does not implement the current design.
+## FUND and INCOME
 
-## Run the product
+The [current design](docs/NETWORK_DESIGN.md) gives FUND and INCOME separate continuing rights. The corporation owns the asset and the owner-controlled FUND Juicebox. Every FUND token participates equally in eventual net asset-sale proceeds. INCOME participates in the separate revenue pool. Cashing out or borrowing against INCOME does not surrender FUND.
 
-From this directory, using Node 20 or newer:
+The creation defaults model a $500,000 asset and $100,000 operating reserve. Including an assumed 2.5% outbound fee gives a $615,384.62 gross raise goal. Monthly revenue starts at $10,000 and expenses at $6,000. Blue modeling inputs are estimates: asset price and cash reserve do **not** automatically create payout limits or withdrawal allowances.
+
+Initial FUND accepts USDC, issues 10,000 FUND per USD, uses a 10% fundraising cash-out tax, and starts with owner minting disabled, zero reserved issuance and no withdrawal allowances. After a successful purchase, the proposed operator allocation is 20% of post-mint FUND supply; contributors retain 80%. The operator must separately review the permitted rule changes and actual mint amounts. Owner-controlled future rulesets remain mutable; a queued transaction does not prove an off-chain purchase or legal outcome.
+
+Off-chain contributions stay settled off-chain. Mint their FUND only after success; refund failed off-chain contributions off-chain. On-chain failure refunds share the actual remaining treasury. Returned money and asset-sale proceeds enter through `addToBalanceOf`, which adds backing without issuing new FUND. Expenses and protocol fees can reduce recovery.
+
+The initial allocation is **500,000 INCOME globally** for every FUND holder at fixed, finalized source blocks, including inactive ERC20 balances, unclaimed credits, unsettled bridge entitlements and the completed operator allocation. Existing balances claim on their recorded chain; unsettled bridge rights claim at their destination. Canonical Sticky custody is traced to its SHARE holders, preserving exact fractional ownership until the final INCOME allocation. Each chain atomically mints its portion into an immutable claim vault before local activity. Linked launches follow stock asynchronous deployment: other chains can finish later, and cross-chain supply updates arrive separately. Initial claims require no staking, activation or vesting, never expire, and always deliver to the snapshot beneficiary. The published Merkle root is an operator attestation: the site independently reconciles canonical ownership and total supply, while the contract verifies membership under that immutable commitment. Holder enumeration happens offchain, so fragmented holdings cannot exceed a launch transaction holder limit. Arbitrary custody wrappers require separate beneficial-owner reconciliation; historical graphs containing multiple FUND projects on one chain are explicitly unsupported. See [INCOME_INTEGRATION.md](docs/INCOME_INTEGRATION.md).
+
+Creation defaults allocate **70% of new INCOME to operators, 10% to FUND stakers and 20% to customers**. Issuance starts at 10 INCOME per USD, falls 5% every quarter for eight quarters, then stays fixed. These percentages divide new tokens, not cash. The retained Founder Haus demo uses its earlier 75% / 15% / 10% comparison. The projection pays expenses from the reserve first, then operator INCOME cash-outs; it does not simulate operator loans.
+
+**Ongoing rewards use stock Sticky.** A holder claims FUND credits as wallet tokens, stakes FUND, and receives Sticky SHARE. Historical SHARE balances divide each reward round proportionally on the chain receiving that revenue; stock pools do not combine stake weights across chains. There is no minimum staking period or age multiplier; participating longer can earn more rounds. Claimed ongoing rewards vest across four weekly round transitions, independently of the perpetual initial allocation. The selected Sticky profile has zero FUND cash-out tax. Unstake SHARE to recover FUND before exercising an asset-sale claim. See [STICKY_REWARDS.md](docs/STICKY_REWARDS.md) for exact timing, expiry and release verification.
+
+The asset's appraised value is not spendable INCOME backing. Borrowing and cash-out estimates are alternative uses of the same tokens. At sale, net proceeds and unused reserve belong to FUND, while INCOME backing and loan obligations remain separate. Neither token promises repayment or a fixed payoff date. See [NETWORK_DESIGN.md](docs/NETWORK_DESIGN.md) and [OWNER_ACTIONS.md](docs/OWNER_ACTIONS.md) for the economic assumptions and lifecycle decisions.
+
+## Run locally
+
+Use Node **24.1 or newer** and npm **11 or newer**. The Dockerfile uses Node 26.7.
 
 ```sh
+npm ci
 npm run dev
 ```
 
-Open the [homepage](http://localhost:3010), or go straight to the [Founder Haus demo](http://localhost:3010/founderhaus). The homepage ballpark is drawn in JavaScript on canvas. All five asset types appear in the neighborhood. The geometry stays still while a WebGL color drift changes pixel colors at up to 24 frames per second. Footer controls select Shapes or Acid mode, intensity, pace and grouping. Motion pauses offscreen or in hidden tabs, respects reduced-motion settings, and can be paused from the footer. There are no web runtime dependencies to install. `PORT` can override the preview port. The development server binds to localhost; `HOST` overrides the bind address. Production serves `dist/` with `NODE_ENV=production`.
+Open [localhost:3010](http://localhost:3010), [Create](http://localhost:3010/create), or the [Founder Haus demo](http://localhost:3010/founderhaus). Next renders the demo body on the server; React owns its controls, gallery and SVG charts. The homepage retains the canvas ballpark, Shapes/Acid color modes, reduced-motion support and pause controls.
+
+Juicebox Center must allow the application's actual origin. The configured development origins are `http://localhost:3010` and `http://localhost:3014`; production configuration uses `https://homerun.money`. Set `NEXT_PUBLIC_SITE_URL` when changing the local origin and, if needed, `NEXT_PUBLIC_JBCENTER_URL` for the corresponding Center service. WalletConnect requires `NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID`; Para requires its public application configuration, including `NEXT_PUBLIC_PARA_API_KEY`. Those optional integrations do not replace the injected-wallet path.
+
+The Create form saves a browser draft and distinguishes editable assumptions from proposed contract settings. A prepared deployment pins metadata, freezes the launch inputs and saves a resumable per-chain journal before submission. Ethereum, Optimism, Base and Arbitrum are selected by default, with their Sepolia counterparts available for testing. One operator address is entered in the UI, while FUND ownership and any later INCOME operator permissions remain distinct contract roles.
+
+The demo's blue controls change fundraising, failure, income and sale scenarios. Its Pay panel preserves the original FUND contribution when modeling a separate INCOME payment. ETH input uses a labeled fixed conversion rate only in that illustration. Downloads retain the current assumptions, and **Use on your site** supplies an AI integration brief with the current configuration. Founder Haus photographs and venue descriptions are documented in [FOUNDER_HAUS_SOURCES.md](docs/FOUNDER_HAUS_SOURCES.md); the financial figures are assumptions.
+
+## Checks
 
 ```sh
-npm test
-npm run build
-npm run test:contracts
+npm run check
 ```
 
-`build` writes a standalone site to `dist/`. Solidity tests use Foundry, Solidity 0.8.28, and the existing OpenZeppelin and forge-std dependencies in the sibling `nana-core-v6` workspace package; see `remappings.txt`.
+`check` runs lint, the retained model/unit tests, live integration tests, the Next production build, and Foundry contract tests. The individual commands are:
 
-With the preview running, `npm run test:browser` checks lifecycle states, live projection edits, scenario downloads and mobile layouts. It uses the existing Playwright installation in `webclients/juicescan` and macOS Chrome; `PLAYWRIGHT_MODULE`, `CHROME_PATH`, and `BASE_URL` can override those defaults.
+| Command | Scope |
+| --- | --- |
+| `npm run lint` | Application and script linting |
+| `npm run typecheck` | TypeScript checking without emission |
+| `npm test` | Financial models and retained JavaScript unit tests |
+| `npm run test:live` | Vitest tests for contract builders/reads, launch recovery, metadata boundaries and wallet/review behavior |
+| `npm run build` | Stage public assets and build the Next standalone application |
+| `npm run test:contracts` | Foundry tests for the Solidity compositions and earlier reference vault |
+| `npm run test:browser` | Native project/demo behavior, lifecycle calculations, dialogs, local previews and mobile layouts |
+| `npm run test:create` | Native Create flow, draft persistence, review and responsive layouts |
+| `npm run test:a11y` | Automated accessibility checks across the rendered flows |
 
-`npm run test:a11y` runs automated WCAG 2 A/AA checks across lifecycle states, expanded details and owner action dialogs. Automated results are a limited check, not a certification of accessibility.
+Start the app before browser checks. `BASE_URL`, `PLAYWRIGHT_MODULE`, `CHROME_PATH` and `BROWSER_SCREENSHOT_DIR` override their defaults. The existing workspace Playwright installation and macOS Chrome are used by default. Foundry uses Solidity 0.8.28 and sibling workspace dependencies listed in [foundry.toml](foundry.toml). Automated accessibility checks are limited evidence, not a certification.
 
-## Create a Homerun
-
-The homepage links to `/create`. Four steps cover the asset, the fundraising budget and operator allocation, the income plan, a written revenue plan and an ownership-over-time slider, and a review with selected networks and optional INCOME revnet operator controls. All four production networks are selected by default: Ethereum, Optimism, Base and Arbitrum. Switching to testnets selects their Sepolia counterparts. The selector uses the same network symbols as Juicebox. The revnet operator role is distinct from the FUND project owner and from receiving operator tokens; its intended address applies across the selected networks. There is no fixed fundraising window; closing remains an owner action. Empty fields can use the example defaults, including “Untitled”. Invalid entered amounts and overallocated token splits must be corrected.
-
-The form saves a draft in this browser. Creation saves a local project and produces a downloadable, explicitly non-executable deployment draft. No wallet is connected and no transaction is sent. `/project/?id=…` loads that project’s name, photo, assumptions and terms into the simulator; these links work only in the browser where the project is stored. A new preview starts at $0 raised. Its Pay component can quote a prospective contribution without changing the displayed fundraising balance. The Founder Haus example remains separate. Revenue plans are retained in the setup export, review and income preview.
-
-`npm run test:create` checks the creation flow, local persistence, independent project previews, mobile layouts and accessibility using the same browser dependencies as the main UI suite.
-
-## Product flows
-
-- **Switch states:** a distinct “Preview controls” panel groups stage selection, fundraising progress, elapsed income months and the later hypothetical sale price. These controls change the illustration, with asset estimates alongside them above the project header. The three bases in the header are display-only. Stages include raising, raise complete, refunding, refunds complete, earning income, or asset sold. Process steps mark completed and upcoming steps. There is no automatic payoff target.
-- **Edit projections:** asset price, cash reserve, monthly revenue and monthly expenses appear in the top preview section. “Annual growth” directly reveals the revenue and expense growth estimates. A single hypothetical sale-price input appears later in the “Asset sold” preview; debt and selling-expense inputs are not shown. Agreed token allocations, issuance and protocol fees are explained as fixed terms, rather than presented as visitor inputs.
-- **Understand each input:** hover a field, focus it with the keyboard, or tap its question mark for a plain-language explanation. Fundraising progress includes an example using the current dollar goal. Escape and outside taps dismiss help.
-- **Preview your contribution:** the Pay box routes payments to FUND during fundraising and INCOME during operation, or shows a refund or sale cash-out. Its dropdowns contain contribution details, token ownership, and cash-out and borrowing estimates that respond to the payment amount. Earlier FUND holdings stay separate from new INCOME payments. Pay accepts USDC or illustrative ETH input, converting ETH to USDC using a fixed, labeled preview rate of 2,500 USDC per ETH. This is not a live market or router quote; refunds and sale claims remain in USDC. FUND ownership alone earns the ongoing holder allocation; no staking action is required.
-- **Read the money:** a budget bar explains the fundraising goal, charts show revenue held and reserve history, and a borrowing chart shows estimated personal liquidity over time. Hover or use the month sliders to inspect values. Ownership rings distinguish current FUND and INCOME balances, including automatically allocated holder rewards. “How the money moves” explains the token allocation and reserve stress scenarios.
-- **See borrowing grow:** set the month directly beside your quote, or advance one month, to update the preview and its ownership charts. Compare cash-out and estimated first-loan proceeds for initial INCOME plus automatic holder rewards. FUND ownership is unaffected by an INCOME exit.
-- **Prepare owner actions:** review and download ordered closing, refund, purchase-completion and sale-redemption drafts. State preview buttons change only the simulation; missing chain and project data remain explicit prerequisites.
-- **Save or reset:** download the current inputs and projection at the bottom of the page, or restore the example. On mobile, preview settings appear first; contribution details remain in dropdowns beneath Pay.
-
-All investment states live at `/founderhaus`, linked from the illustrated homepage. The previous `/demo.html` URL redirects there. `network-app.mjs` and `network-model.mjs` are current. The older story, lifecycle and capped calculator modules remain references and are not loaded by the website.
-
-The owner determines fundraising outcomes and manually queues state changes. A failed raise refunds the remaining cash after incurred expenses, with no operator success mint. At successful purchase, ordinary FUND issuance stops after the operator allocation. FUND continues as the proposed corporate/property claim. Take the initial INCOME snapshot before enabling automatic holder rewards, resolving prior custodians without double counting, then atomically launch and materialize the full initial allocation. Later claims preserve FUND and cannot repeat the closing allocation. The premint gives early participation, not senior repayment priority.
-
-The revenue model includes operator and optional customer redemptions, operating reserve use, automatic FUND-holder rewards and unpaid expense gaps. Each revenue payment allocates the holder share immediately across all FUND, including the operator’s tokens. Production distribution still needs a reviewed implementation that accounts for transfers, snapshots and replay protection without requiring holders to deposit FUND. Owner drafts describe that unimplemented specification; they do not substitute the earlier Sticky hook or provide executable transactions. An explicit legacy staking mode remains available for model comparisons, but the website uses direct holder rewards.
-
-The default month-12 example holds $62,399.44 in the INCOME revnet and $85,600.56 in operating reserve. Its $10,000 contributor has an $835.16 cash-out estimate or a $785.05 first-loan estimate. These are alternative choices and scenario assumptions, not guarantees.
-
-The model assumes one local USDC revnet balance, zero INCOME cash-out tax and no actual holder loans. The first-loan preview uses 6% assumed upfront fees, excluding subsequent fee-payment issuance and repayment effects. Next-month quotes assume no loan today. Cross-chain balances, live holder snapshots and transfers, AMM routing, historical FUND trades/exits, taxes and corporate enforcement are not simulated. Dollar ledgers use cents; illustrative token units are not calldata.
-
-At a sale, net property proceeds and the unused operating reserve enter FUND once. Every FUND token receives the same proportional claim. INCOME backing, loans and earned holder rewards remain separate from the FUND redemption. No property, revenue collection, expense, sale or corporate documentation has been independently verified.
-
-## Earlier reference model: capped cash-outs without loans
-
-Let `B` be protected liquid backing, `S` outstanding token units, `T` the target per unit, and `x` the units redeemed:
-
-```text
-cash-out amount = min(floor(B × x / S), x × T)
-additional backing required = max(0, S × T − B)
-```
-
-Redemption burns the units and terminates all their future rights. Before full backing, an exit can realize a loss and forfeit the rest of the target. Proportional redemption leaves the remaining unit price unchanged except for rounding. Future receipts benefit the remaining units; early discounted exits also reduce the sponsor's final funding requirement.
-
-The property itself is recovery security, not instantly spendable cash. Initial backing can be zero after subscription proceeds are deployed at closing. The product does not guarantee that principal or the target return will be recovered.
-
-At full target backing, governing documents can authorize legal release while preserving cash for holders who have not redeemed. If every investor voluntarily redeems below target instead, claims can be extinguished without anyone having received their full target. These outcomes are deliberately separate in both the explanation and contract signals.
-
-Retained backing is not a dividend. The earlier $2 million example used 2,000,000 $1 tokens and $185,600 of illustrative backing. It remains in the legacy reference modules only.
+[FUND_FORK_VERIFICATION.md](docs/FUND_FORK_VERIFICATION.md) records **29 successful local transactions** against an Ethereum fork: launch, payment, campaign changes, explicit asset withdrawals, success minting, token operations, sale distribution and a separate failure/refund branch. It includes reproducible commands and the guarded local-only write endpoint. That result does not establish browser-wallet, Safe, cross-chain, INCOME or distributor correctness, and no transactions from that run were sent to Ethereum.
 
 ## Implementation map
 
 | Path | Responsibility |
 | --- | --- |
-| [web/index.html](web/index.html), [web/home.css](web/home.css), [web/ballpark.mjs](web/ballpark.mjs) | Homepage with a neighborhood ballpark drawn in JavaScript |
-| [web/founderhaus/index.html](web/founderhaus/index.html), [web/network-app.mjs](web/network-app.mjs), [web/network.css](web/network.css) | Investment simulator and editable projections |
-| [web/founder-haus.mjs](web/founder-haus.mjs), [web/founder-haus.css](web/founder-haus.css), [docs/FOUNDER_HAUS_SOURCES.md](docs/FOUNDER_HAUS_SOURCES.md) | Real venue photographs, accessible gallery and source notes |
-| [web/field-help.mjs](web/field-help.mjs), [web/field-help-ui.mjs](web/field-help-ui.mjs) | Plain-language help for mouse, keyboard and touch |
-| [web/projection-charts.mjs](web/projection-charts.mjs), [web/projection-charts.css](web/projection-charts.css) | Budget, rent cash, operating reserve and borrowing visuals |
-| [web/ownership-charts.mjs](web/ownership-charts.mjs), [web/ownership-charts.css](web/ownership-charts.css) | Current FUND and INCOME ownership rings and quote-month styling |
-| [web/network-model.mjs](web/network-model.mjs), [test/network-model.test.mjs](test/network-model.test.mjs) | FUND/INCOME claims, automatic holder rewards, issuance, operating redemptions, reserves and sale accounting |
-| [web/owner-actions.mjs](web/owner-actions.mjs), [test/owner-actions.test.mjs](test/owner-actions.test.mjs) | Ordered, non-executable owner action drafts and phase guards |
-| [docs/NETWORK_DESIGN.md](docs/NETWORK_DESIGN.md), [docs/OWNER_ACTIONS.md](docs/OWNER_ACTIONS.md) | Current economics, assumptions, source dependencies and owner workflow |
-| [web/lifecycle-model.mjs](web/lifecycle-model.mjs), [test/lifecycle-model.test.mjs](test/lifecycle-model.test.mjs) | Earlier fixed-supply lifecycle comparison |
-| [web/model.mjs](web/model.mjs) | Earlier capped cash-out and recovery reference model |
-| [src/Rooftop.sol](src/Rooftop.sol) | One-property subscription escrow and protected redemption vault |
-| [test/model.test.mjs](test/model.test.mjs) | Cash conservation, early exits, reserves, stress, recovery, and return tests |
-| [test/Rooftop.t.sol](test/Rooftop.t.sol) | Escrow/receipt lifecycle, backing protections, precision, and fuzz tests |
-| [docs/MECHANISM.md](docs/MECHANISM.md) | Financial mechanics and settlement semantics |
-| [docs/PLAYBOOK.md](docs/PLAYBOOK.md) | Earlier financing playbook; current economics superseded by NETWORK_DESIGN.md |
-| [docs/JUICEBOX_ESCROW.md](docs/JUICEBOX_ESCROW.md) | Earlier constrained launcher and receipt-conversion exploration |
-| [docs/REVNET_COMPOSITION.md](docs/REVNET_COMPOSITION.md) | Earlier fixed-supply Revnet and property-release-floor exploration |
-| [web/assets/IMAGE.md](web/assets/IMAGE.md) | Generated illustrative property image and full prompt |
+| [src/app](src/app) | Native Next routes, layout and metadata |
+| [src/providers](src/providers), [src/hooks/useSafeTx.ts](src/hooks/useSafeTx.ts), [src/components/TransactionReviewProvider.tsx](src/components/TransactionReviewProvider.tsx) | Shared wallet connections, query lifecycle and reviewed transaction boundary |
+| [src/components/LiveCreate.tsx](src/components/LiveCreate.tsx), [src/lib/fund-launch-session.ts](src/lib/fund-launch-session.ts), [src/lib/fund-launch-verification.ts](src/lib/fund-launch-verification.ts) | Initial FUND launch, persisted recovery and receipt/postcondition verification |
+| [src/components/FundProject.tsx](src/components/FundProject.tsx), [src/components/FundOperatorActions.tsx](src/components/FundOperatorActions.tsx), [src/lib/fund-state.ts](src/lib/fund-state.ts), [src/lib/fund-contracts.ts](src/lib/fund-contracts.ts) | Live FUND reads and holder/operator transaction preparation |
+| [src/components/IncomeLaunch.tsx](src/components/IncomeLaunch.tsx), [src/components/IncomeProject.tsx](src/components/IncomeProject.tsx), [src/lib/income-launch.ts](src/lib/income-launch.ts) | Gated INCOME composition and contract-based INCOME interfaces |
+| [src/HomerunIncomeDeployer.sol](src/HomerunIncomeDeployer.sol), [src/HomerunInitialIncomeVault.sol](src/HomerunInitialIncomeVault.sol) | Atomic initial INCOME prefunding, immutable per-holder claims, and canonical stock Sticky routing |
+| [src/components/InitialIncomeClaim.tsx](src/components/InitialIncomeClaim.tsx), [src/components/StickyHolder.tsx](src/components/StickyHolder.tsx), [src/lib/fund-global-snapshot.ts](src/lib/fund-global-snapshot.ts), [src/lib/fund-global-manifest.ts](src/lib/fund-global-manifest.ts) | Linked-chain snapshot reconciliation, fixed-beneficiary initial claims, and stock Sticky holder operations |
+| [src/components/HomePage.tsx](src/components/HomePage.tsx), [src/components/ProjectPage.tsx](src/components/ProjectPage.tsx), [src/components/ProjectCharts.tsx](src/components/ProjectCharts.tsx), [src/components/CreateFlow.tsx](src/components/CreateFlow.tsx) | Native React presentation, creation and illustrative model controls |
+| [web/network-model.mjs](web/network-model.mjs), [web/create-model.mjs](web/create-model.mjs), [web/owner-actions.mjs](web/owner-actions.mjs) | Reused pure financial calculations, local draft normalization and non-executable demo owner drafts |
+| [web](web) | Retained styles, assets and pure rendering/model helpers; old HTML and imperative app entry points are comparison artifacts |
+| [docs/TRANSACTIONS.md](docs/TRANSACTIONS.md), [docs/ARCHITECTURE_PARITY.md](docs/ARCHITECTURE_PARITY.md) | Contract integration status, runtime provenance and remaining verification gates |
 
-## Reference contract scope
+`web/network-app.mjs` is not the active application entry point. `npm run dev:prototype` and `npm run build:prototype` retain the earlier static prototype for comparison. The older story, fixed-supply lifecycle and capped calculator modules are reference material rather than live project state.
 
-`Rooftop` is a standalone escrow and ERC-20 receipt vault. Receipts are deliberately nontransferable and use whole units. Issue and target prices are expressed in the settlement token's base units.
+## Earlier Rooftop reference
 
-- Immutable issue price, target, raise ceiling, deadline, agreement hash, closing attestor, and proceeds recipient.
-- Exact subscription accounting and refunds for cancelled or expired closing.
-- A single mint of the full supply at attested closing. Passive subscribers' unclaimed receipts remain included in the denominator.
-- Protected backing deposits, capped cash-outs, minimum-output checks, and zero-value burn rejection.
-- No discretionary withdrawal, subsequent mint, independent burn, approval, or transfer function.
-- `targetWasFullyFunded` records full backing of then-outstanding units. `allClaimsExtinguished` records zero remaining units. `releaseEligible()` expresses economic eligibility, not a title transfer or proof of historical investor returns.
+[src/Rooftop.sol](src/Rooftop.sol) is an earlier standalone escrow and receipt vault, **not Homerun's contract backend**. It uses nontransferable whole-unit receipts, immutable closing terms, exact subscription/refund accounting and protected backing. It has no discretionary withdrawal or independent holder burn/transfer path. Its capped redemption model is:
 
-The closing attestor is trusted to assess off-chain conditions; a document hash is only an assertion reference. Closing proceeds go to the immutable closing recipient, which must handle creditor/seller payments and initial reserves. The vault has no enforcement over that recipient.
+```text
+cash-out amount = min(floor(backing × units redeemed / outstanding units), units redeemed × target)
+additional backing required = max(0, outstanding units × target − backing)
+```
 
-The asset must be a standard, non-rebasing ERC-20. Exact balance checks reject fee-on-transfer behavior, but cannot prevent issuer freezes, depegging, malicious balance reporting, or asset implementation changes. Explicit funding returns only excess from that deposit. Unsolicited direct-transfer excess is intentionally unsweepable.
+Redemption terminates those units' future rights. Early exits can realize losses; full backing, extinguished claims and legal release are different outcomes. The attestor and off-chain proceeds recipient remain trusted, and the reference vault does not enforce asset ownership, revenue remittance or the current FUND/INCOME policy. [test/Rooftop.t.sol](test/Rooftop.t.sol) retains its invariant and fuzz tests.
 
-The reference vault does not enforce the current product's operating policy, rent remittance, corporate rights or sale distribution. It is an earlier contract exploration.
+[MECHANISM.md](docs/MECHANISM.md), [PLAYBOOK.md](docs/PLAYBOOK.md), [JUICEBOX_ESCROW.md](docs/JUICEBOX_ESCROW.md) and [REVNET_COMPOSITION.md](docs/REVNET_COMPOSITION.md) document earlier explorations. Adapting that capped vault would require accounting for all supply changes, withdrawal authority and actual net cash-out fees; those historical adapter constraints are not a substitute for the current Juicebox/Revnet integration.
 
-## Earlier capped adapter exploration
+## Build and deploy
 
-The preferred product direction is NETWORK_DESIGN.md. The following notes explain the limitations of adapting the earlier capped vault directly; they are not requirements to replace the stock Revnet loan system.
+`npm run build` creates `.next/standalone`; `npm start` runs the standalone server locally. The multi-stage [Dockerfile](Dockerfile) installs application dependencies, builds Next, and copies the standalone runtime, static chunks and public assets into the runtime image. It runs as the `node` user on `0.0.0.0:$PORT`.
 
-The local V6 cash-out data-hook interface can express zero-tax capped proportional math by using protected surplus bounded by the outstanding target. A production adapter must additionally preserve exactly the same claim supply, currency precision, and actual liquid custody, without duplicate exits.
+[railway.json](railway.json) selects the Dockerfile and checks `/` before routing traffic. Railway supplies the runtime port; the custom domain must target that port. Deploying this web application does not deploy or enable the INCOME helper, reward distributor or earlier Rooftop vault.
 
-Two source details prevent treating this as a drop-in hook:
-
-1. [`JBController.burnTokensOf`](../../nana-core-v6/src/JBController.sol) permits token burns outside the terminal cash-out hook. The adapter must constrain or explicitly account for every way legal claim supply can change.
-2. [`JBMultiTerminal`](../../nana-core-v6/src/JBMultiTerminal.sol) can charge a terminal fee on qualifying cash-outs even at zero cash-out tax. Its store preview is not necessarily the investor's final net receipt. The production UI must show net cash, actual fees, and transaction costs; it must never describe a gross target as a guaranteed net return.
-
-Project permissions, mint paths, allowances, payout destinations, successor rulesets, and controller/terminal migration also need complete constraints. The standalone prototype avoids implying these production guarantees already exist. No deployed contracts or RPC state are used by the current interface.
-
-## Deploy
-
-The Dockerfile builds the static site and runs a dependency-free Node server on `0.0.0.0:$PORT`. Railway reads `railway.json` and checks `/` before routing traffic. Only the built website is served; the reference contracts are not deployed.
+The Docker build accepts the public site, Center, indexer, WalletConnect and Para variables described above as build arguments. Set them on the Railway service before building; changing `NEXT_PUBLIC_*` variables requires a new build because Next embeds them in browser JavaScript. Only public application configuration belongs in these arguments. Contract deployer keys and server API secrets are never frontend configuration.

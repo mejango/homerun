@@ -1,22 +1,23 @@
-/** Create-flow browser checks. Start npm run dev first. Uses workspace Playwright/axe and Chrome. */
+/** Native Next.js Create regressions. Start npm run dev first. No wallet connection or transaction is signed. */
 import assert from 'node:assert/strict';
 import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const moduleURL = (override, fallback) => override ? pathToFileURL(override) : new URL(fallback, import.meta.url);
-const { chromium } = await import(moduleURL(process.env.PLAYWRIGHT_MODULE, '../../../webclients/juicescan/node_modules/playwright/index.mjs').href);
-const { default: AxeBuilder } = await import(moduleURL(process.env.AXE_MODULE, '../../../webclients/juicescan/node_modules/@axe-core/playwright/dist/index.mjs').href);
+const { chromium } = await import(moduleURL(process.env.PLAYWRIGHT_MODULE, '../node_modules/playwright/index.mjs').href);
+const { default: AxeBuilder } = await import(moduleURL(process.env.AXE_MODULE, '../node_modules/@axe-core/playwright/dist/index.mjs').href);
 const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce', acceptDownloads: true });
 const page = await context.newPage();
-const home = process.env.BASE_URL || 'http://127.0.0.1:3010/';
+const home = process.env.BASE_URL || 'http://localhost:3010/';
 const errors = [], failures = [];
-let checks = 0, projectURL;
-page.setDefaultTimeout(7000);
+let checks = 0;
+page.setDefaultTimeout(15_000);
+page.setDefaultNavigationTimeout(180_000);
 page.on('pageerror', error => errors.push(error.message));
 page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
-page.on('response', response => { if (response.status() >= 400) errors.push(`HTTP ${response.status()} ${response.url()}`); });
+page.on('response', response => { if (response.status() >= 400 && new URL(response.url()).origin === new URL(home).origin) errors.push(`HTTP ${response.status()} ${response.url()}`); });
 async function check(name, callback) {
   checks++;
   try { await callback(); process.stdout.write(`PASS ${name}\n`); }
@@ -31,6 +32,8 @@ const operatorWallet = `0x${'a1'.repeat(20)}`;
 const networkIDs = ['ethereum', 'optimism', 'base', 'arbitrum'];
 const revenuePlan = 'Members pay for tool hire and repairs.\nWeekend <workshops> earn extra revenue & support maintenance.';
 async function downloadSetup() {
+  const details = page.locator('details').filter({ has: page.locator('#download-setup') });
+  if (!(await details.evaluate(node => node.open))) await details.locator('summary').click();
   const pending = page.waitForEvent('download');
   await page.locator('#download-setup').click();
   const result = await pending;
@@ -50,7 +53,7 @@ async function shot(name) {
   await page.screenshot({ path: join(process.env.BROWSER_SCREENSHOT_DIR, name), fullPage: true });
 }
 async function a11y(label) {
-  const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+  const result = await new AxeBuilder({ page }).exclude('nextjs-portal').withTags(['wcag2a', 'wcag2aa']).analyze();
   await check(`Accessibility: ${label}`, async () => assert.deepEqual(result.violations.map(v => ({ id: v.id, nodes: v.nodes.map(n => n.target) })), [], label));
 }
 async function noOverflow() {
@@ -58,10 +61,23 @@ async function noOverflow() {
 }
 
 try {
-  await check('Homepage starts a fresh local creation flow', async () => {
+  await check('Create is rendered on the server before JavaScript runs', async () => {
+    const serverContext = await browser.newContext({ javaScriptEnabled: false });
+    try {
+      const serverPage = await serverContext.newPage();
+      const response = await serverPage.goto(new URL('/create', home).href, { timeout: 180_000 });
+      assert.equal(response.status(), 200);
+      assert.equal(await serverPage.getByRole('heading', { name: 'Design the rules' }).count(), 1);
+      assert.equal(await serverPage.getByLabel('Title', { exact: true }).count(), 1);
+      assert.equal(await serverPage.locator('.brand-ball svg').count(), 1);
+      assert.equal(await serverPage.locator('script[src*="create-app.mjs"]').count(), 0);
+    } finally { await serverContext.close(); }
+  });
+  await check('Homepage starts the native React creation flow', async () => {
     await page.goto(home);
     assert.equal((await page.locator('.create-homerun').textContent()).trim(), 'Begin');
     await page.locator('.create-homerun').click();
+    await page.waitForURL(/\/create\/?$/);
     assert.match(page.url(), /\/create\/?$/);
     await currentStep(0);
     assert.equal(await page.locator('.create-intro h1').textContent(), 'Design the rules');
@@ -75,7 +91,8 @@ try {
   await check('Blank names receive a default and Back keeps editable asset details', async () => {
     await next();
     await currentStep(1);
-    assert.equal(await input('name').inputValue(), 'Untitled');
+    assert.equal(await page.locator('#draft-name').textContent(), 'Untitled');
+    await page.waitForFunction(() => document.activeElement?.id === 'step-title-1');
     assert.equal(await page.locator('#step-title-1').evaluate(node => node === document.activeElement), true);
     await page.locator('#create-back').click();
     await currentStep(0);
@@ -86,14 +103,15 @@ try {
     assert.equal(await page.locator('#draft-name').textContent(), 'Neighborhood Workshop');
     await next();
     await currentStep(1);
+    await page.waitForFunction(() => document.activeElement?.id === 'step-title-1');
     assert.equal(await page.locator('#step-title-1').evaluate(node => node === document.activeElement), true);
   });
   await check('Funding validates amounts and operator ownership', async () => {
     await input('purchaseBudget').fill('');
     await next();
     await currentStep(2);
-    assert.equal(await input('purchaseBudget').inputValue(), '500,000');
     await page.locator('#create-back').click();
+    assert.equal(await input('purchaseBudget').inputValue(), '500,000');
     await input('purchaseBudget').fill('0');
     await next();
     await currentStep(1);
@@ -143,7 +161,7 @@ try {
     assert.equal(await input('revenueDescription').inputValue(), revenuePlan);
   });
   await check('INCOME allocations prevent over-allocation and show the customer remainder', async () => {
-    assert.equal(await page.locator('label[for="create-stickySplitPercent"]').textContent(), 'To FUND holders');
+    assert.equal(await page.locator('label[for="create-stickySplitPercent"]').textContent(), 'To FUND stakers');
     assert.match(await page.locator('[data-step-panel="2"] .create-note').textContent(), /Customers receive the remaining new tokens/);
     await input('monthlyRent').fill('200');
     await input('monthlyCosts').fill('50');
@@ -192,7 +210,9 @@ try {
   await check('Review defaults to all production networks with accessible icon-only choices', async () => {
     assert.match(await page.locator('#create-review').textContent(), /Neighborhood Workshop/);
     assert.match(await page.locator('#create-review').textContent(), /\$1,025\.65/);
-    assert.equal(await page.locator('#create-next').textContent(), 'Preview');
+    assert.equal(await page.locator('#create-next').count(), 0);
+    await page.getByRole('heading', { name: 'Launch the FUND raise', exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Save metadata and prepare deployment', exact: true }).isDisabled(), true);
     assert.equal(await environment('production').getAttribute('aria-pressed'), 'true');
     assert.equal(await environment('testnet').getAttribute('aria-pressed'), 'false');
     assert.deepEqual(await selectedNetworks(), networkIDs);
@@ -201,10 +221,9 @@ try {
       assert.equal((await network(id).textContent()).trim(), '');
       assert.equal(await network(id).locator('img').evaluate(img => img.complete && img.naturalWidth > 0 && img.src.endsWith('.svg')), true);
     }
-    assert.equal(await input('revnetOperatorEnabled').isChecked(), true);
     assert.equal(await input('operatorWallet').isVisible(), true);
     const setup = await downloadSetup();
-    assert.equal(setup.schemaVersion, 2);
+    assert.equal(setup.schemaVersion, 3);
     assert.equal(setup.networkEnvironment, 'production');
     assert.deepEqual(setup.plannedNetworks.map(chain => chain.chainId), [1, 10, 8453, 42161]);
     assert.equal(Object.hasOwn(setup, 'plannedNetwork'), false);
@@ -232,32 +251,28 @@ try {
     assert.deepEqual(setup.plannedNetworks.map(chain => chain.chainId), [11155111, 84532]);
     await network('ethereum').click();
     await network('base').click();
-    await next();
     await currentStep(3);
-    assert.equal(await input('networks').getAttribute('aria-invalid'), 'true');
+    assert.equal(await input('networks').getAttribute('aria-describedby'), 'networks-error');
     assert.match(await page.locator('#networks-error').textContent(), /at least one/);
-    assert.equal(await page.locator('#create-success').isHidden(), true);
+    assert.equal(await page.locator('#create-success').count(), 0);
     await a11y('Empty network selection validation');
     await environment('production').click();
     assert.deepEqual(await selectedNetworks(), networkIDs);
     await environment('testnet').click();
     await network('optimism').click();
     await network('arbitrum').click();
-    assert.equal(await input('networks').getAttribute('aria-invalid'), 'false');
+    assert.equal(await input('networks').getAttribute('aria-describedby'), null);
   });
   await check('One operator address serves FUND ownership and optional INCOME controls', async () => {
-    assert.equal(await input('revnetOperatorEnabled').isHidden(), true);
     assert.equal(await input('operatorWallet').isVisible(), true);
     let setup = await downloadSetup();
     assert.equal(setup.revnetOperator.enabled, true);
     assert.equal(setup.revnetOperator.status, 'not-specified');
     assert.equal(setup.revnetOperator.address, null);
     await input('operatorWallet').fill('not-a-wallet');
-    await next();
     await currentStep(3);
     assert.equal(await input('operatorWallet').getAttribute('aria-invalid'), 'true');
     await input('operatorWallet').fill('0x0000000000000000000000000000000000000000');
-    await next();
     assert.equal(await input('operatorWallet').getAttribute('aria-invalid'), 'true');
     await input('operatorWallet').fill(operatorWallet);
     setup = await downloadSetup();
@@ -265,7 +280,6 @@ try {
     assert.equal(setup.revnetOperator.enabled, true);
     assert.equal(setup.revnetOperator.address, operatorWallet);
     assert.equal(setup.revnetOperator.status, 'specified');
-    assert.equal(await input('revnetOperatorEnabled').isHidden(), true);
     assert.equal(await input('operatorWallet').inputValue(), operatorWallet);
     await input('operatorWallet').fill(operatorWallet);
     setup = await downloadSetup();
@@ -278,14 +292,79 @@ try {
     assert.equal(setup.execution.enabled, false);
     assert.equal(setup.asset.name, 'Neighborhood Workshop');
     assert.equal(Object.hasOwn(setup.funding, 'durationDays'), false);
-    assert.equal(await page.locator('#create-success').isHidden(), true);
+    assert.equal(await page.locator('#create-success').count(), 0);
     await page.reload();
     await currentStep(3);
-    assert.equal(await input('revnetOperatorEnabled').isChecked(), true);
     assert.equal(await input('operatorWallet').inputValue(), operatorWallet);
     assert.deepEqual(await selectedNetworks(), ['ethereum', 'base']);
     await a11y('Review plan with testnet subset and revnet operator');
     await shot('create-review-desktop.png');
+  });
+  await check('Live entry requires a wallet and sign-in cannot create a fake deployment', async () => {
+    const prepare = page.getByRole('button', { name: 'Save metadata and prepare deployment', exact: true });
+    assert.equal(await prepare.isDisabled(), true);
+    assert.match(await page.locator('#create-contract-actions').textContent(), /INCOME.*separate later actions/);
+    assert.equal(await page.locator('#create-next').count(), 0);
+    assert.equal(await page.locator('#create-success').count(), 0);
+    await page.getByRole('button', { name: 'Connect wallet', exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.waitFor({ state: 'visible' });
+    assert.match(await dialog.textContent(), /Connect your wallet|Sign in/);
+    await page.keyboard.press('Escape');
+    await dialog.waitFor({ state: 'hidden' });
+    assert.equal(await prepare.isDisabled(), true);
+    assert.equal(await page.evaluate(() => localStorage.getItem('homerun:fund-launch:v1')), null);
+    assert.equal(await page.evaluate(() => localStorage.getItem('homerun:created-projects:v1')), null);
+  });
+  await check('StrictMode and client navigation preserve the saved review configuration', async () => {
+    const before = await page.evaluate(() => JSON.parse(localStorage.getItem('homerun:create-draft:v1')));
+    await page.getByRole('link', { name: 'Homerun home', exact: true }).click();
+    await page.locator('.create-homerun').click();
+    await currentStep(3);
+    assert.equal(await input('operatorWallet').inputValue(), operatorWallet);
+    assert.deepEqual(await selectedNetworks(), ['ethereum', 'base']);
+    const after = await page.evaluate(() => JSON.parse(localStorage.getItem('homerun:create-draft:v1')));
+    assert.deepEqual(after.raw, before.raw);
+  });
+  await check('Modeling panels and FUND pie retain clear field purpose and ownership labels', async () => {
+    await page.locator('[data-create-step="1"]').click();
+    assert.equal(await page.locator('.fundraise-modeling .create-input').count(), 2);
+    assert.equal(await page.getByRole('img', { name: 'Operators 20%, contributors 80%.' }).count(), 1);
+    assert.equal(await page.locator('#fund-operator-percent').textContent(), '20%');
+    assert.equal(await page.locator('#fund-contributor-percent').textContent(), '80%');
+    await page.locator('[data-create-step="2"]').click();
+    assert.equal(await page.locator('.modeling-inputs .create-input').count(), 4);
+    await input('income-months').fill('24');
+    assert.equal(await page.locator('#create-income-month-label').textContent(), 'Month 24');
+    assert.notEqual(await page.locator('[data-income-total]').textContent(), '500,000');
+    await input('operatorSplitPercent').fill('100');
+    await page.locator('[data-create-step="3"]').click();
+    await currentStep(2);
+    assert.equal(await input('operatorSplitPercent').getAttribute('aria-invalid'), 'true');
+    await input('operatorSplitPercent').fill('70');
+    await page.locator('[data-create-step="3"]').click();
+    await currentStep(3);
+    assert.equal(await page.getByText('Income plan', { exact: true }).count(), 0);
+  });
+  await check('AI handoff separates initial INCOME claims from ongoing Sticky rewards', async () => {
+    await page.getByText('Use on your site', { exact: true }).click();
+    const prompt = await page.locator('[data-prompt]').inputValue();
+    assert.match(prompt, /Next\.js\/React/);
+    assert.match(prompt, /all FUND holders, including inactive ERC20 balances and unclaimed token credits/);
+    assert.match(prompt, /Initial claims require no activation, staking or vesting/);
+    assert.match(prompt, /eligible FUND stakers using Sticky/);
+    assert.match(prompt, /four weekly vesting rounds/);
+    assert.match(prompt, /Vesting starts in the reward-claim round when the allocation is materialized, not at the FUND deposit/);
+    assert.match(prompt, /There is no minimum staking period or stake-age weight boost/);
+    assert.match(prompt, /requires a verified deployment/);
+    assert.match(prompt, /Neighborhood Workshop/);
+    assert.match(prompt, /Safe proposal is not confirmed execution/);
+    const pending = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Download instructions', exact: true }).click();
+    const downloaded = await pending;
+    assert.equal(await readFile(await downloaded.path(), 'utf8'), prompt);
+    await downloaded.delete();
+    await page.getByText('Use on your site', { exact: true }).click();
   });
   await check('All setup stages remain usable on narrow screens', async () => {
     for (const width of [390, 320]) {
@@ -310,135 +389,27 @@ try {
     await page.locator('#draft-photo').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#draft-photo').evaluate(img => img.complete && img.naturalWidth > 0), true);
     await page.locator('#remove-photo').click();
-    assert.equal(await page.locator('#draft-photo').isHidden(), true);
+    assert.equal(await page.locator('#draft-photo').count(), 0);
     for (let index = 0; index < 3; index++) await next();
   });
-  await check('Creation saves a local project and a non-executing deployment draft', async () => {
-    await next();
-    await page.locator('#create-success').waitFor({ state: 'visible' });
-    assert.match(await page.locator('#create-success').textContent(), /Nothing has been deployed on-chain/);
-    assert.equal(await page.locator('#success-title').evaluate(node => node === document.activeElement), true);
-    projectURL = new URL(await page.locator('#open-created-project').getAttribute('href'), home).href;
-    assert.match(projectURL, /\/project\/\?id=[a-f\d-]+/);
-    const download = page.waitForEvent('download');
-    await page.locator('#download-deployment').click();
-    const result = await download;
-    const draft = JSON.parse(await readFile(await result.path(), 'utf8'));
-    await result.delete();
-    assert.equal(draft.asset.name, 'Neighborhood Workshop');
-    assert.equal(draft.execution.enabled, false);
-    assert.equal(draft.execution.status, 'not-deployed');
-    assert.equal(draft.funding.startingAmountRaised, 0);
-    assert.equal(draft.funding.raiseGoal, 1025.65);
-    assert.equal(draft.schemaVersion, 2);
-    assert.equal(draft.networkEnvironment, 'testnet');
-    assert.deepEqual(draft.plannedNetworks.map(chain => chain.chainId), [11155111, 84532]);
-    assert.equal(Object.hasOwn(draft, 'plannedNetwork'), false);
-    assert.equal(draft.revnetOperator.address, operatorWallet);
-    assert.equal(draft.revnetOperator.permissionsAssigned, false);
-    assert.deepEqual(draft.income.issuanceAllocationPercent, { operators: 70, fundHolders: 20, customers: 10 });
-    assert.equal(draft.income.issuanceCutPercentAssumption, 5);
-    assert.equal(draft.income.issuanceCutPeriodMonthsAssumption, 3);
-    assert.equal(draft.income.issuanceCutDurationYearsAssumption, 2);
-    assert.equal(draft.income.numberOfIssuanceCutsAssumption, 8);
-    assert.equal(draft.income.holderRewards.requiresStaking, false);
-    assert.equal(draft.income.holderRewards.vestingMonths, 0);
-    assert.equal(draft.income.revenueDescription, revenuePlan);
-    assert.equal(await page.evaluate(() => localStorage.getItem('homerun:create-draft:v1')), null);
-    await a11y('Created local preview');
-    await shot('create-success-desktop.png');
-  });
-  if (process.env.CREATE_PROJECT_CHECKS !== '0') {
-    await check('Created project starts empty and previews a first contribution without changing its balance', async () => {
-      await page.goto(projectURL);
-      await page.locator('#scenario-title').waitFor();
-      assert.equal((await page.locator('.deal-heading h1').textContent()).trim(), 'Neighborhood Workshop');
-      assert.equal(await page.locator('#open-house-gallery').count(), 0);
-      assert.equal(await page.locator('#created-asset-sketch').count(), 1);
-      assert.equal(await page.locator('#field-purchaseBudget').inputValue(), '1,000');
-      assert.match(await page.locator('.created-project-note').textContent(), /Testnets/);
-      assert.deepEqual(await page.locator('.created-network-symbols img').evaluateAll(images => images.map(img => img.alt)), ['Sepolia', 'Base Sepolia']);
-      assert.equal(await page.locator('#field-monthlyRent').inputValue(), '200');
-      assert.equal(await page.locator('#field-raisedPercent').inputValue(), '0');
-      assert.equal(await page.locator('#project-raised').textContent(), '$0');
-      assert.equal(await page.locator('#pay-amount').isEnabled(), true);
-      await page.locator('#pay-amount').fill('100');
-      assert.equal(await page.locator('#pay-output').textContent(), '1,000,000');
-      assert.equal(await page.locator('#pay-output-unit').textContent(), 'FUND');
-      assert.equal(await page.locator('#pay-review').isEnabled(), true);
-      await page.locator('#pay-review').click();
-      await page.locator('#pay-dialog').waitFor({ state: 'visible' });
-      await page.keyboard.press('Escape');
-      assert.equal(await page.locator('#field-raisedPercent').inputValue(), '0');
-      assert.equal(await page.locator('#project-raised').textContent(), '$0');
-      await page.locator('#pay-amount').fill('200');
-      assert.equal(await page.locator('#pay-output').textContent(), '2,000,000');
-      assert.equal(await page.locator('#project-raised').textContent(), '$0');
-      await page.locator('#pay-amount').fill('1025.66');
-      assert.equal(await page.locator('#pay-review').isDisabled(), true);
-      assert.match(await page.locator('#pay-error').textContent(), /cannot exceed/);
-      await page.locator('#pay-amount').fill('0');
-      assert.equal(await page.locator('#pay-review').isDisabled(), true);
-      await page.locator('#pay-amount').fill('100');
-      assert.equal(await page.locator('#pay-review').isEnabled(), true);
-      await a11y('Created project');
-      await shot('created-project-desktop.png');
-      await page.reload();
-      assert.equal((await page.locator('.deal-heading h1').textContent()).trim(), 'Neighborhood Workshop');
-      assert.equal(await page.locator('#field-purchaseBudget').inputValue(), '1,000');
-    });
-    await check('Created-project income terms, reset, and mobile layouts use its own setup', async () => {
-      await page.goto(projectURL);
-      await page.locator('#scenario-title').waitFor();
-      await page.locator('button[data-journey-phase="earning"]').click();
-      assert.equal(await page.locator('#phase-panel .revenue-description').textContent(), revenuePlan);
-      assert.equal(await page.locator('#phase-panel .revenue-description').evaluate(node => node.children.length), 0);
-      assert.ok(['pre-line', 'pre-wrap', 'break-spaces'].includes(await page.locator('#phase-panel .revenue-description').evaluate(node => getComputedStyle(node).whiteSpace)));
-      assert.match(await page.locator('#rev-payment-split').textContent(), /70%/);
-      assert.match(await page.locator('#rev-payment-split').textContent(), /20%/);
-      await page.locator('#reset-example').click();
-      assert.equal(await page.locator('#field-purchaseBudget').inputValue(), '1,000');
-      assert.equal(await page.locator('#field-raisedPercent').inputValue(), '0');
-      assert.deepEqual(await page.locator('.created-network-symbols img').evaluateAll(images => images.map(img => img.alt)), ['Sepolia', 'Base Sepolia']);
-      await page.locator('button[data-journey-phase="earning"]').click();
-      assert.equal(await page.locator('#phase-panel .revenue-description').textContent(), revenuePlan);
-      await page.locator('#reset-example').click();
-      for (const width of [390, 320]) {
-        await page.setViewportSize({ width, height: 844 });
-        await noOverflow();
-        await a11y(`${width}px created project`);
-        await shot(`created-project-${width}.png`);
-      }
-      await page.setViewportSize({ width: 1440, height: 1000 });
-    });
-    await check('Founder Haus remains isolated from created projects', async () => {
-      await page.goto(new URL('/founderhaus', home).href);
-      await page.locator('#scenario-title').waitFor();
-      assert.equal((await page.locator('.deal-heading h1').textContent()).trim(), 'Founder Haus');
-      assert.equal(await page.locator('#field-purchaseBudget').inputValue(), '500,000');
-      assert.equal(await page.locator('#field-raisedPercent').inputValue(), '60');
-    });
-    await check('A missing local preview has a clear recovery route', async () => {
-      await page.goto(new URL('/project/?id=missing', home).href);
-      assert.equal(await page.locator('.missing-project h1').textContent(), 'Project preview not found.');
-      assert.equal(await page.locator('.missing-project a').first().getAttribute('href'), '/create/');
-      await a11y('Missing project');
-    });
-  }
-  await check('A fresh draft is independent and keeps earlier created projects', async () => {
+  await check('Reset restores the editable draft without creating or overwriting deployments', async () => {
     await page.goto(new URL('/create', home).href);
+    await page.locator('#start-over').click();
     await currentStep(0);
     assert.equal(await input('name').inputValue(), '');
-    assert.equal(await input('purchaseBudget').inputValue(), '500,000');
-    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('homerun:created-projects:v1')).length), 1);
+    assert.equal(await page.evaluate(() => localStorage.getItem('homerun:fund-launch:v1')), null);
+    assert.equal(await page.evaluate(() => localStorage.getItem('homerun:created-projects:v1')), null);
     await input('name').fill('Another project');
     await page.locator('#start-over').click();
     assert.equal(await input('name').inputValue(), '');
-    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('homerun:created-projects:v1')).length), 1);
-    for (let index = 0; index < 3; index++) await next();
+    await next(); await currentStep(1);
+    assert.equal(await input('purchaseBudget').inputValue(), '500,000');
+    await next(); await currentStep(2);
+    assert.equal(await input('operatorSplitPercent').inputValue(), '70');
+    assert.equal(await input('stickySplitPercent').inputValue(), '10');
+    await next(); await currentStep(3);
     assert.deepEqual(await selectedNetworks(), networkIDs);
     assert.equal(await environment('production').getAttribute('aria-pressed'), 'true');
-    assert.equal(await input('revnetOperatorEnabled').isChecked(), true);
   });
   await check('Legacy draft network and operator preferences migrate and reset to new defaults', async () => {
     await page.evaluate(wallet => localStorage.setItem('homerun:create-draft:v1', JSON.stringify({
@@ -448,7 +419,6 @@ try {
     await currentStep(3);
     assert.deepEqual(await selectedNetworks(), ['base']);
     assert.equal(await environment('production').getAttribute('aria-pressed'), 'true');
-    assert.equal(await input('revnetOperatorEnabled').isChecked(), true);
     assert.equal(await input('operatorWallet').inputValue(), operatorWallet);
     const setup = await downloadSetup();
     assert.deepEqual(setup.plannedNetworks.map(chain => chain.chainId), [8453]);
@@ -457,9 +427,8 @@ try {
     await currentStep(0);
     for (let index = 0; index < 3; index++) await next();
     assert.deepEqual(await selectedNetworks(), networkIDs);
-    assert.equal(await input('revnetOperatorEnabled').isChecked(), true);
     assert.equal(await input('operatorWallet').isVisible(), true);
-    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('homerun:created-projects:v1')).length), 1);
+    assert.equal(await page.evaluate(() => localStorage.getItem('homerun:created-projects:v1')), null);
   });
   await check('Earlier default allocations migrate once while custom and newly saved splits remain intact', async () => {
     for (const [operators, holders, version, expected] of [[75, 15, null, [70, 10]], [81, 6, null, [70, 10]], [68, 13, 2, [70, 10]], [70, 20, null, [70, 20]], [75, 15, 2, [75, 15]], [68, 13, 3, [68, 13]]]) {
@@ -480,5 +449,5 @@ try {
   });
   await check('No browser exceptions, failed requests, or console errors', async () => assert.deepEqual(errors, []));
 } finally { await browser.close(); }
-process.stdout.write(`\n${checks - failures.length}/${checks} create-flow checks passed.\n`);
+process.stdout.write(`\n${checks - failures.length}/${checks} native Create checks passed.\n`);
 if (failures.length) process.exitCode = 1;

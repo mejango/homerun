@@ -323,7 +323,7 @@ test('deployment export remains a JSON-safe local plan and separates FUND launch
   const result = deploymentDraft(draft({ networks: ['ethereum'], revnetOperatorEnabled: true, operatorWallet: wallet }));
   assert.deepEqual(JSON.parse(JSON.stringify(result)), result);
   assert.equal(result.kind, 'homerun-deployment-preview');
-  assert.equal(result.schemaVersion, 2);
+  assert.equal(result.schemaVersion, 3);
   assert.equal(result.execution.enabled, false);
   assert.equal(result.execution.status, 'not-deployed');
   assert.equal(result.networkEnvironment, 'production');
@@ -336,9 +336,9 @@ test('deployment export remains a JSON-safe local plan and separates FUND launch
   assert.equal(result.funding.startingAmountRaised, 0);
   assert.equal(result.funding.token, 'FUND');
   assert.equal(result.income.token, 'INCOME');
-  assert.deepEqual(result.income.issuanceAllocationPercent, { operators: 70, fundHolders: 10, customers: 20 });
+  assert.deepEqual(result.income.issuanceAllocationPercent, { operators: 70, fundStakers: 10, customers: 20 });
   assert.equal(result.preparation[0].stage, 'fundraise');
-  assert.match(result.preparation[1].description, /After purchase.*INCOME.*automatic FUND-holder/);
+  assert.match(result.preparation[1].description, /After purchase.*INCOME.*all FUND holders.*ongoing Sticky/);
   const keys = [];
   const visit = object => {
     for (const [key, value] of Object.entries(object)) {
@@ -386,7 +386,7 @@ test('legacy saved projects rebuild the multi-network planning schema and operat
   const loaded = loadCreatedProject(entry.id, storage);
   assert.deepEqual(loaded.values.networks, ['base']);
   assert.equal(loaded.values.revnetOperatorEnabled, true);
-  assert.equal(loaded.deployment.schemaVersion, 2);
+  assert.equal(loaded.deployment.schemaVersion, 3);
   assert.deepEqual(loaded.deployment.plannedNetworks, [{ id: 'base', name: 'Base', chainId: 8453 }]);
   assert.equal(loaded.deployment.execution.enabled, false);
   assert.equal(loaded.deployment.revnetOperator.address, wallet);
@@ -483,18 +483,33 @@ test('a browser that throws when accessing localStorage still returns safe reads
 });
 
 
-test('creation exports quarterly issuance and automatic holder rewards without staking', () => {
+test('creation separates unrestricted initial INCOME from opt-in ongoing Sticky rewards', () => {
   const { income, preparation } = deploymentDraft(draft());
   assert.equal(income.issuanceCutPercentAssumption, 5);
   assert.equal(income.issuanceCutPeriodMonthsAssumption, 3);
   assert.equal(income.issuanceCutDurationYearsAssumption, 2);
   assert.equal(income.numberOfIssuanceCutsAssumption, 8);
-  assert.equal(income.holderRewards.requiresStaking, false);
-  assert.equal(income.holderRewards.vestingMonths, 0);
+  assert.equal(income.initialAllocation.tokens, 500_000);
+  assert.deepEqual(income.initialAllocation.balanceSources, ['erc20', 'unclaimed-credits']);
+  assert.equal(income.initialAllocation.requiresActivation, false);
+  assert.equal(income.initialAllocation.requiresStaking, false);
+  assert.equal(income.initialAllocation.vestingMonths, 0);
+  assert.equal(income.holderRewards.mode, 'sticky');
+  assert.equal(income.holderRewards.requiresStaking, true);
+  assert.equal(income.holderRewards.eligibilityPolicy, 'snapshot-share-balance');
+  assert.equal(income.holderRewards.minimumStakeAgeSeconds, 0);
+  assert.equal(income.holderRewards.vestingRounds, 4);
+  assert.equal(income.holderRewards.roundSeconds, 604_800);
+  assert.equal(Object.hasOwn(income.holderRewards, 'vestingSeconds'), false);
+  assert.equal(income.holderRewards.vestingStartsAt, 'reward-claim-round');
+  assert.equal(income.holderRewards.enabled, false);
+  assert.equal(income.holderRewards.runtimeAvailability, 'requires-verified-deployment');
+  assert.equal(Object.hasOwn(income.holderRewards, 'vestingMonths'), false);
+  assert.match(income.projectionAssumption, /All FUND participates.*rewards are fully vested/);
   assert.equal(creationSummary(draft()).networkInputs.fundRewardMode, 'holders');
   assert.equal(Object.hasOwn(income, 'annualIssuanceCutPercentAssumption'), false);
-  assert.equal(Object.hasOwn(income.issuanceAllocationPercent, 'fundStakers'), false);
-  assert.doesNotMatch(JSON.stringify(preparation), /Sticky|stake/i);
+  assert.equal(income.issuanceAllocationPercent.fundStakers, 10);
+  assert.match(JSON.stringify(preparation), /ongoing Sticky/);
 });
 
 
