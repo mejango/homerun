@@ -6,7 +6,7 @@ await rm(new URL('dist/', root), { recursive: true, force: true });
 await mkdir(new URL('dist/', root), { recursive: true });
 await cp(new URL('web/', root), new URL('dist/', root), { recursive: true });
 await mkdir(new URL('dist/docs/', root), { recursive: true });
-for (const name of ['NETWORK_DESIGN.md', 'OWNER_ACTIONS.md', 'PLAYBOOK.md', 'MECHANISM.md', 'FOUNDER_HAUS_SOURCES.md']) {
+for (const name of ['NETWORK_DESIGN.md', 'OWNER_ACTIONS.md', 'PLAYBOOK.md', 'MECHANISM.md', 'FOUNDER_HAUS_SOURCES.md', 'USE_ON_YOUR_SITE.md']) {
   await cp(new URL(`docs/${name}`, root), new URL(`dist/docs/${name}`, root));
 }
 for (const [page, entries] of [['index.html', ['ballpark.mjs', 'home.css']], ['founderhaus/index.html', ['network-app.mjs', 'network.css', 'project-page.css']]]) {

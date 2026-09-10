@@ -1,3 +1,4 @@
+import { mountSiteIntegration } from './site-integration.mjs';
 import { CREATE_DEFAULTS, CREATE_DRAFT_KEY, normalizeCreateDraft, creationSummary, deploymentDraft, saveCreatedProject } from './create-model.mjs';
 import { initCreateIncomePreview } from './create-income-preview.mjs';
 import { NETWORK_FAMILIES } from './create-networks.mjs';
@@ -265,3 +266,5 @@ document.querySelector('#create-photo').addEventListener('change',async event=>{
 document.querySelector('#remove-photo').addEventListener('click',()=>{photoVersion++;raw.photo='';document.querySelector('#create-photo').value='';showError('photo','');render();save();});
 new ResizeObserver(()=>{if(!raw.photo)drawAssetSketch(document.querySelector('#asset-sketch'),raw.assetType);}).observe(document.querySelector('.asset-art'));
 showStep(step,false);
+
+mountSiteIntegration(document.querySelector('.create-editor'), () => deploymentDraft(raw));

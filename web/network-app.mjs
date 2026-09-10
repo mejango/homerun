@@ -1,3 +1,4 @@
+import { mountSiteIntegration } from './site-integration.mjs';
 import { DEFAULT_NETWORK, projectNetwork } from './network-model.mjs';
 import { ownerActionDraft } from './owner-actions.mjs';
 import { FIELD_HELP } from './field-help.mjs';
@@ -465,3 +466,5 @@ initProjectionCharts(document.querySelector('#main'));
 initOwnershipCharts(document);
 showAssumptions(false);
 update();
+
+mountSiteIntegration(document.querySelector('.simulator'), () => ({ project: { name: projectName, location: projectLocation }, mode: 'illustrative-preview', phase, modelingInputs: { ...inputs }, ...(createdProject ? { setupDraft: createdProject.deployment } : {}), reference: 'https://homerun.money/founderhaus' }));
