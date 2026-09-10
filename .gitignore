@@ -1,0 +1,10 @@
+cache/
+out/
+dist/
+node_modules/
+test-results/
+
+.env
+.env.*
+.railway/
+.DS_Store

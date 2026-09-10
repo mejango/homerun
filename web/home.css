@@ -1,0 +1,59 @@
+@import '/network.css';
+
+.home-page .site-header { position: relative; z-index: 2; }
+.home-page .site-header::after { content: ''; position: absolute; bottom: 0; left: 32px; right: 32px; height: 1px; background: var(--line); }
+.home-main { max-width: 1600px; margin: auto; }
+.ballpark-hero { position: relative; isolation: isolate; height: clamp(650px, 61vw, 900px); overflow: hidden; }
+.home-copy { position: absolute; z-index: 1; left: 20px; right: 20px; top: clamp(18px, 2.7vw, 40px); text-align: center; }
+.home-copy h1 { font: 400 clamp(38px, 4.5vw, 64px)/1.06 var(--serif); letter-spacing: -.045em; }
+.home-copy h1 em { color: #38694b; font-weight: 400; }
+.home-asset-types { position: absolute; top: -23px; left: 0; right: 0; display: flex; justify-content: center; flex-wrap: wrap; gap: 3px 14px; padding: 0; margin: 0; list-style: none; color: #6b7569; font: 10px/1.4 var(--sans); }
+.home-actions { display: flex; justify-content: center; align-items: center; gap: 24px; margin-top: 23px; }
+.home-actions .see-demo { margin-top: 0; }
+.create-homerun { display: inline-flex; align-items: center; justify-content: center; gap: 15px; min-height: 44px; padding: 9px 15px; border: 1px solid #38694b; border-radius: 3px 5px 3px 4px; background: #38694b; color: #fffefa; font-size: 13px; text-decoration: none; }
+.create-homerun:hover { background: #2b533a; }
+.create-homerun:focus-visible { outline: 2px solid #38694b; outline-offset: 4px; }
+.see-demo { display: inline-flex; align-items: center; gap: 13px; min-height: 44px; margin-top: 23px; font-size: 14px; text-decoration: none; position: relative; }
+.see-demo::after { content: ''; position: absolute; height: 1px; background: currentColor; left: 0; right: 0; bottom: 8px; transform: rotate(-1deg); }
+.see-demo span { display: inline-block; transition: transform 160ms ease; font-size: 19px; }
+.see-demo:hover span { transform: translate(2px, -2px); }
+#ballpark { width: 100%; height: 100%; display: block; }
+.home-footer { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-inline: auto; padding-block: 18px; font-size: 10px; }
+.home-motion-toggle { border: 0; padding: 6px 0; min-height: 32px; background: transparent; color: #647060; font: inherit; cursor: pointer; }
+.home-motion-toggle:focus-visible { outline: 2px solid #38694b; outline-offset: 3px; }
+@media (max-width: 760px) {
+  .home-page .site-header::after { left: 20px; right: 20px; }
+  .ballpark-hero { height: 660px; }
+  .home-copy { top: 25px; }
+  .home-copy h1 { font-size: clamp(35px, 8.6vw, 52px); }
+  .home-asset-types { top: -18px; font-size: 9px; gap: 3px 10px; }
+  .see-demo { margin-top: 19px; }
+  .home-actions { gap: 13px; flex-wrap: wrap; margin-top: 17px; }
+  .home-actions .see-demo { font-size: 12px; gap: 8px; }
+  .create-homerun { font-size: 12px; padding: 8px 11px; gap: 9px; }
+}
+@media (max-width: 360px) {
+  .home-page .site-header::after { left: 16px; right: 16px; }
+  .home-copy { left: 12px; right: 12px; }
+  .home-copy h1 { font-size: 33px; }
+  .home-actions { flex-direction: column; gap: 2px; margin-top: 12px; }
+}
+@media (prefers-reduced-motion: reduce) { .see-demo span { transition: none; } }
+
+.home-color-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; }
+.home-color-control { display: flex; align-items: center; gap: 8px; }
+.home-footer { flex-wrap: wrap; }
+.home-color-controls label { white-space: nowrap; }
+.home-color-control input { width: 112px; min-height: 32px; margin: 0; accent-color: #42674d; cursor: pointer; }
+.home-color-control output { min-width: 3ch; font-variant-numeric: tabular-nums; text-align: right; }
+.home-color-control input:focus-visible { outline: 2px solid #38694b; outline-offset: 2px; }
+@media (max-width: 760px) { .home-footer { flex-wrap: wrap; gap: 4px 16px; } .home-color-controls { flex-wrap: wrap; gap: 8px; } .home-color-control input { width: 90px; } }
+
+.home-page .site-header { position: absolute; inset: 0 0 auto; width: 100%; z-index: 2; }
+.home-page .site-header::after { display: none; }
+.home-copy { top: calc(76px + clamp(18px, 2.7vw, 40px)); }
+@media (max-width: 760px) { .home-copy { top: 93px; } }
+
+.home-color-control select { font: inherit; color: #293a32; background: #fffefa; border: 1px solid #bbc3b4; border-radius: 4px; min-height: 32px; padding: 3px 30px 3px 10px; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='m1 1 5 5 5-5' fill='none' stroke='%23293a32' stroke-width='1.5'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; }
+.ballpark-hero { height: calc(clamp(650px, 61vw, 900px) + 76px); }
+@media (max-width: 760px) { .ballpark-hero { height: 736px; } }

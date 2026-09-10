@@ -1,0 +1,37 @@
+.founder-heading .asset-location { margin-top: 9px; font-size: 13px; }
+.deal-image.house-photo-button { width: 160px; height: 104px; padding: 0; border: 0; background: transparent; border-radius: 6px; }
+.house-photo-button img { transition: filter 150ms ease; }
+.house-photo-button:hover img { filter: brightness(.94); }
+.house-photo-button > span { background: #fffefaed; font-size: 10px; }
+.house-gallery { width: min(860px, calc(100% - 32px)); max-width: 860px; padding: 24px; }
+.house-gallery-heading { display: flex; justify-content: space-between; align-items: start; gap: 18px; margin-bottom: 17px; }
+.house-gallery-heading h2 { margin: 0; font: 32px/1.15 var(--serif); letter-spacing: -.035em; }
+.house-gallery-heading p { margin-top: 5px; font-size: 12px; }
+.house-gallery-heading > button { white-space: nowrap; }
+.house-gallery-photo { margin: 0; }
+.house-gallery-photo > img { display: block; width: 100%; height: auto; max-height: 53dvh; object-fit: contain; aspect-ratio: 4 / 3; background: #eeeee5; border-radius: 5px; }
+.house-gallery-photo > figcaption { margin-top: 8px; color: var(--muted); font-size: 11px; }
+.house-photo-picker { display: flex; gap: 9px; margin: 15px 0 17px; }
+.house-photo-picker > button { display: flex; align-items: center; gap: 9px; flex: 1; min-width: 0; padding: 5px; text-align: left; background: transparent; border: 1px solid var(--line); border-radius: 4px; font-size: 11px; }
+.house-photo-picker > button[aria-pressed=true] { border-color: var(--green); background: var(--soft); }
+.house-photo-picker img { display: block; width: 54px; height: 42px; object-fit: cover; border-radius: 2px; }
+.house-photo-picker span { line-height: 1.4; }
+.house-gallery #house-gallery-description { font-size: 13px; }
+.house-gallery .house-source { margin-top: 7px; font-size: 11px; }
+.house-source a { text-underline-offset: 3px; }
+@media (max-width: 760px) {
+  .founder-heading .asset-location { max-width: 230px; font-size: 11px; }
+  .deal-image.house-photo-button { width: 105px; height: 86px; }
+  .house-photo-button > span { right: 5px; bottom: 5px; padding: 1px 5px; font-size: 9px; }
+  .house-gallery { width: calc(100% - 24px); padding: 17px; }
+  .house-gallery-heading h2 { font-size: 28px; }
+  .house-photo-picker > button { flex-direction: column; align-items: stretch; gap: 5px; font-size: 10px; }
+  .house-photo-picker img { width: 100%; height: 48px; }
+  .house-photo-picker span { padding: 2px; }
+}
+@media (max-width: 380px) {
+  .founder-heading { gap: 12px; }
+  .deal-image.house-photo-button { width: 82px; height: 82px; }
+  .deal-heading.founder-heading h1 { font-size: 32px; }
+}
+@media (prefers-reduced-motion: reduce) { .house-photo-button img { transition: none; } }

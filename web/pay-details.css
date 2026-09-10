@@ -1,0 +1,40 @@
+.pay-contribution { margin-top: 20px; border-top: 1px solid var(--line); }
+.pay-contribution .pay-detail, .income-payment-details { border-bottom: 1px solid var(--line); }
+.pay-contribution .pay-detail > summary, .income-payment-details > summary { padding: 14px 0; min-height: 46px; color: var(--green); font-size: 12px; font-weight: 500; cursor: pointer; }
+.pay-detail-body, .income-payment-detail-body { padding: 0 0 17px; min-width: 0; }
+.pay-detail-body p, .income-payment-detail-body p { font-size: 11px; line-height: 1.65; }
+.pay-detail-body .pay-position-basis { margin-bottom: 14px; }
+.income-payment-detail-body > p + p { margin-top: 10px; }
+.income-payment-chart { margin: 12px 0; }
+.income-payment-chart figcaption { font-size: 10px; color: var(--muted); text-align: center; overflow-wrap: anywhere; }
+.income-payment-legend { list-style: none; padding: 0; margin: 15px 0; }
+.income-payment-legend li { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: baseline; gap: 2px 6px; margin: 0; padding: 7px 0; border-top: 1px solid var(--line); font-size: 10px; }
+.income-payment-legend li > strong { font-weight: 500; text-align: right; max-width: 120px; overflow-wrap: anywhere; }
+.income-payment-legend li > span:last-child { grid-column: 2 / -1; color: var(--muted); text-align: right; }
+.income-payment-values { margin: 12px 0; }
+.income-payment-values > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 11px; }
+.income-payment-values dt { color: var(--muted); }
+.income-payment-values dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
+#pay-panel .outcomes { grid-template-columns: minmax(0, 1fr); }
+#pay-panel .outcome { display: block; padding: 14px 0; border-left: 0; }
+#pay-panel .outcome + .outcome { border-top: 1px solid var(--line); }
+#pay-panel .outcome > strong { font-size: 29px; }
+#pay-panel .loan-outcome { padding-inline: 10px; }
+#pay-panel .quote-basis { padding: 12px; margin-bottom: 12px; }
+#pay-panel .quote-cash-flow { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+#pay-panel .quote-cash-flow > span { display: none; }
+#pay-panel .quote-cash-flow > div { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+#pay-panel .quote-cash-flow strong { font-size: 18px; flex: 0 0 auto; }
+#pay-panel .quote-month-control .quote-month-input { width: 72px; }
+#pay-panel .loan-growth { flex-wrap: wrap; }
+#pay-panel .loan-growth button { width: 100%; }
+#pay-panel .state-metrics { grid-template-columns: minmax(0, 1fr); }
+#pay-panel .ownership-section { margin-top: 0; }
+#pay-panel .ownership-heading { display: none; }
+#pay-panel .ownership-charts { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+#pay-panel .ownership-card { padding: 0; border: 0; border-radius: 0; }
+#pay-panel .ownership-body { flex-direction: column; gap: 8px; align-items: stretch; }
+#pay-panel .ownership-ring { align-self: center; width: 130px; height: 130px; flex-basis: 130px; }
+#pay-panel .ownership-legend > li { font-size: 10px; }
+#pay-panel .ownership-legend strong { font-size: 10px; }
+#pay-panel .math-values > div, #pay-panel .rent-allocation > div { gap: 10px; font-size: 11px; }

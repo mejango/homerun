@@ -1,0 +1,2 @@
+@openzeppelin/contracts/=../../nana-core-v6/node_modules/@openzeppelin/contracts/
+forge-std/=../../nana-core-v6/lib/forge-std/src/

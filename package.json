@@ -1,0 +1,22 @@
+{
+  "name": "homerun",
+  "homepage": "https://homerun.money",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Homerun property financing: an interactive product prototype and cash-out reference contracts.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "node scripts/serve.mjs",
+    "build": "node scripts/build.mjs",
+    "test": "node --test test/*.test.mjs",
+    "test:browser": "node test/browser-flow.mjs",
+    "test:create": "node test/create-browser.mjs",
+    "test:a11y": "node test/accessibility.mjs",
+    "test:contracts": "forge test",
+    "check": "npm test && npm run build && npm run test:contracts",
+    "start": "node scripts/serve.mjs"
+  }
+}

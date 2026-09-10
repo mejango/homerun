@@ -1,0 +1,114 @@
+@import '/pay-panel.css';
+@import '/pay-details.css';
+
+/* The project shares the ballpark's paper, pencil greens and warm ochre. */
+.preview-workbench { display: grid; grid-template-columns: 330px minmax(0, 1fr); grid-template-areas: 'assumptions preview'; gap: 0; margin: 18px 0 26px; background: #edf2f1; border: 1px solid #cbd7db; border-radius: 4px; align-items: stretch; }
+.simulator .deal-heading { display: grid; grid-template-columns: max-content minmax(220px, 1fr) minmax(0, 430px); align-items: center; gap: 24px; padding: 27px 0 30px; }
+.simulator .deal-heading h1 { font-size: clamp(36px, 4.1vw, 54px); }
+.simulator .deal-heading .project-status { display: flex; align-items: center; gap: 7px; margin: 0 0 10px; color: var(--green); font-size: 12px; line-height: 1.4; }
+.project-status::before { content: ''; flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.simulator .project-status[data-project-phase='refunding'], .simulator .project-status[data-project-phase='refunded'] { color: #90583d; }
+.simulator .deal-image.house-photo-button { width: 100%; height: 232px; padding: 0; background: transparent; border: 0; border-radius: 0; transform: none; box-shadow: none; }
+.simulator .house-photo-button img { border-radius: 0; }
+.simulator .created-cover { width: 100%; height: 232px; background: #eeeee4; border-radius: 3px; }
+.created-cover canvas, .created-cover img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.simulator:has(.created-cover) .deal-heading { grid-template-columns: minmax(0, 1fr) minmax(220px, 1fr) minmax(0, 430px); }
+.simulator:has(.created-cover) .deal-heading h1 { overflow-wrap: anywhere; }
+.simulator .deal-heading .created-project-note { font-size: 10px; color: #48636a; max-width: none; line-height: 1.6; }
+.simulator .deal-heading .created-project-note { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.created-network-symbols { display: inline-flex; align-items: center; gap: 5px; }
+.created-network-symbols img { display: block; width: 18px; height: 18px; border-radius: 50%; }
+.missing-project { padding: 60px 0; }
+.missing-project h1 { font: 38px/1.1 var(--serif); }
+.missing-project p { margin: 20px 0; }
+.missing-project a { display: inline-flex; margin: 0 16px 16px 0; }
+.simulator .house-photo-button > span { right: 11px; bottom: 10px; }
+.simulator-layout { grid-template-columns: 330px minmax(0, 1fr); grid-template-areas: 'pay process'; gap: 20px 24px; align-items: start; }
+.project-raise-stats { margin-top: 20px; }
+.project-raise-stats dl { display: flex; flex-wrap: wrap; gap: 10px 22px; margin: 0; }
+.project-raise-stats dt { color: var(--muted); font-size: 10px; }
+.project-raise-stats dd { margin: 3px 0 0; font-size: 21px; font-variant-numeric: tabular-nums; line-height: 1.3; }
+.simulator .deal-heading .project-raise-stats p { margin: 9px 0 0; color: var(--green); font-size: 11px; }
+.project-raise-stats p strong { font-weight: 500; }
+#project-journey { min-width: 0; }
+.simulator .deal-heading .pj-description { margin: 6px auto 0; max-width: 220px; font-size: 10px; line-height: 1.6; }
+#pay-panel { grid-area: pay; min-width: 0; }
+.simulator .assumptions { grid-area: assumptions; background: transparent; border: 0; border-radius: 0; padding: 15px 16px; }
+.simulator .assumptions > h2 { color: #365863; font: 500 14px/1.4 var(--sans); margin-bottom: 11px; }
+.simulator .assumptions .core-inputs { gap: 10px 12px; align-items: end; }
+.simulator .assumptions .projection-field { gap: 4px; }
+.simulator .assumptions .field-label label { color: #365863; }
+.simulator .assumptions .field-control { padding: 7px 9px; border-color: #b9cbd1; background: #fff; }
+.simulator .assumptions .field-control input { font-size: 14px; }
+.simulator .assumptions #toggle-assumptions { margin-top: 5px; color: #365863; }
+.simulator .process { grid-area: process; }
+.simulator #preview-controls { grid-area: preview; margin: 0; padding: 18px 20px; border: 0; border-left: 1px solid #cbd7db; border-radius: 0; background: transparent; }
+.simulator #preview-controls .picker-label { margin-bottom: 12px; }
+.simulator #preview-controls .picker-label h2 { font-size: 12px; }
+.simulator #preview-controls .picker-label > span { font-size: 10px; }
+.preview-base-buttons { display: flex; gap: 6px; padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid #cbd7db; }
+.preview-base-buttons button { display: flex; align-items: center; justify-content: center; gap: 8px; flex: 1; min-height: 42px; padding: 8px 10px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: #365863; font: 500 12px/1.3 var(--sans); cursor: pointer; }
+.preview-base-buttons button > span { display: grid; place-items: center; width: 19px; height: 19px; border: 1px solid currentColor; border-radius: 50%; font-size: 10px; }
+.preview-base-buttons button[aria-pressed=true] { background: #d9e5e8; border-color: #aebfc5; color: #294b57; }
+.preview-base-buttons button:hover { background: #e0eaec; }
+.preview-base-buttons button:focus-visible { outline: 2px solid #365863; outline-offset: 2px; }
+.simulator .phase-buttons { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.simulator .phase-buttons button { min-height: 39px; padding: 7px 6px; font-size: 11px; border-radius: 2px 4px 3px 2px; }
+.simulator .scenario-controls { gap: 13px 22px; padding-top: 12px; margin-top: 13px; }
+.simulator #preview-controls:not([data-base='fundraise']) .scenario-controls { margin-top: 0; padding-top: 0; border: 0; }
+.simulator #preview-controls .field-control { padding: 7px 10px; max-width: 130px; }
+.simulator #preview-controls #sale-scenario .field-control { max-width: 210px; }
+.simulator #preview-controls .field-control input { font-size: 15px; }
+.simulator .phase-panel { position: relative; border-radius: 3px 6px 4px 5px; padding: 25px; box-shadow: 2px 3px 0 #d8dbc329; }
+.simulator .phase-copy h2 { font-size: 31px; }
+.simulator .scenario-progress-bar { height: 8px; }
+.simulator .scenario-progress-bar > span { background: repeating-linear-gradient(-35deg, #849969 0 3px, #91a478 3px 5px, #849969 5px 9px); }
+.simulator .contribution-section { border-top: 1px solid #c7ccbb; margin-top: 34px; padding-top: 28px; }
+.simulator .contribution-heading h2 { font-size: 33px; }
+.simulator .contribution-heading p { font-size: 12px; margin-top: 7px; }
+.simulator #contribution-form { padding: 17px 0 22px; }
+.simulator #contribution-form .field-control { max-width: 240px; }
+.simulator .quote-basis { background: #eeeee4; border-radius: 3px 6px 4px 2px; }
+.simulator .outcomes { border-block-color: #ccd0c0; }
+.simulator .loan-outcome { background: #e8eddc; }
+.simulator .page-tools { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 10px; }
+
+@media (min-width: 761px) and (max-width: 1100px) {
+  .preview-workbench { grid-template-columns: 250px minmax(0, 1fr); }
+  .simulator-layout { grid-template-columns: 250px minmax(0, 1fr); gap: 20px 18px; }
+  .simulator .deal-heading { grid-template-columns: max-content minmax(170px, 1fr) minmax(240px, .9fr); gap: 18px; }
+  .simulator:has(.created-cover) .deal-heading { grid-template-columns: minmax(0, 1fr) 170px minmax(240px, .9fr); }
+  .simulator .deal-image.house-photo-button { height: 210px; }
+  .simulator .assumptions { padding: 15px 14px; }
+  .simulator .phase-buttons { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .simulator #preview-controls .picker-label { align-items: start; flex-direction: column; gap: 3px; }
+  .simulator .phase-panel { padding: 20px; }
+  .simulator .phase-copy h2 { font-size: 28px; }
+  .project-raise-stats dl { gap: 8px 16px; }
+  .project-raise-stats dd { font-size: 18px; }
+}
+@media (max-width: 760px) {
+  .preview-workbench { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'assumptions' 'preview'; margin-top: 16px; margin-bottom: 20px; }
+  .simulator-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'pay' 'process'; gap: 20px; }
+  .simulator .deal-heading { padding: 23px 0 24px; grid-template-columns: minmax(0, 1fr); gap: 20px; align-items: stretch; }
+  .simulator:has(.created-cover) .deal-heading { grid-template-columns: minmax(0, 1fr); }
+  .simulator .deal-heading h1 { font-size: 34px; }
+  .simulator .deal-image.house-photo-button { width: 100%; height: clamp(200px, 48vw, 300px); padding: 0; }
+  .simulator .house-photo-button > span { right: 7px; bottom: 7px; font-size: 9px; }
+  .simulator #preview-controls { padding: 17px; border-left: 0; border-top: 1px solid #cbd7db; }
+  .simulator .phase-buttons { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .simulator .phase-buttons button { min-height: 42px; font-size: 12px; }
+  .preview-base-buttons { gap: 4px; }
+  .preview-base-buttons button { padding: 7px 4px; gap: 4px; font-size: 11px; }
+  .preview-base-buttons button > span { display: none; }
+  .simulator .phase-panel { padding: 21px; }
+  .simulator .phase-copy h2 { font-size: 28px; }
+  .simulator .contribution-heading h2 { font-size: 30px; }
+  .simulator .assumptions { padding: 15px 16px; }
+}
+@media (max-width: 360px) {
+  .simulator .deal-heading h1 { font-size: 29px; }
+  .simulator .phase-panel { padding: 17px; }
+}
+
+.revenue-description { white-space: pre-wrap; overflow-wrap: anywhere; }

@@ -1,0 +1,43 @@
+.quote-month-control { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; margin-bottom: 9px; }
+.quote-month-control label { color: var(--ink, #253c32); font-size: 13px; font-weight: 500; }
+.quote-month-control .quote-month-input { width: 88px; padding: 7px 9px; border: 1px solid #9bae8a; border-radius: 4px; background: #fffefa; color: var(--ink, #253c32); font: inherit; font-size: 14px; }
+.quote-month-control > span { font-size: 10px; color: var(--muted, #5f6b61); }
+.quote-month-control .quote-month-input[aria-invalid=true] { border-color: #943a26; }
+.quote-basis .quote-month-error { color: #943a26; font-size: 11px; margin: 0 0 10px; }
+.ownership-section { margin-top: 25px; }
+.ownership-heading { margin-bottom: 13px; }
+.ownership-heading h3 { font-size: 15px; font-weight: 500; }
+.ownership-heading p { margin-top: 4px; font-size: 11px; color: var(--muted, #5f6b61); }
+.ownership-charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.ownership-card { min-width: 0; margin: 0; padding: 17px; border: 1px solid var(--line, #dedfd4); border-radius: 6px; background: #fffefa; }
+.ownership-card figcaption { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 5px 14px; font-size: 12px; font-weight: 500; }
+.ownership-card figcaption > span { font-size: 10px; font-weight: 400; color: var(--muted, #5f6b61); }
+.ownership-body { display: flex; align-items: center; gap: 13px; margin-top: 14px; min-height: 140px; }
+.ownership-ring { display: block; width: 140px; height: 140px; flex: 0 0 140px; overflow: visible; }
+.ownership-ring-track { stroke: #e8ebdf; stroke-width: 22; fill: none; }
+.ownership-segment { stroke-width: 22; fill: none; }
+.ownership-you { stroke: #24533e; background: #24533e; }
+.ownership-investors { stroke: #6b8659; background: #6b8659; }
+.ownership-operators { stroke: #986532; background: #986532; }
+.ownership-customers { stroke: #4f7180; background: #4f7180; }
+.ownership-pending { stroke: #ad914b; background: #ad914b; }
+.ownership-unallocated { stroke: #777f74; background: #777f74; }
+.ownership-ring-label { font-size: 16px; font-weight: 500; fill: var(--ink, #253c32); text-anchor: middle; }
+.ownership-ring-caption { font-size: 10px; fill: var(--muted, #5f6b61); text-anchor: middle; }
+.ownership-legend { flex: 1; min-width: 0; margin: 0; padding: 0; list-style: none; }
+.ownership-legend > li { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 5px 6px; padding: 5px 0; font-size: 10px; }
+.ownership-key { width: 7px; height: 7px; border-radius: 2px; }
+.ownership-legend strong { font-size: 10px; font-weight: 500; white-space: nowrap; }
+.ownership-card .ownership-note, .ownership-empty { margin-top: 11px; font-size: 10px; line-height: 1.7; color: var(--muted, #5f6b61); }
+.ownership-empty { margin-top: 0; }
+@media (max-width: 850px) {
+  .ownership-charts { grid-template-columns: 1fr; }
+  .ownership-body { gap: 20px; }
+}
+@media (max-width: 380px) {
+  .ownership-card { padding: 13px; }
+  .ownership-body { gap: 9px; }
+  .ownership-ring { width: 112px; height: 112px; flex-basis: 112px; }
+  .ownership-legend > li { gap: 4px; font-size: 9px; }
+  .ownership-legend strong { font-size: 9px; }
+}

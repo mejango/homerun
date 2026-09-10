@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f5ef">
+  <meta name="description" content="Fund and earn together. Explore how Homerun brings people together to fund assets and share their income.">
+  <title>Homerun ⚾︎ — Fund and earn together</title>
+  <link rel="canonical" href="https://roof.top/">
+  <meta property="og:site_name" content="Homerun ⚾︎">
+  <meta property="og:title" content="Homerun ⚾︎ — Fund and earn together">
+  <meta property="og:url" content="https://roof.top/">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2040%2040%22%3E%3Crect%20width%3D%2240%22%20height%3D%2240%22%20rx%3D%229%22%20fill%3D%22%23f7f5ef%22%2F%3E%3Ccircle%20cx%3D%2220%22%20cy%3D%2220%22%20r%3D%2215%22%20fill%3D%22%23fffefa%22%20stroke%3D%22%2324533e%22%20stroke-width%3D%221.5%22%2F%3E%3Cpath%20d%3D%22M10%209c10%204%2010%2018%200%2022M30%209c-10%204-10%2018%200%2022M12%2013l4-2m-1%208%204-1m-4%208%204%201m9-14-4-2m1%208-4-1m4%208-4%201%22%20fill%3D%22none%22%20stroke%3D%22%2324533e%22%20stroke-width%3D%221.3%22%2F%3E%3C%2Fsvg%3E">
+  <link rel="stylesheet" href="./home.css">
+  <script type="module" src="./ballpark.mjs"></script>
+</head>
+<body class="home-page">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <main id="main" class="home-main" tabindex="-1">
+    <section class="ballpark-hero" aria-labelledby="home-title">
+  <header class="site-header">
+    <div class="brand-lockup"><a class="brand" href="./" aria-label="Homerun home"><span class="brand-ball" aria-hidden="true">⚾︎</span> <span class="brand-word">Homerun</span></a><p class="brand-tagline">Fund and earn together</p></div>
+  </header>
+
+      <div class="home-copy">
+        <ul class="home-asset-types" aria-label="Asset types"><li>Real estate</li><li>Business</li><li>Equipment</li><li>Energy</li><li>Other assets</li></ul>
+        <h1 id="home-title">Fund an asset.<br><em>Share what it earns.</em></h1>
+        <div class="home-actions"><a class="create-homerun" href="./create">Begin</a><a class="see-demo" href="./founderhause">See Founder Haus demo</a></div>
+      </div>
+      <canvas id="ballpark" role="img" aria-label="A colored-pencil ballpark with houses, a bakery, rooftop solar, a tractor, a UFO coffee kiosk and teammates on benches, overlooking the ocean and sunset cliffs.">A neighborhood ballpark above the ocean, with houses, trees, mountains and sunset cliffs.</canvas>
+    </section>
+  </main>
+  <footer class="home-footer"><span>Homerun | Fund and earn together</span><div class="home-color-controls"><div class="home-color-control"><label for="color-mode">Color mode</label><select id="color-mode"><option value="acid">Acid</option><option value="shapes" selected>Shapes</option></select></div><div class="home-color-control"><label for="color-intensity">Intensity</label><input id="color-intensity" type="range" min="0" max="100" step="1" value="100"><output id="color-intensity-value" for="color-intensity">100</output></div><div class="home-color-control"><label for="color-pace">Pace</label><input id="color-pace" type="range" min="0.25" max="4" step="0.25" value="2.5"><output id="color-pace-value" for="color-pace">2.5×</output></div><div class="home-color-control"><label for="color-grouping">Color grouping</label><input id="color-grouping" type="range" min="0" max="100" step="1" value="11" aria-description="Zero shifts individual pixels; higher values create broader color patches."><output id="color-grouping-value" for="color-grouping">11</output></div><button id="toggle-motion" class="home-motion-toggle" type="button">Pause color drift</button></div></footer>
+</body>
+</html>
