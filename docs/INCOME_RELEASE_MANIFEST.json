@@ -4,7 +4,7 @@
   "releaseReady": false,
   "deploymentAuthorized": false,
   "supersedesProfile": "homerun-income-single-chain-stock-sticky-v1-draft",
-  "capturedAt": "2026-09-10T20:18:30.660Z",
+  "capturedAt": "2026-09-10T20:29:05.126Z",
   "liveRpcCalls": 0,
   "walletCalls": 0,
   "helperSourceKeccak256": "0x71d13f3ea4128c1bea0bb2f800f0aa1736eceee873dc9431ec7c93c60c801241",
@@ -91,32 +91,8 @@
     {
       "name": "homerun",
       "path": "extensions/homerun",
-      "commit": "41d11ac3d42a99a4e8b8c1e41c2da0bc6d8bfabd",
-      "trackedChanges": [
-        "M .dockerignore",
-        " M .gitignore",
-        " M Dockerfile",
-        " M README.md",
-        " M docs/NETWORK_DESIGN.md",
-        " M docs/OWNER_ACTIONS.md",
-        " M foundry.toml",
-        " M package.json",
-        " M test/accessibility.mjs",
-        " M test/browser-flow.mjs",
-        " M test/create-browser.mjs",
-        " M test/create-income-preview.test.mjs",
-        " M test/create-model.test.mjs",
-        " M test/owner-actions.test.mjs",
-        " M web/create-income-preview.mjs",
-        " M web/create-model.mjs",
-        " M web/create.css",
-        " M web/home.css",
-        " M web/income-payment-preview.mjs",
-        " M web/network.css",
-        " M web/owner-actions.mjs",
-        " M web/project-page.css",
-        " M web/site-integration.mjs"
-      ]
+      "commit": "d5a73b61534ae63a39b405733ac100d5bac57bd2",
+      "trackedChanges": []
     },
     {
       "name": "core-v6",
