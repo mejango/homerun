@@ -112,3 +112,8 @@
 }
 
 .revenue-description { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+@media (max-width: 760px) {
+  .simulator .deal-heading > .deal-image { order: 1; }
+  .simulator .deal-heading > #project-journey { order: 2; }
+}
