@@ -22,7 +22,7 @@ From this directory, using Node 20 or newer:
 npm run dev
 ```
 
-Open the [homepage](http://localhost:3010), or go straight to the [Founder Haus demo](http://localhost:3010/founderhause). The homepage ballpark is drawn in JavaScript on canvas. All five asset types appear in the neighborhood. The geometry stays still while a WebGL color drift changes pixel colors at up to 24 frames per second. Footer controls select Shapes or Acid mode, intensity, pace and grouping. Motion pauses offscreen or in hidden tabs, respects reduced-motion settings, and can be paused from the footer. There are no web runtime dependencies to install. `PORT` can override the preview port. The development server binds to localhost; `HOST` overrides the bind address. Production serves `dist/` with `NODE_ENV=production`.
+Open the [homepage](http://localhost:3010), or go straight to the [Founder Haus demo](http://localhost:3010/founderhaus). The homepage ballpark is drawn in JavaScript on canvas. All five asset types appear in the neighborhood. The geometry stays still while a WebGL color drift changes pixel colors at up to 24 frames per second. Footer controls select Shapes or Acid mode, intensity, pace and grouping. Motion pauses offscreen or in hidden tabs, respects reduced-motion settings, and can be paused from the footer. There are no web runtime dependencies to install. `PORT` can override the preview port. The development server binds to localhost; `HOST` overrides the bind address. Production serves `dist/` with `NODE_ENV=production`.
 
 ```sh
 npm test
@@ -55,7 +55,7 @@ The form saves a draft in this browser. Creation saves a local project and produ
 - **Prepare owner actions:** review and download ordered closing, refund, purchase-completion and sale-redemption drafts. State preview buttons change only the simulation; missing chain and project data remain explicit prerequisites.
 - **Save or reset:** download the current inputs and projection at the bottom of the page, or restore the example. On mobile, preview settings appear first; contribution details remain in dropdowns beneath Pay.
 
-All investment states live at `/founderhause`, linked from the illustrated homepage. The previous `/demo.html` URL redirects there. `network-app.mjs` and `network-model.mjs` are current. The older story, lifecycle and capped calculator modules remain references and are not loaded by the website.
+All investment states live at `/founderhaus`, linked from the illustrated homepage. The previous `/demo.html` URL redirects there. `network-app.mjs` and `network-model.mjs` are current. The older story, lifecycle and capped calculator modules remain references and are not loaded by the website.
 
 The owner determines fundraising outcomes and manually queues state changes. A failed raise refunds the remaining cash after incurred expenses, with no operator success mint. At successful purchase, ordinary FUND issuance stops after the operator allocation. FUND continues as the proposed corporate/property claim. Take the initial INCOME snapshot before enabling automatic holder rewards, resolving prior custodians without double counting, then atomically launch and materialize the full initial allocation. Later claims preserve FUND and cannot repeat the closing allocation. The premint gives early participation, not senior repayment priority.
 
@@ -89,7 +89,7 @@ Retained backing is not a dividend. The earlier $2 million example used 2,000,00
 | Path | Responsibility |
 | --- | --- |
 | [web/index.html](web/index.html), [web/home.css](web/home.css), [web/ballpark.mjs](web/ballpark.mjs) | Homepage with a neighborhood ballpark drawn in JavaScript |
-| [web/founderhause/index.html](web/founderhause/index.html), [web/network-app.mjs](web/network-app.mjs), [web/network.css](web/network.css) | Investment simulator and editable projections |
+| [web/founderhaus/index.html](web/founderhaus/index.html), [web/network-app.mjs](web/network-app.mjs), [web/network.css](web/network.css) | Investment simulator and editable projections |
 | [web/founder-haus.mjs](web/founder-haus.mjs), [web/founder-haus.css](web/founder-haus.css), [docs/FOUNDER_HAUS_SOURCES.md](docs/FOUNDER_HAUS_SOURCES.md) | Real venue photographs, accessible gallery and source notes |
 | [web/field-help.mjs](web/field-help.mjs), [web/field-help-ui.mjs](web/field-help-ui.mjs) | Plain-language help for mouse, keyboard and touch |
 | [web/projection-charts.mjs](web/projection-charts.mjs), [web/projection-charts.css](web/projection-charts.css) | Budget, rent cash, operating reserve and borrowing visuals |

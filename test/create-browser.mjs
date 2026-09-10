@@ -64,7 +64,7 @@ try {
     await page.locator('.create-homerun').click();
     assert.match(page.url(), /\/create\/?$/);
     await currentStep(0);
-    assert.equal(await page.locator('.create-intro h1').textContent(), 'Design the game');
+    assert.equal(await page.locator('.create-intro h1').textContent(), 'Design the rules');
     assert.equal(await page.locator('label[for="create-name"]').textContent(), 'Title');
     assert.equal(await page.locator('.draft-preview .create-eyebrow').count(), 0);
     assert.equal(await page.locator('#create-raiseDays').count(), 0);
@@ -415,7 +415,7 @@ try {
       await page.setViewportSize({ width: 1440, height: 1000 });
     });
     await check('Founder Haus remains isolated from created projects', async () => {
-      await page.goto(new URL('/founderhause', home).href);
+      await page.goto(new URL('/founderhaus', home).href);
       await page.locator('#scenario-title').waitFor();
       assert.equal((await page.locator('.deal-heading h1').textContent()).trim(), 'Founder Haus');
       assert.equal(await page.locator('#field-purchaseBudget').inputValue(), '500,000');

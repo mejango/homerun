@@ -31,9 +31,9 @@ function field(name, label, { prefix = '', suffix = '', placeholder = '', help =
   const numeric = name !== 'revenueDescription' && (groups[1].includes(name) || groups[2].includes(name));
   return `<div class="create-field"><label for="create-${name}">${label}</label><div class="create-input">${prefix ? `<span aria-hidden="true">${prefix}</span>` : ''}${rows ? `<textarea id="create-${name}" name="${name}" rows="${rows}" maxlength="${maxLength}" aria-describedby="${name}-help ${name}-error"></textarea>` : `<input id="create-${name}" name="${name}" type="${type}" ${numeric ? 'inputmode="decimal"' : ''} ${maxLength ? `maxlength="${maxLength}"` : ''} placeholder="${placeholder}" autocomplete="off" aria-describedby="${name}-help ${name}-error">`}${suffix ? `<span aria-hidden="true">${suffix}</span>` : ''}</div><p class="create-help" id="${name}-help">${help}</p><p class="create-error" id="${name}-error" hidden></p></div>`;
 }
-document.querySelector('#main').innerHTML = `<div class="create-intro"><div><h1>Design the game</h1></div><span class="prototype-tag">Deployment preview</span></div>
+document.querySelector('#main').innerHTML = `<div class="create-intro"><div><h1>Design the rules</h1></div><span class="prototype-tag">Deployment preview</span></div>
 <div id="create-workspace" class="create-workspace">
-  <section class="create-editor" aria-label="Design the game">
+  <section class="create-editor" aria-label="Design the rules">
     <nav class="create-steps" aria-label="Setup steps">${labels.map((label,index) => `<button type="button" data-create-step="${index}"><span>${index+1}</span>${label}</button>`).join('')}</nav>
     <form id="create-form" novalidate>
       <section class="create-step" data-step-panel="0" aria-labelledby="step-title-0"><h2 id="step-title-0" tabindex="-1">Asset</h2>

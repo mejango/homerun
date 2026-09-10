@@ -14,7 +14,7 @@ const { chromium } = await import((process.env.PLAYWRIGHT_MODULE ? pathToFileURL
 const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, acceptDownloads: true, reducedMotion: 'reduce' });
 const page = await context.newPage();
-const demoURL = new URL('/founderhause', process.env.BASE_URL || 'http://127.0.0.1:3010/').href;
+const demoURL = new URL('/founderhaus', process.env.BASE_URL || 'http://127.0.0.1:3010/').href;
 const homeURL = new URL('/', demoURL).href;
 const phases = ['raising', 'funded', 'refunding', 'refunded', 'earning', 'liquidated'];
 const errors = [];
@@ -92,11 +92,12 @@ async function headerAlignment() {
     const start = selector => {
       const range = document.createRange();
       range.selectNodeContents(document.querySelector(selector));
-      return range.getBoundingClientRect().x;
+      const box = range.getBoundingClientRect();
+      return document.body.classList.contains('home-page') && innerWidth <= 760 ? box.x + box.width / 2 : box.x;
     };
     return { word: start('.brand-word'), tagline: start('.brand-tagline') };
   });
-  assert.ok(Math.abs(starts.word - starts.tagline) <= 1, 'Tagline text aligns with the wordmark text.');
+  assert.ok(Math.abs(starts.word - starts.tagline) <= 1, 'Tagline aligns with the wordmark: centered on mobile home, left-aligned elsewhere.');
 }
 async function field(name, amount) {
   if (name === 'investment') {
@@ -152,22 +153,22 @@ try {
       assert.equal(response.status(), 200);
       await page.locator('#ballpark').waitFor();
       assert.equal(await page.locator('#ballpark').evaluate(canvas => canvas instanceof HTMLCanvasElement && canvas.width > 0 && canvas.height > 0), true);
-      assert.equal(await page.locator('.see-demo').getAttribute('href'), './founderhause');
+      assert.equal(await page.locator('.see-demo').getAttribute('href'), './founderhaus');
       assert.equal(await page.getByRole('link', { name: 'See Founder Haus demo', exact: true }).count(), 1);
-      assert.equal(await page.locator('link[rel="canonical"]').getAttribute('href'), 'https://roof.top/');
+      assert.equal(await page.locator('link[rel="canonical"]').getAttribute('href'), 'https://homerun.money/');
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth) <= width + 1, `Homepage overflows ${width}px`);
       await headerAlignment();
       await screenshot(`homerun-home-${width}.png`);
       await page.locator('.see-demo').click();
       await page.locator('#scenario-title').waitFor();
-      assert.match(new URL(page.url()).pathname, /\/founderhause\/?$/);
+      assert.match(new URL(page.url()).pathname, /\/founderhaus\/?$/);
       assert.equal(await dollars('#raise-goal'), 615384.62);
     }
     await page.setViewportSize({ width: 1440, height: 1000 });
-    for (const pathname of ['/founderhause/', '/demo.html']) {
+    for (const pathname of ['/founderhaus/', '/demo.html']) {
       await page.goto(new URL(pathname, homeURL).href);
       await page.locator('#scenario-title').waitFor();
-      assert.match(new URL(page.url()).pathname, /\/founderhause\/?$/);
+      assert.match(new URL(page.url()).pathname, /\/founderhaus\/?$/);
       assert.equal(await page.locator('.brand').getAttribute('href'), '/');
       const currentPath = new URL(page.url()).pathname;
       await page.locator('.skip-link').focus();
@@ -201,9 +202,9 @@ try {
     assert.match(await text('footer'), /FUND:.*INCOME:/s);
     await headerAlignment();
     assert.match(await page.title(), /^Homerun ⚾︎ — Founder Haus/);
-    assert.equal(await page.locator('link[rel="canonical"]').getAttribute('href'), 'https://roof.top/founderhause');
+    assert.equal(await page.locator('link[rel="canonical"]').getAttribute('href'), 'https://homerun.money/founderhaus');
     assert.equal(await page.locator('meta[property="og:site_name"]').getAttribute('content'), 'Homerun ⚾︎');
-    assert.equal(await page.locator('meta[property="og:url"]').getAttribute('content'), 'https://roof.top/founderhause');
+    assert.equal(await page.locator('meta[property="og:url"]').getAttribute('content'), 'https://homerun.money/founderhaus');
     assert.equal(await dollars('#property-budget'), 500000);
     assert.equal(await dollars('#raise-goal'), 615384.62);
     assert.equal(await dollars('#escrow-cash'), 369230.77);
