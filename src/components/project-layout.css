@@ -11,7 +11,7 @@
   justify-content: center;
   width: 112px;
   height: 112px;
-  margin-bottom: 20px;
+  flex-shrink: 0;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -20,8 +20,9 @@
 .homerun-project-layout .hpl-logo > * { width: 100%; height: 100%; }
 .homerun-project-layout .hpl-logo img,
 .homerun-project-layout .hpl-logo canvas { display: block; width: 100%; height: 100%; object-fit: cover; }
-.homerun-project-layout .hpl-heading-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
-.homerun-project-layout .hpl-identity { min-width: 0; }
+.homerun-project-layout .hpl-heading-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.homerun-project-layout .hpl-project-heading { display: flex; flex: 1; align-items: center; gap: 24px; min-width: 0; }
+.homerun-project-layout .hpl-identity { flex: 1; min-width: 0; }
 .homerun-project-layout .hpl-title {
   margin: 0;
   font: 400 clamp(34px, 3.4vw, 48px)/1.1 var(--serif);
@@ -82,14 +83,15 @@
 }
 @media (max-width: 1000px) and (min-width: 801px) {
   .homerun-project-layout .hpl-heading-row { flex-wrap: wrap; }
-  .homerun-project-layout .hpl-header-actions { justify-content: flex-start; }
+  .homerun-project-layout .hpl-header-actions { flex-basis: 100%; justify-content: flex-start; }
 }
 @media (max-width: 800px) {
   .homerun-project-layout { padding-block: 24px 40px; }
   .homerun-project-layout .hpl-header { padding-bottom: 24px; }
-  .homerun-project-layout .hpl-logo { width: 88px; height: 88px; margin-bottom: 16px; }
+  .homerun-project-layout .hpl-logo { width: 64px; height: 64px; }
   .homerun-project-layout .hpl-heading-row { flex-direction: column; gap: 18px; }
-  .homerun-project-layout .hpl-title { font-size: clamp(32px, 8vw, 42px); }
+  .homerun-project-layout .hpl-project-heading { width: 100%; align-items: flex-start; gap: 16px; }
+  .homerun-project-layout .hpl-title { font-size: clamp(26px, 7vw, 32px); }
   .homerun-project-layout .hpl-metadata { font-size: 13px; margin-top: 12px; }
   .homerun-project-layout .hpl-pip { margin-inline: 8px; }
   .homerun-project-layout .hpl-header-actions { width: 100%; justify-content: flex-start; }

@@ -189,15 +189,17 @@ export function HomerunProjectLayout({
   return (
     <div className="homerun-project-layout" data-project-tab={activityActive ? 'activity' : current}>
       <header className="hpl-header">
-        {logo && <div className="hpl-logo">{logo}</div>}
         <div className="hpl-heading-row">
-          <div className="hpl-identity">
-            <h1 className="hpl-title">{title}</h1>
-            {items.length > 0 && <div className="hpl-metadata">
-              {items.map((item, index) => <span className="hpl-metadata-item" key={index}>
-                {index > 0 && <span className="hpl-pip" aria-hidden="true">|</span>}{item}
-              </span>)}
-            </div>}
+          <div className="hpl-project-heading">
+            {logo && <div className="hpl-logo">{logo}</div>}
+            <div className="hpl-identity">
+              <h1 className="hpl-title">{title}</h1>
+              {items.length > 0 && <div className="hpl-metadata">
+                {items.map((item, index) => <span className="hpl-metadata-item" key={index}>
+                  {index > 0 && <span className="hpl-pip" aria-hidden="true">|</span>}{item}
+                </span>)}
+              </div>}
+            </div>
           </div>
           {actions && <div className="hpl-header-actions">{actions}</div>}
         </div>
