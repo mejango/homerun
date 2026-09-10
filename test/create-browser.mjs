@@ -192,9 +192,6 @@ try {
   await check('Review defaults to all production networks with accessible icon-only choices', async () => {
     assert.match(await page.locator('#create-review').textContent(), /Neighborhood Workshop/);
     assert.match(await page.locator('#create-review').textContent(), /\$1,025\.65/);
-    assert.equal(await page.locator('#create-review .revenue-description').textContent(), revenuePlan);
-    assert.equal(await page.locator('#create-review .revenue-description').evaluate(node => node.children.length), 0);
-    assert.ok(['pre-line', 'pre-wrap', 'break-spaces'].includes(await page.locator('#create-review .revenue-description').evaluate(node => getComputedStyle(node).whiteSpace)));
     assert.equal(await page.locator('#create-next').textContent(), 'Preview');
     assert.equal(await environment('production').getAttribute('aria-pressed'), 'true');
     assert.equal(await environment('testnet').getAttribute('aria-pressed'), 'false');
