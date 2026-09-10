@@ -105,3 +105,7 @@
   #ballpark { --scene-top: 140; }
   .ballpark-hero { height: 724px; }
 }
+
+.home-asset-types { font-size: 12px; }
+@media (max-width: 760px) { .home-asset-types { font-size: 11px; gap: 3px 8px; } }
+@media (max-width: 360px) { .home-asset-types { font-size: 10px; gap: 3px 6px; } }
