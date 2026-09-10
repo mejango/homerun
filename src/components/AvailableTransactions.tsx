@@ -1,12 +1,15 @@
 'use client'
 
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
 import Link from 'next/link'
 import { ModalShell } from './ui/ModalShell'
 import { transactionCatalog, transactionRoles, transactionStages, type TransactionRole, type TransactionStage } from '@/lib/transaction-catalog'
 
+const subscribeToReadiness = () => () => {}
+
 /** Browsable without a wallet; signing remains on the verified live project. */
 export function AvailableTransactions({ stage = 'create' }: { stage?: TransactionStage }) {
+  const ready = useSyncExternalStore(subscribeToReadiness, () => true, () => false)
   const [open, setOpen] = useState(false)
   const [selectedStage, setStage] = useState<TransactionStage | 'all'>(stage)
   const [role, setRole] = useState<TransactionRole | 'all'>('all')
@@ -22,7 +25,7 @@ export function AvailableTransactions({ stage = 'create' }: { stage?: Transactio
     (role === 'all' || entry.role === role || entry.role === 'anyone'),
   )
   return <>
-    <button ref={triggerRef} className="available-transactions-button" type="button" aria-haspopup="dialog" onClick={() => { setStage(stage); setRole('all'); setOpen(true) }}>
+    <button ref={triggerRef} className="available-transactions-button" type="button" disabled={!ready} aria-haspopup="dialog" onClick={() => { setStage(stage); setRole('all'); setOpen(true) }}>
       Available transactions <span aria-hidden="true">↗</span>
     </button>
     {open && <ModalShell title="Available transactions" subtitle="Explore what operators and token holders can do at each stage." maxWidth="max-w-3xl" onClose={() => setOpen(false)} footer={

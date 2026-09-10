@@ -129,6 +129,7 @@
   cursor: pointer;
 }
 .available-transactions-button:hover { background: #34533e; }
+.available-transactions-button:disabled { opacity: 0.55; cursor: wait; }
 .available-transactions-button:focus-visible { outline: 2px solid #42664d; outline-offset: 3px; }
 .create-intro .available-transactions-button { margin-top: 0; flex-shrink: 0; }
 

@@ -68,8 +68,20 @@ try {
     await page.screenshot({ path: `/tmp/homerun-transactions-cta-${width}.png` })
     console.log(`PASS ${width}px: six stages, role filters, full catalogue, focus return, links, layout and accessibility`)
   }
-  await page.goto(`${base}/create`, { waitUntil: 'domcontentloaded' })
-  await expect(page.locator('#create-name')).toBeVisible()
+  let releaseScripts
+  const scriptsReady = new Promise(resolve => { releaseScripts = resolve })
+  await page.route('**/_next/static/**/*.js', async route => {
+    await scriptsReady
+    await route.continue()
+  })
+  try {
+    await page.goto(`${base}/create`, { waitUntil: 'commit' })
+    await expect(page.locator('#create-name')).toBeVisible()
+    await expect(cta).toBeDisabled()
+  } finally {
+    releaseScripts()
+  }
+  await expect(cta).toBeEnabled({ timeout: 60000 })
   await cta.click()
   await expect(dialog.getByRole('combobox', { name: 'Lifecycle stage', exact: true })).toHaveValue('create')
   await expect(dialog.locator('[data-transaction="create"]')).toBeVisible()
@@ -77,7 +89,7 @@ try {
   await page.keyboard.press('Escape')
   await expect(page.locator('[data-step-panel]')).toHaveAttribute('data-step-panel', '0')
   await expect(cta).toBeFocused()
-  console.log('PASS Create: transaction guide works before filling or submitting the form')
+  console.log('PASS Create: waits for JavaScript, then works on the first click before filling or submitting the form')
   assert.deepEqual(errors, [])
   console.log('PASS no JavaScript errors or wallet required')
 } finally {
