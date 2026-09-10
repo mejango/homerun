@@ -108,6 +108,8 @@ describe('INCOME transaction surfaces', () => {
     runtime.sticky = { stickyProjectId: 91n }
     await act(async () => root.render(<IncomeProject chainId={1} projectId={7n} fundProjectId={3n} />)); await visitActions()
     expect(host.textContent).toContain('Initial claim FUND 3 INCOME 7')
+    expect(host.querySelector('.hpl-metadata')?.textContent).toContain('INCOME supply: 100')
+    expect(host.querySelector('.hpl-metadata')?.textContent).toContain('INCOME treasury: <0.000001 ETH')
     expect(host.textContent).toContain('Verified Sticky 91')
     expect(host.textContent).not.toContain('self-delegate')
   })

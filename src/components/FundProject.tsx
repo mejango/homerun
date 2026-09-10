@@ -186,7 +186,7 @@ function ProjectActions({ chainId, projectId, state, client, details, notice, in
   return <HomerunProjectLayout
     title={name ?? 'FUND project'}
     logo={details?.logoUrl && <Image unoptimized src={details.logoUrl} width={112} height={112} alt={name ? `${name} logo` : 'Project logo'} />}
-    metadata={[details?.location, displayChainName(state.chainId), `FUND #${state.projectId}`, income.projectId && `INCOME #${income.projectId}`, !supported ? 'Unsupported FUND configuration' : state.metadata.pausePay ? 'Contributions paused' : 'Raising funds'].filter(Boolean)}
+    metadata={[details?.location, displayChainName(state.chainId), `FUND #${state.projectId}`, income.projectId && `INCOME #${income.projectId}`, !supported ? 'Unsupported FUND configuration' : state.metadata.pausePay ? 'Contributions paused' : 'Raising funds', supported && context && <span>FUND treasury: <DisplayTokenAmount value={context.balance} decimals={context.decimals} /> {context.symbol}</span>, supported && <span>FUND supply: <DisplayTokenAmount value={state.totalSupply} /></span>, income.treasuryMetric].filter(Boolean)}
     notice={<>{notice}{!supported && <p role="alert">This project uses contract settings outside Homerun’s verified FUND integration. Transactions are unavailable here. {state.issues.join(' ')}</p>}{!isConnected && <p>Connect your wallet to contribute, use your tokens, or access operator actions.</p>}{writesUnavailable && <p role="status">New transactions are paused while current project permissions and balances are being verified. Submitted transactions continue to be tracked below.</p>}</>}
     actions={<AvailableTransactions stage={income.projectId ? 'earning' : state.metadata.pausePay ? 'funded' : 'raising'} />}
     payment={<>

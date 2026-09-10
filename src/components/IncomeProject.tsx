@@ -88,6 +88,8 @@ export type IncomeProjectSlots = {
   projectId?: bigint
   fundProjectId?: bigint
   state?: IncomeProjectState
+  treasuryMetric: ReactNode
+  supplyMetric: ReactNode
   title: string
   description: string | null
   logoUrl: string | null
@@ -145,7 +147,7 @@ export function IncomeProject({ chainId, projectId, fundProjectId }: { chainId: 
   return <IncomeProjectRuntime chainId={chainId} projectId={projectId} fundProjectId={fundProjectId}>{slots => <HomerunProjectLayout
     title={slots.title}
     logo={slots.logoUrl && <Image unoptimized src={slots.logoUrl} width={112} height={112} alt={`${slots.title} logo`} />}
-    metadata={[displayChainName(chainId), `INCOME #${projectId}`, slots.state?.metadata.pausePay ? 'Payments paused' : slots.state ? 'Revenue open' : 'Verifying contracts']}
+    metadata={[displayChainName(chainId), `INCOME #${projectId}`, slots.state?.metadata.pausePay ? 'Payments paused' : slots.state ? 'Revenue open' : 'Verifying contracts', slots.treasuryMetric, slots.supplyMetric]}
     notice={slots.notice}
     actions={<AvailableTransactions stage="earning" />}
     payment={slots.payment}
@@ -172,6 +174,8 @@ function IncomeActions({ state, client, fundProjectId, writesUnavailable, notice
   const currency = ready && primary.length > 0 && <label className="mb-5 grid gap-2 text-sm">INCOME treasury currency<select className="min-h-11 rounded border border-[#bfc9b5] bg-white px-3 pr-9" value={context?.token} onChange={event => setSelectedToken(event.target.value as Address)}>{primary.map(item => <option key={item.token} value={item.token}>{item.symbol}</option>)}</select></label>
   return children({
     projectId, fundProjectId, state, title, description, logoUrl, notice,
+    treasuryMetric: context && <span>INCOME treasury: <DisplayTokenAmount value={context.balance} decimals={context.decimals} /> {context.symbol}</span>,
+    supplyMetric: state && <span>INCOME supply: <DisplayTokenAmount value={state.totalSupply} /></span>,
     payment: gate(<>{ready && context ? <IncomePayment state={state} client={client} context={context} currency={currency} /> : <p>{projectId ? 'Loading INCOME payment options…' : 'INCOME has not been launched.'}</p>}</>),
     activity: projectId && <ProjectActivity chainId={chainId} projectId={projectId} />,
     overview: state && <Panel title="Revenue"><dl className="grid gap-5 sm:grid-cols-2"><div><dt>INCOME supply</dt><dd><DisplayTokenAmount value={state.totalSupply} /> INCOME</dd></div><div><dt>Payments</dt><dd>{state.metadata.pausePay ? 'Paused' : 'Open'}</dd></div>{state.accountingContexts.map(item => <div key={`${item.terminal}:${item.token}`}><dt>Treasury</dt><dd><DisplayTokenAmount value={item.balance} decimals={item.decimals} /> {item.symbol}</dd></div>)}</dl><p className="mt-4 text-sm">Verified at block {state.blockNumber.toString()}. INCOME is separate from FUND and does not grant an asset-sale claim.</p></Panel>,

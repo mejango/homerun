@@ -73,7 +73,7 @@
 .homerun-project-layout .hpl-tabs-owners { gap: 20px; }
 .homerun-project-layout .hpl-tabs-owners .hpl-tab { padding-inline: 2px; font-size: 14px; }
 .homerun-project-layout .hpl-owner-panel { padding-top: 24px; min-width: 0; }
-.homerun-project-layout .hpl-tabs-accounts { display: inline-flex; gap: 4px; border: 1px solid var(--line); border-radius: 5px; padding: 3px; background: #eeeee580; }
+.homerun-project-layout .hpl-tabs-accounts { display: inline-flex; flex-direction: column; gap: 4px; border: 1px solid var(--line); border-radius: 5px; padding: 3px; background: #eeeee580; }
 .homerun-project-layout .hpl-tabs-accounts .hpl-tab { min-height: 40px; min-width: 66px; border: 1px solid transparent; border-radius: 3px; padding: 7px 14px; font-size: 14px; }
 .homerun-project-layout .hpl-tabs-accounts .hpl-tab[aria-selected='true'] { background: var(--surface); border-color: #c2cbb9; }
 .homerun-project-layout .hpl-account-panel { min-width: 0; padding-top: 22px; }

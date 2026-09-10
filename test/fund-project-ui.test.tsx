@@ -87,12 +87,16 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     runtime.query = { ...runtime.query, data: undefined, isPending: true }
     await act(async () => root.render(<FundProject chainId={1} projectId="7" />))
     expect(host.querySelector('[aria-label="Project sections"]')).not.toBeNull()
+    expect(host.querySelector('.hpl-metadata')?.textContent).not.toContain('FUND treasury:')
+    expect(host.querySelector('.hpl-metadata')?.textContent).not.toContain('FUND supply:')
     await tab('Operators')
     expect(runtime.mounted).toBe(0)
     runtime.query = { ...runtime.query, data: state(), isPending: false }
     await act(async () => root.render(<FundProject chainId={1} projectId="7" />))
     expect([...host.querySelectorAll('[role="tab"]')].find(button => button.textContent === 'Operators')?.getAttribute('aria-selected')).toBe('true')
     expect(host.querySelector('[data-testid="income"]')).not.toBeNull()
+    expect(host.querySelector('.hpl-metadata')?.textContent).toContain('FUND treasury: <0.000001 ETH')
+    expect(host.querySelector('.hpl-metadata')?.textContent).toContain('FUND supply: <0.000001')
     expect(runtime.send).not.toHaveBeenCalled()
   })
 
@@ -102,6 +106,7 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     await tab('Shop')
     expect(host.querySelector('[data-testid="shop-FUND"]')).not.toBeNull()
     expect(host.querySelector('[data-testid="shop-INCOME"]') !== null).toBe(incomeId !== undefined)
+    expect(host.querySelector('.hpl-metadata')?.textContent).not.toContain('INCOME treasury:')
     expect(runtime.send).not.toHaveBeenCalled()
   })
 
@@ -160,6 +165,8 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     const mounted = runtime.mounted
     runtime.query = { ...runtime.query, data: { ...state(), controller: zeroAddress, supportedController: false } }
     await render()
+    expect(host.querySelector('.hpl-metadata')?.textContent).not.toContain('FUND treasury:')
+    expect(host.querySelector('.hpl-metadata')?.textContent).not.toContain('FUND supply:')
     expect(runtime.mounted).toBe(mounted)
     expect(runtime.unmounted).toBe(0)
     expect(host.querySelector('fieldset[aria-label="Project transactions"]')?.hasAttribute('disabled')).toBe(true)

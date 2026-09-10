@@ -18,11 +18,13 @@ The application uses Next.js/React, Wagmi/Viem, TanStack Query, the Nana SDK dep
 
 ## Project navigation
 
-The demo and live project pages share the Juicebox-style layout: project logo, title and pip-separated metadata, Pay and Activity on the left, and **Overview, Stages, Owners, Shop, Extras, Operators** on the right. On phones, Activity becomes a tab. The header's **Available transactions** button opens the lifecycle action guide.
+The demo and live project pages share the Juicebox-style layout: project logo beside the title and pip-separated metadata, Pay and Activity on the left, and **Overview, Stages, Owners, Shop, Extras, Operators** on the right. Header figures follow the demo stage or verified live treasury and token supply; a payment draft does not change project totals. On phones, Activity becomes a tab. The header's **Available transactions** button opens the lifecycle action guide.
 
 **Owners** contains Accounts (You / All), Market, Settlement, Splits and Loans. Verified linked FUND and INCOME controls appear together. Tabs mount on first use and remain mounted, so changing tabs preserves drafts and pending receipt tracking. Hash links such as `/founderhaus#owners/accounts/all` support direct navigation and browser history.
 
 **Stages** keeps the demo's modeling inputs, journey, history and future projections together. Live stages display confirmed rulesets and published plans without treating paused payments as proof of a purchase or sale. **Shop** reads verified inventory and customers; checkout currently opens the corresponding Juicebox shop. **Extras** lists stock payer addresses and provides reviewed payer creation. The demo uses explicitly modeled milestones and has no real payer addresses.
+
+The demo **Shop** includes a Juicebox-style item editor with media, pricing, supply, discounts, categories, sale splits, reserves, voting power and item rules. Items are reviewed before being saved locally and can be edited or removed. Drafts are isolated by project and cleared by **Reset example**. This editor does not publish items, pin media, or send contract transactions; the live shop remains separate.
 
 ## FUND and INCOME
 

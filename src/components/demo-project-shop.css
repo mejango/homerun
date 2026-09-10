@@ -1,0 +1,153 @@
+.demo-project-shop, .demo-shop-editor, dialog.modal-dialog .demo-shop-editor { color: #2d4035; font: 400 14px/1.55 var(--sans, sans-serif); }
+.demo-project-shop *, .demo-shop-editor *, dialog.modal-dialog .demo-shop-editor *, :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-footer * { box-sizing: border-box; }
+.demo-project-shop [hidden], .demo-shop-editor [hidden], dialog.modal-dialog .demo-shop-editor [hidden] { display: none !important; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding-bottom: 18px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-tabs { display: flex; align-items: stretch; gap: 24px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-tabs button { min-height: 44px; padding: 9px 0; border: 0; border-bottom: 2px solid transparent; background: transparent; color: #667360; font: 500 14px/1.4 var(--sans, sans-serif); cursor: pointer; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-tabs button[aria-selected=true] { border-bottom-color: #42664d; color: #2d4035; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-button { display: inline-flex; justify-content: center; align-items: center; gap: 8px; min-height: 44px; border: 1px solid #b9c4b2; border-radius: 5px; padding: 10px 17px; font: 500 14px/1.4 var(--sans, sans-serif); text-align: center; text-decoration: none; cursor: pointer; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-button-primary { background: #42664d; color: #fffefa; border-color: #42664d; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-button-primary:hover { background: #34533e; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-button-secondary { background: #fffefa; color: #42664d; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-button:disabled, :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-add-row:disabled { opacity: .55; cursor: wait; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-button:focus-visible, :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-text-button:focus-visible, :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-tabs button:focus-visible, :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-add-row:focus-visible, :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-card-preview:focus-visible, :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-card-actions button:focus-visible, :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-more-button:focus-visible { outline: 2px solid #42664d; outline-offset: 3px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-demo-note { margin: 0 0 24px; padding: 12px 14px; border: 1px solid #cbd7db; border-radius: 5px; background: #edf2f4; color: #425e68; font-size: 13px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-demo-note > span { font-weight: 600; margin-right: 8px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-notice { margin: 0 0 20px; padding: 12px 0; color: #42664d; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 16px; padding: 52px 24px; border: 1px solid #d8ddce; border-radius: 8px; background: #f7f7ef; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-empty svg { color: #6b7f62; width: 52px; height: 52px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-empty h2 { margin: 0; font: 400 30px/1.2 var(--serif, serif); letter-spacing: -.02em; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-empty p { margin: 0; max-width: 470px; color: #667360; line-height: 1.65; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-empty .ds-button { margin-top: 5px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-inventory-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 24px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-inventory-heading p { margin: 0; color: #667360; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-text-button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 5px 0; border: 0; background: none; color: #42664d; font: 500 13px/1.4 var(--sans, sans-serif); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-small-button { font-size: 11px; min-height: 30px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-category { margin: 0 0 28px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-category > h3 { margin: 0 0 14px; font: 500 17px/1.4 var(--sans, sans-serif); }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-inventory { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; list-style: none; padding: 0; margin: 0; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-item-card { min-width: 0; overflow: hidden; border: 1px solid #d8ddce; border-radius: 8px; background: #fffefa; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-card-preview { display: flex; flex-direction: column; width: 100%; padding: 0; border: 0; border-radius: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-card-preview .ds-media-large { width: 100%; height: auto; aspect-ratio: 4/3; border: 0; border-radius: 0; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-card-copy { width: 100%; padding: 20px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-eyebrow { color: #667360; font: 500 11px/1.4 var(--sans, sans-serif); letter-spacing: .05em; text-transform: uppercase; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-card-copy h3 { margin: 7px 0 10px; font: 400 25px/1.2 var(--serif, serif); overflow-wrap: anywhere; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-card-description { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; margin: 0 0 18px; color: #667360; font-size: 13px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-card-price { margin: 0; font-weight: 600; font-size: 18px; overflow-wrap: anywhere; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-card-quantity { margin: 6px 0 0; color: #667360; font-size: 12px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-card-actions { display: flex; gap: 18px; padding: 0 20px 14px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-card-actions button { min-height: 36px; padding: 5px 0; background: none; border: 0; color: #42664d; font: 500 12px/1.4 var(--sans, sans-serif); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-footer { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-footer p { flex: 1; min-width: 180px; margin: 0; color: #667360; font: 400 13px/1.5 var(--sans, sans-serif); }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-confirm-copy { margin: 0; color: #2d4035; font: 400 14px/1.6 var(--sans, sans-serif); }
+.demo-shop-editor p, dialog.modal-dialog .demo-shop-editor p { margin: 0; }
+.demo-shop-editor .ds-editor-notice, dialog.modal-dialog .demo-shop-editor .ds-editor-notice { margin: 0 0 24px; padding: 13px 15px; border: 1px solid #cbd7db; border-radius: 5px; background: #edf2f4; color: #425e68; font-size: 13px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-editor-notice strong { display: block; margin-bottom: 3px; font-weight: 600; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-currency-field { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 22px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-currency-field > label { font-weight: 500; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-currency-field select { width: 110px !important; }
+.demo-shop-editor .ds-currency-field p, dialog.modal-dialog .demo-shop-editor .ds-currency-field p { flex-basis: 100%; color: #667360; font-size: 12px; }
+.demo-shop-editor input:not([type=checkbox]):not([type=file]), dialog.modal-dialog .demo-shop-editor input:not([type=checkbox]):not([type=file]), .demo-shop-editor select, dialog.modal-dialog .demo-shop-editor select, .demo-shop-editor textarea, dialog.modal-dialog .demo-shop-editor textarea { display: block; width: 100%; min-width: 0; min-height: 44px; padding: 10px 12px; border: 1px solid #bfc9b5; border-radius: 5px; background: #fffefa; color: #2d4035; font: 400 14px/1.45 var(--sans, sans-serif); box-shadow: none; }
+.demo-shop-editor select, dialog.modal-dialog .demo-shop-editor select { padding-right: 32px; }
+.demo-shop-editor textarea, dialog.modal-dialog .demo-shop-editor textarea { resize: vertical; }
+.demo-shop-editor input:focus, dialog.modal-dialog .demo-shop-editor input:focus, .demo-shop-editor textarea:focus, dialog.modal-dialog .demo-shop-editor textarea:focus, .demo-shop-editor select:focus, dialog.modal-dialog .demo-shop-editor select:focus { outline: 2px solid #42664d; outline-offset: 1px; }
+.demo-shop-editor input[aria-invalid=true], dialog.modal-dialog .demo-shop-editor input[aria-invalid=true], .demo-shop-editor textarea[aria-invalid=true], dialog.modal-dialog .demo-shop-editor textarea[aria-invalid=true] { border-color: #a34134 !important; }
+.demo-shop-editor input::placeholder, dialog.modal-dialog .demo-shop-editor input::placeholder, .demo-shop-editor textarea::placeholder, dialog.modal-dialog .demo-shop-editor textarea::placeholder { color: #7b8476; opacity: 1; }
+.demo-shop-editor input:disabled, dialog.modal-dialog .demo-shop-editor input:disabled, .demo-shop-editor select:disabled, dialog.modal-dialog .demo-shop-editor select:disabled { opacity: .65; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-draft-item { min-width: 0; margin: 0 0 20px; padding: 20px; border: 1px solid #d8ddce; border-radius: 8px; background: #f7f7f0; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-draft-item legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-draft-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; min-height: 32px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-item-basics { display: flex; align-items: flex-start; gap: 20px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-media-field { display: flex; align-items: center; flex-direction: column; flex: 0 0 104px; gap: 8px; width: 104px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-media-preview { display: block; width: 104px; height: 104px; object-fit: cover; border: 1px solid #d8ddce; border-radius: 6px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-media-placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; background: #edf0e4; color: #6b7f62; padding: 10px; text-align: center; overflow: hidden; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-media-placeholder svg { width: 32px; height: 32px; flex-shrink: 0; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-media-placeholder span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; max-width: 100%; overflow-wrap: anywhere; font-size: 10px; line-height: 1.3; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-media-placeholder strong { font-size: 11px; line-height: 1.3; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-media-large.ds-media-placeholder svg { width: 54px; height: 54px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-media-large.ds-media-placeholder span { font-size: 12px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-upload-button { display: flex; align-items: center; justify-content: center; position: relative; width: 100%; min-height: 38px; padding: 8px; border: 1px solid #bfc9b5; border-radius: 5px; background: #fffefa; font-size: 11px; font-weight: 500; cursor: pointer; text-align: center; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-upload-button:focus-within { outline: 2px solid #42664d; outline-offset: 2px; }
+.demo-shop-editor .ds-upload-button input[type=file], dialog.modal-dialog .demo-shop-editor .ds-upload-button input[type=file] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-basics-fields { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 12px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-field { min-width: 0; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-field > label { display: block; margin: 0 0 6px; font-size: 13px; font-weight: 500; line-height: 1.4; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-field > label > input, :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-field > label > select { margin-top: 6px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-field label > span { color: #667360; font-weight: 400; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-field-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.demo-shop-editor .ds-help, dialog.modal-dialog .demo-shop-editor .ds-help { color: #667360; font-size: 12px; line-height: 1.5; margin: 5px 0 0; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-media-options { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-media-options > span { color: #667360; font-size: 11px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-media-url-grid { display: grid; grid-template-columns: minmax(0, 1fr) 115px; gap: 12px; margin-top: 8px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-description-field { margin-top: 18px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-more-button { min-height: 40px; display: flex; align-items: center; gap: 9px; margin-top: 14px; padding: 5px 0; border: 0; background: none; color: #425e68; font: 500 13px/1.4 var(--sans, sans-serif); cursor: pointer; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-advanced { display: flex; flex-direction: column; gap: 25px; margin-top: 8px; padding-top: 22px; border-top: 1px solid #d8ddce; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-advanced h4, :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-item-review h4 { font: 600 14px/1.4 var(--sans, sans-serif); margin: 0 0 6px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-advanced > div > .ds-field, :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-advanced .ds-reserve-grid { margin-top: 10px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-advanced > div > .ds-field { max-width: 180px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-advanced > .ds-field > input { margin-top: 10px; max-width: 320px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-reserve-grid { display: grid; grid-template-columns: minmax(100px, 135px) minmax(0, 1fr); gap: 14px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-rule-options { display: flex; flex-direction: column; gap: 15px; margin-top: 16px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-check-row { display: flex; align-items: flex-start; gap: 12px; cursor: pointer; }
+.demo-shop-editor .ds-check-row input[type=checkbox], dialog.modal-dialog .demo-shop-editor .ds-check-row input[type=checkbox] { display: block; flex: 0 0 18px; width: 18px; height: 18px; min-height: 0; margin: 2px 0 0; accent-color: #42664d; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-check-row > span { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-check-row strong { font-size: 13px; font-weight: 500; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-check-row > span > span { font-size: 12px; color: #667360; line-height: 1.5; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-split-row { margin-top: 12px; padding: 13px; border: 1px solid #d8ddce; border-radius: 5px; background: #eff1e7; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-split-top { display: grid; grid-template-columns: 85px minmax(0, 1fr) auto; gap: 12px; align-items: end; margin-bottom: 12px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-split-top .ds-text-button { margin-bottom: 4px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-split-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; margin-top: 8px; }
+.demo-shop-editor .ds-split-summary p, dialog.modal-dialog .demo-shop-editor .ds-split-summary p { font-size: 12px; color: #667360; }
+.demo-shop-editor .ds-option-note, dialog.modal-dialog .demo-shop-editor .ds-option-note { margin-top: 13px; padding: 10px 12px; border-radius: 5px; background: #e8edf0; color: #425e68; font-size: 12px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-add-row { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 46px; border: 1px dashed #aebb9f; border-radius: 5px; background: transparent; color: #42664d; font: 500 14px/1.4 var(--sans, sans-serif); cursor: pointer; }
+.demo-shop-editor .ds-error, dialog.modal-dialog .demo-shop-editor .ds-error { margin: 7px 0 0; font-size: 12px; color: #a34134; }
+.demo-shop-editor .ds-error-summary, dialog.modal-dialog .demo-shop-editor .ds-error-summary { margin-top: 18px; padding: 12px; border: 1px solid #d8b5ae; border-radius: 5px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-review-item + .ds-review-item { border-top: 1px solid #d8ddce; padding-top: 24px; margin-top: 28px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-review-top { display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: start; gap: 22px; margin-top: 12px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-review-top .ds-media-large { width: 150px; height: 150px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-review-top h3 { margin: 0 0 12px; font: 400 30px/1.15 var(--serif, serif); overflow-wrap: anywhere; }
+.demo-shop-editor .ds-review-description, dialog.modal-dialog .demo-shop-editor .ds-review-description { color: #667360; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; margin-bottom: 15px; }
+.demo-shop-editor .ds-review-price, dialog.modal-dialog .demo-shop-editor .ds-review-price { font-size: 21px; font-weight: 600; overflow-wrap: anywhere; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-review-details { margin: 24px 0; padding-block: 16px; border-top: 1px solid #d8ddce; border-bottom: 1px solid #d8ddce; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-review-details > div, :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-review-rules dl > div { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(0, 1.4fr); align-items: start; gap: 18px; padding: 7px 0; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-review-details dt, :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-review-rules dt { color: #667360; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-review-details dd, :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-review-rules dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-address { display: block; overflow-wrap: anywhere; font-size: 12px; margin-top: 5px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-review-rules dl { margin: 8px 0 0; font-size: 12px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-review-splits { margin-bottom: 24px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-review-splits ul { display: flex; flex-direction: column; gap: 12px; margin: 14px 0; padding: 0; list-style: none; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-review-splits li { display: flex; gap: 16px; font-size: 13px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-review-splits li strong { flex: 0 0 55px; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-review-splits li > span { min-width: 0; overflow-wrap: anywhere; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-review-splits small { display: block; margin-top: 4px; font-size: 11px; color: #667360; }
+@media (max-width: 600px) {
+  :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-toolbar { align-items: stretch; flex-wrap: wrap; gap: 14px; }
+  :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-toolbar > .ds-button { width: 100%; }
+  :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-tabs { width: 100%; }
+  :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-empty { padding: 34px 20px; }
+  :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-empty h2 { font-size: 27px; }
+  :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-inventory { grid-template-columns: minmax(0, 1fr); }
+  :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-inventory-heading { align-items: flex-start; }
+  :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-draft-item { padding: 14px; }
+  :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-item-basics { gap: 14px; }
+  :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-media-field { width: 78px; flex-basis: 78px; }
+  :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-media-field .ds-media-preview { width: 78px; height: 78px; }
+  :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-field-pair { gap: 10px; }
+  :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-basics-fields > .ds-field-pair { grid-template-columns: minmax(0, 1fr); }
+  :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-media-url-grid { grid-template-columns: minmax(0, 1fr); }
+  :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-reserve-grid { grid-template-columns: minmax(0, 1fr); }
+  :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-split-top { grid-template-columns: 72px minmax(0, 1fr); gap: 10px; }
+  :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-split-top > .ds-text-button { grid-column: 1 / -1; justify-self: end; margin-block: -8px -4px; }
+  :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-split-row > .ds-field-pair { grid-template-columns: minmax(0, 1fr); }
+  :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-review-top { grid-template-columns: 90px minmax(0, 1fr); gap: 15px; }
+  :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-review-top .ds-media-large { width: 90px; height: 90px; }
+  :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-review-top h3 { font-size: 24px; }
+  :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-review-details > div, :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-review-rules dl > div { grid-template-columns: minmax(90px, 1fr) minmax(0, 1.3fr); gap: 12px; }
+  :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-footer { flex-wrap: nowrap; }
+  :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-footer > .ds-button { flex: 1; min-width: 0; font-size: 13px; padding-inline: 11px; }
+  :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-footer > p { display: none; }
+}
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-item-review:focus-visible { outline: 2px solid #42664d; outline-offset: 3px; }
+@media (max-width: 600px) {
+  dialog.modal-dialog .demo-shop-editor input:not([type=checkbox]):not([type=file]), dialog.modal-dialog .demo-shop-editor select, dialog.modal-dialog .demo-shop-editor textarea { font-size: 16px; }
+}

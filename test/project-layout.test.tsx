@@ -232,6 +232,13 @@ describe('shared project layout', () => {
     await key('Home')
     expect(selected('Ownership sections')).toBe('Accounts')
     expect(tabs('Ownership sections').filter(item => item.tabIndex === 0)).toHaveLength(1)
+    expect(button('Accounts', 'You').parentElement?.getAttribute('aria-orientation')).toBe('vertical')
+    button('Accounts', 'You').focus()
+    await key('ArrowDown')
+    expect(selected('Accounts')).toBe('All')
+    expect(document.activeElement).toBe(button('Accounts', 'All'))
+    await key('ArrowUp')
+    expect(selected('Accounts')).toBe('You')
     for (const tab of host.querySelectorAll('[role="tab"]')) {
       const panel = document.getElementById(tab.getAttribute('aria-controls')!)
       expect(panel).not.toBeNull()

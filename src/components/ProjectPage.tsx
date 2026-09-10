@@ -22,6 +22,8 @@ import { plannedOwnerActionDraft as modelOwnerActionDraft } from "../../web/owne
 import { SiteIntegration } from "./SiteIntegration";
 import { AvailableTransactions } from "./AvailableTransactions";
 import { HomerunProjectLayout, OwnersTabs } from "./HomerunProjectLayout";
+import { DemoProjectShop } from "./DemoProjectShop";
+import { demoShopStorageKey } from "@/lib/demo-shop";
 import {
   BudgetChart,
   CashHistoryChart,
@@ -90,6 +92,58 @@ const nextStages: Partial<Record<ProjectPhase, [ProjectPhase, string]>> = {
   earning: ["liquidated", "Preview an asset sale"],
   refunding: ["refunded", "Preview completed refunds"],
 };
+
+function demoStateMetadata(
+  p: Projection | null,
+  phase: ProjectPhase,
+): ReactNode[] {
+  if (!p) return ["Check modeling inputs"];
+  const amount = (key: string, value: number, label: string) => (
+    <span key={key} data-header-metric={key} title={`${money(value)} ${label}`}>
+      {new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: "USD",
+        notation: "compact",
+        maximumFractionDigits: Math.abs(value) < 1_000 ? 2 : 1,
+      }).format(value)}{" "}
+      {label}
+    </span>
+  );
+  switch (phase) {
+    case "raising":
+      return [
+        amount("raised", p.raised, "raised"),
+        amount("goal", p.raiseGoal, "goal"),
+        `${percent(p.raiseGoal > 0 ? (p.raised / p.raiseGoal) * 100 : 0)} funded`,
+      ];
+    case "funded":
+      return [
+        amount("closing", p.escrowCash, "ready for closing"),
+        amount("raised", p.raised, "raised"),
+      ];
+    case "refunding":
+      return [
+        amount("refundable", p.refundableCash, "available for refunds"),
+        amount("raised", p.raised, "originally raised"),
+      ];
+    case "refunded":
+      return [
+        amount("refunded", p.refundedCash, "returned"),
+        amount("raised", p.raised, "originally raised"),
+      ];
+    case "earning":
+      return [
+        amount("revenue", p.lastMonthRent, "revenue / month"),
+        amount("income-treasury", p.revCash, "INCOME treasury"),
+        `${p.monthsApplied} months earning`,
+      ];
+    case "liquidated":
+      return [
+        amount("fund-sale", p.fundSaleCash, "for FUND holders"),
+        amount("income-treasury", p.revCash, "INCOME treasury"),
+      ];
+  }
+}
 
 function download(text: string, filename: string, type = "application/json") {
   const url = URL.createObjectURL(new Blob([text], { type }));
@@ -1973,7 +2027,7 @@ function DemoStageHistory({
     <section className="demo-section demo-stage-history">
       <h2>The journey</h2>
       <p>Where this scenario has been, and what comes next.</p>
-      <ol>
+      <ol tabIndex={0} aria-label="Project stages">
         {steps.map((step, index) => (
           <li key={step.name} data-stage-state={step.state.toLowerCase()}>
             <span className="demo-stage-number" aria-hidden="true">
@@ -2350,6 +2404,13 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
           type="button"
           className="quiet-button"
           onClick={() => {
+            try {
+              localStorage.removeItem(
+                demoShopStorageKey(project?.id ?? "founderhaus"),
+              );
+            } catch {
+              /* The mounted shop still clears its in-memory preview. */
+            }
             setInputs(initial);
             setPhase("raising");
             setGrowth(false);
@@ -2392,10 +2453,10 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
               >
                 {statusLabels[phase]}
               </span>,
+              ...demoStateMetadata(overview, phase),
               project?.values.location ||
                 (project ? "" : "Jurerê Internacional, Florianópolis"),
               project ? "Local preview" : "Demo",
-              "FUND / INCOME",
             ].filter(Boolean)}
             payment={
               <aside
@@ -2615,13 +2676,10 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
               />
             }
             shop={
-              <section className="demo-section">
-                <h2>Shop</h2>
-                <p>
-                  No items are offered in this demo. Contributions to the raise
-                  and revenue payments use the Pay module.
-                </p>
-              </section>
+              <DemoProjectShop
+                projectKey={project?.id ?? "founderhaus"}
+                resetKey={reset}
+              />
             }
             extras={
               <div className="demo-extras">

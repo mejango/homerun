@@ -153,33 +153,52 @@
   gap: 28px;
 }
 .homerun-project-layout .demo-stage-history ol {
+  --journey-gap: 24px;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(156px, 1fr);
+  gap: var(--journey-gap);
   list-style: none;
   margin: 24px 0 0;
-  padding: 0;
+  padding: 0 0 12px;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
 }
 .homerun-project-layout .demo-stage-history li {
   display: flex;
-  gap: 16px;
-  padding: 0 0 25px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+  padding: 0 0 8px;
   position: relative;
+}
+.homerun-project-layout .demo-stage-history ol:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 4px;
 }
 .homerun-project-layout .demo-stage-history li:not(:last-child)::before {
   content: "";
   position: absolute;
-  left: 15px;
-  top: 35px;
-  bottom: 5px;
-  width: 1px;
+  left: 40px;
+  top: 16px;
+  width: calc(100% + var(--journey-gap) - 48px);
+  height: 1px;
   background: var(--line);
 }
 .homerun-project-layout .demo-stage-history li > div {
   flex: 1;
+  width: 100%;
   min-width: 0;
 }
 .homerun-project-layout .demo-stage-number {
   display: grid;
   place-items: center;
   flex: 0 0 32px;
+  width: 32px;
   height: 32px;
   border: 1px solid #aab79d;
   border-radius: 50%;
@@ -194,13 +213,11 @@
   color: white;
   border-color: #42664d;
 }
-.homerun-project-layout .demo-stage-label {
+.homerun-project-layout .demo-stage-history .demo-stage-label {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  padding-top: 3px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
 }
 .homerun-project-layout .demo-stage-label h3 {
   font: 500 16px/1.5 var(--sans);
@@ -345,6 +362,9 @@
   }
 }
 @media (max-width: 480px) {
+  .homerun-project-layout .demo-stage-history ol {
+    --journey-gap: 18px;
+  }
   .homerun-project-layout .demo-token-summary {
     grid-template-columns: minmax(0, 1fr);
     gap: 20px;

@@ -72,21 +72,24 @@ function TabStrip<T extends string>({
   level?: 'main' | 'owners' | 'accounts'
 }) {
   const ready = useSyncExternalStore(subscribeToReadiness, () => true, () => false)
+  const vertical = level === 'accounts'
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+    const previousKey = vertical ? 'ArrowUp' : 'ArrowLeft'
+    const nextKey = vertical ? 'ArrowDown' : 'ArrowRight'
+    if (![previousKey, nextKey, 'Home', 'End'].includes(event.key)) return
     const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
       .filter((button) => !button.disabled && button.getClientRects().length > 0)
     const index = buttons.indexOf(event.target as HTMLButtonElement)
     if (index < 0 || buttons.length === 0) return
     event.preventDefault()
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
-      : (index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length
+      : (index + (event.key === nextKey ? 1 : -1) + buttons.length) % buttons.length
     buttons[next].focus({ preventScroll: true })
     buttons[next].scrollIntoView({ block: 'nearest', inline: 'nearest' })
     buttons[next].click()
   }
   return (
-    <div className={`hpl-tabs hpl-tabs-${level}`} role="tablist" aria-label={label} aria-busy={!ready} onKeyDown={onKeyDown}>
+    <div className={`hpl-tabs hpl-tabs-${level}`} role="tablist" aria-label={label} aria-orientation={vertical ? 'vertical' : 'horizontal'} aria-busy={!ready} onKeyDown={onKeyDown}>
       {tabs.map((item) => (
         <button
           key={item.key}

@@ -38,13 +38,13 @@ export function AvailableTransactions({ stage = 'create' }: { stage?: Transactio
         <p className="text-sm leading-relaxed">This is a transaction guide. Actual availability depends on the project’s contracts, balances, and your wallet’s permissions. Browsing this list sends no transactions.</p>
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="grid gap-2 text-sm" htmlFor={stageId}>Lifecycle stage
-            <select id={stageId} className="min-h-11 w-full rounded border border-smoke-300 bg-white p-3" value={selectedStage} onChange={event => setStage(event.target.value as TransactionStage | 'all')}>
+            <select id={stageId} className="available-transactions-select min-h-11 w-full rounded border border-smoke-300 bg-white p-3" value={selectedStage} onChange={event => setStage(event.target.value as TransactionStage | 'all')}>
               <option value="all">All stages</option>
               {transactionStages.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
             </select>
           </label>
           <label className="grid gap-2 text-sm" htmlFor={roleId}>Role
-            <select id={roleId} className="min-h-11 w-full rounded border border-smoke-300 bg-white p-3" value={role} onChange={event => setRole(event.target.value as TransactionRole | 'all')}>
+            <select id={roleId} className="available-transactions-select min-h-11 w-full rounded border border-smoke-300 bg-white p-3" value={role} onChange={event => setRole(event.target.value as TransactionRole | 'all')}>
               <option value="all">All roles</option>
               {transactionRoles.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
             </select>
