@@ -82,3 +82,26 @@
   .home-actions .see-demo { font-size: 12px; }
   .home-footer { padding-inline: 16px; }
 }
+
+@media (max-width: 760px) {
+  .home-page .site-header { justify-content: center; }
+  .home-page .brand-lockup { margin-left: 0; }
+  .home-page .brand-tagline { padding-left: 0; text-align: center; }
+}
+
+#ballpark { --scene-top: 100; }
+.home-copy { top: calc(100px + clamp(18px, 2.7vw, 40px)); }
+.ballpark-hero { height: calc(clamp(650px, 61vw, 900px) + 100px); }
+@media (max-width: 760px) {
+  #ballpark { --scene-top: 104; }
+  .ballpark-hero { height: 688px; }
+  .home-copy { top: 131px; }
+  .home-page .brand-lockup .brand { transform: translateX(calc(-.5 * (var(--brand-icon-width) + var(--brand-gap)))); }
+}
+
+#ballpark { --scene-top: 136; }
+.ballpark-hero { height: calc(clamp(650px, 61vw, 900px) + 136px); }
+@media (max-width: 760px) {
+  #ballpark { --scene-top: 140; }
+  .ballpark-hero { height: 724px; }
+}

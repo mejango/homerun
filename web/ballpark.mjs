@@ -168,7 +168,7 @@ function paintScene(time) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.drawImage(still, 0, 0);
   const { dpr, scale, offset, visibleWidth, compact } = scene;
-  ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * offset, dpr * 76);
+  ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * offset, dpr * scene.skyPadding);
   if (compact) {
     const right = 800 + visibleWidth / 2;
     flyingBird(right - 31 + Math.sin(time * .28) * 25, 237 + Math.sin(time * .23) * 5, 5, time, .7);
@@ -692,8 +692,8 @@ function coastline(visibleWidth) {
   sunset.addColorStop(.53, '#f2d6b9');
   sunset.addColorStop(.76, '#e8b99e');
   sunset.addColorStop(1, '#f4d8a6');
-  ctx.fillStyle = sunset; ctx.fillRect(0, -200, 1600, 745);
-  ctx.save(); ctx.globalAlpha = .28; ctx.fillStyle = grain; ctx.fillRect(0, -200, 1600, 745); ctx.restore();
+  ctx.fillStyle = sunset; ctx.fillRect(0, -400, 1600, 945);
+  ctx.save(); ctx.globalAlpha = .28; ctx.fillStyle = grain; ctx.fillRect(0, -400, 1600, 945); ctx.restore();
 
   // An oversized, banded sun makes the familiar neighborhood feel a little
   // dreamlike. Bring it toward the edge of the phone crop, rather than lose it.
@@ -799,7 +799,7 @@ function draw() {
   shapeContext.fillStyle = "rgb(64,64,0)"; shapeContext.fillRect(0,0,canvas.width,canvas.height);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = C.paper; ctx.fillRect(0, 0, width, height);
-  const skyPadding = 76;
+  const skyPadding = parseFloat(getComputedStyle(canvas).getPropertyValue('--scene-top')) || 76;
   const scale = Math.max(width / 1600, (height - skyPadding) / 1000);
   ctx.translate((width - 1600 * scale) / 2, skyPadding); ctx.scale(scale, scale);
   const texture = document.createElement('canvas'); texture.width = 160; texture.height = 160;
@@ -897,7 +897,7 @@ function draw() {
   stillContext.drawImage(canvas, 0, 0);
   const offset = (width - 1600 * scale) / 2;
   scene = {
-    dpr, scale, offset, visibleWidth, compact,
+    dpr, scale, offset, visibleWidth, compact, skyPadding,
     textRects: protectedTextRects(bounds, scale, offset),
     saucer: { x: compact ? right - 117 : 1161, y: compact ? 817 : 755, scale: compact ? .74 : .84 },
   };
