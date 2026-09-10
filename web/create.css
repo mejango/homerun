@@ -172,10 +172,7 @@
 :is(.income-inputs, .fundraise-inputs) .create-input > span { font-size: 12px; }
 @media (max-width: 760px) { :is(.income-inputs, .fundraise-inputs) { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 12px; } }
 
-.fundraise-inputs { grid-template-areas: 'price reserve operator' 'goal goal share'; }
-.fundraise-inputs > .create-field:nth-child(1) { grid-area: price; }
-.fundraise-inputs > .create-field:nth-child(2) { grid-area: reserve; }
-.fundraise-inputs > .create-field:nth-child(3) { grid-area: operator; }
+.fundraise-inputs { grid-template-areas: 'model model operator' 'goal goal share'; }
 .fundraise-goal { grid-area: goal; min-width: 0; }
 .fundraise-goal > strong { overflow-wrap: anywhere; }
 .fundraise-ownership { grid-area: share; display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; }
@@ -183,7 +180,7 @@
 .fund-ownership-pie::before { content: ''; position: absolute; inset: 16%; background: #eef1e7; border-radius: 50%; }
 .fund-ownership-pie strong { position: relative; font: 400 24px/1.2 var(--serif); }
 @media (max-width: 760px) {
-  .fundraise-inputs { grid-template-areas: 'price reserve' 'goal goal' 'operator share'; }
+  .fundraise-inputs { grid-template-areas: 'model model' 'goal goal' 'operator share'; }
   .fundraise-ownership { padding: 14px 10px; }
 }
 .income-preview-panel + .create-field { margin-top: 20px; }
@@ -191,7 +188,6 @@
 .income-inputs { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 434px; }
 @media (min-width: 761px) {
   .fundraise-inputs { max-width: none; grid-template-columns: repeat(2, minmax(0, min(calc((100% - 32px) / 3), 209.333px))) minmax(0, 1fr); }
-  .fundraise-inputs > .create-field:nth-child(3) { max-width: 209.333px; }
 }
 
 .income-field-group { min-width: 0; padding: 0; margin: 0 0 18px; border: 0; }
@@ -244,5 +240,9 @@
 .review-allocation-heading { margin: 16px 0 12px; }
 @media (max-width: 760px) { .modeling-inputs .create-field > label { min-height: 2.8em; } }
 
-.fundraise-inputs > .create-field:nth-child(-n+2) .create-input { background: #edf2f4; border-color: #b9cbd2; }
-.fundraise-inputs > .create-field:nth-child(-n+2) :is(label, .create-help, .create-input > span) { color: #3f5b66; }
+
+.fundraise-modeling { grid-area: model; }
+.fundraise-contract { grid-area: operator; padding-top: 16px; }
+.fundraise-contract .create-field { max-width: 209.333px; }
+.fundraise-modeling .create-input { background: #fffefa; }
+.fundraise-modeling .income-inputs { max-width: none; }
