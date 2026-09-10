@@ -122,7 +122,7 @@
 .network-symbols button { display: grid; place-items: center; width: 48px; height: 48px; padding: 0; border: 1px solid #bbb; border-radius: 5px; background: #fff; cursor: pointer; }
 .network-symbols button[aria-pressed=true] { border: 2px solid #222; background: #f1f1f1; }
 .network-symbols button[aria-pressed=false] img { opacity: .45; }
-.network-symbols img { filter: grayscale(1); display: block; width: 26px; height: 26px; object-fit: contain; }
+.network-symbols img { display: block; width: 26px; height: 26px; object-fit: contain; }
 .network-environments button:focus-visible, .network-symbols button:focus-visible { outline: 2px solid #222; outline-offset: 3px; }
 .create-network-settings .create-error { margin-top: 9px; }
 .create-operator-settings { padding: 22px 0; border-top: 1px solid var(--line); }
@@ -243,3 +243,6 @@
 .review-modeling dt, .review-modeling dd { color: #3f5b66; }
 .review-allocation-heading { margin: 16px 0 12px; }
 @media (max-width: 760px) { .modeling-inputs .create-field > label { min-height: 2.8em; } }
+
+.fundraise-inputs > .create-field:nth-child(-n+2) .create-input { background: #edf2f4; border-color: #b9cbd2; }
+.fundraise-inputs > .create-field:nth-child(-n+2) :is(label, .create-help, .create-input > span) { color: #3f5b66; }
