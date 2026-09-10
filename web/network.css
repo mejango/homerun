@@ -207,3 +207,5 @@ dialog pre { font: 11px/1.6 ui-monospace, monospace; white-space: pre-wrap; over
 @media (max-width: 1250px) {
   .site-header .brand-lockup { margin-left: 0; }
 }
+
+.brand-ball svg { display: inline-block; width: 100%; height: 1em; vertical-align: -.1em; fill: none; stroke: currentColor; stroke-width: 1.5; }
