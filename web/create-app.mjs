@@ -45,7 +45,7 @@ document.querySelector('#main').innerHTML = `<div class="create-intro"><div><h1>
       <section class="create-step" data-step-panel="1" aria-labelledby="step-title-1" hidden><h2 id="step-title-1" tabindex="-1">Fundraise</h2>
         <div class="fundraise-inputs"><fieldset class="income-field-group modeling-inputs fundraise-modeling" aria-describedby="fundraise-modeling-note"><legend>Modeling inputs</legend><p id="fundraise-modeling-note" class="input-purpose-note">Budget assumptions for the raise goal. These do not set contract withdrawal allowances.</p><div class="income-inputs">${field('purchaseBudget','Asset price',{prefix:'$'})}${field('opsReserve','Cash reserve',{prefix:'$',help:'Cash set aside to cover operating expenses.'})}</div></fieldset><fieldset class="income-field-group fundraise-contract"><legend>Contract settings</legend>${field('operatorFundPercent','Operator FUND ownership',{suffix:'%',help:'Allocated after a successful purchase.'})}</fieldset>
         <div class="create-callout fundraise-goal"><span>Total fundraising goal</span><strong id="create-raise-goal">—</strong><p id="create-fee-note"></p></div>
-        <div class="create-callout fundraise-ownership"><span>Operator FUND share</span><div id="create-fund-pie" class="fund-ownership-pie" role="img" aria-label="Operator FUND ownership"><strong id="create-fund-share" aria-hidden="true">—</strong></div></div></div>
+        <div class="create-callout fundraise-ownership"><span>FUND ownership after purchase</span><div id="create-fund-pie" class="fund-ownership-pie" role="img" aria-label="Operator FUND ownership"><strong id="create-fund-share" aria-hidden="true">—</strong></div><dl class="fund-ownership-legend"><div><dt><i class="fund-operator-swatch" aria-hidden="true"></i>Operators</dt><dd id="fund-operator-percent">—</dd></div><div><dt><i class="fund-contributor-swatch" aria-hidden="true"></i>Contributors</dt><dd id="fund-contributor-percent">—</dd></div></dl></div></div>
         <p class="create-note">Contributors receive FUND. If the purchase succeeds, FUND represents a share of net asset-sale proceeds. A failed raise returns the remaining funds.</p>
       </section>
       <section class="create-step" data-step-panel="2" aria-labelledby="step-title-2" hidden><h2 id="step-title-2" tabindex="-1">Income</h2>
@@ -164,8 +164,10 @@ function render() {
   const operatorShare = summary?.values.operatorFundPercent;
   const fundPie = document.querySelector('#create-fund-pie');
   fundPie.style.background = summary ? `conic-gradient(#42674d ${operatorShare}%, #b1bd91 0)` : '#dfe5d5';
-  fundPie.setAttribute('aria-label', summary ? `Operators ${number(operatorShare)}%, other FUND holders ${number(summary.investorFundPercent)}%.` : 'Enter valid funding inputs to preview FUND ownership.');
+  fundPie.setAttribute('aria-label', summary ? `Operators ${number(operatorShare)}%, contributors ${number(summary.investorFundPercent)}%.` : 'Enter valid funding inputs to preview FUND ownership.');
   document.querySelector('#create-fund-share').textContent = summary ? `${number(operatorShare)}%` : '—';
+  document.querySelector('#fund-operator-percent').textContent = summary ? `${number(operatorShare)}%` : '—';
+  document.querySelector('#fund-contributor-percent').textContent = summary ? `${number(summary.investorFundPercent)}%` : '—';
   document.querySelector('#draft-ownership').innerHTML = summary ? `<div class="ownership-mini" aria-hidden="true"><span style="width:${summary.investorFundPercent}%"></span></div><p>${number(summary.investorFundPercent)}% contributor FUND <span aria-hidden="true">|</span> ${number(summary.values.operatorFundPercent)}% operator FUND</p>` : '';
   incomePreview.update(summary?.networkInputs || null);
   const splitValid = !normalized.errors.operatorSplitPercent && !normalized.errors.stickySplitPercent;

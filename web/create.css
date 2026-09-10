@@ -246,3 +246,11 @@
 .fundraise-contract .create-field { max-width: 209.333px; }
 .fundraise-modeling .create-input { background: #fffefa; }
 .fundraise-modeling .income-inputs { max-width: none; }
+
+.fund-ownership-legend { width: 100%; max-width: 210px; margin: 0; font-size: 11px; text-align: left; }
+.fund-ownership-legend > div { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 6px; }
+.fund-ownership-legend dt { display: flex; align-items: center; gap: 6px; }
+.fund-ownership-legend dd { margin: 0; font-variant-numeric: tabular-nums; }
+.fund-ownership-legend i { width: 8px; height: 8px; flex-shrink: 0; border-radius: 2px; }
+.fund-operator-swatch { background: #42674d; }
+.fund-contributor-swatch { background: #b1bd91; }
