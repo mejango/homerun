@@ -113,6 +113,30 @@
 
 .revenue-description { white-space: pre-wrap; overflow-wrap: anywhere; }
 
+.available-transactions-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 44px;
+  margin-top: 18px;
+  padding: 11px 18px;
+  border: 1px solid #42664d;
+  border-radius: 5px;
+  background: #42664d;
+  color: #fffefa;
+  font: 500 14px/1.4 var(--sans);
+  cursor: pointer;
+}
+.available-transactions-button:hover { background: #34533e; }
+.available-transactions-button:focus-visible { outline: 2px solid #42664d; outline-offset: 3px; }
+.create-intro .available-transactions-button { margin-top: 0; flex-shrink: 0; }
+
+@media (max-width: 760px) {
+  .available-transactions-button { width: 100%; }
+  .create-intro:has(.available-transactions-button) { flex-wrap: wrap; gap: 18px; }
+}
+
 @media (max-width: 760px) {
   .simulator .deal-heading > .deal-image { order: 1; }
   .simulator .deal-heading > #project-journey { order: 2; }

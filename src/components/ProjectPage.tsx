@@ -20,6 +20,7 @@ import {
 import { incomePaymentPreview } from "../../web/income-payment-preview.mjs";
 import { plannedOwnerActionDraft as modelOwnerActionDraft } from "../../web/owner-actions.mjs";
 import { SiteIntegration } from "./SiteIntegration";
+import { AvailableTransactions } from "./AvailableTransactions";
 import {
   BudgetChart,
   CashHistoryChart,
@@ -917,6 +918,7 @@ function PhasePanel({
         {phase === "earning" && revenueDescription && (
           <p className="revenue-description">{revenueDescription}</p>
         )}
+        <AvailableTransactions stage={phase} />
       </div>
       {phase === "raising" && (
         <>
@@ -2175,6 +2177,7 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
               <div className="phase-panel">
                 <h2>Check the assumptions.</h2>
                 <p role="alert">{derived.error}</p>
+                <AvailableTransactions stage={phase} />
               </div>
             )}
             <div className="process-navigation">
