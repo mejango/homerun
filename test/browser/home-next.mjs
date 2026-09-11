@@ -57,10 +57,59 @@ try {
     return { height: heading.height, top: heading.top, actionsTop: actions.top };
   });
   const initialGeometry = await heroGeometry();
+  const prefix = await page.locator('.home-title-prefix').elementHandle();
   for (const asset of ['business', 'equipment', 'energy']) {
-    await page.waitForSelector(`.home-title-subject[data-current-asset="${asset}"]`, { timeout: 6000 });
+    // Start observing before the noun changes so the first painted position is captured.
+    const frames = await page.evaluate(({ prefix, asset }) => new Promise((resolve, reject) => {
+      const subject = document.querySelector('.home-title-subject');
+      const frames = [];
+      let previous;
+      let started;
+      let frame;
+      const timeout = setTimeout(() => {
+        cancelAnimationFrame(frame);
+        reject(new Error(`Timed out sampling the prefix transition to ${asset}`));
+      }, 6000);
+      const sample = time => {
+        const current = document.querySelector('.home-title-prefix');
+        const bounds = current.getBoundingClientRect();
+        const ancestors = [];
+        for (let node = current; node; node = node.parentElement) {
+          const style = getComputedStyle(node);
+          ancestors.push({ opacity: Number(style.opacity), visible: style.visibility === 'visible' && style.display !== 'none' });
+        }
+        const measured = { x: bounds.x, y: bounds.y, sameNode: current === prefix && prefix.isConnected, ancestors };
+        if (subject.dataset.currentAsset === asset && started === undefined) {
+          started = time;
+          if (previous) frames.push(previous);
+        }
+        if (started !== undefined) frames.push(measured);
+        if (started !== undefined && time - started >= 450) {
+          clearTimeout(timeout);
+          resolve(frames);
+          return;
+        }
+        previous = measured;
+        frame = requestAnimationFrame(sample);
+      };
+      frame = requestAnimationFrame(sample);
+    }), { prefix, asset });
+    assert.ok(frames.every(frame => frame.sameNode), `Run your keeps the same DOM node when rotating to ${asset}`);
+    assert.ok(frames.every(frame => frame.ancestors.every(ancestor => ancestor.opacity === 1 && ancestor.visible)), `Run your and its ancestors remain fully visible throughout ${asset}'s transition`);
+    const start = frames[0];
+    const end = frames.at(-1);
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const distanceSquared = dx * dx + dy * dy;
+    assert.ok(distanceSquared > 4, `The prefix changes position to center the different width of ${asset}`);
+    const intermediatePositions = new Set(frames.filter(frame => {
+      const progress = ((frame.x - start.x) * dx + (frame.y - start.y) * dy) / distanceSquared;
+      return progress > .005 && progress < .995;
+    }).map(frame => `${frame.x.toFixed(2)},${frame.y.toFixed(2)}`));
+    assert.ok(intermediatePositions.size >= 2, `The prefix interpolates through multiple painted positions instead of snapping for ${asset}`);
     assert.deepEqual(await heroGeometry(), initialGeometry, `No layout shift when rotating to ${asset}`);
   }
+  await prefix.dispose();
 
   for (const width of [320, 390, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
