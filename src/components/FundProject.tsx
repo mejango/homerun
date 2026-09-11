@@ -1,15 +1,13 @@
 'use client'
 
-import { NATIVE_TOKEN, type JBChainId } from '@bananapus/nana-sdk-core'
+import { type JBChainId } from '@bananapus/nana-sdk-core'
 import {
   buildBurnTokensTx,
   buildClaimTokensTx,
   buildDeployErc20Tx,
-  buildPayTx,
   buildTransferCreditsTx,
   getHookAwareCashOutQuote,
   prepareHookAwareCashOut,
-  previewPay,
 } from '@bananapus/nana-sdk-core/v6'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
@@ -28,7 +26,8 @@ import { ProjectParticipants } from '@/components/ProjectParticipants'
 import { ProjectPayerAddresses } from '@/components/ProjectPayerAddresses'
 import { ProjectShop } from '@/components/ProjectShop'
 import { IncomeProjectRuntime, type IncomeProjectSlots } from '@/components/IncomeProject'
-import { AvailableTransactions } from '@/components/AvailableTransactions'
+import { LiveProjectActions } from '@/components/LiveProjectActions'
+import { ProjectPayment } from '@/components/ProjectPayment'
 import { readIncomeLaunchBinding } from '@/lib/income-launch'
 import { useSafeTx, txPhaseLabel, type TxRequest } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
@@ -155,11 +154,11 @@ function ProjectActions({ chainId, projectId, state, client, details, notice, in
     const pending = <p>Waiting for the project’s confirmed contract state.</p>
     return <HomerunProjectLayout title={details?.name ?? 'FUND project'}
       logo={details?.logoUrl && <Image unoptimized src={details.logoUrl} width={112} height={112} alt="Project logo" />}
-      metadata={[details?.location, displayChainName(chainId), `FUND #${projectId}`, 'Verifying contracts']}
-      notice={notice} actions={<AvailableTransactions stage="raising" />}
+      metadata={[details?.location && `Location: ${details.location}`, `Network: ${displayChainName(chainId)}`, `FUND: #${projectId}`, 'Status: Verifying contracts']}
+      notice={notice}
       payment={<ActionSection title="Pay">{pending}</ActionSection>}
       activity={<ProjectActivity chainId={chainId} projectId={projectId} />}
-      overview={<ActionSection title="Description"><p>{details?.description ?? 'Fund the asset, manage its treasury, and use your FUND tokens.'}</p>{pending}</ActionSection>}
+      overview={<ActionSection title="About"><p>{details?.description ?? 'Fund the asset, manage its treasury, and use your FUND tokens.'}</p>{pending}</ActionSection>}
       stages={pending}
       owners={<OwnersTabs accountsYou={pending} accountsAll={pending} market={pending} settlement={pending} splits={pending} loans={pending} />}
       shop={pending} extras={pending} operators={pending}
@@ -186,17 +185,16 @@ function ProjectActions({ chainId, projectId, state, client, details, notice, in
   return <HomerunProjectLayout
     title={name ?? 'FUND project'}
     logo={details?.logoUrl && <Image unoptimized src={details.logoUrl} width={112} height={112} alt={name ? `${name} logo` : 'Project logo'} />}
-    metadata={[details?.location, displayChainName(state.chainId), `FUND #${state.projectId}`, income.projectId && `INCOME #${income.projectId}`, !supported ? 'Unsupported FUND configuration' : state.metadata.pausePay ? 'Contributions paused' : 'Raising funds', supported && context && <span>FUND treasury: <DisplayTokenAmount value={context.balance} decimals={context.decimals} /> {context.symbol}</span>, supported && <span>FUND supply: <DisplayTokenAmount value={state.totalSupply} /></span>, income.treasuryMetric].filter(Boolean)}
+    metadata={[details?.location && `Location: ${details.location}`, `Network: ${displayChainName(state.chainId)}`, `FUND: #${state.projectId}`, income.projectId && `INCOME: #${income.projectId}`, `Status: ${!supported ? 'Unsupported FUND configuration' : state.metadata.pausePay ? 'Contributions paused' : 'Raising funds'}`, supported && context && <span>FUND treasury: <DisplayTokenAmount value={context.balance} decimals={context.decimals} /> {context.symbol}</span>, supported && <span>FUND supply: <DisplayTokenAmount value={state.totalSupply} /></span>, income.treasuryMetric].filter(Boolean)}
     notice={<>{notice}{!supported && <p role="alert">This project uses contract settings outside Homerun’s verified FUND integration. Transactions are unavailable here. {state.issues.join(' ')}</p>}{!isConnected && <p>Connect your wallet to contribute, use your tokens, or access operator actions.</p>}{writesUnavailable && <p role="status">New transactions are paused while current project permissions and balances are being verified. Submitted transactions continue to be tracked below.</p>}</>}
-    actions={<AvailableTransactions stage={income.projectId ? 'earning' : state.metadata.pausePay ? 'funded' : 'raising'} />}
     payment={<>
       {income.projectId && <div className="mb-5 flex gap-3" role="group" aria-label="Payment token"><button type="button" className={paymentToken === 'fund' ? 'btn-primary' : 'btn-secondary'} aria-pressed={paymentToken === 'fund'} onClick={() => { paymentChoice.current = true; setPaymentToken('fund') }}>FUND</button><button type="button" className={paymentToken === 'income' ? 'btn-primary' : 'btn-secondary'} aria-pressed={paymentToken === 'income'} onClick={() => { paymentChoice.current = true; setPaymentToken('income') }}>INCOME</button></div>}
-      <div hidden={paymentToken !== 'fund'} onFocusCapture={() => { paymentChoice.current = true }}>{gate(<>{context ? <PaymentPanel state={state} client={client} contextIndex={contextIndex} currency={currency} /> : <p>No supported payment terminal was verified for this project.</p>}</>)}</div>
+      <div hidden={paymentToken !== 'fund'} onFocusCapture={() => { paymentChoice.current = true }}>{gate(<>{context ? <PaymentPanel state={state} client={client} contextIndex={contextIndex} /> : <p>No supported payment terminal was verified for this project.</p>}</>)}</div>
       <div hidden={paymentToken !== 'income'}>{income.projectId && income.payment}</div>
     </>}
     activity={<><div hidden={paymentToken !== 'fund'}><ProjectActivity chainId={state.chainId} projectId={state.projectId} /></div><div hidden={paymentToken !== 'income'}>{income.activity}</div></>}
-    overview={<div className="grid gap-7"><ActionSection title="Description"><p className="whitespace-pre-line">{details?.description ?? 'Fund the asset, manage its treasury, and use your FUND tokens.'}</p>{details?.coverUrl && <Image unoptimized src={details.coverUrl} width={1200} height={675} alt={name ? `${name} cover` : 'Project cover'} className="mt-5 max-h-[480px] w-full rounded-md object-cover" />}</ActionSection>{verified}{income.overview}</div>}
-    stages={<div className="grid gap-7"><ActionSection title="The project journey"><ol className="grid gap-5"><li><h3 className="text-2xl">1. Fundraise</h3><p className="mt-2">{state.metadata.pausePay ? 'Contributions are paused under the current rules.' : 'Contributions are open under the current rules.'} FUND represents participation in the asset raise and its eventual net sale proceeds.</p></li><li><h3 className="text-2xl">2. Income</h3><p className="mt-2">{income.projectId ? `INCOME project ${income.projectId} is connected on this network.` : 'After a successful purchase, the operator can launch INCOME and its initial holder allocation.'}</p></li><li><h3 className="text-2xl">3. Asset sale</h3><p className="mt-2">Net proceeds return to the FUND treasury. Holders use the cash-out terms active at that time.</p></li></ol><p className="mt-5 text-sm">Contract settings do not verify an offchain purchase, campaign failure, or asset sale. Indexed transactions appear in Activity.</p></ActionSection><ActionSection title="Current and upcoming rules"><p>Current ruleset {state.ruleset.id.toString()}, active since {new Date(Number(state.ruleset.start) * 1000).toLocaleString()}.</p>{state.upcoming && state.upcoming.ruleset.id !== state.ruleset.id ? <p className="mt-3">Ruleset {state.upcoming.ruleset.id.toString()} is scheduled for {new Date(Number(state.upcoming.ruleset.start) * 1000).toLocaleString()}.</p> : <p className="mt-3">No different upcoming ruleset is currently verified.</p>}</ActionSection>{plan && <PlannedIncome plan={plan} />}{income.stages}</div>}
+    overview={<div className="grid gap-7"><ActionSection title="About"><p className="whitespace-pre-line">{details?.description ?? 'Fund the asset, manage its treasury, and use your FUND tokens.'}</p>{details?.coverUrl && <Image unoptimized src={details.coverUrl} width={1200} height={675} alt={name ? `${name} cover` : 'Project cover'} className="mt-5 max-h-[480px] w-full rounded-md object-cover" />}</ActionSection>{verified}{income.overview}</div>}
+    stages={<div className="grid gap-7">{supported && <LiveProjectActions token="FUND" state={{paymentsPaused: state.metadata.pausePay, cashOutsEnabled: state.metadata.cashOutTaxRate < 10_000, mintingEnabled: state.metadata.allowOwnerMinting, hasLinkedIncome: !!income.projectId}} />}<ActionSection title="The project journey"><ol className="grid gap-5"><li><h3 className="text-2xl">1. Fundraise</h3><p className="mt-2">{state.metadata.pausePay ? 'Contributions are paused under the current rules.' : 'Contributions are open under the current rules.'} FUND represents participation in the asset raise and its eventual net sale proceeds.</p></li><li><h3 className="text-2xl">2. Income</h3><p className="mt-2">{income.projectId ? `INCOME project ${income.projectId} is connected on this network.` : 'After a successful purchase, the operator can launch INCOME and its initial holder allocation.'}</p></li><li><h3 className="text-2xl">3. Asset sale</h3><p className="mt-2">Net proceeds return to the FUND treasury. Holders use the cash-out terms active at that time.</p></li></ol><p className="mt-5 text-sm">Contract settings do not verify an offchain purchase, campaign failure, or asset sale. Indexed transactions appear in Activity.</p></ActionSection><ActionSection title="Current and upcoming rules"><p>Current ruleset {state.ruleset.id.toString()}, active since {new Date(Number(state.ruleset.start) * 1000).toLocaleString()}.</p>{state.upcoming && state.upcoming.ruleset.id !== state.ruleset.id ? <p className="mt-3">Ruleset {state.upcoming.ruleset.id.toString()} is scheduled for {new Date(Number(state.upcoming.ruleset.start) * 1000).toLocaleString()}.</p> : <p className="mt-3">No different upcoming ruleset is currently verified.</p>}</ActionSection>{plan && <PlannedIncome plan={plan} />}{income.stages}</div>}
     owners={<OwnersTabs
       accountsYou={<div className="grid gap-7">{gate(<ActionSection title="Your FUND">{address ? <><p className="mb-3 break-words text-2xl"><DisplayTokenAmount value={totalBalance} /> FUND</p><p className="mb-6 text-sm"><DisplayTokenAmount value={state.creditBalance} /> internal credits / <DisplayTokenAmount value={state.erc20Balance} /> ERC-20 tokens. Both count as FUND without staking.</p></> : <p className="mb-5">Connect a wallet to read your holdings.</p>}<fieldset disabled={!address} className="min-w-0 border-0 p-0"><HolderActions state={state} client={client} /></fieldset></ActionSection>)}{income.projectId ? income.accountsYou : emptyIncome}</div>}
       accountsAll={<div className="grid gap-7"><ProjectParticipants chainId={state.chainId} projectId={state.projectId} tokenLabel="FUND" />{income.projectId ? income.accountsAll : emptyIncome}</div>}
@@ -246,81 +244,14 @@ async function freshState(client: PublicClient, state: FundProjectState, account
   return fresh
 }
 
-function PaymentPanel({ state, client, contextIndex, currency }: { state: FundProjectState; client: PublicClient; contextIndex: number; currency?: ReactNode }) {
-  const { address } = useWallet()
-  const [amount, setAmount] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [preparing, setPreparing] = useState(false)
-  const tx = useProjectTransaction(state)
-  const approval = useProjectTransaction(state)
+function PaymentPanel({ state, client, contextIndex }: { state: FundProjectState; client: PublicClient; contextIndex: number }) {
   const context = state.accountingContexts[contextIndex] ?? state.accountingContexts[0]
-  const amountRaw = positiveAmount(amount, context.decimals)
-  const native = isAddressEqual(context.token, NATIVE_TOKEN)
-  const approvalBlock = approval.phase === 'success' ? approval.receipt?.blockNumber : undefined
-  const allowanceBlock = approvalBlock !== undefined && approvalBlock > state.blockNumber ? approvalBlock : state.blockNumber
-  const quote = useQuery({
-    queryKey: ['fund-pay-quote', state.chainId, state.projectId.toString(), context.terminal, context.token, amountRaw.toString(), address],
-    enabled: !!address && amountRaw > 0n && !state.metadata.pausePay,
-    retry: false,
-    queryFn: () => previewPay(client, { chainId: state.chainId, projectId: state.projectId, terminal: context.terminal, token: context.token, amount: amountRaw, beneficiary: address! }),
-    staleTime: 10_000,
-  })
-  const allowance = useQuery({
-    queryKey: ['fund-allowance', state.chainId, state.projectId.toString(), context.token, context.terminal, address, allowanceBlock.toString()],
-    enabled: !!address && !native,
-    queryFn: () => client.readContract({ address: context.token, abi: erc20Abi, functionName: 'allowance', args: [address!, context.terminal], blockNumber: allowanceBlock }),
-    staleTime: 10_000,
-    retry: false,
-  })
-  const needsApproval = !native && allowance.data !== undefined && allowance.data < amountRaw
-  const minimum = quote.data ? quote.data.beneficiaryTokenCount * 99n / 100n : 0n
-  const busy = preparing || tx.busy || approval.busy || tx.phase === 'review' || approval.phase === 'review'
-  async function submit() {
-    if (!address || amountRaw <= 0n || minimum <= 0n) return
-    setError(null); setPreparing(true)
-    try {
-      const current = await freshState(client, state, address, approvalBlock)
-      const activeContext = current.accountingContexts.find(item => isAddressEqual(item.token, context.token) && isAddressEqual(item.terminal, context.terminal))
-      if (!activeContext || current.metadata.pausePay) throw new Error('Payments changed. Refresh the project and review the new terms.')
-      if (!native) {
-        const available = await client.readContract({ address: context.token, abi: erc20Abi, functionName: 'allowance', args: [address, context.terminal], blockNumber: current.blockNumber })
-        if (available < amountRaw) {
-          await approval.send({ chainId: state.chainId, address: context.token, abi: erc20Abi, functionName: 'approve', args: [context.terminal, amountRaw], label: `Approve exactly ${units(amountRaw, context.decimals)} ${context.symbol} for the FUND payment` }, { reverify: async () => {
-            const latest = await freshState(client, state, address)
-            if (latest.metadata.pausePay || !latest.accountingContexts.some(item => isAddressEqual(item.token, context.token) && isAddressEqual(item.terminal, context.terminal))) throw new Error('The payment terminal or terms changed during review. Refresh before approving.')
-          } })
-          return
-        }
-      }
-      const freshQuote = await previewPay(client, { chainId: state.chainId, projectId: state.projectId, terminal: context.terminal, token: context.token, amount: amountRaw, beneficiary: address })
-      const freshMinimum = freshQuote.beneficiaryTokenCount * 99n / 100n
-      if (freshMinimum <= 0n) throw new Error('This amount has no positive FUND quote. Increase it or refresh the project.')
-      const request = buildPayTx({ chainId: state.chainId, projectId: state.projectId, terminal: context.terminal, token: context.token, amount: amountRaw, beneficiary: address, minReturnedTokens: freshMinimum, memo: 'Homerun FUND contribution' })
-      await tx.send({ ...request, label: `Contribute ${units(amountRaw, context.decimals)} ${context.symbol}; receive at least ${units(freshMinimum)} FUND` }, {
-        simulationBlockNumber: approvalBlock !== undefined ? current.blockNumber : undefined,
-        reviewNotice: freshMinimum < minimum ? `The quote changed. You will receive at least ${units(freshMinimum)} FUND, down from ${units(minimum)} FUND.` : undefined,
-        reverify: async () => {
-          const latest = await freshState(client, state, address, approvalBlock)
-          if (latest.metadata.pausePay || !latest.accountingContexts.some(item => isAddressEqual(item.token, context.token) && isAddressEqual(item.terminal, context.terminal))) throw new Error('Payment terms changed during review. Refresh and start again.')
-          if (!native) {
-            const currentAllowance = await client.readContract({ address: context.token, abi: erc20Abi, functionName: 'allowance', args: [address, context.terminal], blockNumber: latest.blockNumber })
-            if (currentAllowance < amountRaw) throw new Error('The token approval changed during review. Review a new approval first.')
-          }
-        },
-      })
-    } catch (reason) { setError(errorMessage(reason)) } finally { setPreparing(false) }
-  }
-  return <ActionSection title="Contribute">
-    {currency && <div className="mb-5">{currency}</div>}
-    <Input label={`Amount in ${context.symbol}`} value={amount} onChange={setAmount} />
-    {state.metadata.pausePay ? <p className="mt-4">This project has paused contributions.</p> : <p className="mt-4 text-sm">{minimum > 0n ? `At least ${units(minimum)} FUND at 1% maximum slippage.` : quote.isFetching ? 'Reading the payment quote…' : 'Enter an amount to see your FUND quote.'}</p>}
-    {quote.isError && <p role="alert" className="mt-3 text-sm">A protected payment quote is unavailable. {errorMessage(quote.error)}</p>}
-    {!native && allowance.isError && <p role="alert" className="mt-3 text-sm">Token approval could not be verified. Refresh before continuing.</p>}
-    {approval.phase === 'success' && <p className="mt-4 text-sm">Approval confirmed. Review the contribution to continue.</p>}
-    <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={!address || busy || state.metadata.pausePay || minimum <= 0n || (!native && allowance.data === undefined)} onClick={() => void submit()}>{preparing ? 'Preparing…' : txPhaseLabel(approval.busy ? approval.phase : tx.phase, { idle: needsApproval ? 'Review token approval' : 'Review contribution', pending: 'Confirming onchain…' })}</button>
-    {error && <p role="alert" className="mt-4 text-sm text-red-800">{error}</p>}
-    <TransactionStatus tx={approval} chainId={state.chainId} /><TransactionStatus tx={tx} chainId={state.chainId} />
-  </ActionSection>
+  return <ProjectPayment chainId={state.chainId} projectId={state.projectId} tokenLabel="FUND" title="Contribute" context={context} paused={state.metadata.pausePay} reservedPercent={state.metadata.reservedPercent} rulesetId={state.ruleset.id.toString()} verify={async (account, minimumBlock) => {
+    const current = await freshState(client, state, account, minimumBlock)
+    const active = current.accountingContexts.find(item => isAddressEqual(item.token, context.token) && isAddressEqual(item.terminal, context.terminal))
+    if (!active || active.decimals !== context.decimals || active.currency !== context.currency || current.metadata.pausePay || current.ruleset.id !== state.ruleset.id) throw new Error('The payment terminal or project rules changed. Refresh and review the payment again.')
+    return current
+  }} />
 }
 
 function CashOutPanel({ state, client, contextIndex }: { state: FundProjectState; client: PublicClient; contextIndex: number }) {

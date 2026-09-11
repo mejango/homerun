@@ -2,9 +2,9 @@
 
 import { NATIVE_TOKEN, type JBChainId } from '@bananapus/nana-sdk-core'
 import {
-  buildBurnTokensTx, buildClaimTokensTx, buildPayTx, buildSetPermissionsTx, buildTransferCreditsTx,
+  buildBurnTokensTx, buildClaimTokensTx, buildSetPermissionsTx, buildTransferCreditsTx,
   getBorrowableAmount, getHookAwareCashOutQuote, hasPermissions, prepareHookAwareCashOut,
-  previewPay, REVLOANS_BURN_PERMISSION_ID,
+  REVLOANS_BURN_PERMISSION_ID,
 } from '@bananapus/nana-sdk-core/v6'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
@@ -25,7 +25,8 @@ import { HomerunProjectLayout, OwnersTabs } from '@/components/HomerunProjectLay
 import { ProjectParticipants } from '@/components/ProjectParticipants'
 import { ProjectPayerAddresses } from '@/components/ProjectPayerAddresses'
 import { ProjectShop } from '@/components/ProjectShop'
-import { AvailableTransactions } from '@/components/AvailableTransactions'
+import { LiveProjectActions } from '@/components/LiveProjectActions'
+import { ProjectPayment } from '@/components/ProjectPayment'
 import { fetchFundProjectMetadata } from '@/lib/fund-project-metadata'
 import { parseAmount } from '@/lib/fund-contracts'
 import { readFundProjectState } from '@/lib/fund-state'
@@ -147,12 +148,11 @@ export function IncomeProject({ chainId, projectId, fundProjectId }: { chainId: 
   return <IncomeProjectRuntime chainId={chainId} projectId={projectId} fundProjectId={fundProjectId}>{slots => <HomerunProjectLayout
     title={slots.title}
     logo={slots.logoUrl && <Image unoptimized src={slots.logoUrl} width={112} height={112} alt={`${slots.title} logo`} />}
-    metadata={[displayChainName(chainId), `INCOME #${projectId}`, slots.state?.metadata.pausePay ? 'Payments paused' : slots.state ? 'Revenue open' : 'Verifying contracts', slots.treasuryMetric, slots.supplyMetric]}
+    metadata={[`Network: ${displayChainName(chainId)}`, `INCOME: #${projectId}`, `Status: ${slots.state?.metadata.pausePay ? 'Payments paused' : slots.state ? 'Revenue open' : 'Verifying contracts'}`, slots.treasuryMetric, slots.supplyMetric]}
     notice={slots.notice}
-    actions={<AvailableTransactions stage="earning" />}
     payment={slots.payment}
     activity={slots.activity}
-    overview={<div className="grid gap-7"><Panel title="Description"><p className="whitespace-pre-line">{slots.description ?? 'Revenue funds this project’s treasury and issues INCOME according to its current onchain rules.'}</p></Panel>{slots.overview}</div>}
+    overview={<div className="grid gap-7"><Panel title="About"><p className="whitespace-pre-line">{slots.description ?? 'Revenue funds this project’s treasury and issues INCOME according to its current onchain rules.'}</p></Panel>{slots.overview}</div>}
     stages={slots.stages}
     owners={<OwnersTabs accountsYou={slots.accountsYou} accountsAll={slots.accountsAll} market={slots.market} settlement={slots.settlement} splits={slots.splits} loans={slots.loans} />}
     shop={slots.shop}
@@ -176,10 +176,10 @@ function IncomeActions({ state, client, fundProjectId, writesUnavailable, notice
     projectId, fundProjectId, state, title, description, logoUrl, notice,
     treasuryMetric: context && <span>INCOME treasury: <DisplayTokenAmount value={context.balance} decimals={context.decimals} /> {context.symbol}</span>,
     supplyMetric: state && <span>INCOME supply: <DisplayTokenAmount value={state.totalSupply} /></span>,
-    payment: gate(<>{ready && context ? <IncomePayment state={state} client={client} context={context} currency={currency} /> : <p>{projectId ? 'Loading INCOME payment options…' : 'INCOME has not been launched.'}</p>}</>),
+    payment: gate(<>{ready && context ? <IncomePayment state={state} client={client} context={context} /> : <p>{projectId ? 'Loading INCOME payment options…' : 'INCOME has not been launched.'}</p>}</>),
     activity: projectId && <ProjectActivity chainId={chainId} projectId={projectId} />,
     overview: state && <Panel title="Revenue"><dl className="grid gap-5 sm:grid-cols-2"><div><dt>INCOME supply</dt><dd><DisplayTokenAmount value={state.totalSupply} /> INCOME</dd></div><div><dt>Payments</dt><dd>{state.metadata.pausePay ? 'Paused' : 'Open'}</dd></div>{state.accountingContexts.map(item => <div key={`${item.terminal}:${item.token}`}><dt>Treasury</dt><dd><DisplayTokenAmount value={item.balance} decimals={item.decimals} /> {item.symbol}</dd></div>)}</dl><p className="mt-4 text-sm">Verified at block {state.blockNumber.toString()}. INCOME is separate from FUND and does not grant an asset-sale claim.</p></Panel>,
-    stages: state && <Panel title="INCOME schedule"><dl className="grid gap-4"><div><dt>Current ruleset</dt><dd>{state.ruleset.id.toString()}</dd></div><div><dt>Started</dt><dd>{new Date(Number(state.ruleset.start) * 1_000).toLocaleString()}</dd></div><div><dt>Cash-outs and loans</dt><dd>{state.cashOutsAvailable ? 'Available under the current contract terms' : `Unlock ${new Date(Number(state.cashOutDelay) * 1_000).toLocaleString()}`}</dd></div></dl><p className="mt-4">Initial INCOME allocations and ongoing Sticky rewards are separate. Sticky rewards vest in four weekly rounds after a claim is materialized.</p></Panel>,
+    stages: state && <div className="grid gap-7"><LiveProjectActions token="INCOME" state={{cashOutsEnabled: state.cashOutsAvailable, hasInitialAllocation: !!fundProjectId}} /><Panel title="INCOME schedule"><dl className="grid gap-4"><div><dt>Current ruleset</dt><dd>{state.ruleset.id.toString()}</dd></div><div><dt>Started</dt><dd>{new Date(Number(state.ruleset.start) * 1_000).toLocaleString()}</dd></div><div><dt>Cash-outs and loans</dt><dd>{state.cashOutsAvailable ? 'Available under the current contract terms' : `Unlock ${new Date(Number(state.cashOutDelay) * 1_000).toLocaleString()}`}</dd></div></dl><p className="mt-4">Initial INCOME allocations and ongoing Sticky rewards are separate. Sticky rewards vest in four weekly rounds after a claim is materialized.</p></Panel></div>,
     accountsYou: gate(ready && <><Panel title="Your INCOME"><p className="break-words text-2xl"><DisplayTokenAmount value={state.totalBalance} /> INCOME</p><p className="mt-2 text-sm"><DisplayTokenAmount value={state.creditBalance} /> credits / <DisplayTokenAmount value={state.erc20Balance} /> ERC-20 tokens</p></Panel><IncomeTokenActions state={state} client={client} />{fundProjectId && <InitialIncomeClaim chainId={state.chainId} fundProjectId={fundProjectId} incomeProjectId={state.projectId} />}<IncomeHolderRewards state={state} client={client} fundProjectId={fundProjectId} /></>),
     accountsAll: projectId && <ProjectParticipants chainId={chainId} projectId={projectId} tokenLabel="INCOME" />,
     market: gate(ready && context && <>{currency}<IncomeCashOut state={state} client={client} context={context} /></>),
@@ -217,63 +217,13 @@ function IncomeHolderRewards({ state, client, fundProjectId }: { state: IncomePr
   </Panel>
 }
 
-function IncomePayment({ state, client, context, currency }: { state: IncomeProjectState; client: PublicClient; context: IncomeAccountingContext; currency?: ReactNode }) {
-  const { address } = useWallet()
-  const [input, setInput] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [preparing, setPreparing] = useState(false)
-  const tx = useIncomeTx(state)
-  const approval = useIncomeTx(state)
-  const count = amount(input, context.decimals)
-  const native = isAddressEqual(context.token, NATIVE_TOKEN)
-  const prerequisite = approval.phase === 'success' ? approval.receipt?.blockNumber : undefined
-  const quote = useQuery({
-    queryKey: ['income-pay', state.chainId, state.projectId.toString(), context.token, count.toString(), address],
-    enabled: !!address && count > 0n && !state.metadata.pausePay,
-    queryFn: () => previewPay(client, { chainId: state.chainId, projectId: state.projectId, terminal: context.terminal, token: context.token, amount: count, beneficiary: address! }),
-    retry: false, staleTime: 10_000,
-  })
-  const minimum = quote.data?.beneficiaryTokenCount && quote.data.beneficiaryTokenCount > 0n ? protectedIncomeMinimum(quote.data.beneficiaryTokenCount) : 0n
-  const zeroCustomerIssuance = state.metadata.reservedPercent === 10_000 && quote.data?.beneficiaryTokenCount === 0n && quote.data.reservedTokenCount > 0n
-  const hasQuote = minimum > 0n || zeroCustomerIssuance
-  const busy = preparing || tx.busy || approval.busy || tx.phase === 'review' || approval.phase === 'review'
-  async function submit() {
-    if (!address || count <= 0n || !hasQuote) return
-    setPreparing(true); setError(null)
-    try {
-      const current = await fresh(client, state, address, prerequisite)
-      matchingContext(current, context)
-      if (current.metadata.pausePay) throw new Error('Payments are paused.')
-      if (!native) {
-        const allowance = await client.readContract({ address: context.token, abi: erc20Abi, functionName: 'allowance', args: [address, context.terminal], blockNumber: current.blockNumber })
-        if (allowance < count) {
-          await approval.send({ chainId: state.chainId, address: context.token, abi: erc20Abi, functionName: 'approve', args: [context.terminal, count], label: `Approve exactly ${units(count, context.decimals)} ${context.symbol} for this INCOME payment` }, { reverify: async () => { matchingContext(await fresh(client, state, address), context) } })
-          return
-        }
-      }
-      const latest = await previewPay(client, { chainId: state.chainId, projectId: state.projectId, terminal: context.terminal, token: context.token, amount: count, beneficiary: address })
-      const zeroOutput = current.metadata.reservedPercent === 10_000 && latest.beneficiaryTokenCount === 0n && latest.reservedTokenCount > 0n
-      const protectedMinimum = zeroOutput ? 0n : protectedIncomeMinimum(latest.beneficiaryTokenCount)
-      await tx.send({ ...buildPayTx({ chainId: state.chainId, projectId: state.projectId, terminal: context.terminal, token: context.token, amount: count, beneficiary: address, minReturnedTokens: protectedMinimum, memo: 'Homerun INCOME payment' }), label: `Pay ${units(count, context.decimals)} ${context.symbol}; receive at least ${units(protectedMinimum)} INCOME` }, {
-        simulationBlockNumber: prerequisite === undefined ? undefined : current.blockNumber,
-        reviewNotice: zeroOutput ? 'You receive no INCOME for this payment. This revnet allocates 100% of new INCOME to its reserved recipients.' : protectedMinimum < minimum ? `The quote decreased. Your protected minimum is now ${units(protectedMinimum)} INCOME.` : undefined,
-        reverify: async () => {
-          const latestState = await fresh(client, state, address, prerequisite)
-          matchingContext(latestState, context)
-          if (latestState.metadata.pausePay) throw new Error('Payments were paused during review.')
-        },
-      })
-    } catch (reason) { setError(message(reason)) } finally { setPreparing(false) }
-  }
-  return <Panel title="Pay the project">
-    {currency}
-    <Field label={`Amount in ${context.symbol}`} value={input} onChange={setInput} />
-    <p className="mt-4 text-sm">{zeroCustomerIssuance ? 'This payment gives you no INCOME. All new INCOME is allocated to the reserved recipients.' : minimum > 0n ? `Receive at least ${units(minimum)} INCOME with 1% maximum slippage. Reserved INCOME goes to the configured recipients.` : 'Enter an amount to get a live INCOME quote.'}</p>
-    {quote.isError && <p role="alert" className="mt-3 text-sm">The payment quote is unavailable. {message(quote.error)}</p>}
-    {approval.phase === 'success' && <p className="mt-3 text-sm">Approval confirmed. Continue to review the payment.</p>}
-    <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={!address || busy || count <= 0n || !hasQuote || state.metadata.pausePay} onClick={() => void submit()}>{preparing ? 'Preparing…' : txPhaseLabel(approval.busy ? approval.phase : tx.phase, { idle: 'Review payment', pending: 'Confirming onchain…' })}</button>
-    {error && <p role="alert" className="mt-3 text-sm text-red-800">{error}</p>}<Status tx={approval} chainId={state.chainId} /><Status tx={tx} chainId={state.chainId} />
-  </Panel>
+function IncomePayment({ state, client, context }: { state: IncomeProjectState; client: PublicClient; context: IncomeAccountingContext }) {
+  return <ProjectPayment chainId={state.chainId} projectId={state.projectId} tokenLabel="INCOME" title="Pay the project" context={context} paused={state.metadata.pausePay} reservedPercent={state.metadata.reservedPercent} rulesetId={state.ruleset.id.toString()} verify={async (account, minimumBlock) => {
+    const current = await fresh(client, state, account, minimumBlock)
+    matchingContext(current, context)
+    if (current.metadata.pausePay || current.ruleset.id !== state.ruleset.id) throw new Error('The payment rules changed. Refresh and review the payment again.')
+    return current
+  }} />
 }
 
 function IncomeCashOut({ state, client, context }: { state: IncomeProjectState; client: PublicClient; context: IncomeAccountingContext }) {

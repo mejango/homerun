@@ -303,7 +303,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
                   <p id="fundraise-modeling-note" className="input-purpose-note">Budget assumptions for the raise goal. These do not set contract withdrawal allowances.</p>
                   <div className="income-inputs">{field('purchaseBudget', 'Asset price', { prefix: '$' })}{field('opsReserve', 'Cash reserve', { prefix: '$', help: 'Cash set aside to cover operating expenses.' })}</div>
                 </fieldset>
-                <fieldset className="income-field-group fundraise-contract"><legend>Contract settings</legend>
+                <fieldset className="income-field-group fundraise-contract"><legend>Contractual Settings</legend>
                   {field('operatorFundPercent', 'Operator FUND ownership', { suffix: '%', help: 'Allocated after a successful purchase.' })}
                 </fieldset>
                 <div className="create-callout fundraise-goal"><span>Total fundraising goal</span><strong id="create-raise-goal">{summary ? money(summary.raiseGoal) : '—'}</strong>
@@ -329,7 +329,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
                   {field('rentGrowthPercent', 'Target revenue growth rate (%)', { suffix: '%', help: 'Per year.' })}{field('costGrowthPercent', 'Target expense growth rate (%)', { suffix: '%', help: 'Per year.' })}
                 </div>
               </fieldset>
-              <fieldset className="income-field-group"><legend>INCOME allocation settings</legend><p className="input-purpose-note">Sets how each new batch of INCOME tokens is shared. The FUND-staker allocation goes to eligible Sticky participants.</p>
+              <fieldset className="income-field-group"><legend>Contractual Settings</legend><p className="input-purpose-note">Sets how each new batch of INCOME tokens is shared. The FUND-staker allocation goes to eligible Sticky participants.</p>
                 <div className="income-inputs">{field('operatorSplitPercent', 'To operators', { suffix: '%' })}{field('stickySplitPercent', 'To FUND stakers', { suffix: '%' })}</div>
               </fieldset>
               <section className="income-preview-panel" aria-labelledby="income-preview-heading"><header><h3 id="income-preview-heading">Income preview</h3><p>Based on your inputs. Move the timeline to explore ownership.</p></header>

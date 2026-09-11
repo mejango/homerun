@@ -40,6 +40,10 @@ Recoverable workflows use the optional `beforeWrite` callback to persist an unkn
 
 For multi-step creation, use `submitReviewedContractWrite` with `requireContractTransactionReview` and the same Wagmi config/public clients. The reviewed request must be the request simulated, and only the simulation result goes to the writer. Fees are read just before submission on each chain. Parent workflows must persist recovery state and verify action-specific postconditions in addition to generic receipt success.
 
+FUND and INCOME use a shared `ProjectPayment` flow. `prepareProjectPayQuote` compares the project's listed canonical terminal routes with the Nana SDK's direct Uniswap V4 route, including its supported ETH/USDC V3 bridge. Pool discovery follows the active onchain pay hook, including the current omnichain configuration and Revnet owner, rather than a modeled lifecycle stage. The quote reads share one block. The displayed minimum includes 1% slippage exactly once; a direct swap must beat the SDK's terminal-payment threshold to win. A zero issuance preview from a buyback hook cannot authorize an unprotected payment when its output is unknown.
+
+Route-specific ERC-20 approval, Permit2 typed-data review or contract-wallet approval, swap execution, and Safe execution keep separate confirmation states. Each approval is for the requested payment amount. The final review exposes the route and protected output; buying existing AMM tokens explicitly does not add backing to the project or issue reserved tokens. Preparation refreshes the quote; account, amount, currency and rules changes invalidate it. These are the reference SDK routes, not an exhaustive search of every external market, and local verification does not establish deployment or a completed payment.
+
 ## Initial FUND launch boundary
 
 Creation launches only the FUND fundraising project. INCOME deployment, operator-share issuance, initial INCOME distribution, and success/failure transitions belong to later operator actions with their own reviews and receipts. Those later actions must not be silently bundled into Create.

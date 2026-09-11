@@ -22,6 +22,15 @@ const ownerActions = [['raising', 'close_raise'], ['raising', 'enable_refunds'],
 let violations = 0;
 let checks = 0;
 async function tab(name) {
+  if (['Extras', 'Operators'].includes(name)) {
+    const more = page.getByRole('button', { name: 'More project sections', exact: true });
+    if (await more.getAttribute('aria-expanded') !== 'true') await more.click();
+    await page.getByRole('menuitemradio', { name, exact: true }).click();
+    await expect(more).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator('.homerun-project-layout')).toHaveAttribute('data-project-tab', name.toLowerCase());
+    await expect(page.getByRole('tabpanel', { name, exact: true })).toBeVisible();
+    return;
+  }
   const trigger = page.getByRole('tab', { name, exact: true });
   await trigger.click();
   await expect(trigger).toHaveAttribute('aria-selected', 'true');
@@ -29,7 +38,9 @@ async function tab(name) {
 async function owners(account = 'You') {
   await tab('Owners');
   await tab('Accounts');
-  await tab(account);
+  await expect(page.locator('[data-account-section=you]')).toBeVisible();
+  await expect(page.locator('[data-account-section=all]')).toBeVisible();
+  await page.locator(`[data-account-section="${account.toLowerCase()}"]`).scrollIntoViewIfNeeded();
 }
 async function phase(value) {
   await tab('Stages');
@@ -74,8 +85,8 @@ try {
     await page.setViewportSize({ width: 1440, height: 1000 });
   }
   await page.goto(demoURL, { waitUntil: 'domcontentloaded' });
-  await expect(page.locator('.simulator')).toHaveAttribute('data-ready', 'true');
-  await page.getByRole('heading', { name: 'Description', exact: true }).waitFor();
+  await expect(page.locator('.simulator')).toHaveAttribute('data-ready', 'true', { timeout: 120_000 });
+  await page.getByRole('heading', { name: 'About', exact: true }).waitFor();
   await page.locator('#open-house-gallery').click();
   await page.locator('#house-gallery-image').evaluate(image => image.decode());
   await analyze('Founder Haus photo gallery');

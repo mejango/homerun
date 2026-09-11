@@ -20,9 +20,10 @@ import {
 import { incomePaymentPreview } from "../../web/income-payment-preview.mjs";
 import { plannedOwnerActionDraft as modelOwnerActionDraft } from "../../web/owner-actions.mjs";
 import { SiteIntegration } from "./SiteIntegration";
-import { AvailableTransactions } from "./AvailableTransactions";
+import { ProjectActionGuide } from "./ProjectActionGuide";
 import { HomerunProjectLayout, OwnersTabs } from "./HomerunProjectLayout";
 import { DemoProjectShop } from "./DemoProjectShop";
+import { FundingProgress } from "./FundingProgress";
 import { demoShopStorageKey } from "@/lib/demo-shop";
 import {
   BudgetChart,
@@ -97,49 +98,53 @@ function demoStateMetadata(
   p: Projection | null,
   phase: ProjectPhase,
 ): ReactNode[] {
-  if (!p) return ["Check modeling inputs"];
+  if (!p) return ["Modeling: Check inputs"];
   const amount = (key: string, value: number, label: string) => (
-    <span key={key} data-header-metric={key} title={`${money(value)} ${label}`}>
+    <span
+      key={key}
+      data-header-metric={key}
+      title={`${label}: ${money(value)}`}
+    >
+      {label}:{" "}
       {new Intl.NumberFormat("en-US", {
         style: "currency",
         currency: "USD",
         notation: "compact",
         maximumFractionDigits: Math.abs(value) < 1_000 ? 2 : 1,
-      }).format(value)}{" "}
-      {label}
+      }).format(value)}
     </span>
   );
   switch (phase) {
     case "raising":
       return [
-        amount("raised", p.raised, "raised"),
-        amount("goal", p.raiseGoal, "goal"),
-        `${percent(p.raiseGoal > 0 ? (p.raised / p.raiseGoal) * 100 : 0)} funded`,
+        amount("raised", p.raised, "Raised"),
+        amount("goal", p.raiseGoal, "Goal"),
+        `Funded: ${percent(p.raiseGoal > 0 ? (p.raised / p.raiseGoal) * 100 : 0)}`,
       ];
     case "funded":
       return [
-        amount("closing", p.escrowCash, "ready for closing"),
-        amount("raised", p.raised, "raised"),
+        amount("closing", p.escrowCash, "Ready for closing"),
+        amount("raised", p.raised, "Raised"),
       ];
     case "refunding":
       return [
-        amount("refundable", p.refundableCash, "available for refunds"),
-        amount("raised", p.raised, "originally raised"),
+        amount("refundable", p.refundableCash, "Available for refunds"),
+        amount("raised", p.raised, "Originally raised"),
       ];
     case "refunded":
       return [
-        amount("refunded", p.refundedCash, "returned"),
-        amount("raised", p.raised, "originally raised"),
+        amount("refunded", p.refundedCash, "Returned"),
+        amount("raised", p.raised, "Originally raised"),
       ];
     case "earning":
       return [
-        amount("revenue", p.lastMonthRent, "revenue / month"),
+        amount("revenue", p.lastMonthRent, "Monthly revenue"),
         amount("income-treasury", p.revCash, "INCOME treasury"),
-        `${p.monthsApplied} months earning`,
+        `Months earning: ${p.monthsApplied}`,
       ];
     case "liquidated":
       return [
-        amount("fund-sale", p.fundSaleCash, "for FUND holders"),
+        amount("fund-sale", p.fundSaleCash, "FUND proceeds"),
         amount("income-treasury", p.revCash, "INCOME treasury"),
       ];
   }
@@ -1480,9 +1485,6 @@ function PayPreview({
               ? "Cash out"
               : "Pay"}
         </h2>
-        <span className="pay-route" id="pay-route">
-          {cashStage ? "FUND → USDC" : quote.route}
-        </span>
       </div>
       <p className="pay-context">
         {income
@@ -1561,11 +1563,7 @@ function PayPreview({
           </div>
         )}
         <div className="pay-receipt" aria-live="polite">
-          <span>
-            {cashStage
-              ? "Estimated cash you receive"
-              : "Estimated tokens you receive"}
-          </span>
+          <span>{cashStage ? "Cash you receive" : "Tokens you receive"}</span>
           <div>
             <strong id="pay-output">
               {quote.tokenOutput !== null
@@ -1657,6 +1655,7 @@ function DemoOwnerTools({
 }) {
   const [draft, setDraft] = useState<OwnerDraft | null>(null);
   const [draftError, setDraftError] = useState("");
+  const toolsRef = useRef<HTMLDetailsElement>(null);
   const actions: Partial<Record<ProjectPhase, [string, string][]>> = {
     raising: [
       ["close_raise", "Prepare closing"],
@@ -1669,131 +1668,151 @@ function DemoOwnerTools({
     earning: [["enable_sale_redemptions", "Prepare sale redemptions"]],
   };
   const available = actions[projection.phase as ProjectPhase] ?? [];
-  if (!available.length) return null;
+  const prepare = (action: string) => {
+    try {
+      setDraftError("");
+      if (toolsRef.current) toolsRef.current.open = true;
+      setDraft(ownerActionDraft(action, projection));
+    } catch (error) {
+      setDraftError(
+        error instanceof Error
+          ? error.message
+          : "Check the model inputs before reviewing this draft.",
+      );
+    }
+  };
+  const reviewActions: Record<string, string> = {
+    close: "close_raise",
+    fail: "enable_refunds",
+    sale: "enable_sale_redemptions",
+  };
+  const guide = (
+    <ProjectActionGuide
+      stage={projection.phase as ProjectPhase}
+      section="operators"
+      actionIds={Object.keys(reviewActions).filter((id) =>
+        available.some(([action]) => action === reviewActions[id]),
+      )}
+      onAction={(id) => prepare(reviewActions[id])}
+    />
+  );
+  if (!available.length) return guide;
   return (
-    <details id="owner-tools">
-      <summary>Owner tools</summary>
-      <div id="owner-actions" className="owner-actions">
-        <p>Demo review drafts only</p>
-        <div>
-          {available.map(([action, label]) => (
-            <button
-              type="button"
-              className="outline-button"
-              key={action}
-              data-owner-action={action}
-              onClick={() => {
-                try {
-                  setDraftError("");
-                  setDraft(ownerActionDraft(action, projection));
-                } catch (error) {
-                  setDraftError(
-                    error instanceof Error
-                      ? error.message
-                      : "Check the model inputs before reviewing this draft.",
-                  );
-                }
-              }}
-            >
-              {label}
-            </button>
-          ))}
+    <>
+      <details id="owner-tools" ref={toolsRef}>
+        <summary>Owner tools</summary>
+        <div id="owner-actions" className="owner-actions">
+          <p>Demo review drafts only</p>
+          <div>
+            {available.map(([action, label]) => (
+              <button
+                type="button"
+                className="outline-button"
+                key={action}
+                data-owner-action={action}
+                onClick={() => prepare(action)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
-      {draftError && (
-        <p className="pay-error" role="alert">
-          {draftError}
-        </p>
-      )}
-      {["raising", "funded"].includes(projection.phase) && (
-        <button
-          id="failure-state"
-          type="button"
-          className="quiet-button"
-          onClick={() => onPhase("refunding")}
-        >
-          Preview a failed raise
-        </button>
-      )}
-      {draft && (
-        <Modal
-          id="owner-dialog"
-          title={draft.title}
-          onClose={() => setDraft(null)}
-        >
-          <p className="draft-only">
-            Review only. Nothing is signed, submitted, queued or changed
-            on-chain.
+        {draftError && (
+          <p className="pay-error" role="alert">
+            {draftError}
           </p>
-          <p>{draft.description}</p>
-          {draft.blockedReasons.length > 0 && (
-            <div className="scenario-caution">
-              <strong>Prerequisites not met</strong>
+        )}
+        {["raising", "funded"].includes(projection.phase) && (
+          <button
+            id="failure-state"
+            type="button"
+            className="quiet-button"
+            onClick={() => onPhase("refunding")}
+          >
+            Preview a failed raise
+          </button>
+        )}
+        {draft && (
+          <Modal
+            id="owner-dialog"
+            title={draft.title}
+            onClose={() => setDraft(null)}
+          >
+            <p className="draft-only">
+              Review only. Nothing is signed, submitted, queued or changed
+              on-chain.
+            </p>
+            <p>{draft.description}</p>
+            {draft.blockedReasons.length > 0 && (
+              <div className="scenario-caution">
+                <strong>Prerequisites not met</strong>
+                <ul>
+                  {draft.blockedReasons.map((reason) => (
+                    <li key={reason}>{reason}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <ol className="draft-steps">
+              {draft.steps.map((step) => (
+                <li key={step.id}>
+                  <h3>{step.title}</h3>
+                  <p>{step.description}</p>
+                </li>
+              ))}
+            </ol>
+            <details className="holder-choices">
+              <summary>Prerequisites & verification</summary>
               <ul>
-                {draft.blockedReasons.map((reason) => (
-                  <li key={reason}>{reason}</li>
+                {draft.requiresVerification.map((item) => (
+                  <li key={item}>{item}</li>
                 ))}
               </ul>
+            </details>
+            <details className="holder-choices">
+              <summary>Limitations & cautions</summary>
+              <ul>
+                {draft.warnings.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </details>
+            <details className="holder-choices">
+              <summary>Review proposed field changes</summary>
+              <pre>{JSON.stringify(draft.changes, null, 2)}</pre>
+            </details>
+            <div className="dialog-actions">
+              <button
+                id="download-owner-draft"
+                className="button"
+                type="button"
+                onClick={() =>
+                  download(
+                    JSON.stringify(draft, null, 2),
+                    "homerun-owner-draft.json",
+                  )
+                }
+              >
+                Download draft
+              </button>
+              <button
+                id="preview-owner-state"
+                className="outline-button"
+                type="button"
+                disabled={!draft.eligible}
+                onClick={() => {
+                  onPhase(draft.toPhase as ProjectPhase);
+                  setDraft(null);
+                }}
+              >
+                Preview state
+              </button>
             </div>
-          )}
-          <ol className="draft-steps">
-            {draft.steps.map((step) => (
-              <li key={step.id}>
-                <h3>{step.title}</h3>
-                <p>{step.description}</p>
-              </li>
-            ))}
-          </ol>
-          <details className="holder-choices">
-            <summary>Prerequisites & verification</summary>
-            <ul>
-              {draft.requiresVerification.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </details>
-          <details className="holder-choices">
-            <summary>Limitations & cautions</summary>
-            <ul>
-              {draft.warnings.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </details>
-          <details className="holder-choices">
-            <summary>Review proposed field changes</summary>
-            <pre>{JSON.stringify(draft.changes, null, 2)}</pre>
-          </details>
-          <div className="dialog-actions">
-            <button
-              id="download-owner-draft"
-              className="button"
-              type="button"
-              onClick={() =>
-                download(
-                  JSON.stringify(draft, null, 2),
-                  "homerun-owner-draft.json",
-                )
-              }
-            >
-              Download draft
-            </button>
-            <button
-              id="preview-owner-state"
-              className="outline-button"
-              type="button"
-              disabled={!draft.eligible}
-              onClick={() => {
-                onPhase(draft.toPhase as ProjectPhase);
-                setDraft(null);
-              }}
-            >
-              Preview state
-            </button>
-          </div>
-        </Modal>
-      )}
-    </details>
+          </Modal>
+        )}
+      </details>
+      {guide}
+    </>
   );
 }
 
@@ -1816,7 +1835,7 @@ function DemoOverview({
   return (
     <div className="demo-overview">
       <section className="demo-section demo-description">
-        <h2>Description</h2>
+        <h2>About</h2>
         <p>{description}</p>
       </section>
       <ProjectPhoto
@@ -1827,7 +1846,7 @@ function DemoOverview({
       />
       <section className="demo-section demo-overview-progress">
         <div>
-          <h2>At a glance</h2>
+          <h2>Progress</h2>
           {p && (
             <div
               id="project-raise-stats"
@@ -1848,6 +1867,11 @@ function DemoOverview({
                   <dd id="project-goal">{money(p.raiseGoal)}</dd>
                 </div>
               </dl>
+              <FundingProgress
+                raised={p.raised}
+                goal={p.raiseGoal}
+                historical={phase !== "raising"}
+              />
               <p>
                 <strong id="project-funded">
                   {percent(
@@ -1874,20 +1898,17 @@ function DemoOverview({
         <ProjectJourney phase={phase} />
       </section>
       <section className="demo-section">
-        <h2>Fund it. Earn together.</h2>
+        <h2>Representation</h2>
         <div className="demo-token-summary">
           <div>
             <h3>FUND</h3>
-            <p>
-              A share of the net proceeds when the asset is sold. The initial
-              INCOME allocation includes every FUND holder at the snapshot.
-            </p>
+            <p>A share of the net proceeds when the asset is sold.</p>
           </div>
           <div>
             <h3>INCOME</h3>
             <p>
-              A separate token backed by revenue. FUND holders can stake through
-              Sticky to earn ongoing INCOME rewards.
+              A share of ongoing revenues, owned by FUND holders, operators, and
+              customers
             </p>
           </div>
         </div>
@@ -2025,8 +2046,7 @@ function DemoStageHistory({
       ];
   return (
     <section className="demo-section demo-stage-history">
-      <h2>The journey</h2>
-      <p>Where this scenario has been, and what comes next.</p>
+      <h2>Progress</h2>
       <ol tabIndex={0} aria-label="Project stages">
         {steps.map((step, index) => (
           <li key={step.name} data-stage-state={step.state.toLowerCase()}>
@@ -2122,10 +2142,12 @@ function DemoOutlook({ p, inputs }: { p: Projection; inputs: NetworkInputs }) {
 
 function DemoOwners({
   p,
+  phase,
   error,
   onMonthChange,
 }: {
   p: Projection | null;
+  phase: ProjectPhase;
   error: string;
   onMonthChange: (month: number) => void;
 }) {
@@ -2160,6 +2182,7 @@ function DemoOwners({
             <div id="fund-position-preview">
               <Contribution p={p} onMonthChange={onMonthChange} />
             </div>
+            <ProjectActionGuide stage={phase} section="accounts" />
           </section>
         ) : (
           unavailable
@@ -2210,6 +2233,7 @@ function DemoOwners({
                 </p>
               </div>
             </div>
+            <ProjectActionGuide stage={phase} section="market" />
           </section>
         ) : (
           unavailable
@@ -2224,6 +2248,7 @@ function DemoOwners({
             relayed, then claimed on the destination.
           </p>
           <p>This demo has no cross-chain transfers to settle.</p>
+          <ProjectActionGuide stage={phase} section="settlement" />
         </section>
       }
       splits={
@@ -2236,6 +2261,7 @@ function DemoOwners({
             </p>
             <Allocation p={p} />
             <TokenTerms p={p} />
+            <ProjectActionGuide stage={phase} section="splits" />
           </section>
         ) : (
           unavailable
@@ -2271,6 +2297,7 @@ function DemoOwners({
             ) : (
               <p>Loan projections become available in the Income stage.</p>
             )}
+            <ProjectActionGuide stage={phase} section="loans" />
           </section>
         ) : (
           unavailable
@@ -2369,6 +2396,9 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
   const overview = derived.property;
   const fundraising = !["earning", "liquidated"].includes(phase);
   const name = project?.values.name || "Founder Haus";
+  const location =
+    project?.values.location ||
+    (project ? "" : "Jurerê Internacional, Florianópolis");
   const next = nextStages[phase];
   const field = (
     key: keyof NetworkInputs,
@@ -2425,7 +2455,6 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
         <div className="simulator" data-ready={ready}>
           <HomerunProjectLayout
             title={name}
-            actions={<AvailableTransactions stage={phase} />}
             logo={
               project && !project.values.photo ? (
                 <span className="demo-project-initial" aria-hidden="true">
@@ -2436,8 +2465,8 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
                   <Image
                     unoptimized
                     src={project?.values.photo || photos[0].src}
-                    width={112}
-                    height={112}
+                    width={192}
+                    height={192}
                     alt=""
                   />
                 </div>
@@ -2451,12 +2480,11 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
                 data-project-phase={phase}
                 role="status"
               >
-                {statusLabels[phase]}
+                Status: {statusLabels[phase]}
               </span>,
               ...demoStateMetadata(overview, phase),
-              project?.values.location ||
-                (project ? "" : "Jurerê Internacional, Florianópolis"),
-              project ? "Local preview" : "Demo",
+              location && `Location: ${location}`,
+              `Mode: ${project ? "Local preview" : "Demo"}`,
             ].filter(Boolean)}
             payment={
               <aside
@@ -2486,6 +2514,7 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
             stages={
               <div className="demo-stages">
                 <DemoStageHistory p={overview} phase={phase} />
+                <ProjectActionGuide stage={phase} section="stages" />
                 {p ? (
                   <PhasePanel
                     p={project ? overview! : p}
@@ -2671,6 +2700,7 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
             owners={
               <DemoOwners
                 p={p}
+                phase={phase}
                 error={derived.personalError || derived.error}
                 onMonthChange={(value) => change("revenueMonths", value)}
               />

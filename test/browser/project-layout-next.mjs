@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { chromium, expect } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 
-const base = process.env.BASE_URL || 'http://localhost:3016'
+const base = process.env.BASE_URL || 'http://localhost:3014'
 const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true })
 const context = await browser.newContext({ reducedMotion: 'reduce' })
 const page = await context.newPage()
@@ -12,6 +12,15 @@ const errors = []
 page.on('pageerror', error => errors.push(error.message))
 const tabs = page.getByRole('tablist', { name: 'Project sections', exact: true })
 async function tab(name) {
+  if (['Extras', 'Operators'].includes(name)) {
+    const more = page.getByRole('button', { name: 'More project sections', exact: true })
+    if (await more.getAttribute('aria-expanded') !== 'true') await more.click()
+    await page.getByRole('menuitemradio', { name, exact: true }).click()
+    await expect(more).toHaveAttribute('aria-expanded', 'false')
+    await expect(page.locator('.homerun-project-layout')).toHaveAttribute('data-project-tab', name.toLowerCase())
+    await expect(page.getByRole('tabpanel', { name, exact: true })).toBeVisible()
+    return
+  }
   await tabs.getByRole('tab', { name, exact: true }).click()
   await expect(tabs.getByRole('tab', { name, exact: true })).toHaveAttribute('aria-selected', 'true')
 }
@@ -28,8 +37,28 @@ try {
     await page.goto(`${base}/founderhaus`, { waitUntil: 'domcontentloaded' })
     await expect(page.locator('.simulator')).toHaveAttribute('data-ready', 'true', { timeout: 120000 })
     await expect(tabs.getByRole('tab', { name: 'Overview', exact: true })).toHaveAttribute('aria-selected', 'true')
-    await expect(page.getByRole('heading', { name: 'Description', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'About', exact: true })).toBeVisible()
     await expect(page.locator('#open-house-gallery')).toBeVisible()
+    await expect(page.locator('.demo-overview-progress').getByRole('heading', { name: 'Progress', exact: true })).toBeVisible()
+    const logo = await page.locator('.hpl-logo').boundingBox()
+    assert.equal(logo.width, width > 800 ? 192 : 104, 'Project logo has the requested size')
+    assert.equal(logo.height, logo.width, 'Project logo remains square')
+    const funding = page.getByRole('progressbar', { name: 'Funding goal progress', exact: true })
+    await expect(funding).toBeVisible()
+    assert.ok(Math.abs(Number(await funding.getAttribute('aria-valuenow')) - 60) < 0.00001, 'Funding graph shows the modeled 60% raise')
+    await expect(funding).toHaveAttribute('aria-valuetext', /\$369,230\.77 raised of \$615,384\.62 goal/)
+    await expect(tabs.getByRole('tab', { name: 'Extras', exact: true })).toHaveCount(0)
+    await expect(tabs.getByRole('tab', { name: 'Operators', exact: true })).toHaveCount(0)
+    const more = page.getByRole('button', { name: 'More project sections', exact: true })
+    await more.focus()
+    await page.keyboard.press('ArrowDown')
+    await expect(page.getByRole('menuitemradio', { name: 'Extras', exact: true })).toBeFocused()
+    await page.keyboard.press('ArrowDown')
+    await expect(page.getByRole('menuitemradio', { name: 'Operators', exact: true })).toBeFocused()
+    await accessible(`Overflow menu ${width}`)
+    await page.keyboard.press('Escape')
+    await expect(more).toBeFocused()
+    await expect(more).toHaveAttribute('aria-expanded', 'false')
     await page.locator('#pay-amount').fill('2500')
     await page.evaluate(() => { window.layoutPaymentInput = document.querySelector('#pay-amount') })
     await fits()
@@ -44,12 +73,16 @@ try {
     }
     await tab('Owners')
     const ownerTabs = page.getByRole('tablist', { name: 'Ownership sections', exact: true })
-    await page.getByRole('tablist', { name: 'Accounts', exact: true }).getByRole('tab', { name: 'All', exact: true }).click()
-    await expect(page.getByRole('heading', { name: 'All owners', exact: true })).toBeVisible()
-    assert.equal(new URL(page.url()).hash, '#owners/accounts/all')
+    await ownerTabs.getByRole('tab', { name: 'Accounts', exact: true }).click()
+    await expect(page.getByRole('tablist', { name: 'Accounts', exact: true })).toHaveCount(0)
+    await expect(page.locator('[data-account-section="you"]')).toBeVisible()
+    await expect(page.locator('[data-account-section="all"]')).toBeVisible()
+    assert.equal(new URL(page.url()).hash, '#owners/accounts')
     await tab('Overview')
     await tab('Owners')
-    await expect(page.getByRole('tablist', { name: 'Accounts', exact: true }).getByRole('tab', { name: 'All', exact: true })).toHaveAttribute('aria-selected', 'true')
+    await expect(ownerTabs.getByRole('tab', { name: 'Accounts', exact: true })).toHaveAttribute('aria-selected', 'true')
+    await expect(page.locator('[data-account-section="you"]')).toBeVisible()
+    await expect(page.locator('[data-account-section="all"]')).toBeVisible()
     for (const name of ['Market', 'Settlement', 'Splits', 'Loans']) {
       await ownerTabs.getByRole('tab', { name, exact: true }).click()
       await fits()
@@ -69,14 +102,16 @@ try {
       await fits()
       await accessible(`Activity ${width}`)
     }
-    console.log(`PASS ${width}px: six tabs, nested owners, retained payment, projections, mobile activity and accessibility`)
+    console.log(`PASS ${width}px: six project sections, simultaneous accounts, overflow menu, funding graph, logo, retained payment, projections and accessibility`)
   }
   await page.goto(`${base}/founderhaus?layout=check#owners/accounts/all`, { waitUntil: 'domcontentloaded' })
-  await expect(page.getByRole('heading', { name: 'All owners', exact: true })).toBeVisible({ timeout: 120000 })
+  await expect(page.locator('[data-account-section=all]')).toBeVisible({ timeout: 120000 })
+  await expect(page.locator('[data-account-section=you]')).toBeVisible()
   await tab('Stages')
   assert.equal(new URL(page.url()).search, '?layout=check')
   await page.goBack()
-  await expect(page.getByRole('heading', { name: 'All owners', exact: true })).toBeVisible()
+  await expect(page.locator('[data-account-section=all]')).toBeVisible()
+  await expect(page.locator('[data-account-section=you]')).toBeVisible()
   await page.goForward()
   await expect(page.locator('#scenario-title')).toBeVisible()
   await tabs.getByRole('tab', { name: 'Stages', exact: true }).focus()

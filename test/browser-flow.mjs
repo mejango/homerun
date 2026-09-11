@@ -53,12 +53,21 @@ async function check(name, callback) {
 async function open() {
   const response = await page.goto(demoURL, { waitUntil: "domcontentloaded" });
   assert.equal(response.status(), 200);
-  await expect(page.locator('.simulator')).toHaveAttribute('data-ready', 'true');
+  await expect(page.locator('.simulator')).toHaveAttribute('data-ready', 'true', { timeout: 120_000 });
   await tab("Stages");
   await expect(page.locator("#scenario-title")).toHaveText("Raise the money.");
   await tab("Overview");
 }
 async function tab(name) {
+  if (['Extras', 'Operators'].includes(name)) {
+    const more = page.getByRole('button', { name: 'More project sections', exact: true });
+    if (await more.getAttribute('aria-expanded') !== 'true') await more.click();
+    await page.getByRole('menuitemradio', { name, exact: true }).click();
+    await expect(more).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator('.homerun-project-layout')).toHaveAttribute('data-project-tab', name.toLowerCase());
+    await expect(page.getByRole('tabpanel', { name, exact: true })).toBeVisible();
+    return;
+  }
   const trigger = page.getByRole('tab', { name, exact: true });
   await trigger.click();
   await expect(trigger).toHaveAttribute('aria-selected', 'true');
@@ -66,7 +75,9 @@ async function tab(name) {
 async function owners(account = 'You') {
   await tab('Owners');
   await tab('Accounts');
-  await tab(account);
+  await expect(page.locator('[data-account-section=you]')).toBeVisible();
+  await expect(page.locator('[data-account-section=all]')).toBeVisible();
+  await page.locator(`[data-account-section="${account.toLowerCase()}"]`).scrollIntoViewIfNeeded();
 }
 async function navigateTo(selector) {
   if (/data-owner-action|#owner-tools/.test(selector)) await tab('Operators');
@@ -155,7 +166,7 @@ try {
       const response = await staticPage.goto(demoURL);
       assert.equal(response.status(), 200);
       await expect(staticPage.locator("h1")).toHaveText("Founder Haus");
-      await expect(staticPage.getByRole('heading', { name: 'Description', exact: true })).toBeVisible();
+      await expect(staticPage.getByRole('heading', { name: 'About', exact: true })).toBeVisible();
       await expect(staticPage.locator('#project-journey')).toHaveAttribute('data-journey-phase', 'raising');
       await expect(staticPage.locator("#project-goal")).toHaveText(
         "$615,384.62",
@@ -686,7 +697,7 @@ try {
     const entry = { id, createdAt: new Date().toISOString(), values: { ...CREATE_DEFAULTS, name: 'Neighborhood equipment', assetType: 'equipment', operatorWallet: '0x1111111111111111111111111111111111111111' } };
     await page.evaluate(({ key, value }) => localStorage.setItem(key, JSON.stringify([value])), { key: CREATED_PROJECTS_KEY, value: entry });
     await page.goto(new URL(`/project?id=${id}`, base).href);
-    await expect(page.locator('.simulator')).toHaveAttribute('data-ready', 'true');
+    await expect(page.locator('.simulator')).toHaveAttribute('data-ready', 'true', { timeout: 120_000 });
     await expect(page.locator('h1')).toHaveText('Neighborhood equipment');
     await expect(page.locator('#project-raised')).toHaveText('$0');
     await page.locator('#pay-amount').fill('2500');

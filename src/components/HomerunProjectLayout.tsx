@@ -1,10 +1,10 @@
 'use client'
 
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react'
+import { ProjectOverflowIcon, ProjectTabIcon } from './ProjectTabIcon'
 
 export type ProjectTab = 'overview' | 'stages' | 'owners' | 'shop' | 'extras' | 'operators'
 type OwnerTab = 'accounts' | 'market' | 'settlement' | 'splits' | 'loans'
-type AccountTab = 'you' | 'all'
 type NavigationTab = ProjectTab | 'activity'
 
 const PROJECT_TABS: { key: ProjectTab; label: string }[] = [
@@ -21,10 +21,6 @@ const OWNER_TABS: { key: OwnerTab; label: string }[] = [
   { key: 'settlement', label: 'Settlement' },
   { key: 'splits', label: 'Splits' },
   { key: 'loans', label: 'Loans' },
-]
-const ACCOUNT_TABS: { key: AccountTab; label: string }[] = [
-  { key: 'you', label: 'You' },
-  { key: 'all', label: 'All' },
 ]
 const NAVIGATION_EVENT = 'homerun:project-navigation'
 const subscribeToReadiness = () => () => {}
@@ -69,28 +65,79 @@ function TabStrip<T extends string>({
   tabs: { key: T; label: string; mobileOnly?: boolean }[]
   active: T
   onSelect: (key: T) => void
-  level?: 'main' | 'owners' | 'accounts'
+  level?: 'main' | 'owners'
 }) {
   const ready = useSyncExternalStore(subscribeToReadiness, () => true, () => false)
-  const vertical = level === 'accounts'
+  const overflowTabs = level === 'main' ? tabs.filter((item) => item.key === 'extras' || item.key === 'operators') : []
+  const visibleTabs = tabs.filter((item) => !overflowTabs.includes(item))
+  const overflowSelected = overflowTabs.some((item) => item.key === active)
+  const fallbackFocus = visibleTabs.find((item) => !item.mobileOnly)?.key
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const overflowRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const requestedMenuFocus = useRef<'first' | 'last' | 'active'>('active')
+
+  useEffect(() => {
+    if (!menuOpen) return
+    const buttons = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') ?? [])
+    const selected = buttons.find((button) => button.getAttribute('aria-checked') === 'true')
+    const target = requestedMenuFocus.current === 'last' ? buttons.at(-1)
+      : requestedMenuFocus.current === 'first' ? buttons[0] : selected ?? buttons[0]
+    target?.focus({ preventScroll: true })
+    const outside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !overflowRef.current?.contains(event.target)) setMenuOpen(false)
+    }
+    const escape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      setMenuOpen(false)
+      triggerRef.current?.focus({ preventScroll: true })
+    }
+    document.addEventListener('pointerdown', outside)
+    document.addEventListener('keydown', escape)
+    return () => {
+      document.removeEventListener('pointerdown', outside)
+      document.removeEventListener('keydown', escape)
+    }
+  }, [menuOpen])
+
+  const openMenu = (focus: 'first' | 'last' | 'active') => {
+    requestedMenuFocus.current = focus
+    setMenuOpen(true)
+  }
+  const onMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Tab') {
+      setMenuOpen(false)
+      triggerRef.current?.focus({ preventScroll: true })
+      return
+    }
+    if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return
+    const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'))
+    const index = buttons.indexOf(event.target as HTMLButtonElement)
+    if (index < 0) return
+    event.preventDefault()
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+      : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
+    buttons[next].focus({ preventScroll: true })
+  }
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    const previousKey = vertical ? 'ArrowUp' : 'ArrowLeft'
-    const nextKey = vertical ? 'ArrowDown' : 'ArrowRight'
-    if (![previousKey, nextKey, 'Home', 'End'].includes(event.key)) return
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
     const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
       .filter((button) => !button.disabled && button.getClientRects().length > 0)
     const index = buttons.indexOf(event.target as HTMLButtonElement)
     if (index < 0 || buttons.length === 0) return
     event.preventDefault()
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
-      : (index + (event.key === nextKey ? 1 : -1) + buttons.length) % buttons.length
+      : (index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length
     buttons[next].focus({ preventScroll: true })
     buttons[next].scrollIntoView({ block: 'nearest', inline: 'nearest' })
     buttons[next].click()
   }
   return (
-    <div className={`hpl-tabs hpl-tabs-${level}`} role="tablist" aria-label={label} aria-orientation={vertical ? 'vertical' : 'horizontal'} aria-busy={!ready} onKeyDown={onKeyDown}>
-      {tabs.map((item) => (
+    <div className={`hpl-navigation-bar hpl-navigation-${level}`}>
+    <div className={`hpl-tabs hpl-tabs-${level}`} role="tablist" aria-label={label} aria-orientation="horizontal" aria-busy={!ready} onKeyDown={onKeyDown}>
+      {visibleTabs.map((item) => (
         <button
           key={item.key}
           id={`${id}-tab-${item.key}`}
@@ -98,12 +145,56 @@ function TabStrip<T extends string>({
           role="tab"
           aria-selected={active === item.key}
           aria-controls={`${id}-panel-${item.key}`}
-          tabIndex={active === item.key ? 0 : -1}
+          tabIndex={active === item.key || (overflowSelected && item.key === fallbackFocus) ? 0 : -1}
           disabled={!ready}
           className={`hpl-tab${item.mobileOnly ? ' hpl-mobile-tab' : ''}`}
           onClick={() => onSelect(item.key)}
-        >{item.label}</button>
+        >{level === 'main' && <ProjectTabIcon label={item.label} />}<span>{item.label}</span></button>
       ))}
+    </div>
+    {overflowTabs.length > 0 && <div className="hpl-overflow" ref={overflowRef}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="hpl-overflow-trigger"
+        aria-label="More project sections"
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        aria-controls={`${id}-overflow-menu`}
+        data-active={overflowSelected || undefined}
+        disabled={!ready}
+        onClick={() => menuOpen ? setMenuOpen(false) : openMenu('active')}
+        onKeyDown={(event) => {
+          if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+          event.preventDefault()
+          openMenu(event.key === 'ArrowUp' ? 'last' : 'first')
+        }}
+      >
+        {overflowSelected && <span className="hpl-overflow-current">{overflowTabs.find((item) => item.key === active)?.label}</span>}
+        <ProjectOverflowIcon />
+      </button>
+      <div
+        id={`${id}-overflow-menu`}
+        ref={menuRef}
+        role="menu"
+        aria-label="More project sections"
+        className="hpl-overflow-menu"
+        hidden={!menuOpen}
+        onKeyDown={onMenuKeyDown}
+      >{overflowTabs.map((item) => <button
+        key={item.key}
+        type="button"
+        role="menuitemradio"
+        aria-checked={active === item.key}
+        tabIndex={-1}
+        onClick={() => {
+          setMenuOpen(false)
+          onSelect(item.key)
+          triggerRef.current?.focus({ preventScroll: true })
+        }}
+      ><ProjectTabIcon label={item.label} /><span>{item.label}</span></button>)}</div>
+      {overflowTabs.map((item) => <span key={item.key} id={`${id}-tab-${item.key}`} className="hpl-overflow-label">{item.label}</span>)}
+    </div>}
     </div>
   )
 }
@@ -256,42 +347,26 @@ export function OwnersTabs({ accountsYou, accountsAll, market, settlement, split
   loans: ReactNode
 }) {
   const id = useId()
-  const accountsId = `${id}-accounts`
   const [selected, setSelected] = useState<OwnerTab>('accounts')
-  const [account, setAccount] = useState<AccountTab>('you')
   const visited = useRef(new Set<OwnerTab>())
-  const visitedAccounts = useRef(new Set<AccountTab>())
   visited.current.add(selected)
-  if (selected === 'accounts') visitedAccounts.current.add(account)
 
   useNavigationListener(() => {
-    const [parent, child, accountChild] = hashParts()
+    // Older /accounts/you and /accounts/all links both open the full account view.
+    const [parent, child] = hashParts()
     if (parent !== 'owners') return
     const next = OWNER_TABS.find((item) => item.key === child)?.key ?? 'accounts'
     setSelected(next)
-    if (next === 'accounts') setAccount(accountChild === 'all' ? 'all' : 'you')
   })
   const chooseOwner = (next: OwnerTab) => {
     setSelected(next)
-    navigateHash(next === 'accounts' ? ['owners', next, account] : ['owners', next])
-  }
-  const chooseAccount = (next: AccountTab) => {
-    setAccount(next)
-    navigateHash(['owners', 'accounts', next])
+    navigateHash(['owners', next])
   }
   const panels: Record<OwnerTab, ReactNode> = {
-    accounts: <>
-      <TabStrip id={accountsId} label="Accounts" tabs={ACCOUNT_TABS} active={account} onSelect={chooseAccount} level="accounts" />
-      {ACCOUNT_TABS.map(({ key }) => <div
-        key={key}
-        id={`${accountsId}-panel-${key}`}
-        role="tabpanel"
-        aria-labelledby={`${accountsId}-tab-${key}`}
-        tabIndex={0}
-        hidden={account !== key}
-        className="hpl-account-panel"
-      >{visitedAccounts.current.has(key) ? key === 'you' ? accountsYou : accountsAll : null}</div>)}
-    </>,
+    accounts: <div className="hpl-accounts-stack">
+      <div className="hpl-account-section" data-account-section="you">{accountsYou}</div>
+      <div className="hpl-account-section" data-account-section="all">{accountsAll}</div>
+    </div>,
     market, settlement, splits, loans,
   }
   return <div className="hpl-owners">

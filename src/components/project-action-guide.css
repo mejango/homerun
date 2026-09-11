@@ -1,0 +1,27 @@
+.project-action-guide { margin-top: 24px; color: #2d4035; font: 400 14px/1.55 var(--sans, sans-serif); }
+.project-action-guide > h3 { margin: 0; font: 500 18px/1.35 var(--sans, sans-serif); letter-spacing: 0; }
+.project-action-guide .pag-note { margin: 8px 0 16px; font-size: 13px; color: #65715e; }
+.project-action-guide .pag-actions { list-style: none; padding: 0; margin: 0; border-top: 1px solid #d8dece; }
+.project-action-guide .pag-actions > li { margin: 0; border-bottom: 1px solid #d8dece; }
+.project-action-guide .pag-action > summary { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 13px 0; font-weight: 500; cursor: pointer; list-style: none; }
+.project-action-guide .pag-action > summary::-webkit-details-marker { display: none; }
+.project-action-guide .pag-action > summary::after { content: '+'; margin-left: auto; color: #42664d; font: 400 20px/1 var(--sans, sans-serif); }
+.project-action-guide .pag-action[open] > summary::after { content: '−'; }
+.project-action-guide .pag-action-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.project-action-guide .pag-action-heading h4 { margin: 0; font: 500 15px/1.45 var(--sans, sans-serif); letter-spacing: 0; }
+.project-action-guide .pag-role { flex-shrink: 0; color: #65715e; font-size: 11px; font-weight: 400; }
+.project-action-guide .pag-action-content { padding: 0 0 16px; }
+.project-action-guide .pag-next-action { padding: 16px 0; }
+.project-action-guide .pag-description { margin: 0; color: #5b6856; font-size: 13px; line-height: 1.65; }
+.project-action-guide .pag-next-action .pag-description { margin-top: 7px; }
+.project-action-guide .pag-setup { margin: 8px 0 0; color: #425e68; font-size: 12px; }
+.project-action-guide .pag-review, .project-action-guide .pag-link { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 0; margin: 6px 18px 0 0; border: 0; border-radius: 0; background: transparent; color: #42664d; font: 500 13px/1.45 var(--sans, sans-serif); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.project-action-guide .pag-other { margin-top: 16px; }
+.project-action-guide .pag-other > summary { min-height: 44px; padding: 10px 0; color: #42664d; font-size: 13px; cursor: pointer; }
+.project-action-guide .pag-count { margin-left: 5px; color: #65715e; font-size: 12px; }
+.project-action-guide :is(summary, button, a):focus-visible { outline: 2px solid #42664d; outline-offset: 3px; }
+@media (max-width: 600px) {
+  .project-action-guide .pag-action > summary { flex-wrap: wrap; gap: 4px 10px; }
+  .project-action-guide .pag-action > summary > span:first-child { flex-basis: 100%; }
+  .project-action-guide .pag-action-heading { flex-wrap: wrap; gap: 4px 10px; }
+}

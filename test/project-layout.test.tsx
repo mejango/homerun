@@ -73,6 +73,11 @@ describe('shared project layout', () => {
   }
 
   async function click(label: string, name: string) {
+    if (label === 'Project sections' && (name === 'Extras' || name === 'Operators')) {
+      await act(async () => host.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!.click())
+      await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find(item => item.textContent === name)!.click())
+      return
+    }
     await act(async () => button(label, name).click())
   }
 
@@ -126,10 +131,12 @@ describe('shared project layout', () => {
     const element = <HomerunProjectLayout {...props()} />
     host.innerHTML = renderToString(element)
     expect(tabs('Project sections').every(item => item.disabled)).toBe(true)
+    expect(host.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')?.disabled).toBe(true)
     button('Project sections', 'Stages').click()
     expect(window.location.hash).toBe('')
     await act(async () => { root = hydrateRoot(host, element) })
     expect(tabs('Project sections').every(item => !item.disabled)).toBe(true)
+    expect(host.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')?.disabled).toBe(false)
     await click('Project sections', 'Stages')
     expect(selected('Project sections')).toBe('Stages')
     expect(window.location.hash).toBe('#stages')
@@ -140,7 +147,16 @@ describe('shared project layout', () => {
     await render()
     expect(selected('Project sections')).toBe('Owners')
     expect(selected('Ownership sections')).toBe('Accounts')
-    expect(selected('Accounts')).toBe('All')
+    expect(host.querySelector('[role="tablist"][aria-label="Accounts"]')).toBeNull()
+    expect(input('you')).not.toBeNull()
+    expect(input('all')).not.toBeNull()
+    expect(Array.from(host.querySelectorAll('[data-account-section]')).map(item => item.getAttribute('data-account-section'))).toEqual(['you', 'all'])
+    await act(async () => {
+      window.history.replaceState(window.history.state, '', '#owners/accounts/you')
+      window.dispatchEvent(new HashChangeEvent('hashchange'))
+    })
+    expect(selected('Ownership sections')).toBe('Accounts')
+    expect(input('you')).not.toBeNull()
     expect(input('all')).not.toBeNull()
     await click('Ownership sections', 'Loans')
     expect(window.location.pathname).toBe('/founderhaus')
@@ -175,26 +191,39 @@ describe('shared project layout', () => {
     expect(unmounts.payment ?? 0).toBe(0)
   })
 
-  it('lazy-mounts nested panes and preserves account selection and drafts on return', async () => {
+  it('mounts both account sections together and preserves their drafts and receipt watchers on return', async () => {
     await render()
     expect(input('loans')).toBeNull()
     expect(input('you')).toBeNull()
+    expect(input('all')).toBeNull()
     await click('Project sections', 'Owners')
-    expect(selected('Accounts')).toBe('You')
-    await click('Accounts', 'All')
+    expect(selected('Ownership sections')).toBe('Accounts')
+    const you = input('you')!
     const all = input('all')!
+    you.value = 'reviewed holder operation'
     all.value = 'holder search'
     await click('Ownership sections', 'Market')
+    await act(async () => {
+      window.dispatchEvent(new Event('receipt:you'))
+      window.dispatchEvent(new Event('receipt:all'))
+    })
     await click('Ownership sections', 'Accounts')
-    expect(selected('Accounts')).toBe('All')
+    expect(selected('Ownership sections')).toBe('Accounts')
     await click('Project sections', 'Extras')
     await click('Project sections', 'Owners')
-    expect(selected('Accounts')).toBe('All')
+    expect(selected('Ownership sections')).toBe('Accounts')
+    expect(input('you')).toBe(you)
     expect(input('all')).toBe(all)
+    expect(you.value).toBe('reviewed holder operation')
     expect(all.value).toBe('holder search')
+    expect(host.querySelector('[aria-label="you receipt"]')?.textContent).toBe('confirmed')
+    expect(host.querySelector('[aria-label="all receipt"]')?.textContent).toBe('confirmed')
+    expect(mounts.you).toBe(1)
     expect(mounts.all).toBe(1)
+    expect(unmounts.you ?? 0).toBe(0)
+    expect(unmounts.all ?? 0).toBe(0)
     expect(mounts.loans).toBeUndefined()
-    expect(window.location.hash).toBe('#owners/accounts/all')
+    expect(window.location.hash).toBe('#owners/accounts')
   })
 
   it('follows back and forward through main and nested navigation', async () => {
@@ -232,18 +261,58 @@ describe('shared project layout', () => {
     await key('Home')
     expect(selected('Ownership sections')).toBe('Accounts')
     expect(tabs('Ownership sections').filter(item => item.tabIndex === 0)).toHaveLength(1)
-    expect(button('Accounts', 'You').parentElement?.getAttribute('aria-orientation')).toBe('vertical')
-    button('Accounts', 'You').focus()
-    await key('ArrowDown')
-    expect(selected('Accounts')).toBe('All')
-    expect(document.activeElement).toBe(button('Accounts', 'All'))
-    await key('ArrowUp')
-    expect(selected('Accounts')).toBe('You')
+    expect(button('Ownership sections', 'Accounts').parentElement?.getAttribute('aria-orientation')).toBe('horizontal')
     for (const tab of host.querySelectorAll('[role="tab"]')) {
       const panel = document.getElementById(tab.getAttribute('aria-controls')!)
       expect(panel).not.toBeNull()
       if (!tab.classList.contains('hpl-mobile-tab')) expect(panel?.getAttribute('aria-labelledby')).toBe(tab.id)
     }
+  })
+
+  it('keeps overflow deep links and labels available and supports menu keyboard selection', async () => {
+    window.history.replaceState(window.history.state, '', '#operators')
+    await render()
+    expect(tabs('Project sections').map(item => item.textContent)).toEqual(['Activity', 'Overview', 'Stages', 'Owners', 'Shop'])
+    expect(tabs('Project sections').filter(item => item.tabIndex === 0)).toEqual([button('Project sections', 'Overview')])
+    const trigger = host.querySelector<HTMLButtonElement>('[aria-label="More project sections"][aria-haspopup="menu"]')!
+    const menu = host.querySelector<HTMLElement>('[role="menu"]')!
+    expect(trigger.dataset.active).toBe('true')
+    expect(trigger.textContent).toContain('Operators')
+    expect(menu.hidden).toBe(true)
+    const operatorPanel = input('operators')!.closest('[role="tabpanel"]')!
+    expect(document.getElementById(operatorPanel.getAttribute('aria-labelledby')!)?.textContent).toBe('Operators')
+    await act(async () => trigger.click())
+    expect(menu.hidden).toBe(false)
+    expect(document.activeElement?.textContent).toBe('Operators')
+    await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true })))
+    expect(document.activeElement?.textContent).toBe('Extras')
+    await act(async () => (document.activeElement as HTMLButtonElement).click())
+    expect(window.location.hash).toBe('#extras')
+    expect(menu.hidden).toBe(true)
+    expect(trigger.textContent).toContain('Extras')
+    expect(document.activeElement).toBe(trigger)
+    expect(host.querySelector('[role="menuitemradio"][aria-checked="true"]')?.textContent).toBe('Extras')
+    await traverse('back')
+    expect(trigger.textContent).toContain('Operators')
+    expect(input('operators')!.closest('[role="tabpanel"]')?.hasAttribute('hidden')).toBe(false)
+    expect(mounts.operators).toBe(1)
+  })
+
+  it('dismisses overflow with Escape or outside interaction without changing the selected pane', async () => {
+    await render()
+    const trigger = host.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!
+    const menu = host.querySelector<HTMLElement>('[role="menu"]')!
+    await act(async () => trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })))
+    expect(menu.hidden).toBe(false)
+    expect(document.activeElement?.textContent).toBe('Extras')
+    await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+    expect(menu.hidden).toBe(true)
+    expect(document.activeElement).toBe(trigger)
+    await act(async () => trigger.click())
+    await act(async () => document.body.dispatchEvent(new Event('pointerdown', { bubbles: true })))
+    expect(menu.hidden).toBe(true)
+    expect(selected('Project sections')).toBe('Overview')
+    expect(window.location.hash).toBe('')
   })
 
   it('shows mobile Activity without remounting payment or the selected desktop pane', async () => {

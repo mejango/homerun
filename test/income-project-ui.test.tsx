@@ -23,6 +23,7 @@ vi.mock('@/components/ProjectParticipants', () => ({ ProjectParticipants: () => 
 vi.mock('@/components/ProjectPayerAddresses', () => ({ ProjectPayerAddresses: () => <span>Project payer addresses</span> }))
 vi.mock('@/components/ProjectShop', () => ({ ProjectShop: () => <span>Project shop</span> }))
 vi.mock('wagmi', () => ({ usePublicClient: () => ({}) }))
+vi.mock('@/hooks/useReviewedPermit2Signature', () => ({ useReviewedPermit2Signature: () => ({ signPermit2Async: vi.fn() }) }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address, isConnected: true }) }))
 vi.mock('@/components/InitialIncomeClaim', () => ({ InitialIncomeClaim: ({ fundProjectId, incomeProjectId }: { fundProjectId: bigint; incomeProjectId: bigint }) => <div>Initial claim FUND {fundProjectId.toString()} INCOME {incomeProjectId.toString()}</div> }))
 vi.mock('@/components/StickyHolder', () => ({ StickyHolder: ({ stickyProjectId }: { stickyProjectId: bigint }) => {
@@ -33,14 +34,14 @@ vi.mock('@/components/IncomeBridgeActions', () => ({ IncomeBridgeActions: () => 
 vi.mock('@/components/IncomeLoanTools', () => ({ IncomeLoanTools: () => <span>Additional loan operations</span> }))
 vi.mock('@/lib/income-state', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/income-state')>(), readIncomeProjectState: runtime.readState, readIncomeAutoIssuance: runtime.autoIssuance }))
 vi.mock('@/lib/income-reserved', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/income-reserved')>(), readIncomeReservedTokens: runtime.readReserved }))
-vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({ ...await importOriginal<typeof import('@bananapus/nana-sdk-core/v6')>(), previewPay: () => runtime.payQuote }))
+vi.mock('@/lib/project-pay-quote', () => ({ prepareProjectPayQuote: async () => ({ kind: 'pay', terminal: '0x3333333333333333333333333333333333333333', preview: runtime.payQuote, minimumTokenCount: runtime.payQuote.beneficiaryTokenCount * 99n / 100n, reservedTokenCount: runtime.payQuote.reservedTokenCount, blockNumber: 100n }), readProjectPayTokenOptions: vi.fn() }))
 vi.mock('@tanstack/react-query', () => ({
   keepPreviousData: (value: unknown) => value,
   useQueryClient: () => ({ invalidateQueries: runtime.invalidateQueries }),
   useQuery: ({ queryKey }: { queryKey: unknown[] }) => queryKey[0] === 'income-project' ? runtime.query
     : queryKey[0] === 'income-fund-binding' ? { data: runtime.discoveredFund, isError: runtime.discoveryError, refetch: vi.fn() }
     : queryKey[0] === 'income-sticky-binding' ? { data: runtime.sticky, isError: runtime.stickyError }
-    : queryKey[0] === 'income-pay' ? { data: runtime.payQuote, isError: false }
+    : queryKey[0] === 'project-pay' ? { data: { kind: 'pay', terminal: '0x3333333333333333333333333333333333333333', preview: runtime.payQuote, minimumTokenCount: runtime.payQuote.beneficiaryTokenCount * 99n / 100n, reservedTokenCount: runtime.payQuote.reservedTokenCount, blockNumber: 100n }, isError: false }
     : queryKey[0] === 'income-reserved' ? { data: runtime.reserved, isError: runtime.reservedError, error: new Error('RPC unavailable'), refetch: vi.fn() }
     : queryKey[0] === 'income-reserved-receipt' ? { data: runtime.reservedReceipt, isError: false }
       : { data: undefined, isError: false, isFetching: false },
@@ -90,8 +91,15 @@ describe('INCOME transaction surfaces', () => {
     host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   })
   afterEach(async () => { await act(async () => root.unmount()); host.remove() })
-  async function tab(label: string) { const target = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(button => button.textContent === label); expect(target, `Missing ${label} tab`).toBeDefined(); await act(async () => target!.click()) }
-  async function visitActions() { for (const label of ['Owners', 'Accounts', 'You', 'Market', 'Settlement', 'Splits', 'Loans', 'Overview']) await tab(label) }
+  async function tab(label: string) {
+    let target = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"], [role="menuitemradio"]')].find(button => button.textContent === label)
+    if (!target && ['Operators', 'Extras'].includes(label)) {
+      await act(async () => host.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!.click())
+      target = [...host.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')].find(button => button.textContent === label)
+    }
+    expect(target, `Missing ${label} tab`).toBeDefined(); await act(async () => target!.click())
+  }
+  async function visitActions() { for (const label of ['Owners', 'Accounts', 'Market', 'Settlement', 'Splits', 'Loans', 'Overview']) await tab(label) }
   async function render() { await act(async () => root.render(<IncomeProject chainId={1} projectId={7n} />)); await visitActions() }
   function section(title: string) { return [...host.querySelectorAll('section')].find(element => element.querySelector('h3')?.textContent === title)! }
   function pendingReserved() {
