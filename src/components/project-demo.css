@@ -112,7 +112,6 @@
 .homerun-project-layout .demo-activity-event > summary { display: flex; align-items: flex-start; gap: 10px; padding: 14px 0; list-style: none; cursor: pointer; }
 .homerun-project-layout .demo-activity-event > summary::-webkit-details-marker { display: none; }
 .homerun-project-layout .demo-activity-event > summary:focus-visible { outline: 2px solid var(--green); outline-offset: 3px; border-radius: 3px; }
-.homerun-project-layout .demo-activity-icon { flex: 0 0 20px; width: 20px; height: 20px; margin-top: 1px; color: var(--muted); }
 .homerun-project-layout .demo-activity-body { flex: 1; min-width: 0; }
 .homerun-project-layout .demo-activity-topline { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 5px 8px; min-height: 20px; }
 .homerun-project-layout .demo-activity-flow { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
@@ -126,7 +125,7 @@
 .homerun-project-layout .demo-activity-effect { display: block; margin-top: 3px; color: var(--muted); font: 400 11px/1.4 var(--sans); font-variant-numeric: tabular-nums; }
 .homerun-project-layout .demo-activity-chevron { flex: 0 0 13px; width: 13px; height: 13px; margin-top: 4px; color: var(--muted); transition: transform .15s ease; }
 .homerun-project-layout .demo-activity-event[open] .demo-activity-chevron { transform: rotate(90deg); }
-.homerun-project-layout .demo-activity-event .demo-activity-detail { margin: -3px 23px 14px 30px; padding-left: 10px; border-left: 1px solid var(--line); color: var(--muted); font: 400 12px/1.6 var(--sans); overflow-wrap: anywhere; }
+.homerun-project-layout .demo-activity-event .demo-activity-detail { margin: -3px 23px 14px 0; padding-left: 10px; border-left: 1px solid var(--line); color: var(--muted); font: 400 12px/1.6 var(--sans); overflow-wrap: anywhere; }
 .homerun-project-layout .demo-activity-detail p { margin: 0; font: inherit; }
 .homerun-project-layout .demo-activity-detail .demo-activity-full-value { margin-bottom: 6px; color: var(--ink); font-variant-numeric: tabular-nums; }
 @media (prefers-reduced-motion: reduce) { .homerun-project-layout .demo-activity-chevron { transition: none; } }

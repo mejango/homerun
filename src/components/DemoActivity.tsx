@@ -1,28 +1,10 @@
 import type { projectNetwork } from '../../web/network-model.mjs';
-import { buildDemoActivity, type DemoActivityEvent, type DemoActivityKind } from '@/lib/demo-activity';
+import { buildDemoActivity, type DemoActivityEvent } from '@/lib/demo-activity';
 
 const compactDollars = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: 2 });
 const compactTokens = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 });
 const fullDollars = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 20 });
 const fullTokens = new Intl.NumberFormat('en-US', { maximumFractionDigits: 20 });
-
-const iconPaths: Record<DemoActivityKind, string> = {
-  configuration: 'M4 7h16M4 17h16M8 4v6M16 14v6',
-  contribution: 'M17 5 5 17M5 5v12h12',
-  income: 'M17 5 5 17M5 5v12h12',
-  milestone: 'M5 12.5 9.5 17 19 7',
-  purchase: 'm3 10 9-7 9 7M5 9v11h14V9M10 20v-7h4v7',
-  issuance: 'M4 7c0-2 3.6-3 8-3s8 1 8 3-3.6 3-8 3-8-1-8-3Zm0 0v5c0 2 3.6 3 8 3s8-1 8-3V7M4 12v5c0 2 3.6 3 8 3s8-1 8-3v-5',
-  expense: 'M5 19 19 5M7 5h12v12',
-  cashout: 'M5 19 19 5M7 5h12v12',
-  reward: 'M3 8h18v4H3zM5 12v8h14v-8M12 8v12M12 8H8a3 3 0 1 1 3-3l1 3Zm0 0h4a3 3 0 1 0-3-3l-1 3Z',
-  refund: 'M4 9h10a6 6 0 0 1 0 12M4 9l5-5M4 9l5 5',
-  sale: 'm3 10 9-7 9 7M5 9v11h14V9M9 14h6M12 11v6',
-};
-
-function ActivityIcon({ kind }: { kind: DemoActivityKind }) {
-  return <svg className="demo-activity-icon" data-activity-icon={kind} aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d={iconPaths[kind]} /></svg>;
-}
 
 function preciseValue(amount: number, unit: DemoActivityEvent['unit']) {
   return unit === 'USD' ? fullDollars.format(amount) : `${fullTokens.format(amount)} ${unit ?? ''}`.trim();
@@ -53,7 +35,6 @@ export function DemoActivity({ projection }: { projection: ReturnType<typeof pro
         return <li key={event.id} data-activity-id={event.id} data-activity-kind={event.kind}>
           <details className="demo-activity-event">
             <summary>
-              <ActivityIcon kind={event.kind} />
               <span className="demo-activity-body">
                 <span className="demo-activity-topline">
                   {event.amount !== undefined ? <span className="demo-activity-flow">

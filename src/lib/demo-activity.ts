@@ -44,6 +44,37 @@ function splitCents(total: number, weights: readonly number[]): number[] {
   });
 }
 
+/** Use an illustrative scenario clock, independent of wall time and rendering. */
+function withRelativePeriods(events: DemoActivityEvent[], monthsApplied: number): DemoActivityEvent[] {
+  const day = 24 * 60;
+  const stageDays: Record<string, number> = {
+    Setup: 0,
+    'During the raise': 10,
+    'Raise closed': 10,
+    Refunds: 11,
+    'Refunds complete': 12,
+    Purchase: 12,
+    'Income begins': 12,
+    'Asset sale': 13 + monthsApplied * 30,
+  };
+  let cursor = -8;
+  const elapsed = events.map(event => {
+    const raiseDay = /^Raise day (\d+)$/.exec(event.period);
+    const month = /^Month (\d+)$/.exec(event.period);
+    const scenarioDay = raiseDay ? Number(raiseDay[1]) : month ? 12 + Number(month[1]) * 30 : stageDays[event.period] ?? 0;
+    // Events within one modeled period remain ordered; month boundaries retain their spacing.
+    cursor = Math.max(cursor + 8, scenarioDay * day);
+    return cursor;
+  });
+  const latest = elapsed.at(-1) ?? 0;
+  const units = [[365 * day, 'y'], [30 * day, 'mo'], [day, 'd'], [60, 'h'], [1, 'm']] as const;
+  return events.map((event, index) => {
+    const age = latest - elapsed[index] + 8;
+    const [minutes, unit] = units.find(([minutes]) => age >= minutes)!;
+    return { ...event, period: `${Math.floor(age / minutes)}${unit} ago` };
+  });
+}
+
 /**
  * Illustrative history, not indexed transactions. Configuration rows describe assumptions;
  * fictional contribution/refund installments conserve the model's aggregate whole cents.
@@ -154,5 +185,5 @@ export function buildDemoActivity(p: Projection): DemoActivityEvent[] {
     add('sale-settlement', 'sale', p.fundSaleCash > 0 ? 'Sale proceeds available to FUND' : 'No distributable sale proceeds remain', 'The modeled FUND settlement is available to holders; individual sale claims are not simulated.', 'Asset sale', p.fundSaleCash, 'USD');
   }
 
-  return events.slice(-20).reverse();
+  return withRelativePeriods(events, p.monthsApplied).slice(-20).reverse();
 }

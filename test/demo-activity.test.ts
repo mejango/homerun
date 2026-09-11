@@ -7,6 +7,10 @@ const cents = (amount: number) => Math.round(amount * 100);
 const moneyTotal = (events: DemoActivityEvent[]) => events.reduce((sum, event) => sum + cents(event.amount ?? 0), 0);
 const get = (events: DemoActivityEvent[], id: string) => events.find(event => event.id === id);
 const monthly = (events: DemoActivityEvent[]) => events.filter(event => event.id.startsWith('month-'));
+const ageMinutes = (period: string) => {
+  const [, value, unit] = /^(\d+)(mo|m|h|d|y) ago$/.exec(period)!;
+  return Number(value) * ({ m: 1, h: 60, d: 1440, mo: 43_200, y: 525_600 }[unit]!);
+};
 
 describe('modeled demo activity', () => {
   it.each(phases)('provides twenty deterministic, distinct, well-formed events for %s', phase => {
@@ -28,6 +32,24 @@ describe('modeled demo activity', () => {
         if (event.unit === 'USD') expect(event.amount).toBe(cents(event.amount) / 100);
       }
     }
+  });
+
+  it.each(phases)('shows stable relative ages in chronological order for %s', phase => {
+    const events = buildDemoActivity(projectNetwork({}, phase));
+    expect(events[0].period).toBe('8m ago');
+    expect(events.every(event => /^\d+(?:mo|m|h|d|y) ago$/.test(event.period))).toBe(true);
+    const ages = events.map(event => ageMinutes(event.period));
+    expect(ages).toEqual([...ages].sort((a, b) => a - b));
+    expect(ages.at(-1)).toBeGreaterThan(ages[0]);
+  });
+
+  it('preserves daily contribution spacing and older setup history', () => {
+    const events = buildDemoActivity(projectNetwork({ raisedPercent: 60, investment: 0 }));
+    expect(get(events, 'contribution-7')?.period).toBe('8m ago');
+    expect(get(events, 'contribution-6')?.period).toBe('1d ago');
+    expect(get(events, 'contribution-5')?.period).toBe('2d ago');
+    expect(ageMinutes(get(events, 'setup-sale')!.period)).toBeGreaterThanOrEqual(ageMinutes(get(events, 'raise-opened')!.period));
+    expect(events.findIndex(event => event.id === 'setup-sale')).toBeGreaterThan(events.findIndex(event => event.id === 'raise-opened'));
   });
 
   it('conserves contributed cents, including fractional-dollar and one-cent raises', () => {
@@ -95,7 +117,8 @@ describe('modeled demo activity', () => {
     expect(get(events, 'month-1-operator-cashout')).toBeUndefined();
     expect(get(events, 'month-1-customer-cashout')).toBeUndefined();
     expect(get(events, 'month-1-fees')).toBeUndefined();
-    expect(monthly(events).every(event => event.period === 'Month 1')).toBe(true);
+    expect(monthly(events).every(event => ageMinutes(event.period) < 60)).toBe(true);
+    expect(ageMinutes(get(events, 'asset-purchased')!.period)).toBeGreaterThanOrEqual(30 * 24 * 60);
   });
 
   it('records net cash-outs and combined fees while distinguishing unpaid cost demand', () => {
@@ -124,10 +147,12 @@ describe('modeled demo activity', () => {
   it('caps monthly activity at the selected horizon and orders it newest first', () => {
     const p = projectNetwork({ revenueMonths: 3 }, 'earning');
     const events = buildDemoActivity(p);
-    const months = monthly(events).map(event => Number(event.period.replace('Month ', '')));
+    const months = monthly(events).map(event => Number(event.id.split('-')[1]));
     expect(Math.max(...months)).toBe(3);
     expect(months).toEqual([...months].sort((a, b) => b - a));
-    expect(events[0].period).toBe('Month 3');
+    expect(events[0].period).toBe('8m ago');
+    expect(get(events, 'month-2-revenue')?.period).toBe('1mo ago');
+    expect(get(events, 'month-1-revenue')?.period).toBe('2mo ago');
     const prior = buildDemoActivity(p);
     // Poisoning future rows and diagnostics must not affect completed activity.
     for (const row of p.history.filter(row => row.month > 3)) Object.assign(row, { lastMonthRent: 987_654_321, cumulativeFundRewardsAllocated: 987_654_321 });
@@ -202,7 +227,8 @@ describe('modeled demo activity', () => {
       const events = buildDemoActivity(p);
       expect(events).toHaveLength(20);
       expect(monthly(events)).toEqual([]);
-      expect(get(events, 'income-checkpoint')?.period).toBe('Month 120');
+      expect(get(events, 'income-checkpoint')?.title).toBe('Income modeled through month 120');
+      expect(get(events, 'income-checkpoint')?.period).toBe(phase === 'earning' ? '8m ago' : '1d ago');
       expect(events.some(event => ['income', 'reward', 'cashout'].includes(event.kind))).toBe(false);
     }
   });
