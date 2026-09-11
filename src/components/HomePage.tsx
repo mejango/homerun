@@ -105,7 +105,7 @@ export function HomePage() {
         <section className="ballpark-hero" aria-labelledby="home-title">
           <header className="site-header"><Brand /><WalletButton /></header>
           <div className="home-copy" ref={copy}>
-            <h1 id="home-title" aria-label="Run your home's investments and revenues">
+            <h1 id="home-title" aria-label="Run your homes' investments and revenues">
               <RotatingAssetHeadline playing={motion === 'running'} />
               <em className="home-title-revenues">investments and revenues</em>
             </h1>

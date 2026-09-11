@@ -7,7 +7,7 @@ import type { CreateConnectorFn } from 'wagmi'
 
 export const PARA_APP = {
   appName: 'Homerun',
-  appDescription: "Run your home's investments and revenues.",
+  appDescription: "Run your homes' investments and revenues.",
   appUrl: process.env.NEXT_PUBLIC_SITE_URL ?? 'https://homerun.money',
 }
 

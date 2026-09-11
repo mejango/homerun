@@ -3,14 +3,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 const ASSETS = [
-  'home', 'business', 'farms', 'equipment', 'energy',
-  'coffee cart', 'bakery', 'solar farm', 'robot fleet',
-  'moonbase', 'neighborhood', 'food truck', 'dream lab',
-  'lemonade stand', 'garden', 'spaceship', 'treehouse',
-  'bike shop', 'corner store', 'art studio', 'island',
+  'homes', 'businesses', 'farms', 'equipment', 'energy',
+  'coffee carts', 'bakeries', 'solar farms', 'robot fleets',
+  'moonbases', 'neighborhoods', 'food trucks', 'dream labs',
+  'lemonade stands', 'gardens', 'spaceships', 'treehouses',
+  'bike shops', 'corner stores', 'art studios', 'islands',
 ];
 
-const possessive = (asset: string) => `${asset}'${asset === 'farms' ? '' : 's'}`;
+const possessive = (asset: string) => `${asset}'${asset.endsWith('s') ? '' : 's'}`;
 
 /** Reserve every wrapping case while the shared prefix moves without fading. */
 export function RotatingAssetHeadline({ playing }: { playing: boolean }) {

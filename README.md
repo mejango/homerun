@@ -1,6 +1,6 @@
 # Homerun
 
-Run your home's investments and revenues.
+Run your homes' investments and revenues.
 
 Homerun combines an asset-funding **FUND** Juicebox with a separate **INCOME** Revnet. This checkout contains the native Next.js application, live FUND transaction integration, and an illustrative Founder Haus simulator. The deployment configuration targets Railway and `homerun.money`; implementation and local verification do not mean this revision has been deployed there.
 

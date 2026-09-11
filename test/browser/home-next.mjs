@@ -27,8 +27,8 @@ try {
   const staticPage = await staticContext.newPage();
   const response = await staticPage.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 120_000 });
   assert.equal(response?.status(), 200);
-  assert.equal(await staticPage.getByRole('heading', { name: "Run your home's investments and revenues" }).isVisible(), true);
-  assert.equal(await staticPage.locator('.home-asset-line.is-current').textContent(), "Run your home's");
+  assert.equal(await staticPage.getByRole('heading', { name: "Run your homes' investments and revenues" }).isVisible(), true);
+  assert.equal(await staticPage.locator('.home-asset-line.is-current').textContent(), "Run your homes'");
   assert.equal(await staticPage.locator('.brand-tagline').count(), 0, 'The homepage uses its large headline instead of repeating the slogan under the logo');
   assert.equal(await staticPage.getByRole('link', { name: 'Begin', exact: true }).getAttribute('href'), '/create');
   assert.equal(await staticPage.getByRole('link', { name: 'See Founder Haus demo' }).getAttribute('href'), '/founderhaus');
@@ -59,7 +59,7 @@ try {
   await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 120_000 });
   await waitForMotion(page, 'running');
   await page.waitForSelector('.home-title-subject[data-rotating="true"]');
-  assert.equal(await page.locator('.home-title-subject').getAttribute('data-current-asset'), 'home');
+  assert.equal(await page.locator('.home-title-subject').getAttribute('data-current-asset'), 'homes');
 
   // The first five assets appear in the requested order without moving the headline or CTAs.
   const heroGeometry = () => page.locator('.home-copy').evaluate(element => {
@@ -69,7 +69,7 @@ try {
   });
   const initialGeometry = await heroGeometry();
   const prefix = await page.locator('.home-title-prefix').elementHandle();
-  for (const asset of ['business', 'farms', 'equipment', 'energy']) {
+  for (const asset of ['businesses', 'farms', 'equipment', 'energy']) {
     // Start observing before the noun changes so the first painted position is captured.
     const frames = await page.evaluate(({ prefix, asset }) => new Promise((resolve, reject) => {
       const subject = document.querySelector('.home-title-subject');
@@ -80,7 +80,7 @@ try {
       const timeout = setTimeout(() => {
         cancelAnimationFrame(frame);
         reject(new Error(`Timed out sampling the prefix transition to ${asset}`));
-      }, asset === 'business' ? 10_000 : 6000);
+      }, asset === 'businesses' ? 10_000 : 6000);
       const sample = time => {
         const current = document.querySelector('.home-title-prefix');
         const bounds = current.getBoundingClientRect();
@@ -122,7 +122,7 @@ try {
   }
   await prefix.dispose();
   const headlineTiming = await page.evaluate(() => window.homeHeadlineTiming.slice(0, 5));
-  assert.deepEqual(headlineTiming.map(({ asset }) => asset), ['home', 'business', 'farms', 'equipment', 'energy']);
+  assert.deepEqual(headlineTiming.map(({ asset }) => asset), ['homes', 'businesses', 'farms', 'equipment', 'energy']);
   const initialHold = headlineTiming[1].time - headlineTiming[0].time;
   assert.ok(initialHold >= 7800 && initialHold < 10_000, `The initial home headline holds for 8 seconds before Business (${initialHold.toFixed(0)}ms)`);
   for (let index = 2; index < headlineTiming.length; index++) {
@@ -233,7 +233,7 @@ try {
   const playing = await canvasSignature(page);
   await page.waitForTimeout(400);
   assert.notEqual(await canvasSignature(page), playing, 'Explicit play works with reduced motion');
-  await page.waitForFunction(previous => document.querySelector('.home-title-subject').dataset.currentAsset !== previous, reducedAsset, { timeout: reducedAsset === 'home' ? 10_000 : 6000 });
+  await page.waitForFunction(previous => document.querySelector('.home-title-subject').dataset.currentAsset !== previous, reducedAsset, { timeout: reducedAsset === 'homes' ? 10_000 : 6000 });
 
   // The headline pauses while scrolled out of view, even when the artwork is still visible.
   await page.setViewportSize({ width: 390, height: 400 });

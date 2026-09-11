@@ -8,7 +8,7 @@ import { lazyConnector, wasRecentConnector } from './lazy-connector'
 // lazyParaConnector exists to prevent.
 const APP = {
   name: 'Homerun',
-  description: "Run your home's investments and revenues.",
+  description: "Run your homes' investments and revenues.",
   url: process.env.NEXT_PUBLIC_SITE_URL ?? 'https://homerun.money',
 }
 
