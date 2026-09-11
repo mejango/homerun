@@ -23,7 +23,7 @@ export function Brand({ tagline = true, className = '' }: BrandProps) {
         {' '}
         <span className="brand-word">Homerun</span>
       </Link>
-      {tagline && <p className="brand-tagline">Fund and earn together</p>}
+      {tagline && <p className="brand-tagline">Run your home&apos;s investments and revenues</p>}
     </div>
   );
 }

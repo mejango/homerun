@@ -29,11 +29,11 @@
   letter-spacing: -.035em;
   overflow-wrap: anywhere;
 }
+.homerun-project-layout .hpl-location { margin: 8px 0 0; color: var(--muted); font: 400 16px/1.5 var(--sans); overflow-wrap: anywhere; }
 .homerun-project-layout .hpl-metadata { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 0; margin-top: 14px; color: var(--muted); font-size: 14px; line-height: 1.6; }
 .homerun-project-layout .hpl-metadata-item { display: inline-flex; align-items: center; min-width: 0; overflow-wrap: anywhere; }
 .homerun-project-layout .hpl-pip { display: inline-block; margin-inline: 12px; color: #aab3a3; }
 .homerun-project-layout .hpl-header-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 12px; flex-shrink: 0; }
-.homerun-project-layout .hpl-header-actions .available-transactions-button { margin-top: 0; }
 .homerun-project-layout .hpl-notice { max-width: 840px; margin-top: 16px; color: #48636a; font-size: 13px; line-height: 1.6; }
 .homerun-project-layout .hpl-notice p { color: inherit; }
 .homerun-project-layout .hpl-columns { display: flex; gap: 40px; align-items: flex-start; }
@@ -41,8 +41,8 @@
 .homerun-project-layout .hpl-payment { min-width: 0; }
 .homerun-project-layout .hpl-activity { margin-top: 28px; min-width: 0; }
 .homerun-project-layout .hpl-main { flex: 1 1 0; min-width: 0; }
-.homerun-project-layout .hpl-navigation-main { display: flex; align-items: stretch; min-width: 0; }
-.homerun-project-layout .hpl-navigation-main > .hpl-tabs { flex: 1; min-width: 0; }
+.homerun-project-layout .hpl-navigation-main { display: flex; align-items: stretch; gap: 4px; min-width: 0; border-bottom: 1px solid var(--line); }
+.homerun-project-layout .hpl-navigation-main > .hpl-tabs { flex: 0 1 auto; min-width: 0; border-bottom: 0; }
 .homerun-project-layout .hpl-tabs { display: flex; align-items: stretch; overflow-x: auto; overflow-y: hidden; overscroll-behavior-inline: contain; touch-action: pan-x pan-y; scrollbar-width: thin; border-bottom: 1px solid var(--line); }
 .homerun-project-layout .hpl-tabs-main { gap: 4px; }
 .homerun-project-layout .hpl-tab-icon { width: 20px; height: 20px; flex: 0 0 20px; }
@@ -66,7 +66,7 @@
 }
 .homerun-project-layout .hpl-tab:hover:not(:disabled) { color: var(--green); background: #eef1e65c; }
 .homerun-project-layout .hpl-tab:disabled { opacity: .65; cursor: progress; }
-.homerun-project-layout .hpl-overflow { position: relative; display: flex; flex: 0 0 auto; border-bottom: 1px solid var(--line); }
+.homerun-project-layout .hpl-overflow { position: relative; display: flex; flex: 0 0 auto; }
 .homerun-project-layout .hpl-overflow-trigger { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 44px; min-height: 44px; padding: 8px 10px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--muted); cursor: pointer; }
 .homerun-project-layout .hpl-overflow-trigger:hover:not(:disabled),
 .homerun-project-layout .hpl-overflow-trigger[data-active] { color: var(--green); border-bottom-color: var(--green); }
@@ -106,6 +106,7 @@
   .homerun-project-layout .hpl-heading-row { flex-direction: column; gap: 18px; }
   .homerun-project-layout .hpl-project-heading { width: 100%; align-items: flex-start; gap: 16px; }
   .homerun-project-layout .hpl-title { font-size: clamp(26px, 7vw, 32px); }
+  .homerun-project-layout .hpl-location { margin-top: 7px; font-size: 14px; }
   .homerun-project-layout .hpl-metadata { font-size: 13px; margin-top: 12px; }
   .homerun-project-layout .hpl-pip { margin-inline: 8px; }
   .homerun-project-layout .hpl-header-actions { width: 100%; justify-content: flex-start; }

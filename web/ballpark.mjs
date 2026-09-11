@@ -25,6 +25,8 @@ const paceOutput = document.querySelector('#color-pace-value');
 const groupingSlider = document.querySelector('#color-grouping');
 const groupingOutput = document.querySelector('#color-grouping-value');
 const modeSelect = document.querySelector('#color-mode');
+const ACID_COLORS_KEY = 'homerun:acid-colors';
+let acidColors = null;
 let colorMode = 'shapes';
 try { const savedMode = localStorage.getItem('homerun:color-mode'); if (['acid', 'shapes'].includes(savedMode)) colorMode = savedMode; } catch {}
 modeSelect.value = colorMode;
@@ -39,6 +41,35 @@ try {
   if (pace !== null && pace.trim() && Number.isFinite(Number(pace))) colorPace = Math.max(.25, Math.min(4, Number(pace)));
   if (grouping !== null && grouping.trim() && Number.isFinite(Number(grouping))) colorGrouping = Math.max(0, Math.min(100, Number(grouping)));
 } catch { /* Controls work without storage. */ }
+try {
+  const saved = JSON.parse(localStorage.getItem(ACID_COLORS_KEY) || 'null');
+  if (saved && typeof saved.intensity === 'number' && Number.isFinite(saved.intensity)
+    && typeof saved.grouping === 'number' && Number.isFinite(saved.grouping)) {
+    acidColors = {
+      intensity: Math.max(0, Math.min(100, saved.intensity)),
+      grouping: Math.max(0, Math.min(100, saved.grouping)),
+    };
+  }
+} catch { /* Controls work without storage. */ }
+if (colorMode === 'acid') {
+  // A saved Acid mode predates the separate preferences: retain its legacy values.
+  acidColors ??= { intensity: colorIntensity, grouping: colorGrouping };
+  colorIntensity = acidColors.intensity;
+  colorGrouping = acidColors.grouping;
+  saveColorPreferences();
+}
+
+function saveColorPreferences() {
+  if (colorMode === 'acid') acidColors = { intensity: colorIntensity, grouping: colorGrouping };
+  try {
+    localStorage.setItem('homerun:color-mode', colorMode);
+    localStorage.setItem('homerun:color-intensity', String(colorIntensity));
+    localStorage.setItem('homerun:color-grouping', String(colorGrouping));
+    localStorage.setItem('homerun:color-pace', String(colorPace));
+    if (acidColors) localStorage.setItem(ACID_COLORS_KEY, JSON.stringify(acidColors));
+  } catch { /* Acid preferences still survive mode changes in memory. */ }
+}
+
 paceSlider.value = String(colorPace); paceOutput.textContent = `${colorPace}×`;
 groupingSlider.value = String(colorGrouping); groupingOutput.textContent = String(colorGrouping);
 intensitySlider.value = String(colorIntensity);
@@ -921,22 +952,29 @@ document.addEventListener('visibilitychange', syncMotion);
 reducedMotion.addEventListener('change', syncMotion);
 paceSlider.addEventListener('input', () => {
   colorPace = Number(paceSlider.value); paceOutput.textContent = `${colorPace}×`;
-  try { localStorage.setItem('homerun:color-pace', String(colorPace)); } catch {}
+  saveColorPreferences();
 });
 modeSelect.addEventListener('change', () => {
   colorMode = modeSelect.value;
-  try { localStorage.setItem('homerun:color-mode', colorMode); } catch {}
+  if (colorMode === 'acid') {
+    acidColors ??= { intensity: 20, grouping: 20 };
+    colorIntensity = acidColors.intensity;
+    colorGrouping = acidColors.grouping;
+    intensitySlider.value = String(colorIntensity); intensityOutput.textContent = String(colorIntensity);
+    groupingSlider.value = String(colorGrouping); groupingOutput.textContent = String(colorGrouping);
+  }
+  saveColorPreferences();
   paintMotion(motionTime);
 });
 groupingSlider.addEventListener('input', () => {
   colorGrouping = Number(groupingSlider.value); groupingOutput.textContent = String(colorGrouping);
-  try { localStorage.setItem('homerun:color-grouping', String(colorGrouping)); } catch {}
+  saveColorPreferences();
   paintMotion(motionTime);
 });
 intensitySlider.addEventListener('input', () => {
   colorIntensity = Number(intensitySlider.value);
   intensityOutput.textContent = String(colorIntensity);
-  try { localStorage.setItem('homerun:color-intensity', String(colorIntensity)); } catch { /* Optional persistence. */ }
+  saveColorPreferences();
   paintMotion(motionTime);
 });
 motionToggle?.addEventListener('click', () => {

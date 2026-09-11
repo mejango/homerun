@@ -7,6 +7,11 @@
 .home-copy { position: absolute; z-index: 1; left: 20px; right: 20px; top: clamp(18px, 2.7vw, 40px); text-align: center; }
 .home-copy h1 { font: 400 clamp(38px, 4.5vw, 64px)/1.06 var(--serif); letter-spacing: -.045em; }
 .home-copy h1 em { color: #38694b; font-weight: 400; }
+.home-title-subject { display: grid; width: 100%; }
+.home-asset-line { grid-area: 1 / 1; align-self: center; visibility: hidden; opacity: 0; transition: opacity 180ms ease; }
+.home-asset-line.is-current { visibility: visible; opacity: 1; }
+.home-title-revenues { display: block; }
+@media (prefers-reduced-motion: reduce) { .home-asset-line { transition: none; } }
 .home-asset-types { position: absolute; top: -23px; left: 0; right: 0; display: flex; justify-content: center; flex-wrap: wrap; gap: 3px 14px; padding: 0; margin: 0; list-style: none; color: #6b7569; font: 10px/1.4 var(--sans); }
 .home-actions { display: flex; justify-content: center; align-items: center; gap: 24px; margin-top: 23px; }
 .home-actions .see-demo { margin-top: 0; }

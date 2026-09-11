@@ -80,11 +80,11 @@ const phases: [ProjectPhase, string][] = [
 const stageNames = ["Fundraise", "Income", "Asset sale"];
 const stagePhases: ProjectPhase[] = ["raising", "earning", "liquidated"];
 const statusLabels: Record<ProjectPhase, string> = {
-  raising: "Currently Fundraising",
+  raising: "Fundraising",
   funded: "Raise Closed",
-  refunding: "Currently Refunding",
+  refunding: "Refunding",
   refunded: "Refunds Complete",
-  earning: "Currently Earning Income",
+  earning: "Earning Income",
   liquidated: "Asset Sold",
 };
 const nextStages: Partial<Record<ProjectPhase, [ProjectPhase, string]>> = {
@@ -2455,6 +2455,7 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
         <div className="simulator" data-ready={ready}>
           <HomerunProjectLayout
             title={name}
+            location={location}
             logo={
               project && !project.values.photo ? (
                 <span className="demo-project-initial" aria-hidden="true">
@@ -2483,7 +2484,6 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
                 Status: {statusLabels[phase]}
               </span>,
               ...demoStateMetadata(overview, phase),
-              location && `Location: ${location}`,
               `Mode: ${project ? "Local preview" : "Demo"}`,
             ].filter(Boolean)}
             payment={

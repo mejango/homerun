@@ -15,7 +15,6 @@ page.setDefaultTimeout(30000)
 page.setDefaultNavigationTimeout(120000)
 
 const globalCta = page.getByRole('button', { name: 'Available transactions', exact: true })
-const createDialog = page.getByRole('dialog', { name: 'Available transactions', exact: true })
 const guide = section => page.locator(`[data-action-section="${section}"]:visible`)
 const entry = (section, id) => guide(section).locator(`[data-project-action="${id}"]`)
 
@@ -183,7 +182,8 @@ try {
     console.log(`PASS ${width}px: contextual stage links, owner action sections, operator overflow navigation, accessible disclosures, and layout`)
   }
 
-  // The Create catalogue remains unavailable until hydration, then works on the first click.
+  // Create renders its own setup flow without the old global action catalogue,
+  // before or after JavaScript hydrates the native form.
   let releaseScripts
   const scriptsReady = new Promise(resolve => { releaseScripts = resolve })
   await page.route('**/_next/static/**/*.js', async route => {
@@ -193,28 +193,35 @@ try {
   try {
     await page.goto(`${base}/create`, { waitUntil: 'commit' })
     await expect(page.locator('#create-name')).toBeVisible()
-    await expect(globalCta).toBeDisabled()
+    await expect(page.getByRole('heading', { name: 'Design the rules', exact: true })).toBeVisible()
+    await expect(globalCta).toHaveCount(0)
   } finally {
     releaseScripts()
   }
-  await expect(globalCta).toBeEnabled({ timeout: 60000 })
-  await globalCta.click()
-  await expect(createDialog.getByRole('combobox', { name: 'Lifecycle stage', exact: true })).toHaveValue('create')
-  await expect(createDialog.locator('[data-transaction="create"]')).toBeVisible()
-  await expect(createDialog.getByRole('status')).toHaveText('1 action')
-  await fits('dialog[open] [data-modal-card]')
-  await accessible('dialog[open]')
-  await page.keyboard.press('Escape')
+  await expect(page.locator('#draft-status')).toHaveText('Draft saved in this browser', { timeout: 60000 })
+  await expect(globalCta).toHaveCount(0)
   await expect(page.locator('[data-step-panel]')).toHaveAttribute('data-step-panel', '0')
-  await expect(globalCta).toBeFocused()
   await page.locator('#create-name').fill('Transaction guide check')
+  await expect(page.locator('#draft-name')).toHaveText('Transaction guide check')
   await page.locator('#create-next').click()
   await expect(page.locator('[data-step-panel]')).toHaveAttribute('data-step-panel', '1')
-  await expect(page.getByRole('group', { name: 'Contractual Settings', exact: true })).toBeVisible()
+  const contractualSettings = page.getByRole('group', { name: 'Contractual Settings', exact: true })
+  await expect(contractualSettings).toBeVisible()
+  await expect(contractualSettings.locator('#create-operatorFundPercent')).toBeVisible()
+  await expect(page.getByRole('group', { name: 'Modeling inputs', exact: true }).locator('#create-purchaseBudget')).toBeVisible()
   await page.locator('#create-next').click()
   await expect(page.locator('[data-step-panel]')).toHaveAttribute('data-step-panel', '2')
-  await expect(page.getByRole('group', { name: 'Contractual Settings', exact: true })).toBeVisible()
-  console.log('PASS Create: hydration guard, immediate catalogue, focus return, and matching Contractual Settings headings')
+  await expect(contractualSettings).toBeVisible()
+  await expect(contractualSettings.locator('#create-operatorSplitPercent')).toBeVisible()
+  await expect(contractualSettings.locator('#create-stickySplitPercent')).toBeVisible()
+  await page.locator('#create-next').click()
+  await expect(page.locator('[data-step-panel]')).toHaveAttribute('data-step-panel', '3')
+  await expect(page.getByRole('heading', { name: 'Launch the FUND raise', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Save metadata and prepare deployment', exact: true })).toBeDisabled()
+  await expect(globalCta).toHaveCount(0)
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await fits('#create-workspace')
+  console.log('PASS Create: no global catalogue before/after hydration, native setup steps, contextual settings and wallet-gated FUND preparation')
   assert.deepEqual(errors, [])
   console.log('PASS no JavaScript errors, wallet requests, or transactions required')
 } finally {

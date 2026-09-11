@@ -121,7 +121,7 @@ export function FundProject({ chainId, projectId }: { chainId: JBChainId; projec
   </>
   return <IncomeProjectRuntime chainId={chainId} projectId={incomeId} fundProjectId={id} bindingUnavailable={incomeBinding.isError || !!lastIncomeId && !incomeBinding.data}>{income => <div className="project-page live-contract-page">
     <a className="skip-link" href="#main">Skip to content</a>
-    <header className="site-header flex items-center justify-between gap-5"><Brand tagline={false} /><WalletButton /></header>
+    <header className="site-header flex items-center justify-between gap-5"><Brand /><WalletButton /></header>
     <main id="main" className="mx-auto max-w-[1220px] px-5 py-8 sm:px-8 sm:py-10" tabIndex={-1}>
       <ProjectActions key={`${chainId}:${projectId}`} chainId={chainId} projectId={id} state={displayState ?? undefined} client={client} details={details.data} notice={<>{notice}{income.notice}</>} income={income} refreshing={query.isFetching} writesUnavailable={writesUnavailable} refresh={() => void query.refetch()} />
     </main>
@@ -153,8 +153,9 @@ function ProjectActions({ chainId, projectId, state, client, details, notice, in
   if (!state || !client) {
     const pending = <p>Waiting for the project’s confirmed contract state.</p>
     return <HomerunProjectLayout title={details?.name ?? 'FUND project'}
+      location={details?.location}
       logo={details?.logoUrl && <Image unoptimized src={details.logoUrl} width={112} height={112} alt="Project logo" />}
-      metadata={[details?.location && `Location: ${details.location}`, `Network: ${displayChainName(chainId)}`, `FUND: #${projectId}`, 'Status: Verifying contracts']}
+      metadata={[`Network: ${displayChainName(chainId)}`, `FUND: #${projectId}`, 'Status: Verifying contracts']}
       notice={notice}
       payment={<ActionSection title="Pay">{pending}</ActionSection>}
       activity={<ProjectActivity chainId={chainId} projectId={projectId} />}
@@ -184,8 +185,9 @@ function ProjectActions({ chainId, projectId, state, client, details, notice, in
   const emptyIncome = <ActionSection title="INCOME"><p>INCOME has not been verified for this project yet. Its launch and recovery controls are under Operators.</p></ActionSection>
   return <HomerunProjectLayout
     title={name ?? 'FUND project'}
+    location={details?.location}
     logo={details?.logoUrl && <Image unoptimized src={details.logoUrl} width={112} height={112} alt={name ? `${name} logo` : 'Project logo'} />}
-    metadata={[details?.location && `Location: ${details.location}`, `Network: ${displayChainName(state.chainId)}`, `FUND: #${state.projectId}`, income.projectId && `INCOME: #${income.projectId}`, `Status: ${!supported ? 'Unsupported FUND configuration' : state.metadata.pausePay ? 'Contributions paused' : 'Raising funds'}`, supported && context && <span>FUND treasury: <DisplayTokenAmount value={context.balance} decimals={context.decimals} /> {context.symbol}</span>, supported && <span>FUND supply: <DisplayTokenAmount value={state.totalSupply} /></span>, income.treasuryMetric].filter(Boolean)}
+    metadata={[`Network: ${displayChainName(state.chainId)}`, `FUND: #${state.projectId}`, income.projectId && `INCOME: #${income.projectId}`, `Status: ${!supported ? 'Unsupported FUND configuration' : state.metadata.pausePay ? 'Contributions paused' : 'Raising funds'}`, supported && context && <span>FUND treasury: <DisplayTokenAmount value={context.balance} decimals={context.decimals} /> {context.symbol}</span>, supported && <span>FUND supply: <DisplayTokenAmount value={state.totalSupply} /></span>, income.treasuryMetric].filter(Boolean)}
     notice={<>{notice}{!supported && <p role="alert">This project uses contract settings outside Homerun’s verified FUND integration. Transactions are unavailable here. {state.issues.join(' ')}</p>}{!isConnected && <p>Connect your wallet to contribute, use your tokens, or access operator actions.</p>}{writesUnavailable && <p role="status">New transactions are paused while current project permissions and balances are being verified. Submitted transactions continue to be tracked below.</p>}</>}
     payment={<>
       {income.projectId && <div className="mb-5 flex gap-3" role="group" aria-label="Payment token"><button type="button" className={paymentToken === 'fund' ? 'btn-primary' : 'btn-secondary'} aria-pressed={paymentToken === 'fund'} onClick={() => { paymentChoice.current = true; setPaymentToken('fund') }}>FUND</button><button type="button" className={paymentToken === 'income' ? 'btn-primary' : 'btn-secondary'} aria-pressed={paymentToken === 'income'} onClick={() => { paymentChoice.current = true; setPaymentToken('income') }}>INCOME</button></div>}

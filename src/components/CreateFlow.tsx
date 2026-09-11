@@ -7,7 +7,6 @@ import { NETWORK_FAMILIES } from '../../web/create-networks.mjs';
 import { drawAssetSketch } from '../../web/asset-sketch.mjs';
 import { CreateIncomePreview } from './CreateIncomePreview';
 import { SiteIntegration } from './SiteIntegration';
-import { AvailableTransactions } from './AvailableTransactions';
 
 /** Validated setup values. Budget and income estimates remain modeling assumptions. */
 export interface CreateValues {
@@ -267,7 +266,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
     <Field name={name} label={label} value={raw[name]} error={errors[name] || (step === 3 ? normalized.errors[name] : undefined)} onChange={update} onBlur={formatField} {...props} />;
 
   return <>
-    <div className="create-intro"><h1>Design the rules</h1><AvailableTransactions /></div>
+    <div className="create-intro"><h1>Design the rules</h1></div>
     <div id="create-workspace" className="create-workspace">
       <section className="create-editor" aria-label="Design the rules">
         <nav className="create-steps" aria-label="Setup steps">

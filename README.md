@@ -1,6 +1,6 @@
 # Homerun
 
-Fund and earn together.
+Run your home's investments and revenues.
 
 Homerun combines an asset-funding **FUND** Juicebox with a separate **INCOME** Revnet. This checkout contains the native Next.js application, live FUND transaction integration, and an illustrative Founder Haus simulator. The deployment configuration targets Railway and `homerun.money`; implementation and local verification do not mean this revision has been deployed there.
 
@@ -18,7 +18,7 @@ The application uses Next.js/React, Wagmi/Viem, TanStack Query, the Nana SDK dep
 
 ## Project navigation
 
-The demo and live project pages share the Juicebox-style layout: a large project logo beside the title and pip-separated **Key: Value** metadata, Pay and Activity on the left, and **Overview, Stages, Owners, Shop** on the right. **Extras** and **Operators** are in the vertical three-dot menu after Shop. Header figures follow the demo stage or verified live treasury and token supply; a payment draft does not change project totals. On phones, Activity becomes a tab. Actions appear within their relevant sections, with likely next steps linked from Stages.
+The demo and live project pages share the Juicebox-style layout: a large project logo beside the title, the location immediately below the title, and pip-separated **Key: Value** metadata, Pay and Activity on the left, and **Overview, Stages, Owners, Shop** on the right. **Extras** and **Operators** are in the vertical three-dot menu after Shop. Header figures follow the demo stage or verified live treasury and token supply; a payment draft does not change project totals. On phones, Activity becomes a tab. Actions appear within their relevant sections, with likely next steps linked from Stages.
 
 **Owners** contains Accounts, Market, Settlement, Splits and Loans. Accounts shows your position above all owners, with both sections visible. Verified linked FUND and INCOME controls appear together. Tabs mount on first use and remain mounted, so changing tabs preserves drafts and pending receipt tracking. Hash links such as `/founderhaus#owners/accounts/all` support direct navigation and browser history.
 
@@ -53,7 +53,7 @@ npm ci
 npm run dev
 ```
 
-Open [localhost:3010](http://localhost:3010), [Create](http://localhost:3010/create), or the [Founder Haus demo](http://localhost:3010/founderhaus). Next renders the demo body on the server; React owns its controls, gallery and SVG charts. The homepage retains the canvas ballpark, Shapes/Acid color modes, reduced-motion support and pause controls.
+Open [localhost:3010](http://localhost:3010), [Create](http://localhost:3010/create), or the [Founder Haus demo](http://localhost:3010/founderhaus). Next renders the demo body on the server; React owns its controls, gallery and SVG charts. The homepage uses the large centered slogan, cycling from home through business, equipment, energy and other assets. The header slogan appears on other pages. The canvas ballpark and rotating headline share pause controls and respect reduced motion; headline rotation also pauses offscreen and in background tabs. Shapes/Acid color modes remain available. First-time Acid selection starts intensity and color grouping at 20; subsequent visits retain the user’s Acid settings.
 
 Juicebox Center must allow the application's actual origin. The configured development origins are `http://localhost:3010` and `http://localhost:3014`; production configuration uses `https://homerun.money`. Set `NEXT_PUBLIC_SITE_URL` when changing the local origin and, if needed, `NEXT_PUBLIC_JBCENTER_URL` for the corresponding Center service. WalletConnect requires `NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID`; Para requires its public application configuration, including `NEXT_PUBLIC_PARA_API_KEY`. Those optional integrations do not replace the injected-wallet path.
 

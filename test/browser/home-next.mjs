@@ -27,7 +27,9 @@ try {
   const staticPage = await staticContext.newPage();
   const response = await staticPage.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 120_000 });
   assert.equal(response?.status(), 200);
-  assert.equal(await staticPage.getByRole('heading', { name: 'Fund an asset. Share what it earns.' }).isVisible(), true);
+  assert.equal(await staticPage.getByRole('heading', { name: "Run your home's investments and revenues" }).isVisible(), true);
+  assert.equal(await staticPage.locator('.home-asset-line.is-current').textContent(), "Run your home's");
+  assert.equal(await staticPage.locator('.brand-tagline').count(), 0, 'The homepage uses its large headline instead of repeating the slogan under the logo');
   assert.equal(await staticPage.getByRole('link', { name: 'Begin', exact: true }).getAttribute('href'), '/create');
   assert.equal(await staticPage.getByRole('link', { name: 'See Founder Haus demo' }).getAttribute('href'), '/founderhaus');
   assert.equal(await staticPage.locator('#color-mode').inputValue(), 'shapes');
@@ -45,6 +47,20 @@ try {
   });
   await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 120_000 });
   await waitForMotion(page, 'running');
+  await page.waitForSelector('.home-title-subject[data-rotating="true"]');
+  assert.equal(await page.locator('.home-title-subject').getAttribute('data-current-asset'), 'home');
+
+  // The first four assets appear in the requested order without moving the headline or CTAs.
+  const heroGeometry = () => page.locator('.home-copy').evaluate(element => {
+    const heading = element.querySelector('h1').getBoundingClientRect();
+    const actions = element.querySelector('.home-actions').getBoundingClientRect();
+    return { height: heading.height, top: heading.top, actionsTop: actions.top };
+  });
+  const initialGeometry = await heroGeometry();
+  for (const asset of ['business', 'equipment', 'energy']) {
+    await page.waitForSelector(`.home-title-subject[data-current-asset="${asset}"]`, { timeout: 6000 });
+    assert.deepEqual(await heroGeometry(), initialGeometry, `No layout shift when rotating to ${asset}`);
+  }
 
   for (const width of [320, 390, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
@@ -80,20 +96,44 @@ try {
   const drifting = await canvasSignature(page);
   await page.waitForTimeout(400);
   assert.notEqual(await canvasSignature(page), drifting, 'Shapes color drift changes pixels');
-  await page.getByRole('button', { name: 'Pause color drift' }).click();
+  await page.getByRole('button', { name: 'Pause animations' }).click();
   await waitForMotion(page, 'paused');
   const paused = await canvasSignature(page);
-  await page.waitForTimeout(250);
+  const pausedAsset = await page.locator('.home-title-subject').getAttribute('data-current-asset');
+  await page.waitForTimeout(3400);
   assert.equal(await canvasSignature(page), paused, 'Pause holds the rendered artwork still');
+  assert.equal(await page.locator('.home-title-subject').getAttribute('data-current-asset'), pausedAsset, 'Pause also holds the headline still');
+  assert.equal(await page.locator('.home-title-subject').getAttribute('data-rotating'), 'false');
 
   await page.locator('#color-mode').selectOption('acid');
   assert.notEqual(await canvasSignature(page), paused, 'Acid applies a different color formula');
+  assert.equal(await page.locator('#color-intensity').inputValue(), '20', 'First Acid selection starts at intensity 20');
+  assert.equal(await page.locator('#color-grouping').inputValue(), '20', 'First Acid selection starts at color grouping 20');
+  assert.equal(await page.locator('#color-pace').inputValue(), '2.5', 'Selecting Acid preserves pace');
   await page.locator('#color-intensity').fill('35');
   await page.locator('#color-pace').fill('3.5');
   await page.locator('#color-grouping').fill('27');
   assert.equal(await page.locator('#color-intensity-value').textContent(), '35');
   assert.equal(await page.locator('#color-pace-value').textContent(), '3.5×');
   assert.equal(await page.locator('#color-grouping-value').textContent(), '27');
+
+  await page.locator('#color-mode').selectOption('shapes');
+  await page.locator('#color-intensity').fill('90');
+  await page.locator('#color-grouping').fill('65');
+  await page.locator('#color-mode').selectOption('acid');
+  assert.equal(await page.locator('#color-intensity').inputValue(), '35', 'Returning to Acid restores its edited intensity');
+  assert.equal(await page.locator('#color-grouping').inputValue(), '27', 'Shapes edits do not replace remembered Acid grouping');
+  await page.locator('#color-mode').selectOption('shapes');
+  await page.locator('#color-intensity').fill('90');
+  await page.locator('#color-grouping').fill('65');
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await waitForMotion(page, 'running');
+  assert.equal(await page.locator('#color-mode').inputValue(), 'shapes');
+  assert.equal(await page.locator('#color-intensity').inputValue(), '90');
+  assert.equal(await page.locator('#color-grouping').inputValue(), '65');
+  await page.locator('#color-mode').selectOption('acid');
+  assert.equal(await page.locator('#color-intensity').inputValue(), '35', 'Acid intensity is remembered across reloads in another mode');
+  assert.equal(await page.locator('#color-grouping').inputValue(), '27', 'Acid grouping is remembered across reloads in another mode');
 
   // Next client navigation must release the canvas and mount a fresh renderer on return.
   await page.evaluate(() => { window.previousBallpark = document.querySelector('#ballpark'); });
@@ -114,17 +154,69 @@ try {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await waitForMotion(page, 'reduced');
   const reduced = await canvasSignature(page);
-  await page.waitForTimeout(250);
+  const reducedAsset = await page.locator('.home-title-subject').getAttribute('data-current-asset');
+  await page.waitForTimeout(3400);
   assert.equal(await canvasSignature(page), reduced);
-  await page.getByRole('button', { name: 'Play color drift' }).click();
+  assert.equal(await page.locator('.home-title-subject').getAttribute('data-current-asset'), reducedAsset, 'Reduced motion keeps the headline still');
+  assert.equal(await page.locator('.home-title-subject').getAttribute('data-rotating'), 'false');
+  await page.getByRole('button', { name: 'Play animations' }).click();
   await waitForMotion(page, 'running');
   const playing = await canvasSignature(page);
   await page.waitForTimeout(400);
   assert.notEqual(await canvasSignature(page), playing, 'Explicit play works with reduced motion');
+  await page.waitForFunction(previous => document.querySelector('.home-title-subject').dataset.currentAsset !== previous, reducedAsset, { timeout: 6000 });
+
+  // The headline pauses while scrolled out of view, even when the artwork is still visible.
+  await page.setViewportSize({ width: 390, height: 400 });
+  await page.evaluate(() => window.scrollTo(0, 450));
+  await page.waitForSelector('.home-title-subject[data-rotating="false"]');
+  const offscreenAsset = await page.locator('.home-title-subject').getAttribute('data-current-asset');
+  await page.waitForTimeout(3400);
+  assert.equal(await page.locator('.home-title-subject').getAttribute('data-current-asset'), offscreenAsset, 'An offscreen headline does not keep cycling');
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForSelector('.home-title-subject[data-rotating="true"]');
+
+  // Background tabs pause too. The visibility event is simulated because headless Chrome
+  // does not reliably background a page when another Playwright page is brought forward.
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await page.waitForSelector('.home-title-subject[data-rotating="false"]');
+  const backgroundAsset = await page.locator('.home-title-subject').getAttribute('data-current-asset');
+  await page.waitForTimeout(3400);
+  assert.equal(await page.locator('.home-title-subject').getAttribute('data-current-asset'), backgroundAsset, 'A background headline does not keep cycling');
+  await page.evaluate(() => {
+    delete document.hidden;
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await page.waitForSelector('.home-title-subject[data-rotating="true"]');
 
   assert.deepEqual(errors, [], 'No application or hydration errors');
-  console.log('Next homepage: SSR without JavaScript, three viewport layouts, color controls, pause, route cleanup, persistence and reduced motion passed.');
   await context.close();
+
+  // Existing users who saved Acid before separate mode preferences existed keep their values.
+  const legacyContext = await browser.newContext({ viewport: { width: 390, height: 1000 }, reducedMotion: 'reduce' });
+  await legacyContext.addInitScript(() => {
+    localStorage.setItem('homerun:color-mode', 'acid');
+    localStorage.setItem('homerun:color-intensity', '67');
+    localStorage.setItem('homerun:color-grouping', '43');
+    localStorage.setItem('homerun:color-pace', '1.75');
+  });
+  const legacyPage = await legacyContext.newPage();
+  await legacyPage.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+  await waitForMotion(legacyPage, 'reduced');
+  assert.equal(await legacyPage.locator('#color-intensity').inputValue(), '67', 'Saved legacy Acid intensity is preserved');
+  assert.equal(await legacyPage.locator('#color-grouping').inputValue(), '43', 'Saved legacy Acid grouping is preserved');
+  await legacyPage.locator('#color-mode').selectOption('shapes');
+  await legacyPage.locator('#color-intensity').fill('100');
+  await legacyPage.locator('#color-grouping').fill('11');
+  await legacyPage.locator('#color-mode').selectOption('acid');
+  assert.equal(await legacyPage.locator('#color-intensity').inputValue(), '67', 'Legacy Acid intensity is remembered on later selections');
+  assert.equal(await legacyPage.locator('#color-grouping').inputValue(), '43', 'Legacy Acid grouping is remembered on later selections');
+  assert.equal(await legacyPage.locator('#color-pace').inputValue(), '1.75');
+  await legacyContext.close();
+  console.log('Next homepage: SSR, three viewports, stable headline rotation, shared pause, offscreen/background pause, first-use Acid defaults, remembered/legacy Acid settings, color controls, route cleanup, persistence and reduced motion passed.');
 } finally {
   await browser.close();
 }

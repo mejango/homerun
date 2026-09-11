@@ -96,10 +96,6 @@
   font-size: 12px;
   line-height: 1.7;
 }
-.homerun-project-layout .demo-overview > .available-transactions-button {
-  justify-self: start;
-  margin-top: 0;
-}
 .homerun-project-layout .demo-project-initial {
   display: grid;
   place-items: center;

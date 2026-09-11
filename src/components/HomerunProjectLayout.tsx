@@ -201,11 +201,12 @@ function TabStrip<T extends string>({
 
 /** Shared project shell. Slots contain the existing model or verified live controls. */
 export function HomerunProjectLayout({
-  title, logo, metadata = [], notice, actions, payment, activity,
+  title, logo, location, metadata = [], notice, actions, payment, activity,
   overview, stages, owners, shop, extras, operators, defaultTab = 'overview', tab, onTabChange,
 }: {
   title: ReactNode
   logo?: ReactNode
+  location?: string | null
   metadata?: ReactNode[]
   notice?: ReactNode
   actions?: ReactNode
@@ -288,6 +289,7 @@ export function HomerunProjectLayout({
             {logo && <div className="hpl-logo">{logo}</div>}
             <div className="hpl-identity">
               <h1 className="hpl-title">{title}</h1>
+              {location?.trim() && <p className="hpl-location">{location.trim()}</p>}
               {items.length > 0 && <div className="hpl-metadata">
                 {items.map((item, index) => <span className="hpl-metadata-item" key={index}>
                   {index > 0 && <span className="hpl-pip" aria-hidden="true">|</span>}{item}

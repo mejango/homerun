@@ -94,6 +94,7 @@ export type IncomeProjectSlots = {
   title: string
   description: string | null
   logoUrl: string | null
+  location?: string | null
   notice: ReactNode
   payment: ReactNode
   activity: ReactNode
@@ -141,12 +142,13 @@ export function IncomeProjectRuntime({ chainId, projectId, fundProjectId, bindin
     {fundProjectId === undefined && source.isError && <p className="mb-4 text-sm" role="alert">The original FUND connection could not be discovered. INCOME transactions remain available. <button type="button" className="underline" onClick={() => void source.refetch()}>Retry connection</button></p>}
   </>
   // This component stays in the same tree position while a linked ID/read loads.
-  return <IncomeActions state={displayState} client={client} fundProjectId={resolvedFundId} writesUnavailable={writesUnavailable} notice={notice} title={details.data?.name ?? `Revenue project ${projectId ?? ''}`} description={details.data?.description ?? null} logoUrl={details.data?.logoUrl ?? null} projectId={projectId} chainId={chainId}>{children}</IncomeActions>
+  return <IncomeActions state={displayState} client={client} fundProjectId={resolvedFundId} writesUnavailable={writesUnavailable} notice={notice} title={details.data?.name ?? `Revenue project ${projectId ?? ''}`} description={details.data?.description ?? null} logoUrl={details.data?.logoUrl ?? null} location={details.data?.location ?? null} projectId={projectId} chainId={chainId}>{children}</IncomeActions>
 }
 
 export function IncomeProject({ chainId, projectId, fundProjectId }: { chainId: JBChainId; projectId: bigint; fundProjectId?: bigint }) {
   return <IncomeProjectRuntime chainId={chainId} projectId={projectId} fundProjectId={fundProjectId}>{slots => <HomerunProjectLayout
     title={slots.title}
+    location={slots.location}
     logo={slots.logoUrl && <Image unoptimized src={slots.logoUrl} width={112} height={112} alt={`${slots.title} logo`} />}
     metadata={[`Network: ${displayChainName(chainId)}`, `INCOME: #${projectId}`, `Status: ${slots.state?.metadata.pausePay ? 'Payments paused' : slots.state ? 'Revenue open' : 'Verifying contracts'}`, slots.treasuryMetric, slots.supplyMetric]}
     notice={slots.notice}
@@ -161,9 +163,9 @@ export function IncomeProject({ chainId, projectId, fundProjectId }: { chainId: 
   />}</IncomeProjectRuntime>
 }
 
-function IncomeActions({ state, client, fundProjectId, writesUnavailable, notice, title, description, logoUrl, projectId, chainId, children }: {
+function IncomeActions({ state, client, fundProjectId, writesUnavailable, notice, title, description, logoUrl, location, projectId, chainId, children }: {
   state?: IncomeProjectState; client?: PublicClient; fundProjectId?: bigint; writesUnavailable: boolean; notice: ReactNode
-  title: string; description: string | null; logoUrl: string | null; projectId?: bigint; chainId: JBChainId
+  title: string; description: string | null; logoUrl: string | null; location: string | null; projectId?: bigint; chainId: JBChainId
   children: (slots: IncomeProjectSlots) => ReactNode
 }) {
   const [selectedToken, setSelectedToken] = useState<Address | undefined>()
@@ -173,7 +175,7 @@ function IncomeActions({ state, client, fundProjectId, writesUnavailable, notice
   const gate = (content: ReactNode) => <fieldset aria-label="INCOME transactions" disabled={writesUnavailable} className="m-0 grid min-w-0 gap-7 border-0 p-0">{content}</fieldset>
   const currency = ready && primary.length > 0 && <label className="mb-5 grid gap-2 text-sm">INCOME treasury currency<select className="min-h-11 rounded border border-[#bfc9b5] bg-white px-3 pr-9" value={context?.token} onChange={event => setSelectedToken(event.target.value as Address)}>{primary.map(item => <option key={item.token} value={item.token}>{item.symbol}</option>)}</select></label>
   return children({
-    projectId, fundProjectId, state, title, description, logoUrl, notice,
+    projectId, fundProjectId, state, title, description, logoUrl, location, notice,
     treasuryMetric: context && <span>INCOME treasury: <DisplayTokenAmount value={context.balance} decimals={context.decimals} /> {context.symbol}</span>,
     supplyMetric: state && <span>INCOME supply: <DisplayTokenAmount value={state.totalSupply} /></span>,
     payment: gate(<>{ready && context ? <IncomePayment state={state} client={client} context={context} /> : <p>{projectId ? 'Loading INCOME payment options…' : 'INCOME has not been launched.'}</p>}</>),

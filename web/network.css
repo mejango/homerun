@@ -155,6 +155,13 @@ dialog pre { font: 11px/1.6 ui-monospace, monospace; white-space: pre-wrap; over
 @media (max-width: 760px) {
   .simulator-layout { grid-template-columns: 1fr; gap: 24px; }
   .site-header { height: 68px; }
+  .site-header:has(#reset-example) { height: auto; min-height: 68px; padding-block: 10px; }
+  .site-header:has(#reset-example) .brand-lockup { min-width: 0; flex-shrink: 1; }
+  .site-header:has(#reset-example) .brand-tagline { text-wrap: balance; }
+  #reset-example { flex-shrink: 0; }
+  .live-contract-page > .site-header { height: auto; min-height: 68px; padding-block: 10px; }
+  .live-contract-page > .site-header .brand-lockup { min-width: 0; flex-shrink: 1; }
+  .live-contract-page > .site-header .brand-tagline { text-wrap: balance; }
   .brand-lockup { --brand-icon-width: 26px; --brand-gap: 7px; }
   .deal-heading h1 { font-size: 36px; }
   .deal-heading p { font-size: 13px; max-width: 210px; }

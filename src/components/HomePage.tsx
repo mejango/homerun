@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { Brand } from './Brand';
+import { RotatingAssetHeadline } from './RotatingAssetHeadline';
 import {
   mountBallpark,
   type BallparkController,
@@ -16,6 +17,24 @@ const DEFAULT_COLORS: BallparkOptions = {
   pace: 2.5,
   grouping: 11,
 };
+
+type AcidColors = Pick<BallparkOptions, 'intensity' | 'grouping'>;
+
+function savedAcidColors(colors: BallparkOptions): AcidColors | null {
+  try {
+    const saved = JSON.parse(localStorage.getItem('homerun:acid-colors') ?? 'null');
+    if (saved && typeof saved.intensity === 'number' && Number.isFinite(saved.intensity)
+      && typeof saved.grouping === 'number' && Number.isFinite(saved.grouping)) {
+      return {
+        intensity: Math.max(0, Math.min(100, saved.intensity)),
+        grouping: Math.max(0, Math.min(100, saved.grouping)),
+      };
+    }
+  } catch {
+    // Existing Acid users retain their current settings if preferences cannot be read.
+  }
+  return colors.mode === 'acid' ? { intensity: colors.intensity, grouping: colors.grouping } : null;
+}
 
 function savedColors(): BallparkOptions {
   const colors = { ...DEFAULT_COLORS };
@@ -42,12 +61,15 @@ export function HomePage() {
   const canvas = useRef<HTMLCanvasElement>(null);
   const copy = useRef<HTMLDivElement>(null);
   const renderer = useRef<BallparkController | null>(null);
+  const acidColors = useRef<AcidColors | null>(null);
   const [colors, setColors] = useState(DEFAULT_COLORS);
   const [motion, setMotion] = useState<BallparkMotion>('running');
 
   useEffect(() => {
     if (!canvas.current || !copy.current) return;
     const initialColors = savedColors();
+    acidColors.current = savedAcidColors(initialColors);
+    if (initialColors.mode === 'acid' && acidColors.current) Object.assign(initialColors, acidColors.current);
     setColors(initialColors);
     const ballpark = mountBallpark(canvas.current, copy.current, initialColors, setMotion);
     renderer.current = ballpark;
@@ -59,10 +81,17 @@ export function HomePage() {
 
   function updateColors<Key extends keyof BallparkOptions>(key: Key, value: BallparkOptions[Key]) {
     const next = { ...colors, [key]: value };
+    if (key === 'mode' && value === 'acid' && colors.mode !== 'acid') {
+      Object.assign(next, acidColors.current ?? { intensity: 20, grouping: 20 });
+    }
+    if (next.mode === 'acid') acidColors.current = { intensity: next.intensity, grouping: next.grouping };
     setColors(next);
     renderer.current?.setOptions(next);
     try {
-      localStorage.setItem(`homerun:color-${key}`, String(value));
+      for (const setting of ['mode', 'intensity', 'pace', 'grouping'] as const) {
+        localStorage.setItem(`homerun:color-${setting}`, String(next[setting]));
+      }
+      if (acidColors.current) localStorage.setItem('homerun:acid-colors', JSON.stringify(acidColors.current));
     } catch {
       // Persistence is optional; the visible controls are the source of truth.
     }
@@ -73,14 +102,17 @@ export function HomePage() {
       <a className="skip-link" href="#main">Skip to content</a>
       <main id="main" className="home-main" tabIndex={-1}>
         <section className="ballpark-hero" aria-labelledby="home-title">
-          <header className="site-header"><Brand /></header>
+          <header className="site-header"><Brand tagline={false} /></header>
           <div className="home-copy" ref={copy}>
             <ul className="home-asset-types" aria-label="Asset types">
               {['Real estate', 'Business', 'Equipment', 'Energy', 'Other assets'].map(type => (
                 <li key={type}>{type}</li>
               ))}
             </ul>
-            <h1 id="home-title">Fund an asset.<br /><em>Share what it earns.</em></h1>
+            <h1 id="home-title" aria-label="Run your home's investments and revenues">
+              <RotatingAssetHeadline playing={motion === 'running'} />
+              <em className="home-title-revenues">investments and revenues</em>
+            </h1>
             <div className="home-actions">
               <Link className="create-homerun" href="/create">Begin</Link>
               <Link className="see-demo" href="/founderhaus">See Founder Haus demo</Link>
@@ -144,7 +176,7 @@ export function HomePage() {
             id="toggle-motion" className="home-motion-toggle" type="button"
             onClick={() => renderer.current?.toggleMotion()}
           >
-            {motion === 'reduced' ? 'Play color drift' : motion === 'paused' ? 'Resume color drift' : 'Pause color drift'}
+            {motion === 'reduced' ? 'Play animations' : motion === 'paused' ? 'Resume animations' : 'Pause animations'}
           </button>
         </div>
         <p className="home-project-link"><Link href="/projects">Find a project ↗</Link></p>
