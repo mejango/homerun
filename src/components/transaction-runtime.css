@@ -91,6 +91,33 @@ dialog.ui-modal-host::backdrop { all: revert-layer; }
   dialog.ui-modal-host[open] { width: 100%; height: 100%; pointer-events: auto; }
   dialog.ui-modal-host::backdrop { background: transparent; }
   .ui-modal-host .card { border: 1px solid #d8dece; border-radius: .75rem; background: #fff; }
+  :is(.modal-dialog, .ui-modal-host) .input-well {
+    width: 100%;
+    border: 1px solid #cbd0c3;
+    border-radius: .5rem;
+    background: #fff;
+    color: #293e35;
+    outline: none;
+    transition: border-color 100ms linear, box-shadow 100ms linear;
+  }
+  :is(.modal-dialog, .ui-modal-host) .input-well::placeholder { color: #657460; }
+  :is(.modal-dialog, .ui-modal-host) .input-well:is(:focus, :focus-within) {
+    border-color: #537584;
+    box-shadow: 0 0 0 2px #e1eaed;
+    outline: none;
+  }
+  :is(.modal-dialog, .ui-modal-host) .input-well:disabled {
+    cursor: not-allowed;
+    background: #fffefa;
+    color: #657460;
+  }
+  :is(.modal-dialog, .ui-modal-host) .input-well[aria-invalid='true'] { border-color: #a23e31; }
+  :is(.modal-dialog, .ui-modal-host) .input-well[aria-invalid='true']:is(:focus, :focus-within) {
+    box-shadow: 0 0 0 2px #f8e9e6;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    :is(.modal-dialog, .ui-modal-host) .input-well { transition: none; }
+  }
   .modal-dialog .card { border: 1px solid #d8dece; border-radius: .75rem; background: #f7f5ef; }
   .btn-primary, .btn-secondary, .btn-tertiary, .btn-ghost, .btn-link, .icon-button {
     display: inline-flex;
