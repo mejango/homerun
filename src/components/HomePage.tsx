@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { Brand } from './Brand';
+import { WalletButton } from '@/components/WalletButton';
 import { RotatingAssetHeadline } from './RotatingAssetHeadline';
 import {
   mountBallpark,
@@ -102,7 +103,7 @@ export function HomePage() {
       <a className="skip-link" href="#main">Skip to content</a>
       <main id="main" className="home-main" tabIndex={-1}>
         <section className="ballpark-hero" aria-labelledby="home-title">
-          <header className="site-header"><Brand /></header>
+          <header className="site-header"><Brand /><WalletButton /></header>
           <div className="home-copy" ref={copy}>
             <h1 id="home-title" aria-label="Run your home's investments and revenues">
               <RotatingAssetHeadline playing={motion === 'running'} />

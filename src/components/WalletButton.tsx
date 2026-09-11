@@ -32,7 +32,7 @@ export function WalletButton() {
       onTouchStart={preloadParaHost}
       className="btn-primary min-h-11 px-5 text-sm"
     >
-      Connect wallet
+      Sign in
     </button>
   )
 }

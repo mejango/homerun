@@ -307,7 +307,7 @@ try {
     assert.match(await page.locator('#create-contract-actions').textContent(), /INCOME.*separate later actions/);
     assert.equal(await page.locator('#create-next').count(), 0);
     assert.equal(await page.locator('#create-success').count(), 0);
-    await page.getByRole('button', { name: 'Connect wallet', exact: true }).click();
+    await page.locator('.site-header').getByRole('button', { name: 'Sign in', exact: true }).click();
     const dialog = page.getByRole('dialog');
     await dialog.waitFor({ state: 'visible' });
     assert.match(await dialog.textContent(), /Connect your wallet|Sign in/);

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { Brand } from "./Brand";
+import { WalletButton } from '@/components/WalletButton';
 import { DEFAULT_NETWORK, projectNetwork } from "../../web/network-model.mjs";
 import {
   creationSummary,
@@ -2222,27 +2223,30 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
       </a>
       <header className="site-header">
         <Brand />
-        <button
-          id="reset-example"
-          type="button"
-          className="quiet-button"
-          onClick={() => {
-            try {
-              localStorage.removeItem(
-                demoShopStorageKey(project?.id ?? "founderhaus"),
-              );
-            } catch {
-              /* The mounted shop still clears its in-memory preview. */
-            }
-            setInputs(initial);
-            setPhase("raising");
-            setGrowth(false);
-            setInvalidFields({});
-            setReset(reset + 1);
-          }}
-        >
-          Reset {project ? "preview" : "example"} ↺
-        </button>
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          <button
+            id="reset-example"
+            type="button"
+            className="quiet-button"
+            onClick={() => {
+              try {
+                localStorage.removeItem(
+                  demoShopStorageKey(project?.id ?? "founderhaus"),
+                );
+              } catch {
+                /* The mounted shop still clears its in-memory preview. */
+              }
+              setInputs(initial);
+              setPhase("raising");
+              setGrowth(false);
+              setInvalidFields({});
+              setReset(reset + 1);
+            }}
+          >
+            Reset {project ? "preview" : "example"} ↺
+          </button>
+          <WalletButton />
+        </div>
       </header>
       <main id="main" tabIndex={-1}>
         <div className="simulator" data-ready={ready}>
@@ -2595,6 +2599,7 @@ export function LocalProjectPreview() {
     <>
       <header className="site-header">
         <Brand />
+        <WalletButton />
       </header>
       <main id="main" className="missing-project">
         {project === undefined ? (
