@@ -22,6 +22,7 @@ import { DemoPaymentResult } from "./DemoPaymentResult";
 import { plannedOwnerActionDraft as modelOwnerActionDraft } from "../../web/owner-actions.mjs";
 import { SiteIntegration } from "./SiteIntegration";
 import { ProjectActionGuide } from "./ProjectActionGuide";
+import { projectActionIds } from "@/lib/project-action-guide";
 import { HomerunProjectLayout, OwnersTabs } from "./HomerunProjectLayout";
 import { DemoProjectShop } from "./DemoProjectShop";
 import { DemoActivity } from "./DemoActivity";
@@ -89,12 +90,6 @@ const statusLabels: Record<ProjectPhase, string> = {
   refunded: "Refunds Complete",
   earning: "Earning Income",
   liquidated: "Asset Sold",
-};
-const nextStages: Partial<Record<ProjectPhase, [ProjectPhase, string]>> = {
-  raising: ["funded", "Preview closed raise"],
-  funded: ["earning", "Preview income"],
-  earning: ["liquidated", "Preview an asset sale"],
-  refunding: ["refunded", "Preview completed refunds"],
 };
 
 function demoStateMetadata(
@@ -1506,9 +1501,11 @@ function PayPreview({
 function DemoOwnerTools({
   projection,
   onPhase,
+  placement = "operators",
 }: {
   projection: Projection;
   onPhase: (phase: ProjectPhase) => void;
+  placement?: "operators" | "raise";
 }) {
   const [draft, setDraft] = useState<OwnerDraft | null>(null);
   const [draftError, setDraftError] = useState("");
@@ -1544,7 +1541,11 @@ function DemoOwnerTools({
   const guide = (
     <ProjectActionGuide
       stage={projection.phase as ProjectPhase}
-      section="operators"
+      section={placement === "raise" ? "stages" : "operators"}
+      goalReached={projection.raiseGoal > 0 && Math.round(projection.raised * 100) >= Math.round(projection.raiseGoal * 100)}
+      onlyIds={placement === "operators" && !projection.purchaseCompleted
+        ? projectActionIds.operators.filter(id => !["pause", "close", "fail", "return", "withdraw", "offchain"].includes(id))
+        : undefined}
       actionIds={Object.keys(reviewActions).filter((id) =>
         available.some(([action]) => action === reviewActions[id]),
       )}
@@ -1555,9 +1556,9 @@ function DemoOwnerTools({
   if (!available.length) return guide;
   return (
     <>
-      <div id="owner-tools">
+      <div id={placement === "raise" ? "raise-tools" : "owner-tools"}>
         {guide}
-        {projection.phase === "funded" && <div id="owner-actions" className="owner-actions">
+        {placement === "operators" && projection.phase === "funded" && <div id="owner-actions" className="owner-actions">
           <div>
             {available.filter(([action]) => action === "complete_purchase").map(([action, label]) => (
               <button
@@ -1576,16 +1577,6 @@ function DemoOwnerTools({
           <p className="pay-error" role="alert">
             {draftError}
           </p>
-        )}
-        {["raising", "funded"].includes(projection.phase) && (
-          <button
-            id="failure-state"
-            type="button"
-            className="quiet-button"
-            onClick={() => onPhase("refunding")}
-          >
-            Preview a failed raise
-          </button>
         )}
         {draft && (
           <Modal
@@ -1861,7 +1852,6 @@ function DemoStageHistory({
                 <span>{step.state}</span>
               </div>
               <p>{step.detail}</p>
-              {step.state === "Current" && <ProjectActionGuide stage={phase} section="stages" />}
             </div>
           </li>
         ))}
@@ -1974,14 +1964,14 @@ function DemoOwners({
               <div>
                 <dt>FUND</dt>
                 <dd>{tokenNumber(p.personalFundTokens)}</dd>
-                <dd><ProjectActionGuide stage={phase} section="accounts" onlyIds={["fund-credit", "fund-transfer", "fund-burn"]} /></dd>
+                <dd><ProjectActionGuide stage={phase} section="accounts" onlyIds={["fund-cashout", "refund", "sale-claim", "fund-credit", "fund-transfer", "fund-burn"]} /></dd>
               </div>
               <div>
                 <dt>INCOME</dt>
                 <dd>
                   {income ? tokenNumber(p.personalRevTokens) : "Not issued yet"}
                 </dd>
-                {income && <dd><ProjectActionGuide stage={phase} section="accounts" onlyIds={["initial-income", "income-credit", "income-transfer", "income-burn"]} /></dd>}
+                {income && <dd><ProjectActionGuide stage={phase} section="accounts" onlyIds={["initial-income", "income-cashout", "income-credit", "income-transfer", "income-burn"]} /></dd>}
               </div>
             </dl>
             <ProjectActionGuide stage={phase} section="accounts" onlyIds={["stake", "unstake", "vest", "collect"]} />
@@ -2026,7 +2016,6 @@ function DemoOwners({
                     ? "Cash-outs are closed during purchase and operation."
                     : "Estimated cash-out before protocol fees."}
                 </p>
-                <ProjectActionGuide stage={phase} section="market" onlyIds={["fund-cashout", "refund", "sale-claim"]} />
               </div>
               <div>
                 <h3>INCOME</h3>
@@ -2037,7 +2026,6 @@ function DemoOwners({
                   Cash-outs return revenue backing and give up the tokens
                   redeemed.
                 </p>
-                <ProjectActionGuide stage={phase} section="market" onlyIds={["income-cashout"]} />
               </div>
             </div>
           </section>
@@ -2205,7 +2193,6 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
   const location =
     project?.values.location ||
     (project ? "" : "Jurerê Internacional, Florianópolis");
-  const next = nextStages[phase];
   const field = (
     key: keyof NetworkInputs,
     label: string,
@@ -2333,17 +2320,10 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
                     <p role="alert">{derived.error}</p>
                   </div>
                 )}
-                <div className="process-navigation">
-                  <button
-                    id="next-state"
-                    type="button"
-                    className="quiet-button"
-                    disabled={!next || !p}
-                    onClick={() => next && setPhase(next[0])}
-                  >
-                    {next ? `${next[1]} →` : "End of this scenario"}
-                  </button>
-                </div>
+                {overview && ["raising", "funded"].includes(phase) && <div className="demo-stage-actions" data-raise-actions>
+                  <DemoOwnerTools projection={overview} onPhase={setPhase} placement="raise" />
+                </div>}
+                {overview && ["earning", "liquidated"].includes(phase) && <ProjectActionGuide stage={phase} section="stages" />}
                 <details className="demo-modeling-controls" open>
                   <summary>Modeling inputs</summary>
                   <section

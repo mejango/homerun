@@ -36,6 +36,7 @@ describe('modeled demo activity', () => {
       const contributions = buildDemoActivity(p).filter(event => event.kind === 'contribution');
       expect(moneyTotal(contributions)).toBe(cents(p.raised));
       expect(contributions.every(event => event.amount! > 0 && event.detail.includes('FUND issued'))).toBe(true);
+      for (const event of contributions) expect(event.tokens).toEqual({ amount: cents(event.amount!) * 100, unit: 'FUND', action: 'issued' });
     }
   });
 
@@ -172,6 +173,8 @@ describe('modeled demo activity', () => {
       expect(events[0].amount).toBe(-p.fundInvestorSupply);
       expect(get(events, 'refunds-complete')).toBeDefined();
       expect(refunds.every(event => event.amount! < 0)).toBe(true);
+      expect(refunds.reduce((total, event) => total + event.tokens!.amount, 0)).toBe(p.fundInvestorSupply);
+      expect(refunds.every(event => event.tokens?.action === 'redeemed' && event.tokens.unit === 'FUND')).toBe(true);
     }
   });
 

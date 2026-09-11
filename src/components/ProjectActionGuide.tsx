@@ -9,6 +9,8 @@ import './project-action-guide.css'
 export type ProjectActionGuideProps = {
   stage: TransactionStage
   section: ProjectActionSection
+  /** Selects successful-raise guidance only; it does not establish permission to transact. */
+  goalReached?: boolean
   /** Only list IDs here when onAction opens an existing, functioning demo review. */
   actionIds?: readonly string[]
   /** Limit controls to the balances or operation beside this group. */
@@ -22,9 +24,9 @@ const subscribeToReadiness = () => () => {}
 const readyOnClient = () => true
 const readyOnServer = () => false
 const actionLabels: Readonly<Record<string, string>> = {
-  contribute: 'Fund', pause: 'Pause or resume', close: 'Close raise', fail: 'Open refunds',
-  return: 'Return funds', allowance: 'Set purchase allowance', withdraw: 'Withdraw for purchase',
-  'enable-minting': 'Enable FUND minting', offchain: 'Issue offchain FUND', 'operator-share': 'Issue operator share',
+  contribute: 'Fund', pause: 'Pause raise', close: 'Close raise', fail: 'Open refunds',
+  return: 'Inject funds', allowance: 'Set purchase allowance', withdraw: 'Withdraw funds',
+  'enable-minting': 'Enable FUND minting', offchain: 'Mint tokens for offchain contributions', 'operator-share': 'Issue operator share',
   'disable-minting': 'Finish FUND minting', erc20: 'Deploy FUND token', 'sticky-setup': 'Create staking pool',
   'income-launch': 'Launch INCOME', sale: 'Open sale claims',
   'fund-credit': 'Claim FUND', 'fund-transfer': 'Transfer FUND', 'fund-bridge': 'Bridge FUND',
@@ -36,20 +38,21 @@ const actionLabels: Readonly<Record<string, string>> = {
   borrow: 'Borrow', repay: 'Repay loan', refinance: 'Refinance loan', 'transfer-loan': 'Transfer loan',
   scheduled: 'Collect scheduled allocation',
 }
-const tokenAccountActions = new Set(['fund-credit', 'fund-transfer', 'income-credit', 'income-transfer'])
+const tokenAccountActions = new Set(['fund-cashout', 'refund', 'sale-claim', 'income-cashout', 'fund-credit', 'fund-transfer', 'income-credit', 'income-transfer'])
 
 /** Contextual demo controls. All signing stays in the verified live action forms. */
-export function ProjectActionGuide({ stage, section, actionIds = [], onlyIds, ownerActionIds, onAction, onNavigate }: ProjectActionGuideProps) {
+export function ProjectActionGuide({ stage, section, goalReached = false, actionIds = [], onlyIds, ownerActionIds, onAction, onNavigate }: ProjectActionGuideProps) {
   const id = useId()
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const ready = useSyncExternalStore(subscribeToReadiness, readyOnClient, readyOnServer)
-  const contextKey = `${stage}:${section}:${onlyIds?.join(',') ?? '*'}`
+  const contextKey = `${stage}:${section}:${goalReached}:${onlyIds?.join(',') ?? '*'}`
   const [view, setView] = useState<{ contextKey: string; moreOpen: boolean; selected: ProjectGuideAction | null }>({ contextKey, moreOpen: false, selected: null })
   // Changing stage or group dismisses its dialog instead of leaving stale controls open.
   if (view.contextKey !== contextKey) setView({ contextKey, moreOpen: false, selected: null })
   const current = view.contextKey === contextKey ? view : { contextKey, moreOpen: false, selected: null }
-  const groups = projectActionsFor(stage, section)
+  const groups = projectActionsFor(stage, section, goalReached)
   const candidates = [...groups.primary, ...groups.other].filter(entry => !onlyIds || onlyIds.includes(entry.id))
+  if (onlyIds) candidates.sort((a, b) => onlyIds.indexOf(a.id) - onlyIds.indexOf(b.id))
   // Filter before the final priority split so each token keeps its own Claim / Transfer controls.
   const primary = onlyIds
     ? candidates.filter(entry => groups.primary.some(chosen => chosen.id === entry.id) || (section === 'accounts' && tokenAccountActions.has(entry.id))).slice(0, 3)
@@ -61,7 +64,7 @@ export function ProjectActionGuide({ stage, section, actionIds = [], onlyIds, ow
   const control = (entry: ProjectGuideAction) => {
     const review = onAction && actionIds.includes(entry.id)
     const label = actionLabels[entry.id] ?? entry.title
-    if (section === 'stages' && !review) return <a
+    if (section === 'stages' && entry.section !== 'operators' && !review) return <a
       key={entry.id}
       className="outline-button pag-control"
       data-project-action={entry.id}

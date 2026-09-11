@@ -24,10 +24,10 @@ export type DemoActivityEvent = {
   period: string;
   amount?: number;
   unit?: 'USD' | 'FUND' | 'INCOME';
+  tokens?: { amount: number; unit: 'FUND' | 'INCOME'; action: 'issued' | 'redeemed' };
 };
 
 const contributionWeights = [8, 12, 15, 10, 15, 12, 18, 10];
-const contributionMemos = ['The raise is underway.', 'Building the purchase budget.', 'Backing the asset.', 'Adding to the acquisition fund.', 'Growing contributor ownership.', 'Supporting the shared purchase.', 'Moving the raise forward.', 'Adding community backing.'];
 const dollars = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
 const number = (value: number) => new Intl.NumberFormat('en-US', { maximumFractionDigits: 9 }).format(value);
 
@@ -51,8 +51,8 @@ function splitCents(total: number, weights: readonly number[]): number[] {
  */
 export function buildDemoActivity(p: Projection): DemoActivityEvent[] {
   const events: DemoActivityEvent[] = [];
-  const add = (id: string, kind: DemoActivityKind, title: string, detail: string, period: string, amount?: number, unit?: DemoActivityEvent['unit']) => {
-    events.push({ id, kind, title, detail, period, ...(amount === undefined ? {} : { amount, unit }) });
+  const add = (id: string, kind: DemoActivityKind, title: string, detail: string, period: string, amount?: number, unit?: DemoActivityEvent['unit'], tokens?: DemoActivityEvent['tokens']) => {
+    events.push({ id, kind, title, detail, period, ...(amount === undefined ? {} : { amount, unit }), ...(tokens ? { tokens } : {}) });
   };
   const setting = (id: string, title: string, detail: string, amount?: number, unit?: DemoActivityEvent['unit']) => add(`setup-${id}`, 'configuration', title, detail, 'Setup', amount, unit);
 
@@ -87,7 +87,7 @@ export function buildDemoActivity(p: Projection): DemoActivityEvent[] {
     if (!cents) return;
     raisedCents += cents;
     const period = `Raise day ${index + 2}`;
-    add(`contribution-${index}`, 'contribution', 'Contribution received', `${number(cents * 100)} FUND issued. ${contributionMemos[index]}`, period, cents / 100, 'USD');
+    add(`contribution-${index}`, 'contribution', 'Contribution received', `${number(cents * 100)} FUND issued.`, period, cents / 100, 'USD', { amount: cents * 100, unit: 'FUND', action: 'issued' });
     while (milestone <= 100 && BigInt(raisedCents) * 100n >= BigInt(goalCents) * BigInt(milestone)) {
       add(`raise-${milestone}`, 'milestone', milestone === 100 ? 'Raise goal reached' : `${milestone}% of the goal reached`, `${dollars(raisedCents / 100)} raised in this illustrative history.`, period);
       milestone += 25;
@@ -100,7 +100,7 @@ export function buildDemoActivity(p: Projection): DemoActivityEvent[] {
     add('refunds-opened', 'refund', 'Refunds opened', `${dollars(p.phase === 'refunding' ? p.refundableCash : p.refundedCash)} remains after pre-purchase spending for contributor refunds.`, 'Refunds');
     if (p.phase === 'refunded') {
       splitCents(Math.round(p.refundedCash * 100), portions).forEach((cents, index) => {
-        if (cents) add(`refund-${index}`, 'refund', 'Refund sent', `${number(portions[index] * 100)} FUND redeemed for this share of the remaining escrow.`, 'Refunds complete', -cents / 100, 'USD');
+        if (cents) add(`refund-${index}`, 'refund', 'Refund sent', `${number(portions[index] * 100)} FUND redeemed for this share of the remaining escrow.`, 'Refunds complete', -cents / 100, 'USD', { amount: portions[index] * 100, unit: 'FUND', action: 'redeemed' });
       });
       add('refunds-complete', 'milestone', 'Refunds complete', 'The remaining refund cash has been distributed; no escrow remains.', 'Refunds complete');
       if (p.fundInvestorSupply > 0) add('fund-refund-burn', 'issuance', 'Refunded FUND burned', 'The completed refund stage leaves no FUND supply outstanding.', 'Refunds complete', -p.fundInvestorSupply, 'FUND');

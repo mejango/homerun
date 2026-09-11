@@ -54,20 +54,64 @@ async function openOther(section) {
     await expect(more).toHaveAttribute('aria-expanded', 'true')
   }
 }
-async function inspect(section, id, text = []) {
+async function inspect(section, id, text = [], keyboard = false) {
   const action = entry(section, id)
   await expect(action).toBeVisible()
   assert.equal(await action.evaluate(element => element.tagName), 'BUTTON', 'An available action is itself a button')
-  await action.click()
+  if (keyboard) {
+    await action.focus()
+    await page.keyboard.press('Enter')
+  } else await action.click()
   const dialog = page.getByRole('dialog')
   await expect(dialog).toBeVisible()
   await expect(dialog).toHaveAccessibleName(/\S/)
+  assert.ok(await dialog.evaluate(element => element.contains(document.activeElement)), 'Opening a dialog moves focus inside')
   await expect(dialog.locator('.pag-description')).toBeVisible()
   for (const expected of text) await expect(dialog).toContainText(expected)
   await expect(dialog.getByRole('button', { name: 'Preview in demo', exact: true })).toHaveCount(0)
-  await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+  if (keyboard) {
+    await accessible('dialog[open]')
+    await page.keyboard.press('Tab')
+    assert.ok(await dialog.evaluate(element => element.contains(document.activeElement)), 'Tab keeps focus in the open dialog')
+    await page.keyboard.press('Escape')
+  } else await dialog.getByRole('button', { name: 'Close', exact: true }).click()
   await expect(dialog).toHaveCount(0)
   await expect(action).toBeFocused()
+}
+async function stageActions(phase, expected) {
+  await expect(page.locator('.demo-stage-history [data-project-action]')).toHaveCount(0)
+  await expect(page.locator('.demo-stage-history [data-action-section]')).toHaveCount(0)
+  const raise = ['raising', 'funded'].includes(phase)
+  await expect(page.locator('[data-raise-actions]')).toHaveCount(raise ? 1 : 0)
+  if (!expected.length) {
+    await expect(guide('stages')).toHaveCount(0)
+    return
+  }
+  await expect(guide('stages')).toHaveAttribute('data-action-stage', phase)
+  assert.deepEqual(await guide('stages').locator('[data-project-action]').evaluateAll(nodes => nodes.map(node => node.dataset.projectAction)), expected)
+  await expect(guide('stages').getByRole('heading')).toHaveCount(0)
+  await expect(guide('stages').locator('[data-project-action="contribute"], [data-project-action="income-pay"]')).toHaveCount(0)
+  if (raise) {
+    await expect(page.locator('.phase-panel + [data-raise-actions] [data-action-section="stages"]')).toBeVisible()
+  } else {
+    await expect(page.locator('.phase-panel + [data-action-section="stages"]')).toBeVisible()
+  }
+  assert.ok(await guide('stages').locator('[data-project-action]').evaluateAll((nodes, tag) => nodes.every(node => node.tagName === tag), raise ? 'BUTTON' : 'A'), raise ? 'Raise actions open local review dialogs' : 'Holder stage actions navigate to account controls')
+}
+async function accountAction(id, token) {
+  const action = entry('accounts', id)
+  await expect(action).toBeVisible()
+  await expect(action.locator('xpath=ancestor::*[@data-account-section][1]')).toHaveAttribute('data-account-section', 'you')
+  await expect(action.locator('xpath=ancestor::dl[1]')).toHaveClass(/demo-account-balances/)
+  await expect(action.locator('xpath=ancestor::dd[1]/parent::div/dt')).toHaveText(token)
+}
+async function marketWithoutActions() {
+  await ownersTab('Market')
+  const market = page.getByRole('tabpanel', { name: 'Market', exact: true })
+  await expect(market.getByRole('heading', { name: 'FUND', exact: true })).toBeVisible()
+  await expect(market.getByRole('heading', { name: 'INCOME', exact: true })).toBeVisible()
+  await expect(market.locator('[data-project-action]')).toHaveCount(0)
+  await expect(guide('market')).toHaveCount(0)
 }
 async function accessible(selector) {
   const result = await new AxeBuilder({ page }).include(selector).withTags(['wcag2a', 'wcag2aa']).analyze()
@@ -81,50 +125,91 @@ try {
     await expect(page.locator('.simulator')).toHaveAttribute('data-ready', 'true', { timeout: 60000 })
     await expect(globalCta).toHaveCount(0)
 
-    // Each journey phase surfaces a short, relevant next-action list in place.
+    // Actions belong below the current phase card, never inside the history.
     const phases = {
-      raising: ['contribute', 'fund-cashout', 'close'],
-      funded: ['allowance', 'withdraw', 'income-launch'],
-      refunding: ['refund', 'return', 'fail'],
+      raising: ['pause', 'fail', 'return'],
+      funded: ['pause', 'withdraw', 'offchain'],
+      refunding: [],
       refunded: [],
-      earning: ['income-pay', 'initial-income', 'stake'],
-      liquidated: ['unstake', 'sale-claim', 'collect'],
+      earning: ['initial-income', 'stake'],
+      liquidated: ['unstake', 'collect'],
     }
     for (const [phase, expected] of Object.entries(phases)) {
       await selectPhase(phase)
-      if (expected.length) {
-        await expect(guide('stages')).toHaveAttribute('data-action-stage', phase)
-        assert.deepEqual(await guide('stages').locator('[data-project-action]').evaluateAll(nodes => nodes.map(node => node.dataset.projectAction)), expected)
-        await expect(guide('stages').getByRole('heading')).toHaveCount(0)
-        await expect(guide('stages').locator('xpath=ancestor::li[1]')).toHaveAttribute('data-stage-state', 'current')
-        assert.ok(await guide('stages').locator('[data-project-action]').evaluateAll(nodes => nodes.every(node => node.tagName === 'A')), 'Stage actions are direct navigation links')
-      } else {
-        await expect(guide('stages')).toHaveCount(0)
-      }
+      await stageActions(phase, expected)
       await expect(globalCta).toHaveCount(0)
       await fits()
     }
 
-    // A functional operator shortcut opens a review without changing the preview stage.
+    // Reaching the goal changes guidance without changing the modeled phase.
     await selectPhase('raising')
-    await operatorsTab()
-    const close = entry('operators', 'close')
-    await expect(close).toHaveAttribute('data-owner-action', 'close_raise')
-    await close.click()
-    const ownerDialog = page.getByRole('dialog', { name: 'Close the raise', exact: true })
-    await expect(ownerDialog).toBeVisible()
-    await expect(ownerDialog).toContainText('Review only.')
-    await expect(guide('operators')).toHaveAttribute('data-action-stage', 'raising')
+    const progress = page.locator('#field-raisedPercent')
+    await progress.fill('60')
+    await stageActions('raising', phases.raising)
+    assert.deepEqual(await guide('stages').getByRole('button').allTextContents(), ['Pause raise', 'Open refunds', 'Inject funds'])
+    await inspect('stages', 'pause', [], true)
+    await inspect('stages', 'return')
+    const refunds = entry('stages', 'fail')
+    await expect(refunds).toHaveAttribute('data-owner-action', 'enable_refunds')
+    await refunds.focus()
+    await page.keyboard.press('Enter')
+    const refundDialog = page.getByRole('dialog', { name: 'Enable refunds', exact: true })
+    await expect(refundDialog).toBeVisible()
+    await expect(refundDialog).toContainText('Review only.')
     await page.keyboard.press('Escape')
-    await expect(ownerDialog).toHaveCount(0)
-    await expect(guide('operators')).toHaveAttribute('data-action-stage', 'raising')
+    await expect(refundDialog).toHaveCount(0)
+    await expect(refunds).toBeFocused()
+    await stageActions('raising', phases.raising)
+    await page.locator('[data-raise-actions]').scrollIntoViewIfNeeded()
+    await accessible('[data-raise-actions]')
+    await page.screenshot({ path: `/tmp/homerun-raise-actions-${width}.png` })
 
-    // Stages take the user to the existing payment, account and operator areas.
+    await progress.fill('100')
+    await stageActions('raising', phases.funded)
+    await expect(page.locator('.phase-buttons button[data-phase="raising"]')).toHaveAttribute('aria-pressed', 'true')
+    await expect(entry('stages', 'withdraw')).toHaveText('Withdraw funds')
+    await expect(entry('stages', 'offchain')).toHaveText('Mint tokens for offchain contributions')
+    await inspect('stages', 'withdraw')
+    await inspect('stages', 'offchain')
+    await progress.fill('60')
+    await stageActions('raising', phases.raising)
+
+    // Refund scenarios do not regain purchase controls even at 100% raised.
+    for (const phase of ['refunding', 'refunded']) {
+      await selectPhase(phase)
+      await progress.fill('100')
+      await stageActions(phase, [])
+    }
+    await selectPhase('raising')
+    await progress.fill('60')
+
+    // Cash-out controls sit first beside the corresponding balance under You.
+    await ownersTab('Accounts')
+    await accountAction('fund-cashout', 'FUND')
+    assert.deepEqual(await entry('accounts', 'fund-cashout').locator('xpath=ancestor::section[@data-action-section][1]').locator('[data-project-action]:visible').evaluateAll(nodes => nodes.map(node => node.dataset.projectAction)), ['fund-cashout', 'fund-credit', 'fund-transfer'])
+    await inspect('accounts', 'fund-cashout')
+    await marketWithoutActions()
+
+    // Fundraise controls are not duplicated in the back office.
+    await operatorsTab()
+    for (const id of ['pause', 'close', 'fail', 'return', 'withdraw', 'offchain']) await expect(entry('operators', id)).toHaveCount(0)
+
     await selectPhase('funded')
-    await entry('stages', 'withdraw').click()
-    await expect(page.locator('.homerun-project-layout')).toHaveAttribute('data-project-tab', 'operators')
+    await stageActions('funded', phases.funded)
+    await inspect('stages', 'withdraw', [], true)
+    await guide('stages').scrollIntoViewIfNeeded()
+    await accessible('[data-raise-actions]')
+    await page.screenshot({ path: `/tmp/homerun-funded-actions-${width}.png` })
+    await operatorsTab()
     await expect(guide('operators')).toHaveAttribute('data-action-stage', 'funded')
-    await inspect('operators', 'withdraw')
+    for (const id of ['pause', 'close', 'fail', 'return', 'withdraw', 'offchain']) await expect(entry('operators', id)).toHaveCount(0)
+    await page.getByRole('button', { name: 'Prepare purchase & allocation', exact: true }).click()
+    const purchaseDialog = page.getByRole('dialog', { name: 'Complete purchase and issue revenue tokens', exact: true })
+    await expect(purchaseDialog).toBeVisible()
+    await expect(purchaseDialog).toContainText('Review only.')
+    await page.keyboard.press('Escape')
+    await expect(purchaseDialog).toHaveCount(0)
+    await expect(guide('operators')).toHaveAttribute('data-action-stage', 'funded')
     await openOther('operators')
     await inspect('operators', 'operator-share', ['Issue the operator’s FUND share'])
     await expect(guide('operators').locator('[data-project-action="fund-transfer"]')).toHaveCount(0)
@@ -133,29 +218,29 @@ try {
     await fits()
 
     await selectPhase('earning')
-    await entry('stages', 'income-pay').click()
-    await expect(page.locator('#pay-panel')).toBeVisible()
-    await expect(page).toHaveURL(/#pay-panel$/)
     await entry('stages', 'initial-income').click()
     await expect(page.locator('.homerun-project-layout')).toHaveAttribute('data-project-tab', 'owners')
     await expect(page.locator('[data-account-section="you"]')).toBeVisible()
     await expect(page.locator('[data-account-section="all"]')).toBeVisible()
     await expect(guide('accounts')).toHaveCount(3)
-    await expect(entry('accounts', 'fund-transfer').locator('xpath=ancestor::dl[1]')).toHaveClass(/demo-account-balances/)
-    await expect(entry('accounts', 'income-transfer').locator('xpath=ancestor::dl[1]')).toHaveClass(/demo-account-balances/)
+    await accountAction('fund-transfer', 'FUND')
+    await accountAction('income-cashout', 'INCOME')
+    await expect(entry('accounts', 'fund-cashout')).toHaveCount(0)
     await expect(entry('accounts', 'stake').locator('xpath=ancestor::dl')).toHaveCount(0)
+    await inspect('accounts', 'income-cashout', [], true)
     await inspect('accounts', 'initial-income', ['Claim the initial INCOME allocation', 'Snapshot recipient', 'Inactive balances and credits count.'])
     await inspect('accounts', 'stake')
     await openOther('accounts')
+    await accountAction('income-transfer', 'INCOME')
     await inspect('accounts', 'fund-transfer')
     await inspect('accounts', 'income-transfer')
     await expect(guide('accounts').locator('[data-project-action="borrow"]')).toHaveCount(0)
     await accessible('[data-action-section="accounts"]')
     await fits()
+    await page.locator('[data-account-section="you"]').scrollIntoViewIfNeeded()
+    await page.screenshot({ path: `/tmp/homerun-account-actions-${width}.png` })
 
-    await ownersTab('Market')
-    await inspect('market', 'income-cashout')
-    await expect(guide('market').locator('[data-project-action="fund-cashout"]')).toHaveCount(0)
+    await marketWithoutActions()
     await ownersTab('Settlement')
     await inspect('settlement', 'fund-bridge')
     await inspect('settlement', 'income-bridge')
@@ -172,15 +257,20 @@ try {
     await accessible('[data-action-section="loans"]')
     await fits()
 
-    // Refunds and asset sales show the corresponding cash-out controls in Market.
+    // Refund and sale claims stay beside FUND; INCOME retains its separate cash-out.
     await selectPhase('refunding')
-    await entry('stages', 'refund').click()
-    await inspect('market', 'refund')
-    await expect(guide('market').locator('[data-project-action="income-cashout"]')).toHaveCount(0)
+    await ownersTab('Accounts')
+    await accountAction('refund', 'FUND')
+    await inspect('accounts', 'refund')
+    await expect(entry('accounts', 'income-cashout')).toHaveCount(0)
+    await marketWithoutActions()
     await selectPhase('liquidated')
-    await entry('stages', 'sale-claim').click()
-    await inspect('market', 'sale-claim')
-    await inspect('market', 'income-cashout')
+    await entry('stages', 'unstake').click()
+    await accountAction('sale-claim', 'FUND')
+    await accountAction('income-cashout', 'INCOME')
+    await inspect('accounts', 'sale-claim')
+    await inspect('accounts', 'income-cashout')
+    await marketWithoutActions()
     await operatorsTab()
     await expect(guide('operators')).toHaveAttribute('data-action-stage', 'liquidated')
     await inspect('operators', 'sale')
@@ -190,7 +280,7 @@ try {
     await guide('stages').scrollIntoViewIfNeeded()
     await accessible('[data-action-section="stages"]')
     await page.screenshot({ path: `/tmp/homerun-project-actions-${width}.png` })
-    console.log(`PASS ${width}px: contextual stage links, per-token action buttons, review dialogs, inline operator navigation, More actions, and layout`)
+    console.log(`PASS ${width}px: raise footer actions, goal-aware guidance, refund exclusions, per-token account cash-outs, review dialogs, operator deduplication, and accessibility`)
   }
 
   // Create renders its own setup flow without the old global action catalogue,

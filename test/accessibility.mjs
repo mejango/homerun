@@ -18,7 +18,7 @@ page.setDefaultTimeout(15_000);
 page.setDefaultNavigationTimeout(120_000);
 const demoURL = new URL('/founderhaus', process.env.BASE_URL || 'http://localhost:3010/').href;
 const homeURL = new URL('/', demoURL).href;
-const ownerActions = [['raising', 'close_raise'], ['raising', 'enable_refunds'], ['funded', 'complete_purchase'], ['earning', 'enable_sale_redemptions']];
+const ownerActions = [['raising', 'enable_refunds'], ['funded', 'complete_purchase'], ['earning', 'enable_sale_redemptions']];
 let violations = 0;
 let checks = 0;
 async function tab(name) {
@@ -54,7 +54,8 @@ async function closeDialog(id) {
   await expect(page.locator(id)).toHaveCount(0);
 }
 async function reveal(selector) {
-  if (/data-owner-action|#owner-tools/.test(selector)) await tab('Operators');
+  if (/enable_refunds|data-raise-actions/.test(selector)) await tab('Stages');
+  else if (/data-owner-action|#owner-tools/.test(selector)) await tab('Operators');
   else if (/your-|quote-month|data-chart-kind.*loan/.test(selector)) await owners();
   else if (/field-|reserve-stress|fund-total-supply/.test(selector)) await tab('Stages');
   const locator = page.locator(selector);

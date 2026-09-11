@@ -80,7 +80,8 @@ async function owners(account = 'You') {
   await page.locator(`[data-account-section="${account.toLowerCase()}"]`).scrollIntoViewIfNeeded();
 }
 async function navigateTo(selector) {
-  if (/data-owner-action|#owner-tools/.test(selector)) await tab('Operators');
+  if (/enable_refunds|data-raise-actions/.test(selector)) await tab('Stages');
+  else if (/data-owner-action|#owner-tools/.test(selector)) await tab('Operators');
   else if (/download-scenario|site-integration/.test(selector)) await tab('Extras');
   else if (/data-ownership-chart|fund-ownership-preview/.test(selector)) await owners('All');
   else if (/your-|quote-month|combined-cashout|loan-status|fund-details|fund-position-preview|data-chart-kind.*loan/.test(selector)) await owners();
@@ -545,31 +546,43 @@ try {
     },
   );
   await check(
-    "Owner drafts expose blockers and preserve review before a scenario change",
+    "Raise actions follow progress without treating Pause as a completed raise",
     async () => {
       await open();
-      await tab("Operators");
-      await (await reveal("[data-owner-action=close_raise]")).click();
-      await expect(page.locator("#owner-dialog")).toContainText(
-        "Prerequisites not met",
-      );
-      await expect(page.locator("#preview-owner-state")).toBeDisabled();
+      await tab("Stages");
+      const actions = page.locator("[data-raise-actions]");
+      const pauseDialog = page.getByRole("dialog", { name: "Pause or resume contributions", exact: true });
+      await expect(actions.getByRole("button")).toHaveText([
+        "Pause raise", "Open refunds", "Inject funds",
+      ]);
+      await actions.getByRole("button", { name: "Pause raise", exact: true }).click();
+      await expect(pauseDialog).toBeVisible();
+      await expect(page.locator("#preview-owner-state")).toHaveCount(0);
+      await expect(page.locator("[data-owner-action=close_raise]")).toHaveCount(0);
       await expect(page.locator("#project-journey")).toHaveAttribute(
         "data-journey-phase",
         "raising",
       );
-      const draft = JSON.parse((await download("#download-owner-draft")).text);
-      assert.equal(draft.executable, false);
-      await dismiss("#owner-dialog");
+      await page.keyboard.press("Escape");
+      await expect(pauseDialog).toHaveCount(0);
       await field("raisedPercent", 100);
-      await tab('Operators');
-      await (await reveal("[data-owner-action=close_raise]")).click();
-      await expect(page.locator("#preview-owner-state")).toBeEnabled();
-      await page.locator("#preview-owner-state").click();
+      const purchaseActions = ["Pause raise", "Withdraw funds", "Mint tokens for offchain contributions"];
+      await expect(actions.getByRole("button")).toHaveText(purchaseActions);
+      await actions.getByRole("button", { name: "Pause raise", exact: true }).click();
+      await expect(pauseDialog).toBeVisible();
+      await expect(page.locator("#preview-owner-state")).toHaveCount(0);
       await expect(page.locator("#project-journey")).toHaveAttribute(
         "data-journey-phase",
-        "funded",
+        "raising",
       );
+      await page.keyboard.press("Escape");
+      await expect(pauseDialog).toHaveCount(0);
+      await phase("funded");
+      await expect(actions.getByRole("button")).toHaveText(purchaseActions);
+      for (const value of ["refunding", "refunded"]) {
+        await phase(value);
+        await expect(actions).toHaveCount(0);
+      }
     },
   );
   await check(
@@ -582,7 +595,6 @@ try {
       ]) {
         await open();
         await phase(stage);
-        await tab("Operators");
         await (await reveal(`[data-owner-action="${action}"]`)).click();
         await expect(page.locator("#owner-dialog")).toContainText(
           "Nothing is signed, submitted, queued or changed on-chain",
@@ -592,7 +604,13 @@ try {
         );
         assert.equal(draft.executable, false);
         assert.ok(draft.steps.length > 0);
-        await dismiss("#owner-dialog");
+        await expect(page.locator("#project-journey")).toHaveAttribute("data-journey-phase", stage);
+        if (action === "enable_refunds") {
+          await expect(page.locator("#preview-owner-state")).toBeEnabled();
+          await page.locator("#preview-owner-state").click();
+          await expect(page.locator("#project-journey")).toHaveAttribute("data-journey-phase", "refunding");
+          await expect(page.locator("#owner-dialog")).toHaveCount(0);
+        } else await dismiss("#owner-dialog");
       }
     },
   );

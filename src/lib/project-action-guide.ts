@@ -18,11 +18,11 @@ export const projectActionSections: Record<ProjectActionSection, { title: string
   operators: { title: 'Operator actions', tabLabel: 'Operators', href: '#operators' },
 }
 
-/** Payments belong to the persistent payment panel; Market contains cash-outs. */
+/** Payments belong to the persistent payment panel; cash-outs sit beside account balances. */
 export const projectActionIds: Record<ProjectActionSection, readonly string[]> = {
   stages: ['contribute', 'income-pay'],
-  accounts: ['fund-credit', 'fund-transfer', 'fund-burn', 'initial-income', 'stake', 'unstake', 'vest', 'collect', 'income-credit', 'income-transfer', 'income-burn'],
-  market: ['fund-cashout', 'refund', 'sale-claim', 'income-cashout'],
+  accounts: ['fund-cashout', 'refund', 'sale-claim', 'income-cashout', 'fund-credit', 'fund-transfer', 'fund-burn', 'initial-income', 'stake', 'unstake', 'vest', 'collect', 'income-credit', 'income-transfer', 'income-burn'],
+  market: [],
   settlement: ['fund-bridge', 'income-bridge'],
   splits: ['reserved', 'scheduled'],
   loans: ['borrow', 'repay', 'refinance', 'transfer-loan'],
@@ -31,12 +31,12 @@ export const projectActionIds: Record<ProjectActionSection, readonly string[]> =
 
 const nextActions: Record<TransactionStage, readonly string[]> = {
   create: [],
-  raising: ['contribute', 'fund-cashout', 'close'],
-  funded: ['allowance', 'withdraw', 'income-launch'],
-  refunding: ['refund', 'return', 'fail'],
+  raising: ['pause', 'fail', 'return'],
+  funded: ['pause', 'withdraw', 'offchain'],
+  refunding: [],
   refunded: [],
-  earning: ['income-pay', 'initial-income', 'stake'],
-  liquidated: ['unstake', 'sale-claim', 'collect'],
+  earning: ['initial-income', 'stake'],
+  liquidated: ['unstake', 'collect'],
 }
 
 const operatorOrder: Record<TransactionStage, readonly string[]> = {
@@ -51,7 +51,7 @@ const operatorOrder: Record<TransactionStage, readonly string[]> = {
 
 const primaryIds: Partial<Record<ProjectActionSection, readonly string[]>> = {
   accounts: ['initial-income', 'collect', 'stake', 'fund-credit', 'fund-transfer', 'income-credit', 'income-transfer'],
-  market: ['sale-claim', 'refund', 'fund-cashout', 'income-cashout'],
+  market: [],
   settlement: ['fund-bridge', 'income-bridge'],
   splits: ['reserved'],
   loans: ['borrow', 'repay'],
@@ -84,16 +84,18 @@ function ordered(entries: ProjectGuideAction[], ids: readonly string[]): Project
 }
 
 /** Stage selects relevant guidance; it never establishes contract permissions. */
-export function projectActionsFor(stage: TransactionStage, section: ProjectActionSection): {
+export function projectActionsFor(stage: TransactionStage, section: ProjectActionSection, goalReached = false): {
   primary: ProjectGuideAction[]
   other: ProjectGuideAction[]
 } {
-  const relevant = transactionCatalog.filter(entry => entry.stages.includes(stage)).flatMap(entry => {
+  // Reaching the goal changes suggested purchase guidance, never live permissions.
+  const guidanceStage = section === 'stages' && stage === 'raising' && goalReached ? 'funded' : stage
+  const relevant = transactionCatalog.filter(entry => entry.stages.includes(guidanceStage)).flatMap(entry => {
     const mapped = action(entry)
     return mapped ? [mapped] : []
   })
   if (section === 'stages') return {
-    primary: ordered(relevant.filter(entry => nextActions[stage].includes(entry.id)), nextActions[stage]).slice(0, 3),
+    primary: ordered(relevant.filter(entry => nextActions[guidanceStage].includes(entry.id)), nextActions[guidanceStage]).slice(0, 3),
     other: [],
   }
   const entries = relevant.filter(entry => entry.section === section)
