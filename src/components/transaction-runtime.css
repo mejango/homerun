@@ -33,26 +33,26 @@
    inside the shared dialogs, allowing the reference utility classes to remain
    authoritative for layout, readability, focus, and the confirmation footer. */
 dialog.modal-dialog,
-dialog.modal-dialog :where(*),
-dialog.ui-modal-host { all: revert-layer; }
+dialog.ui-modal-host,
+dialog:is(.modal-dialog, .ui-modal-host) :where(*) { all: revert-layer; }
 dialog.modal-dialog::backdrop,
 dialog.ui-modal-host::backdrop { all: revert-layer; }
 
 @layer components {
   .modal-dialog, .ui-modal-host { box-sizing: border-box; font: 14px/1.6 var(--font-sans); }
-  .modal-dialog :where(*, ::before, ::after) {
+  :is(.modal-dialog, .ui-modal-host) :where(*, ::before, ::after) {
     box-sizing: border-box;
     border-width: 0;
     border-style: solid;
     border-color: currentColor;
   }
-  .modal-dialog :where(h1, h2, h3, h4, p, dl, dd, figure, ul, ol, pre) { margin: 0; }
-  .modal-dialog :where(h1, h2, h3, h4) { font-size: inherit; font-weight: inherit; }
-  .modal-dialog :where(button, input, select, textarea) { font: inherit; color: inherit; }
-  .modal-dialog :where(button) { padding: 0; }
-  .modal-dialog :where(a) { color: inherit; text-decoration: inherit; }
-  .modal-dialog :where(img, svg) { display: block; vertical-align: middle; }
-  .modal-dialog :where(img) { max-width: 100%; height: auto; }
+  :is(.modal-dialog, .ui-modal-host) :where(h1, h2, h3, h4, p, dl, dd, figure, ul, ol, pre) { margin: 0; }
+  :is(.modal-dialog, .ui-modal-host) :where(h1, h2, h3, h4) { font-size: inherit; font-weight: inherit; }
+  :is(.modal-dialog, .ui-modal-host) :where(button, input, select, textarea) { font: inherit; color: inherit; }
+  :is(.modal-dialog, .ui-modal-host) :where(button) { padding: 0; }
+  :is(.modal-dialog, .ui-modal-host) :where(a) { color: inherit; text-decoration: inherit; }
+  :is(.modal-dialog, .ui-modal-host) :where(img, svg) { display: block; vertical-align: middle; }
+  :is(.modal-dialog, .ui-modal-host) :where(img) { max-width: 100%; height: auto; }
   .modal-dialog {
     display: none;
     position: fixed;
@@ -90,6 +90,7 @@ dialog.ui-modal-host::backdrop { all: revert-layer; }
   }
   dialog.ui-modal-host[open] { width: 100%; height: 100%; pointer-events: auto; }
   dialog.ui-modal-host::backdrop { background: transparent; }
+  .ui-modal-host .card { border: 1px solid #d8dece; border-radius: .75rem; background: #fff; }
   .modal-dialog .card { border: 1px solid #d8dece; border-radius: .75rem; background: #f7f5ef; }
   .btn-primary, .btn-secondary, .btn-tertiary, .btn-ghost, .btn-link, .icon-button {
     display: inline-flex;
@@ -111,5 +112,5 @@ dialog.ui-modal-host::backdrop { all: revert-layer; }
   .btn-ghost:hover:not(:disabled), .icon-button:hover:not(:disabled) { background: #edf2f4; }
   .btn-link:hover:not(:disabled) { color: #293e35; }
   .icon-button { width: 44px; height: 44px; }
-  .modal-dialog :focus-visible { outline: 2px solid #3f5b66; outline-offset: 3px; }
+  :is(.modal-dialog, .ui-modal-host) :focus-visible { outline: 2px solid #3f5b66; outline-offset: 3px; }
 }
