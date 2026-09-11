@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 const ASSETS = [
-  'home', 'farms', 'business', 'equipment', 'energy',
+  'home', 'business', 'farms', 'equipment', 'energy',
   'coffee cart', 'bakery', 'solar farm', 'robot fleet',
   'moonbase', 'neighborhood', 'food truck', 'dream lab',
   'lemonade stand', 'garden', 'spaceship', 'treehouse',
@@ -19,6 +19,7 @@ export function RotatingAssetHeadline({ playing }: { playing: boolean }) {
   const prefix = useRef<HTMLSpanElement>(null);
   const position = useRef<{ x: number; y: number } | null>(null);
   const slide = useRef<Animation | null>(null);
+  const hasRotated = useRef(false);
 
   useLayoutEffect(() => {
     const node = prefix.current;
@@ -70,13 +71,18 @@ export function RotatingAssetHeadline({ playing }: { playing: boolean }) {
     const node = element.current;
     if (!node) return;
     let inView = false;
-    let interval: ReturnType<typeof setInterval> | undefined;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const advance = () => {
+      hasRotated.current = true;
+      setSelected(index => (index + 1) % ASSETS.length);
+      timeout = setTimeout(advance, 3200);
+    };
     const sync = () => {
-      if (interval !== undefined) clearInterval(interval);
-      interval = undefined;
+      if (timeout !== undefined) clearTimeout(timeout);
+      timeout = undefined;
       const running = playing && inView && !document.hidden;
       node.dataset.rotating = String(running);
-      if (running) interval = setInterval(() => setSelected(index => (index + 1) % ASSETS.length), 3200);
+      if (running) timeout = setTimeout(advance, hasRotated.current ? 3200 : 8000);
     };
     const observer = new IntersectionObserver(([entry]) => {
       inView = entry?.isIntersecting ?? false;
@@ -88,7 +94,7 @@ export function RotatingAssetHeadline({ playing }: { playing: boolean }) {
     return () => {
       observer.disconnect();
       document.removeEventListener('visibilitychange', sync);
-      if (interval !== undefined) clearInterval(interval);
+      if (timeout !== undefined) clearTimeout(timeout);
       node.dataset.rotating = 'false';
     };
   }, [playing]);

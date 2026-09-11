@@ -40,6 +40,17 @@ try {
   await staticContext.close();
 
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  await context.addInitScript(() => {
+    window.homeHeadlineTiming = [];
+    new MutationObserver(() => {
+      const subject = document.querySelector('.home-title-subject');
+      if (subject?.dataset.rotating !== 'true') return;
+      const asset = subject.dataset.currentAsset;
+      if (window.homeHeadlineTiming.at(-1)?.asset !== asset) {
+        window.homeHeadlineTiming.push({ asset, time: performance.now() });
+      }
+    }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-rotating', 'data-current-asset'] });
+  });
   const page = await context.newPage();
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => {
@@ -58,7 +69,7 @@ try {
   });
   const initialGeometry = await heroGeometry();
   const prefix = await page.locator('.home-title-prefix').elementHandle();
-  for (const asset of ['farms', 'business', 'equipment', 'energy']) {
+  for (const asset of ['business', 'farms', 'equipment', 'energy']) {
     // Start observing before the noun changes so the first painted position is captured.
     const frames = await page.evaluate(({ prefix, asset }) => new Promise((resolve, reject) => {
       const subject = document.querySelector('.home-title-subject');
@@ -69,7 +80,7 @@ try {
       const timeout = setTimeout(() => {
         cancelAnimationFrame(frame);
         reject(new Error(`Timed out sampling the prefix transition to ${asset}`));
-      }, 6000);
+      }, asset === 'business' ? 10_000 : 6000);
       const sample = time => {
         const current = document.querySelector('.home-title-prefix');
         const bounds = current.getBoundingClientRect();
@@ -110,6 +121,15 @@ try {
     assert.deepEqual(await heroGeometry(), initialGeometry, `No layout shift when rotating to ${asset}`);
   }
   await prefix.dispose();
+  const headlineTiming = await page.evaluate(() => window.homeHeadlineTiming.slice(0, 5));
+  assert.deepEqual(headlineTiming.map(({ asset }) => asset), ['home', 'business', 'farms', 'equipment', 'energy']);
+  const initialHold = headlineTiming[1].time - headlineTiming[0].time;
+  assert.ok(initialHold >= 7800 && initialHold < 10_000, `The initial home headline holds for 8 seconds before Business (${initialHold.toFixed(0)}ms)`);
+  for (let index = 2; index < headlineTiming.length; index++) {
+    const interval = headlineTiming[index].time - headlineTiming[index - 1].time;
+    assert.ok(interval >= 3000 && interval < 4500, `Later rotations retain the 3.2-second cadence (${interval.toFixed(0)}ms to ${headlineTiming[index].asset})`);
+  }
+  console.log(`Headline sequence passed: Home ${initialHold.toFixed(0)}ms → Business → Farms → Equipment → Energy; later intervals ${headlineTiming.slice(2).map((entry, index) => `${(entry.time - headlineTiming[index + 1].time).toFixed(0)}ms`).join(', ')}.`);
 
   for (const width of [320, 390, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
@@ -213,7 +233,7 @@ try {
   const playing = await canvasSignature(page);
   await page.waitForTimeout(400);
   assert.notEqual(await canvasSignature(page), playing, 'Explicit play works with reduced motion');
-  await page.waitForFunction(previous => document.querySelector('.home-title-subject').dataset.currentAsset !== previous, reducedAsset, { timeout: 6000 });
+  await page.waitForFunction(previous => document.querySelector('.home-title-subject').dataset.currentAsset !== previous, reducedAsset, { timeout: reducedAsset === 'home' ? 10_000 : 6000 });
 
   // The headline pauses while scrolled out of view, even when the artwork is still visible.
   await page.setViewportSize({ width: 390, height: 400 });
@@ -265,7 +285,7 @@ try {
   assert.equal(await legacyPage.locator('#color-grouping').inputValue(), '43', 'Legacy Acid grouping is remembered on later selections');
   assert.equal(await legacyPage.locator('#color-pace').inputValue(), '1.75');
   await legacyContext.close();
-  console.log('Next homepage: SSR, three viewports, stable headline rotation, shared pause, offscreen/background pause, first-use Acid defaults, remembered/legacy Acid settings, color controls, route cleanup, persistence and reduced motion passed.');
+  console.log('Next homepage: SSR, three viewports, 8-second opening hold, Business/Farms order, stable 3.2-second headline rotation, shared pause, offscreen/background pause, first-use Acid defaults, remembered/legacy Acid settings, color controls, route cleanup, persistence and reduced motion passed.');
 } finally {
   await browser.close();
 }
