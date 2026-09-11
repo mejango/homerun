@@ -101,6 +101,11 @@ async function phase(name) {
 async function reveal(selector) {
   await navigateTo(selector);
   const locator = page.locator(selector);
+  const actionGroup = locator.locator('xpath=ancestor::*[@data-action-section][1]');
+  if (await actionGroup.count() && await locator.isHidden()) {
+    const more = actionGroup.getByRole('button', { name: /^More actions/ });
+    if (await more.count() && await more.getAttribute('aria-expanded') !== 'true') await more.click();
+  }
   const ancestors = locator.locator("xpath=ancestor::details");
   for (let i = 0; i < (await ancestors.count()); i++) {
     const detail = ancestors.nth(i);
@@ -544,8 +549,7 @@ try {
     async () => {
       await open();
       await tab("Operators");
-      await page.locator("#owner-tools > summary").click();
-      await page.locator("[data-owner-action=close_raise]").click();
+      await (await reveal("[data-owner-action=close_raise]")).click();
       await expect(page.locator("#owner-dialog")).toContainText(
         "Prerequisites not met",
       );
@@ -559,7 +563,7 @@ try {
       await dismiss("#owner-dialog");
       await field("raisedPercent", 100);
       await tab('Operators');
-      await page.locator("[data-owner-action=close_raise]").click();
+      await (await reveal("[data-owner-action=close_raise]")).click();
       await expect(page.locator("#preview-owner-state")).toBeEnabled();
       await page.locator("#preview-owner-state").click();
       await expect(page.locator("#project-journey")).toHaveAttribute(
@@ -579,8 +583,7 @@ try {
         await open();
         await phase(stage);
         await tab("Operators");
-        await page.locator("#owner-tools > summary").click();
-        await page.locator(`[data-owner-action="${action}"]`).click();
+        await (await reveal(`[data-owner-action="${action}"]`)).click();
         await expect(page.locator("#owner-dialog")).toContainText(
           "Nothing is signed, submitted, queued or changed on-chain",
         );

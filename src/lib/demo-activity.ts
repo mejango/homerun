@@ -26,7 +26,6 @@ export type DemoActivityEvent = {
   unit?: 'USD' | 'FUND' | 'INCOME';
 };
 
-const contributors = ['Juniper', 'Harbor', 'Cedar', 'Maple', 'Orchard', 'Lantern', 'Willow', 'Sol'];
 const contributionWeights = [8, 12, 15, 10, 15, 12, 18, 10];
 const contributionMemos = ['The raise is underway.', 'Building the purchase budget.', 'Backing the asset.', 'Adding to the acquisition fund.', 'Growing contributor ownership.', 'Supporting the shared purchase.', 'Moving the raise forward.', 'Adding community backing.'];
 const dollars = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
@@ -88,7 +87,7 @@ export function buildDemoActivity(p: Projection): DemoActivityEvent[] {
     if (!cents) return;
     raisedCents += cents;
     const period = `Raise day ${index + 2}`;
-    add(`contribution-${index}`, 'contribution', `${contributors[index]} contributed`, `${number(cents * 100)} FUND issued. ${contributionMemos[index]}`, period, cents / 100, 'USD');
+    add(`contribution-${index}`, 'contribution', 'Contribution received', `${number(cents * 100)} FUND issued. ${contributionMemos[index]}`, period, cents / 100, 'USD');
     while (milestone <= 100 && BigInt(raisedCents) * 100n >= BigInt(goalCents) * BigInt(milestone)) {
       add(`raise-${milestone}`, 'milestone', milestone === 100 ? 'Raise goal reached' : `${milestone}% of the goal reached`, `${dollars(raisedCents / 100)} raised in this illustrative history.`, period);
       milestone += 25;
@@ -101,7 +100,7 @@ export function buildDemoActivity(p: Projection): DemoActivityEvent[] {
     add('refunds-opened', 'refund', 'Refunds opened', `${dollars(p.phase === 'refunding' ? p.refundableCash : p.refundedCash)} remains after pre-purchase spending for contributor refunds.`, 'Refunds');
     if (p.phase === 'refunded') {
       splitCents(Math.round(p.refundedCash * 100), portions).forEach((cents, index) => {
-        if (cents) add(`refund-${index}`, 'refund', `${contributors[index]} refunded`, `${number(portions[index] * 100)} FUND redeemed for this share of the remaining escrow.`, 'Refunds complete', -cents / 100, 'USD');
+        if (cents) add(`refund-${index}`, 'refund', 'Refund sent', `${number(portions[index] * 100)} FUND redeemed for this share of the remaining escrow.`, 'Refunds complete', -cents / 100, 'USD');
       });
       add('refunds-complete', 'milestone', 'Refunds complete', 'The remaining refund cash has been distributed; no escrow remains.', 'Refunds complete');
       if (p.fundInvestorSupply > 0) add('fund-refund-burn', 'issuance', 'Refunded FUND burned', 'The completed refund stage leaves no FUND supply outstanding.', 'Refunds complete', -p.fundInvestorSupply, 'FUND');

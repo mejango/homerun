@@ -9,7 +9,6 @@ export function DemoPaymentResult({ result }: { result: PaymentResult }) {
   const circumference = 2 * Math.PI * 40
   const description = result.allocations.map(part => `${part.label}: ${quantity.format(part.tokens)} tokens, ${percent(part.percent)}`).join('; ')
   return <div className={`demo-payment-result ${styles.result}`} data-payment-route={result.route}>
-    <p className={styles.heading}>After this payment</p>
     <div className={styles.summary}>
       <svg viewBox="0 0 104 104" width="104" height="104" role="img" aria-label={`${result.route} ownership after this payment. ${description}`}>
         <title>{`${result.route} ownership after this payment`}</title>

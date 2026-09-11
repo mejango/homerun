@@ -59,6 +59,11 @@ async function reveal(selector) {
   else if (/field-|reserve-stress|fund-total-supply/.test(selector)) await tab('Stages');
   const locator = page.locator(selector);
   await expect(locator).toHaveCount(1);
+  const actionGroup = locator.locator('xpath=ancestor::*[@data-action-section][1]');
+  if (await actionGroup.count() && await locator.isHidden()) {
+    const more = actionGroup.getByRole('button', { name: /^More actions/ });
+    if (await more.count() && await more.getAttribute('aria-expanded') !== 'true') await more.click();
+  }
   if (await locator.locator('xpath=ancestor::*[@id="assumptions-body"]').count() && await page.locator('#assumptions-body').isHidden()) await page.locator('#toggle-assumptions').click();
   const ancestors = locator.locator('xpath=ancestor::details');
   for (let index = 0; index < await ancestors.count(); index++) {

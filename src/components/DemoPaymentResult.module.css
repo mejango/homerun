@@ -1,5 +1,4 @@
 .result { margin-top: 18px; }
-.heading { margin: 0 0 14px; color: var(--ink-muted, #637061); font-size: 12px; }
 .summary { display: flex; align-items: center; gap: 20px; }
 .summary svg { flex: 0 0 104px; max-width: 40%; height: auto; }
 .values { display: grid; gap: 12px; min-width: 0; margin: 0; }

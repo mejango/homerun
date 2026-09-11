@@ -1391,8 +1391,7 @@ function PayPreview({
                   currency === "ETH" ? "pay-conversion" : "",
                   currency === "ETH" && !parsed.error && parsed.amount !== undefined ? "pay-settlement" : "",
                   error ? "pay-error" : "",
-                  "pay-preview-note",
-                ].filter(Boolean).join(" ")}
+                ].filter(Boolean).join(" ") || undefined}
                 onChange={(event) => {
                   const value = event.target.value;
                   if (income) setIncomeRaw(value);
@@ -1471,7 +1470,6 @@ function PayPreview({
         >
           {quote.actionLabel}
         </button>}
-        <p id="pay-preview-note" className="pay-preview-note">Preview only | no transaction</p>
       </form>
       {review && cashStage && (
         <Modal
@@ -1514,7 +1512,6 @@ function DemoOwnerTools({
 }) {
   const [draft, setDraft] = useState<OwnerDraft | null>(null);
   const [draftError, setDraftError] = useState("");
-  const toolsRef = useRef<HTMLDetailsElement>(null);
   const actions: Partial<Record<ProjectPhase, [string, string][]>> = {
     raising: [
       ["close_raise", "Prepare closing"],
@@ -1530,7 +1527,6 @@ function DemoOwnerTools({
   const prepare = (action: string) => {
     try {
       setDraftError("");
-      if (toolsRef.current) toolsRef.current.open = true;
       setDraft(ownerActionDraft(action, projection));
     } catch (error) {
       setDraftError(
@@ -1553,17 +1549,17 @@ function DemoOwnerTools({
         available.some(([action]) => action === reviewActions[id]),
       )}
       onAction={(id) => prepare(reviewActions[id])}
+      ownerActionIds={reviewActions}
     />
   );
   if (!available.length) return guide;
   return (
     <>
-      <details id="owner-tools" ref={toolsRef}>
-        <summary>Owner tools</summary>
-        <div id="owner-actions" className="owner-actions">
-          <p>Demo review drafts only</p>
+      <div id="owner-tools">
+        {guide}
+        {projection.phase === "funded" && <div id="owner-actions" className="owner-actions">
           <div>
-            {available.map(([action, label]) => (
+            {available.filter(([action]) => action === "complete_purchase").map(([action, label]) => (
               <button
                 type="button"
                 className="outline-button"
@@ -1575,7 +1571,7 @@ function DemoOwnerTools({
               </button>
             ))}
           </div>
-        </div>
+        </div>}
         {draftError && (
           <p className="pay-error" role="alert">
             {draftError}
@@ -1669,8 +1665,7 @@ function DemoOwnerTools({
             </div>
           </Modal>
         )}
-      </details>
-      {guide}
+      </div>
     </>
   );
 }
@@ -1796,6 +1791,14 @@ function DemoStageHistory({
   p: Projection | null;
   phase: ProjectPhase;
 }) {
+  const historyRef = useRef<HTMLOListElement>(null);
+  useEffect(() => {
+    const history = historyRef.current;
+    const current = history?.querySelector('[data-stage-state="current"]');
+    if (history && current) {
+      history.scrollLeft += current.getBoundingClientRect().left - history.getBoundingClientRect().left;
+    }
+  }, [phase]);
   const failed = phase === "refunding" || phase === "refunded";
   const steps = failed
     ? [
@@ -1846,7 +1849,7 @@ function DemoStageHistory({
   return (
     <section className="demo-section demo-stage-history">
       <h2>Progress</h2>
-      <ol tabIndex={0} aria-label="Project stages">
+      <ol ref={historyRef} tabIndex={0} aria-label="Project stages">
         {steps.map((step, index) => (
           <li key={step.name} data-stage-state={step.state.toLowerCase()}>
             <span className="demo-stage-number" aria-hidden="true">
@@ -1858,6 +1861,7 @@ function DemoStageHistory({
                 <span>{step.state}</span>
               </div>
               <p>{step.detail}</p>
+              {step.state === "Current" && <ProjectActionGuide stage={phase} section="stages" />}
             </div>
           </li>
         ))}
@@ -1970,18 +1974,20 @@ function DemoOwners({
               <div>
                 <dt>FUND</dt>
                 <dd>{tokenNumber(p.personalFundTokens)}</dd>
+                <dd><ProjectActionGuide stage={phase} section="accounts" onlyIds={["fund-credit", "fund-transfer", "fund-burn"]} /></dd>
               </div>
               <div>
                 <dt>INCOME</dt>
                 <dd>
                   {income ? tokenNumber(p.personalRevTokens) : "Not issued yet"}
                 </dd>
+                {income && <dd><ProjectActionGuide stage={phase} section="accounts" onlyIds={["initial-income", "income-credit", "income-transfer", "income-burn"]} /></dd>}
               </div>
             </dl>
+            <ProjectActionGuide stage={phase} section="accounts" onlyIds={["stake", "unstake", "vest", "collect"]} />
             <div id="fund-position-preview">
               <Contribution p={p} onMonthChange={onMonthChange} />
             </div>
-            <ProjectActionGuide stage={phase} section="accounts" />
           </section>
         ) : (
           unavailable
@@ -2020,6 +2026,7 @@ function DemoOwners({
                     ? "Cash-outs are closed during purchase and operation."
                     : "Estimated cash-out before protocol fees."}
                 </p>
+                <ProjectActionGuide stage={phase} section="market" onlyIds={["fund-cashout", "refund", "sale-claim"]} />
               </div>
               <div>
                 <h3>INCOME</h3>
@@ -2030,9 +2037,9 @@ function DemoOwners({
                   Cash-outs return revenue backing and give up the tokens
                   redeemed.
                 </p>
+                <ProjectActionGuide stage={phase} section="market" onlyIds={["income-cashout"]} />
               </div>
             </div>
-            <ProjectActionGuide stage={phase} section="market" />
           </section>
         ) : (
           unavailable
@@ -2086,6 +2093,7 @@ function DemoOwners({
                     <dd>{money(p.personalLoanFees)}</dd>
                   </div>
                 </dl>
+                <ProjectActionGuide stage={phase} section="loans" />
                 <BorrowingChart projection={p} />
                 <p>
                   Borrowing and cashing out the same INCOME are alternatives.
@@ -2096,7 +2104,6 @@ function DemoOwners({
             ) : (
               <p>Loan projections become available in the Income stage.</p>
             )}
-            <ProjectActionGuide stage={phase} section="loans" />
           </section>
         ) : (
           unavailable
@@ -2314,7 +2321,6 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
             stages={
               <div className="demo-stages">
                 <DemoStageHistory p={overview} phase={phase} />
-                <ProjectActionGuide stage={phase} section="stages" />
                 {p ? (
                   <PhasePanel
                     p={project ? overview! : p}

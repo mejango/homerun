@@ -341,6 +341,11 @@
 .homerun-project-layout .demo-account .outcome > strong {
   font-size: 29px;
 }
+.homerun-project-layout #fund-position-preview > .outcomes + #fund-details,
+.homerun-project-layout #fund-details .math-values + .personal-goal {
+  margin-top: 0;
+  border-top: 0;
+}
 .homerun-project-layout .demo-operators > #owner-tools {
   display: block;
   margin-top: 24px;
