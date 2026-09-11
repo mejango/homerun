@@ -75,6 +75,7 @@ describe('INCOME transaction surfaces', () => {
   let root: Root
   let host: HTMLDivElement
   beforeEach(() => {
+    HTMLElement.prototype.scrollIntoView ??= () => {}
     Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) })
     window.history.replaceState(null, '', '/')
     runtime.mounted = 0; runtime.unmounted = 0; runtime.busy = false; runtime.phase = 'idle'; runtime.sticky = null
@@ -92,10 +93,10 @@ describe('INCOME transaction surfaces', () => {
   })
   afterEach(async () => { await act(async () => root.unmount()); host.remove() })
   async function tab(label: string) {
-    let target = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"], [role="menuitemradio"]')].find(button => button.textContent === label)
+    let target = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(button => button.textContent === label)
     if (!target && ['Operators', 'Extras'].includes(label)) {
-      await act(async () => host.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!.click())
-      target = [...host.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')].find(button => button.textContent === label)
+      await act(async () => host.querySelector<HTMLButtonElement>('.hpl-overflow-trigger')!.click())
+      target = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(button => button.textContent === label)
     }
     expect(target, `Missing ${label} tab`).toBeDefined(); await act(async () => target!.click())
   }

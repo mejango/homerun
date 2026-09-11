@@ -1,12 +1,11 @@
 import Link from 'next/link';
 
 type BrandProps = {
-  tagline?: boolean;
   className?: string;
 };
 
 /** The baseball is artwork, so phones cannot substitute an emoji glyph. */
-export function Brand({ tagline = true, className = '' }: BrandProps) {
+export function Brand({ className = '' }: BrandProps) {
   return (
     <div className={`brand-lockup${className ? ` ${className}` : ''}`}>
       <Link className="brand" href="/" aria-label="Homerun home">
@@ -23,7 +22,6 @@ export function Brand({ tagline = true, className = '' }: BrandProps) {
         {' '}
         <span className="brand-word">Homerun</span>
       </Link>
-      {tagline && <p className="brand-tagline">Run your home&apos;s investments and revenues</p>}
     </div>
   );
 }

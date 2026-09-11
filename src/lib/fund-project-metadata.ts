@@ -5,12 +5,14 @@ import { JBCENTER_IPFS_GATEWAY } from './jbcenter-ipfs'
 /** Standard Juicebox display metadata with Homerun's descriptive plan extension. */
 export function buildFundProjectMetadata(
   values: CreateValues,
-  images: { coverImageUri?: string; logoUri?: string } = {},
+  images: { coverImageUri?: string; logoUri?: string; operatorPhotoUri?: string } = {},
 ) {
-  for (const uri of [images.coverImageUri, images.logoUri]) {
+  for (const uri of [images.coverImageUri, images.logoUri, images.operatorPhotoUri]) {
     if (uri !== undefined && !fundIpfsUrl(uri)) throw new Error('Publish project images to IPFS before saving metadata.')
   }
-  const { photo: _photo, ...setup } = values
+  const { photo: _photo, operatorPhoto: _operatorPhoto, ...setup } = values
+  const operatorName = text(values.operatorName, 80)
+  const operatorIntroduction = text(values.operatorIntroduction, 1_200)
   const metadata = {
     name: values.name.trim(),
     description: values.description.trim() || undefined,
@@ -25,6 +27,11 @@ export function buildFundProjectMetadata(
       version: 1 as const,
       kind: 'fund' as const,
       setup,
+      operator: operatorName || operatorIntroduction || images.operatorPhotoUri ? {
+        name: operatorName ?? undefined,
+        introduction: operatorIntroduction ?? undefined,
+        photoUri: images.operatorPhotoUri,
+      } : undefined,
       incomeProject: null,
       note: 'Income terms are a future plan. This deployment creates only FUND; it does not enforce an asset purchase, outcome, or income distribution.',
     },
@@ -37,6 +44,11 @@ export type FundProjectMetadata = {
   location: string | null
   coverUrl: string | null
   logoUrl: string | null
+  operator: {
+    name: string | null
+    introduction: string | null
+    photoUrl: string | null
+  } | null
   plan: {
     purchaseBudget: number | null
     opsReserve: number | null
@@ -75,12 +87,19 @@ export function parseFundProjectMetadata(value: unknown): FundProjectMetadata {
   if (!metadata) throw new Error('Project metadata is not a JSON object.')
   const homerun = record(metadata.homerun)
   const setup = homerun?.version === 1 && homerun.kind === 'fund' ? record(homerun.setup) : null
+  const profile = setup ? record(homerun?.operator) : null
+  const operator = profile ? {
+    name: text(profile.name, 80),
+    introduction: text(profile.introduction, 1_200),
+    photoUrl: fundIpfsUrl(profile.photoUri),
+  } : null
   return {
     name: text(metadata.name, 160),
     description: text(metadata.description, 4_000),
     location: setup ? text(setup.location, 200) : null,
     coverUrl: fundIpfsUrl(metadata.coverImageUri) ?? fundIpfsUrl(metadata.logoUri),
     logoUrl: fundIpfsUrl(metadata.logoUri),
+    operator: operator && (operator.name || operator.introduction || operator.photoUrl) ? operator : null,
     plan: setup ? {
       purchaseBudget: number(setup.purchaseBudget),
       opsReserve: number(setup.opsReserve),

@@ -23,10 +23,10 @@ let violations = 0;
 let checks = 0;
 async function tab(name) {
   if (['Extras', 'Operators'].includes(name)) {
-    const more = page.getByRole('button', { name: 'More project sections', exact: true });
+    const more = page.getByRole('button', { name: /^More project sections/ });
     if (await more.getAttribute('aria-expanded') !== 'true') await more.click();
-    await page.getByRole('menuitemradio', { name, exact: true }).click();
-    await expect(more).toHaveAttribute('aria-expanded', 'false');
+    await page.getByRole('tab', { name, exact: true }).click();
+    await expect(more).toHaveAttribute('aria-expanded', 'true');
     await expect(page.locator('.homerun-project-layout')).toHaveAttribute('data-project-tab', name.toLowerCase());
     await expect(page.getByRole('tabpanel', { name, exact: true })).toBeVisible();
     return;
@@ -112,7 +112,12 @@ try {
     await phase(value);
     await analyze(value);
   }
-  for (const value of ['raising', 'earning', 'refunding', 'liquidated']) {
+  for (const value of ['raising', 'earning']) {
+    await phase(value);
+    await expect(page.locator('.demo-payment-result svg[role=img]')).toBeVisible();
+    await analyze(`inline payment result: ${value}`);
+  }
+  for (const value of ['refunding', 'liquidated']) {
     await phase(value);
     await page.locator('#pay-review').click();
     await page.locator('#pay-dialog').waitFor({ state: 'visible' });
@@ -120,8 +125,8 @@ try {
     await closeDialog('#pay-dialog');
   }
   await phase('earning');
-  await reveal('#income-payment-results dl');
-  await analyze('expanded independent INCOME ownership and liquidity');
+  await expect(page.locator('.demo-payment-result')).toBeVisible();
+  await analyze('independent INCOME ownership and liquidity');
   await page.locator('#pay-amount').fill('250');
   await analyze('reactive independent INCOME payment details');
   await page.locator('#pay-amount').fill('1.001');
@@ -182,14 +187,15 @@ try {
         await expect(page.locator('#pay-review')).toBeDisabled();
         continue;
       }
+      if (['raising', 'earning'].includes(value)) {
+        await expect(page.locator('.demo-payment-result svg[role=img]')).toBeVisible();
+        await analyze(`${width}px inline payment result: ${value}`);
+        continue;
+      }
       await page.locator('#pay-review').click();
       await page.locator('#pay-dialog').waitFor({ state: 'visible' });
       await analyze(`${width}px payment review: ${value}`);
       await closeDialog('#pay-dialog');
-      if (value === 'earning') {
-        await reveal('#income-payment-results dl');
-        await analyze(`${width}px expanded INCOME payment details`);
-      }
     }
     for (const [value, action] of ownerActions) {
       await phase(value);

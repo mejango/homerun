@@ -68,59 +68,23 @@ function TabStrip<T extends string>({
   level?: 'main' | 'owners'
 }) {
   const ready = useSyncExternalStore(subscribeToReadiness, () => true, () => false)
+  const [overflowExpanded, setOverflowExpanded] = useState(false)
   const overflowTabs = level === 'main' ? tabs.filter((item) => item.key === 'extras' || item.key === 'operators') : []
-  const visibleTabs = tabs.filter((item) => !overflowTabs.includes(item))
-  const overflowSelected = overflowTabs.some((item) => item.key === active)
+  const visibleTabs = tabs.filter((item) => overflowExpanded || !overflowTabs.includes(item))
+  const activeOverflow = overflowTabs.find((item) => item.key === active)
+  const hiddenSelection = !!activeOverflow && !overflowExpanded
   const fallbackFocus = visibleTabs.find((item) => !item.mobileOnly)?.key
-  const [menuOpen, setMenuOpen] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const overflowRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
-  const requestedMenuFocus = useRef<'first' | 'last' | 'active'>('active')
+  const previousExpansion = useRef(false)
 
   useEffect(() => {
-    if (!menuOpen) return
-    const buttons = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') ?? [])
-    const selected = buttons.find((button) => button.getAttribute('aria-checked') === 'true')
-    const target = requestedMenuFocus.current === 'last' ? buttons.at(-1)
-      : requestedMenuFocus.current === 'first' ? buttons[0] : selected ?? buttons[0]
-    target?.focus({ preventScroll: true })
-    const outside = (event: PointerEvent) => {
-      if (event.target instanceof Node && !overflowRef.current?.contains(event.target)) setMenuOpen(false)
-    }
-    const escape = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      setMenuOpen(false)
-      triggerRef.current?.focus({ preventScroll: true })
-    }
-    document.addEventListener('pointerdown', outside)
-    document.addEventListener('keydown', escape)
-    return () => {
-      document.removeEventListener('pointerdown', outside)
-      document.removeEventListener('keydown', escape)
-    }
-  }, [menuOpen])
+    if (previousExpansion.current === overflowExpanded) return
+    previousExpansion.current = overflowExpanded
+    // The trigger moves after the newly revealed tabs. Keep it reachable even
+    // when the whole row is wider than the phone, without moving the page.
+    triggerRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [overflowExpanded])
 
-  const openMenu = (focus: 'first' | 'last' | 'active') => {
-    requestedMenuFocus.current = focus
-    setMenuOpen(true)
-  }
-  const onMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === 'Tab') {
-      setMenuOpen(false)
-      triggerRef.current?.focus({ preventScroll: true })
-      return
-    }
-    if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return
-    const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'))
-    const index = buttons.indexOf(event.target as HTMLButtonElement)
-    if (index < 0) return
-    event.preventDefault()
-    const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
-      : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
-    buttons[next].focus({ preventScroll: true })
-  }
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
     const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
@@ -135,79 +99,61 @@ function TabStrip<T extends string>({
     buttons[next].click()
   }
   return (
-    <div className={`hpl-navigation-bar hpl-navigation-${level}`}>
-    <div className={`hpl-tabs hpl-tabs-${level}`} role="tablist" aria-label={label} aria-orientation="horizontal" aria-busy={!ready} onKeyDown={onKeyDown}>
-      {visibleTabs.map((item) => (
-        <button
-          key={item.key}
-          id={`${id}-tab-${item.key}`}
+    <div className={`hpl-navigation-bar hpl-navigation-${level}`} onKeyDown={(event) => {
+      if (event.key !== 'Escape' || !overflowExpanded) return
+      event.preventDefault()
+      setOverflowExpanded(false)
+      triggerRef.current?.focus({ preventScroll: true })
+    }}>
+      <div className="hpl-tab-scroll" data-project-tab-scroll={level === 'main' ? true : undefined}>
+        <div id={`${id}-tablist`} className={`hpl-tabs hpl-tabs-${level}`} role="tablist" aria-label={label} aria-orientation="horizontal" aria-busy={!ready} onKeyDown={onKeyDown}>
+          {visibleTabs.map((item) => (
+            <button
+              key={item.key}
+              id={`${id}-tab-${item.key}`}
+              type="button"
+              role="tab"
+              aria-selected={active === item.key}
+              aria-controls={`${id}-panel-${item.key}`}
+              tabIndex={active === item.key || (hiddenSelection && item.key === fallbackFocus) ? 0 : -1}
+              disabled={!ready}
+              className={`hpl-tab${item.mobileOnly ? ' hpl-mobile-tab' : ''}`}
+              onClick={() => onSelect(item.key)}
+            >{level === 'main' && <ProjectTabIcon label={item.label} />}<span>{item.label}</span></button>
+          ))}
+        </div>
+        {overflowTabs.length > 0 && <button
+          ref={triggerRef}
           type="button"
-          role="tab"
-          aria-selected={active === item.key}
-          aria-controls={`${id}-panel-${item.key}`}
-          tabIndex={active === item.key || (overflowSelected && item.key === fallbackFocus) ? 0 : -1}
+          className="hpl-overflow-trigger"
+          aria-label={`More project sections${activeOverflow ? `, current: ${activeOverflow.label}` : ''}`}
+          aria-expanded={overflowExpanded}
+          aria-controls={`${id}-tablist`}
+          data-active={hiddenSelection || undefined}
           disabled={!ready}
-          className={`hpl-tab${item.mobileOnly ? ' hpl-mobile-tab' : ''}`}
-          onClick={() => onSelect(item.key)}
-        >{level === 'main' && <ProjectTabIcon label={item.label} />}<span>{item.label}</span></button>
-      ))}
-    </div>
-    {overflowTabs.length > 0 && <div className="hpl-overflow" ref={overflowRef}>
-      <button
-        ref={triggerRef}
-        type="button"
-        className="hpl-overflow-trigger"
-        aria-label="More project sections"
-        aria-haspopup="menu"
-        aria-expanded={menuOpen}
-        aria-controls={`${id}-overflow-menu`}
-        data-active={overflowSelected || undefined}
-        disabled={!ready}
-        onClick={() => menuOpen ? setMenuOpen(false) : openMenu('active')}
-        onKeyDown={(event) => {
-          if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
-          event.preventDefault()
-          openMenu(event.key === 'ArrowUp' ? 'last' : 'first')
-        }}
-      >
-        {overflowSelected && <span className="hpl-overflow-current">{overflowTabs.find((item) => item.key === active)?.label}</span>}
-        <ProjectOverflowIcon />
-      </button>
-      <div
-        id={`${id}-overflow-menu`}
-        ref={menuRef}
-        role="menu"
-        aria-label="More project sections"
-        className="hpl-overflow-menu"
-        hidden={!menuOpen}
-        onKeyDown={onMenuKeyDown}
-      >{overflowTabs.map((item) => <button
-        key={item.key}
-        type="button"
-        role="menuitemradio"
-        aria-checked={active === item.key}
-        tabIndex={-1}
-        onClick={() => {
-          setMenuOpen(false)
-          onSelect(item.key)
-          triggerRef.current?.focus({ preventScroll: true })
-        }}
-      ><ProjectTabIcon label={item.label} /><span>{item.label}</span></button>)}</div>
-      {overflowTabs.map((item) => <span key={item.key} id={`${id}-tab-${item.key}`} className="hpl-overflow-label">{item.label}</span>)}
-    </div>}
+          onClick={() => {
+            setOverflowExpanded((expanded) => !expanded)
+            triggerRef.current?.focus({ preventScroll: true })
+          }}
+        >
+          <span data-overflow-orientation={overflowExpanded ? 'horizontal' : 'vertical'}><ProjectOverflowIcon /></span>
+        </button>}
+      </div>
+      {!overflowExpanded && overflowTabs.map((item) => <span key={item.key} id={`${id}-tab-${item.key}`} className="hpl-overflow-label">{item.label}</span>)}
     </div>
   )
 }
 
 /** Shared project shell. Slots contain the existing model or verified live controls. */
 export function HomerunProjectLayout({
-  title, logo, location, metadata = [], notice, actions, payment, activity,
+  title, logo, location, metadata = [], headerProgress, notice, actions, payment, activity,
   overview, stages, owners, shop, extras, operators, defaultTab = 'overview', tab, onTabChange,
 }: {
   title: ReactNode
   logo?: ReactNode
   location?: string | null
   metadata?: ReactNode[]
+  headerProgress?: ReactNode
   notice?: ReactNode
   actions?: ReactNode
   payment: ReactNode
@@ -295,6 +241,7 @@ export function HomerunProjectLayout({
                   {index > 0 && <span className="hpl-pip" aria-hidden="true">|</span>}{item}
                 </span>)}
               </div>}
+              {headerProgress && <div className="hpl-header-progress">{headerProgress}</div>}
             </div>
           </div>
           {actions && <div className="hpl-header-actions">{actions}</div>}

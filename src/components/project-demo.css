@@ -129,6 +129,10 @@
   font: 500 14px/1.5 var(--sans);
   letter-spacing: 0;
 }
+.homerun-project-layout .demo-activity-body { flex: 1; min-width: 0; }
+.homerun-project-layout .demo-activity-topline { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.homerun-project-layout .demo-activity-amount { margin-left: auto; color: var(--green); font-size: 13px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.homerun-project-layout .demo-activity-period { display: block; margin-top: 7px; color: var(--muted); font-size: 11px; }
 .homerun-project-layout .demo-activity li p {
   margin-top: 5px;
   font-size: 12px;

@@ -26,11 +26,13 @@ async function ownersTab(name) {
   await page.getByRole('tablist', { name: 'Ownership sections', exact: true }).getByRole('tab', { name, exact: true }).click()
 }
 async function operatorsTab() {
-  await page.getByRole('button', { name: 'More project sections', exact: true }).click()
-  const menu = page.getByRole('menu', { name: 'More project sections', exact: true })
-  await expect(menu).toBeVisible()
-  await menu.getByRole('menuitemradio', { name: 'Operators', exact: true }).click()
-  await expect(menu).toBeHidden()
+  const more = page.getByRole('button', { name: /^More project sections/ })
+  if (await more.getAttribute('aria-expanded') !== 'true') await more.click()
+  await expect(more).toHaveAttribute('aria-expanded', 'true')
+  const operators = page.getByRole('tablist', { name: 'Project sections', exact: true }).getByRole('tab', { name: 'Operators', exact: true })
+  await operators.click()
+  await expect(operators).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByRole('menuitemradio')).toHaveCount(0)
   await expect(page.locator('.homerun-project-layout')).toHaveAttribute('data-project-tab', 'operators')
 }
 async function selectPhase(phase) {
@@ -179,7 +181,7 @@ try {
     await guide('stages').scrollIntoViewIfNeeded()
     await accessible('[data-action-section="stages"]')
     await page.screenshot({ path: `/tmp/homerun-project-actions-${width}.png` })
-    console.log(`PASS ${width}px: contextual stage links, owner action sections, operator overflow navigation, accessible disclosures, and layout`)
+    console.log(`PASS ${width}px: contextual stage links, owner action sections, inline operator navigation, accessible disclosures, and layout`)
   }
 
   // Create renders its own setup flow without the old global action catalogue,
@@ -205,7 +207,7 @@ try {
   await expect(page.locator('#draft-name')).toHaveText('Transaction guide check')
   await page.locator('#create-next').click()
   await expect(page.locator('[data-step-panel]')).toHaveAttribute('data-step-panel', '1')
-  const contractualSettings = page.getByRole('group', { name: 'Contractual Settings', exact: true })
+  const contractualSettings = page.getByRole('group', { name: 'Contractual settings', exact: true })
   await expect(contractualSettings).toBeVisible()
   await expect(contractualSettings.locator('#create-operatorFundPercent')).toBeVisible()
   await expect(page.getByRole('group', { name: 'Modeling inputs', exact: true }).locator('#create-purchaseBudget')).toBeVisible()

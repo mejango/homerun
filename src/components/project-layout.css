@@ -32,6 +32,7 @@
 .homerun-project-layout .hpl-location { margin: 8px 0 0; color: var(--muted); font: 400 16px/1.5 var(--sans); overflow-wrap: anywhere; }
 .homerun-project-layout .hpl-metadata { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 0; margin-top: 14px; color: var(--muted); font-size: 14px; line-height: 1.6; }
 .homerun-project-layout .hpl-metadata-item { display: inline-flex; align-items: center; min-width: 0; overflow-wrap: anywhere; }
+.homerun-project-layout .hpl-header-progress { width: 100%; max-width: 480px; margin-top: 12px; }
 .homerun-project-layout .hpl-pip { display: inline-block; margin-inline: 12px; color: #aab3a3; }
 .homerun-project-layout .hpl-header-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 12px; flex-shrink: 0; }
 .homerun-project-layout .hpl-notice { max-width: 840px; margin-top: 16px; color: #48636a; font-size: 13px; line-height: 1.6; }
@@ -41,8 +42,9 @@
 .homerun-project-layout .hpl-payment { min-width: 0; }
 .homerun-project-layout .hpl-activity { margin-top: 28px; min-width: 0; }
 .homerun-project-layout .hpl-main { flex: 1 1 0; min-width: 0; }
-.homerun-project-layout .hpl-navigation-main { display: flex; align-items: stretch; gap: 4px; min-width: 0; border-bottom: 1px solid var(--line); }
-.homerun-project-layout .hpl-navigation-main > .hpl-tabs { flex: 0 1 auto; min-width: 0; border-bottom: 0; }
+.homerun-project-layout .hpl-navigation-main { min-width: 0; border-bottom: 1px solid var(--line); }
+.homerun-project-layout .hpl-navigation-main .hpl-tab-scroll { display: flex; align-items: stretch; gap: 4px; min-width: 0; max-width: 100%; overflow-x: auto; overflow-y: hidden; overscroll-behavior-inline: contain; touch-action: pan-x pan-y; scrollbar-width: thin; }
+.homerun-project-layout .hpl-navigation-main .hpl-tabs { flex: 0 0 auto; overflow: visible; border-bottom: 0; }
 .homerun-project-layout .hpl-tabs { display: flex; align-items: stretch; overflow-x: auto; overflow-y: hidden; overscroll-behavior-inline: contain; touch-action: pan-x pan-y; scrollbar-width: thin; border-bottom: 1px solid var(--line); }
 .homerun-project-layout .hpl-tabs-main { gap: 4px; }
 .homerun-project-layout .hpl-tab-icon { width: 20px; height: 20px; flex: 0 0 20px; }
@@ -66,18 +68,13 @@
 }
 .homerun-project-layout .hpl-tab:hover:not(:disabled) { color: var(--green); background: #eef1e65c; }
 .homerun-project-layout .hpl-tab:disabled { opacity: .65; cursor: progress; }
-.homerun-project-layout .hpl-overflow { position: relative; display: flex; flex: 0 0 auto; }
-.homerun-project-layout .hpl-overflow-trigger { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 44px; min-height: 44px; padding: 8px 10px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.homerun-project-layout .hpl-overflow-trigger { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; padding: 8px 12px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--muted); cursor: pointer; }
 .homerun-project-layout .hpl-overflow-trigger:hover:not(:disabled),
 .homerun-project-layout .hpl-overflow-trigger[data-active] { color: var(--green); border-bottom-color: var(--green); }
 .homerun-project-layout .hpl-overflow-trigger:disabled { opacity: .65; cursor: progress; }
 .homerun-project-layout .hpl-overflow-trigger:focus-visible { outline: 2px solid var(--green); outline-offset: -3px; }
-.homerun-project-layout .hpl-overflow-current { font: 500 13px/1.4 var(--sans); }
-.homerun-project-layout .hpl-overflow-menu { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; min-width: 180px; padding: 5px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); box-shadow: 0 6px 20px #253c321f; }
-.homerun-project-layout .hpl-overflow-menu > button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; padding: 10px 12px; border: 0; border-radius: 3px; background: transparent; color: var(--ink); text-align: left; font: 500 14px/1.4 var(--sans); cursor: pointer; }
-.homerun-project-layout .hpl-overflow-menu > button:hover,
-.homerun-project-layout .hpl-overflow-menu > button[aria-checked='true'] { background: var(--soft); color: var(--green); }
-.homerun-project-layout .hpl-overflow-menu > button:focus-visible { outline: 2px solid var(--green); outline-offset: -2px; }
+.homerun-project-layout .hpl-overflow-trigger > span { display: inline-flex; transition: transform 120ms ease; }
+.homerun-project-layout .hpl-overflow-trigger [data-overflow-orientation='horizontal'] { transform: rotate(90deg); }
 .homerun-project-layout .hpl-overflow-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .homerun-project-layout .hpl-tab[aria-selected='true'] { color: var(--green); border-bottom-color: var(--green); }
 .homerun-project-layout .hpl-tab:focus-visible { outline: 2px solid var(--green); outline-offset: -3px; }

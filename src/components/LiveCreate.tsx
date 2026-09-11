@@ -13,8 +13,7 @@ import CreateFlow, { type CreateValues } from './CreateFlow'
 import { buildFundLaunch, type FundTransaction } from '@/lib/fund-contracts'
 import { FUND_LAUNCH_KEY, decodeLaunchSession, encodeLaunchSession, saveLaunch, updateLaunchStatus, refreshLaunchCreationFee, archiveLaunch, sameSender, type FundLaunchSession, type LaunchStatus } from '@/lib/fund-launch-session'
 import { checkLaunchDeployment, verifyFundLaunch, verifyFailedFundLaunch } from '@/lib/fund-launch-verification'
-import { jbCenterIpfs } from '@/lib/jbcenter-ipfs'
-import { buildFundProjectMetadata } from '@/lib/fund-project-metadata'
+import { publishFundProjectMetadata } from '@/lib/publish-fund-project-metadata'
 import { SUPPORTED_CHAINS } from '@/lib/chains'
 import { plannedNetworks } from '../../web/create-networks.mjs'
 import { isSafeConnection, waitForSafeExecutionHash } from '@/lib/safe-connector'
@@ -126,15 +125,7 @@ export function FundDeploy({ values }: { values?: CreateValues }) {
       const chainIds = plannedNetworks(values).map((chain: { chainId: number }) => chain.chainId)
       const owner = getAddress(values.operatorWallet)
       const sender = address
-      let coverImageUri: string | undefined
-      if (values.photo) {
-        const response = await fetch(values.photo)
-        const image = await response.blob()
-        if (!['image/png', 'image/jpeg', 'image/webp'].includes(image.type) || image.size > 2_000_000) throw new Error('Choose a supported cover photo under 2 MB.')
-        const pin = await jbCenterIpfs.pinImage(new File([image], 'cover', { type: image.type }))
-        coverImageUri = `ipfs://${pin.cid}`
-      }
-      const pin = await jbCenterIpfs.pinJson(buildFundProjectMetadata(values, { coverImageUri }))
+      const pin = await publishFundProjectMetadata(values)
       const fees = await Promise.all(chainIds.map(async (id: number) => {
         const client = publicClient(id)
         const fee = await client.readContract({ address: v6Address('JBProjects', id as JBChainId), abi: jbProjectsAbi, functionName: 'creationFee' })

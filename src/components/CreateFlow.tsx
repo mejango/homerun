@@ -7,6 +7,7 @@ import { NETWORK_FAMILIES } from '../../web/create-networks.mjs';
 import { drawAssetSketch } from '../../web/asset-sketch.mjs';
 import { CreateIncomePreview } from './CreateIncomePreview';
 import { SiteIntegration } from './SiteIntegration';
+import { OperatorProfile } from './OperatorProfile';
 
 /** Validated setup values. Budget and income estimates remain modeling assumptions. */
 export interface CreateValues {
@@ -29,6 +30,9 @@ export interface CreateValues {
   networkEnvironment: 'production' | 'testnet';
   revnetOperatorEnabled: boolean;
   operatorWallet: string;
+  operatorName?: string;
+  operatorIntroduction?: string;
+  operatorPhoto?: string;
   photo: string;
 }
 
@@ -45,7 +49,7 @@ export interface CreateFlowProps {
 
 const labels = ['The asset', 'Fundraise', 'Income', 'Review & create'];
 const groups: FieldName[][] = [
-  ['name', 'assetType', 'location', 'description', 'photo'],
+  ['name', 'assetType', 'location', 'description', 'photo', 'operatorName', 'operatorIntroduction', 'operatorPhoto'],
   ['purchaseBudget', 'opsReserve', 'operatorFundPercent'],
   ['revenueDescription', 'monthlyRent', 'monthlyCosts', 'rentGrowthPercent', 'costGrowthPercent', 'operatorSplitPercent', 'stickySplitPercent'],
   ['networks', 'networkEnvironment', 'revnetOperatorEnabled', 'operatorWallet'],
@@ -127,12 +131,14 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
   const [errors, setErrors] = useState<Errors>({});
   const [hydrated, setHydrated] = useState(false);
   const [storageNotice, setStorageNotice] = useState('');
-  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState({ photo: false, operatorPhoto: false });
   const heading = useRef<HTMLHeadingElement>(null);
-  const photoRequest = useRef(0);
+  const photoRequest = useRef({ photo: 0, operatorPhoto: 0 });
   const photoInput = useRef<HTMLInputElement>(null);
+  const operatorPhotoInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    const requests = photoRequest.current;
     try {
       const saved = JSON.parse(localStorage.getItem(CREATE_DRAFT_KEY) || 'null');
       if (saved?.raw && typeof saved.raw === 'object' && !Array.isArray(saved.raw)) {
@@ -157,7 +163,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
       }
     } catch { setStorageNotice('Draft saving is unavailable. Keep this tab open while you work.'); }
     setHydrated(true);
-    return () => { photoRequest.current += 1; };
+    return () => { requests.photo += 1; requests.operatorPhoto += 1; };
   }, []);
 
   useEffect(() => {
@@ -174,6 +180,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
     catch { return null; }
   }, [raw]);
   const photo = normalized.errors.photo ? '' : normalized.values.photo;
+  const operatorPhoto = normalized.errors.operatorPhoto ? '' : normalized.values.operatorPhoto;
 
   function update(name: FieldName, value: RawValues[FieldName]) {
     setRaw(previous => ({ ...previous, [name]: value }));
@@ -215,18 +222,19 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
     if (!result.errors[name]) update(name, number(result.values[name] as number));
   }
 
-  async function choosePhoto(file: File | undefined) {
+  async function choosePhoto(name: 'photo' | 'operatorPhoto', file: File | undefined) {
     if (!file) return;
-    const request = ++photoRequest.current;
+    const request = ++photoRequest.current[name];
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 8 * 1024 * 1024) {
-      setErrors(previous => ({ ...previous, photo: 'Choose a JPG, PNG or WebP image up to 8 MB.' }));
+      setErrors(previous => ({ ...previous, [name]: 'Choose a JPG, PNG or WebP image up to 8 MB.' }));
+      setPhotoBusy(previous => ({ ...previous, [name]: false }));
       return;
     }
-    setPhotoBusy(true);
+    setPhotoBusy(previous => ({ ...previous, [name]: true }));
     try {
       const bitmap = await createImageBitmap(file);
       const canvas = document.createElement('canvas');
-      const scale = Math.min(1, 1400 / Math.max(bitmap.width, bitmap.height));
+      const scale = Math.min(1, (name === 'operatorPhoto' ? 800 : 1400) / Math.max(bitmap.width, bitmap.height));
       canvas.width = Math.max(1, Math.round(bitmap.width * scale));
       canvas.height = Math.max(1, Math.round(bitmap.height * scale));
       const context = canvas.getContext('2d');
@@ -234,12 +242,20 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
       context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
       bitmap.close();
       const data = canvas.toDataURL('image/jpeg', 0.82);
-      const checked = normalize({ ...raw, photo: data });
-      if (checked.errors.photo) throw new Error(checked.errors.photo);
-      if (request === photoRequest.current) update('photo', data);
+      const checked = normalize({ ...raw, [name]: data });
+      if (checked.errors[name]) throw new Error(checked.errors[name]);
+      if (request === photoRequest.current[name]) update(name, data);
     } catch (error) {
-      if (request === photoRequest.current) setErrors(previous => ({ ...previous, photo: error instanceof Error ? error.message : 'This image could not be read.' }));
-    } finally { if (request === photoRequest.current) setPhotoBusy(false); }
+      if (request === photoRequest.current[name]) setErrors(previous => ({ ...previous, [name]: error instanceof Error ? error.message : 'This image could not be read.' }));
+    } finally { if (request === photoRequest.current[name]) setPhotoBusy(previous => ({ ...previous, [name]: false })); }
+  }
+
+  function removePhoto(name: 'photo' | 'operatorPhoto') {
+    photoRequest.current[name] += 1;
+    update(name, '');
+    setPhotoBusy(previous => ({ ...previous, [name]: false }));
+    const input = name === 'photo' ? photoInput.current : operatorPhotoInput.current;
+    if (input) input.value = '';
   }
 
   function downloadDraft() {
@@ -253,13 +269,15 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
   }
 
   function reset() {
-    photoRequest.current += 1;
-    setPhotoBusy(false);
+    photoRequest.current.photo += 1;
+    photoRequest.current.operatorPhoto += 1;
+    setPhotoBusy({ photo: false, operatorPhoto: false });
     setRaw(initialValues());
     setErrors({});
     setFurthest(0);
     navigate(0);
     if (photoInput.current) photoInput.current.value = '';
+    if (operatorPhotoInput.current) operatorPhotoInput.current.value = '';
   }
 
   const field = (name: FieldName, label: string, props: Partial<FieldProps> = {}) =>
@@ -271,7 +289,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
       <section className="create-editor" aria-label="Design the rules">
         <nav className="create-steps" aria-label="Setup steps">
           {labels.map((label, index) => <button key={label} type="button" data-create-step={index}
-            disabled={index > furthest} aria-current={index === step ? 'step' : undefined}
+            disabled={index > furthest || photoBusy.photo || photoBusy.operatorPhoto} aria-current={index === step ? 'step' : undefined}
             data-complete={index < step} onClick={() => { if (index <= step || validateStep()) navigate(index); }}><span>{index + 1}</span>{label}</button>)}
         </nav>
         <form id="create-form" noValidate onSubmit={event => { event.preventDefault(); continueStep(); }}>
@@ -289,12 +307,24 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
               </div>
               {field('description', 'The idea (optional)', { rows: 3, maxLength: 600, help: 'A short introduction to the asset and how it earns income.' })}
               <div className="create-field"><label htmlFor="create-photo">Cover photo (optional)</label>
-                <label className="photo-picker" htmlFor="create-photo"><span aria-hidden="true">＋</span><span>{photoBusy ? 'Preparing photo…' : 'Choose a photo'}<small>JPG, PNG or WebP | up to 8 MB</small></span>
-                  <input id="create-photo" ref={photoInput} type="file" accept="image/jpeg,image/png,image/webp" aria-describedby={errors.photo ? 'photo-error' : undefined} onChange={event => { void choosePhoto(event.target.files?.[0]); }} />
+                <label className="photo-picker" htmlFor="create-photo"><span aria-hidden="true">＋</span><span>{photoBusy.photo ? 'Preparing photo…' : 'Choose a photo'}<small>JPG, PNG or WebP | up to 8 MB</small></span>
+                  <input id="create-photo" ref={photoInput} type="file" accept="image/jpeg,image/png,image/webp" aria-describedby={errors.photo ? 'photo-error' : undefined} onChange={event => { void choosePhoto('photo', event.target.files?.[0]); }} />
                 </label>
-                {photo && <button id="remove-photo" className="quiet-button" type="button" onClick={() => { photoRequest.current += 1; update('photo', ''); setPhotoBusy(false); if (photoInput.current) photoInput.current.value = ''; }}>Remove photo</button>}
+                {photo && <button id="remove-photo" className="quiet-button" type="button" onClick={() => removePhoto('photo')}>Remove photo</button>}
                 {errors.photo && <p className="create-error" id="photo-error">{errors.photo}</p>}
               </div>
+              <fieldset className="create-operator-profile"><legend>Operator</legend>
+                <p className="create-help">Introduce the person or team running this project.</p>
+                {field('operatorName', 'Name (optional)', { placeholder: 'Your name or team', maxLength: 80 })}
+                {field('operatorIntroduction', 'Introduction (optional)', { rows: 4, maxLength: 1200, placeholder: 'Tell people about yourself, your experience, and your plans for the project.' })}
+                <div className="create-field"><label htmlFor="create-operatorPhoto">Operator picture (optional)</label>
+                  <label className="photo-picker" htmlFor="create-operatorPhoto"><span aria-hidden="true">＋</span><span>{photoBusy.operatorPhoto ? 'Preparing picture…' : 'Choose a picture'}<small>JPG, PNG or WebP | up to 8 MB</small></span>
+                    <input id="create-operatorPhoto" ref={operatorPhotoInput} type="file" accept="image/jpeg,image/png,image/webp" aria-describedby={errors.operatorPhoto ? 'operatorPhoto-error' : undefined} onChange={event => { void choosePhoto('operatorPhoto', event.target.files?.[0]); }} />
+                  </label>
+                  {operatorPhoto && <><Image unoptimized src={operatorPhoto} alt="Your operator picture" width={96} height={96} className="create-operator-photo-preview" /><button id="remove-operator-photo" className="quiet-button" type="button" onClick={() => removePhoto('operatorPhoto')}>Remove picture</button></>}
+                  {errors.operatorPhoto && <p className="create-error" id="operatorPhoto-error">{errors.operatorPhoto}</p>}
+                </div>
+              </fieldset>
             </>}
             {step === 1 && <>
               <div className="fundraise-inputs">
@@ -302,7 +332,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
                   <p id="fundraise-modeling-note" className="input-purpose-note">Budget assumptions for the raise goal. These do not set contract withdrawal allowances.</p>
                   <div className="income-inputs">{field('purchaseBudget', 'Asset price', { prefix: '$' })}{field('opsReserve', 'Cash reserve', { prefix: '$', help: 'Cash set aside to cover operating expenses.' })}</div>
                 </fieldset>
-                <fieldset className="income-field-group fundraise-contract"><legend>Contractual Settings</legend>
+                <fieldset className="income-field-group fundraise-contract"><legend>Contractual settings</legend>
                   {field('operatorFundPercent', 'Operator FUND ownership', { suffix: '%', help: 'Allocated after a successful purchase.' })}
                 </fieldset>
                 <div className="create-callout fundraise-goal"><span>Total fundraising goal</span><strong id="create-raise-goal">{summary ? money(summary.raiseGoal) : '—'}</strong>
@@ -328,7 +358,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
                   {field('rentGrowthPercent', 'Target revenue growth rate (%)', { suffix: '%', help: 'Per year.' })}{field('costGrowthPercent', 'Target expense growth rate (%)', { suffix: '%', help: 'Per year.' })}
                 </div>
               </fieldset>
-              <fieldset className="income-field-group"><legend>Contractual Settings</legend><p className="input-purpose-note">Sets how each new batch of INCOME tokens is shared. The FUND-staker allocation goes to eligible Sticky participants.</p>
+              <fieldset className="income-field-group"><legend>Contractual settings</legend><p className="input-purpose-note">Sets how each new batch of INCOME tokens is shared. The FUND-staker allocation goes to eligible Sticky participants.</p>
                 <div className="income-inputs">{field('operatorSplitPercent', 'To operators', { suffix: '%' })}{field('stickySplitPercent', 'To FUND stakers', { suffix: '%' })}</div>
               </fieldset>
               <section className="income-preview-panel" aria-labelledby="income-preview-heading"><header><h3 id="income-preview-heading">Income preview</h3><p>Based on your inputs. Move the timeline to explore ownership.</p></header>
@@ -344,16 +374,19 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
                 <section className="review-block"><div><h3>{String(raw.name || 'Untitled')}</h3><button type="button" onClick={() => navigate(0)}>Edit asset</button></div>
                   <p>{String(raw.location || 'Location not specified')}</p>{raw.description && <p>{String(raw.description)}</p>}
                 </section>
+                {(normalized.values.operatorName || normalized.values.operatorIntroduction || operatorPhoto) && <section className="review-block"><div><h3>Operator</h3><button type="button" onClick={() => navigate(0)}>Edit operator</button></div>
+                  <OperatorProfile name={normalized.values.operatorName} introduction={normalized.values.operatorIntroduction} photoUrl={operatorPhoto} showHeading={false} />
+                </section>}
                 <section className="review-block"><div><h3>The raise</h3><button type="button" onClick={() => navigate(1)}>Edit raise</button></div>
                   <dl><div><dt>Goal</dt><dd>{summary ? money(summary.raiseGoal) : '—'}</dd></div>
                     <div><dt>FUND ownership after purchase</dt><dd>{summary ? `${number(summary.investorFundPercent)}% contributors / ${number(summary.values.operatorFundPercent)}% operator` : '—'}</dd></div></dl>
                 </section>
               </div>
               <fieldset className="create-network-settings"><legend>Networks</legend><div className="create-network-options">
-                <div id="create-networkEnvironment" className="network-environments" role="group" aria-label="Network environment">
-                  {(['production', 'testnet'] as const).map(environment => <button type="button" key={environment} data-environment={environment}
-                    aria-pressed={raw.networkEnvironment === environment} onClick={() => { update('networkEnvironment', environment); update('networks', NETWORK_FAMILIES.map(family => family.id)); }}>{environment === 'production' ? 'Production' : 'Testnets'}</button>)}
-                </div>
+                <select id="create-networkEnvironment" className="network-environments" aria-label="Network environment" value={String(raw.networkEnvironment)}
+                  onChange={event => { update('networkEnvironment', event.target.value); update('networks', NETWORK_FAMILIES.map(family => family.id)); }}>
+                  <option value="production">Production</option><option value="testnet">Testnets</option>
+                </select>
                 <div id="create-networks" className="network-symbols" role="group" aria-label="Deployment networks" aria-describedby={normalized.errors.networks ? 'networks-error' : undefined}>
                   {NETWORK_FAMILIES.map(family => {
                     const chain = family[raw.networkEnvironment === 'testnet' ? 'testnet' : 'production'];
@@ -378,7 +411,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
           </section>
           {errors.form && <p id="create-form-error" className="create-error" role="alert">{errors.form}</p>}
           <div className="create-actions">{step > 0 && <button type="button" id="create-back" className="quiet-button" onClick={() => navigate(step - 1)}>← Back</button>}
-            {step < 3 && <button type="submit" id="create-next" className="create-primary" disabled={photoBusy}>Continue <span aria-hidden="true">→</span></button>}
+            {step < 3 && <button type="submit" id="create-next" className="create-primary" disabled={photoBusy.photo || photoBusy.operatorPhoto}>Continue <span aria-hidden="true">→</span></button>}
           </div>
         </form>
         <div className="draft-status"><span id="draft-status" role="status">{storageNotice}</span><button type="button" id="start-over" className="quiet-button" onClick={reset}>Start over</button></div>

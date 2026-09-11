@@ -102,13 +102,8 @@ export function HomePage() {
       <a className="skip-link" href="#main">Skip to content</a>
       <main id="main" className="home-main" tabIndex={-1}>
         <section className="ballpark-hero" aria-labelledby="home-title">
-          <header className="site-header"><Brand tagline={false} /></header>
+          <header className="site-header"><Brand /></header>
           <div className="home-copy" ref={copy}>
-            <ul className="home-asset-types" aria-label="Asset types">
-              {['Real estate', 'Business', 'Equipment', 'Energy', 'Other assets'].map(type => (
-                <li key={type}>{type}</li>
-              ))}
-            </ul>
             <h1 id="home-title" aria-label="Run your home's investments and revenues">
               <RotatingAssetHeadline playing={motion === 'running'} />
               <em className="home-title-revenues">investments and revenues</em>
@@ -179,7 +174,6 @@ export function HomePage() {
             {motion === 'reduced' ? 'Play animations' : motion === 'paused' ? 'Resume animations' : 'Pause animations'}
           </button>
         </div>
-        <p className="home-project-link"><Link href="/projects">Find a project ↗</Link></p>
       </footer>
     </div>
   );

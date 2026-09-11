@@ -17,12 +17,15 @@ import {
   PREVIEW_ETH_USDC_RATE,
   sourceAmountFromUSDC,
 } from "../../web/payment-currencies.mjs";
-import { incomePaymentPreview } from "../../web/income-payment-preview.mjs";
+import { demoPaymentResult, fundPaymentLimitError } from "@/lib/demo-payment-result";
+import { DemoPaymentResult } from "./DemoPaymentResult";
 import { plannedOwnerActionDraft as modelOwnerActionDraft } from "../../web/owner-actions.mjs";
 import { SiteIntegration } from "./SiteIntegration";
 import { ProjectActionGuide } from "./ProjectActionGuide";
 import { HomerunProjectLayout, OwnersTabs } from "./HomerunProjectLayout";
 import { DemoProjectShop } from "./DemoProjectShop";
+import { DemoActivity } from "./DemoActivity";
+import { OperatorProfile } from "./OperatorProfile";
 import { FundingProgress } from "./FundingProgress";
 import { demoShopStorageKey } from "@/lib/demo-shop";
 import {
@@ -1298,154 +1301,16 @@ function Contribution({
   );
 }
 
-function IncomePaymentDetails({
-  p,
-  amount,
-}: {
-  p: Projection;
-  amount: number;
-}) {
-  let preview: ReturnType<typeof incomePaymentPreview>;
-  try {
-    preview = incomePaymentPreview(p, amount);
-  } catch (error) {
-    return (
-      <p className="pay-error" role="alert">
-        {error instanceof Error
-          ? error.message
-          : "This payment exceeds the supported model range."}
-      </p>
-    );
-  }
-  const circumference = 2 * Math.PI * 37;
-  return (
-    <div id="income-payment-results">
-      <details className="pay-detail">
-        <summary>This INCOME payment</summary>
-        <div className="pay-detail-body">
-          <p>After this payment at month {preview.month}</p>
-          <dl className="math-values">
-            <div>
-              <dt>New INCOME for you</dt>
-              <dd>{tokenNumber(preview.payerTokens)}</dd>
-            </div>
-            <div>
-              <dt>Your share after payment</dt>
-              <dd>{percent(preview.payerSharePercent)}</dd>
-            </div>
-            <div>
-              <dt>Cash-out estimate</dt>
-              <dd>{money(preview.cashoutValue)}</dd>
-            </div>
-            <div>
-              <dt>First-loan estimate</dt>
-              <dd>{money(preview.loanCash)}</dd>
-            </div>
-          </dl>
-          <p>
-            The cash-out and loan are alternatives. Both are modeling estimates;
-            your historical FUND position stays unchanged.
-          </p>
-          <figure
-            className="income-payment-chart"
-            data-income-payment-chart="allocation"
-          >
-            <svg
-              viewBox="0 0 120 120"
-              width="132"
-              height="132"
-              role="img"
-              aria-label={`Your INCOME ownership after this payment: ${percent(preview.payerSharePercent)}.`}
-              style={{
-                display: "block",
-                maxWidth: "100%",
-                height: "auto",
-                margin: "12px auto",
-              }}
-            >
-              <title>INCOME allocation after this payment</title>
-              <circle
-                cx="60"
-                cy="60"
-                r="37"
-                fill="none"
-                stroke="#edf0e7"
-                strokeWidth="15"
-              />
-              {preview.allocations.map((part, index) => (
-                <circle
-                  key={part.key}
-                  data-income-segment={part.key}
-                  cx="60"
-                  cy="60"
-                  r="37"
-                  fill="none"
-                  stroke={part.color}
-                  strokeWidth="15"
-                  strokeDasharray={`${(circumference * part.percent) / 100} ${circumference * (1 - part.percent / 100)}`}
-                  strokeDashoffset={
-                    (-circumference *
-                      preview.allocations
-                        .slice(0, index)
-                        .reduce(
-                          (sum, allocation) => sum + allocation.percent,
-                          0,
-                        )) /
-                    100
-                  }
-                  transform="rotate(-90 60 60)"
-                />
-              ))}
-              <text
-                x="60"
-                y="56"
-                textAnchor="middle"
-                fill="#31523a"
-                fontSize="9"
-              >
-                Your share
-              </text>
-              <text
-                x="60"
-                y="71"
-                textAnchor="middle"
-                fill="#203a29"
-                fontSize="10"
-              >
-                {percent(preview.payerSharePercent)}
-              </text>
-            </svg>
-            <figcaption>
-              Of {number(preview.supplyAfter)} INCOME outstanding after this
-              payment.
-            </figcaption>
-          </figure>
-          <ul className="ownership-legend">
-            {preview.allocations.map((part) => (
-              <li key={part.key}>
-                <span
-                  className="ownership-key"
-                  style={{ background: part.color }}
-                />
-                <span>{part.label}</span>
-                <strong>{number(part.tokens)} INCOME</strong>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </details>
-    </div>
-  );
-}
-
 function PayPreview({
   p,
+  projectProjection,
   phase,
   contributionError,
   fundAmount,
   onFundAmount,
 }: {
   p: Projection | null;
+  projectProjection: Projection | null;
   phase: ProjectPhase;
   contributionError: string;
   fundAmount: number;
@@ -1459,13 +1324,30 @@ function PayPreview({
   const raw = income ? incomeRaw : fundRaw;
   const paymentStage = phase === "raising" || income;
   const cashStage = phase === "refunding" || phase === "liquidated";
+  const parsed = parsePaymentAmount(raw, currency);
+  const fundPaymentError = phase === "raising" && projectProjection && !parsed.error && parsed.amount !== undefined
+    ? fundPaymentLimitError(projectProjection, parsed.amount)
+    : "";
   const quote = payPanelQuote({
     phase,
-    projection: p,
+    projection: paymentStage ? projectProjection : p,
     amount: raw,
     currency,
-    contributionError,
+    contributionError: phase === "raising" ? fundPaymentError : contributionError,
   });
+  let result: ReturnType<typeof demoPaymentResult> | null = null;
+  let resultError = "";
+  if (
+    paymentStage && projectProjection && quote.enabled &&
+    quote.amount !== null && quote.tokenOutput !== null
+  ) {
+    try {
+      result = demoPaymentResult(projectProjection, quote.amount, quote.tokenOutput);
+    } catch (error) {
+      resultError = error instanceof Error ? error.message : "Check the payment amount and project assumptions.";
+    }
+  }
+  const error = quote.error || resultError;
   const signature = JSON.stringify([
     quote,
     p?.monthsApplied,
@@ -1474,7 +1356,6 @@ function PayPreview({
   useEffect(() => {
     setReview(false);
   }, [signature]);
-  const parsed = parsePaymentAmount(raw, currency);
   return (
     <>
       <div className="pay-panel-heading">
@@ -1483,36 +1364,35 @@ function PayPreview({
             ? "Refund"
             : phase === "liquidated"
               ? "Cash out"
-              : "Pay"}
+              : income ? "Pay" : "Fund"}
         </h2>
       </div>
-      <p className="pay-context">
-        {income
-          ? `Revenue payment, month ${p?.monthsApplied ?? 0} preview`
-          : phase === "raising"
-            ? "Contribute to the asset raise"
-            : "Project payment options"}
-      </p>
+      {income && <p className="pay-context">Revenue payment, month {projectProjection?.monthsApplied ?? 0} preview</p>}
       <form
         id="pay-form"
+        style={!income ? { marginTop: 20 } : undefined}
         onSubmit={(event) => {
           event.preventDefault();
-          if (quote.enabled) setReview(true);
+          if (cashStage && quote.enabled) setReview(true);
         }}
       >
         {paymentStage && (
           <div id="pay-amount-wrap">
-            <label htmlFor="pay-amount">Amount in {currency}</label>
             <div className="pay-amount-control">
-              {currency === "USDC" && <span aria-hidden="true">$</span>}
               <input
                 id="pay-amount"
                 type="text"
                 inputMode="decimal"
                 value={raw}
                 maxLength={24}
-                aria-invalid={Boolean(quote.error)}
-                aria-describedby="pay-note pay-error"
+                aria-label={`Amount in ${currency}`}
+                aria-invalid={Boolean(error)}
+                aria-describedby={[
+                  currency === "ETH" ? "pay-conversion" : "",
+                  currency === "ETH" && !parsed.error && parsed.amount !== undefined ? "pay-settlement" : "",
+                  error ? "pay-error" : "",
+                  "pay-preview-note",
+                ].filter(Boolean).join(" ")}
                 onChange={(event) => {
                   const value = event.target.value;
                   if (income) setIncomeRaw(value);
@@ -1550,11 +1430,11 @@ function PayPreview({
             </div>
             {currency === "ETH" && (
               <>
-                <p className="pay-conversion">
+                <p id="pay-conversion" className="pay-conversion">
                   1 ETH ≈ {number(PREVIEW_ETH_USDC_RATE)} USDC | preview rate
                 </p>
                 {!parsed.error && parsed.amount !== undefined && (
-                  <p className="pay-settlement">
+                  <p id="pay-settlement" className="pay-settlement">
                     ≈ {money(parsed.amount)} after conversion
                   </p>
                 )}
@@ -1563,11 +1443,11 @@ function PayPreview({
           </div>
         )}
         <div className="pay-receipt" aria-live="polite">
-          <span>{cashStage ? "Cash you receive" : "Tokens you receive"}</span>
+          <span>{cashStage ? "Cash you receive" : "You get"}</span>
           <div>
             <strong id="pay-output">
-              {quote.tokenOutput !== null
-                ? tokenNumber(quote.tokenOutput)
+              {result
+                ? tokenNumber(result.tokens)
                 : quote.cashOutput !== null
                   ? number(quote.cashOutput)
                   : "—"}
@@ -1575,15 +1455,14 @@ function PayPreview({
             <span>{cashStage ? "USDC" : quote.route}</span>
           </div>
         </div>
-        <p id="pay-note" className="pay-note">
-          {quote.reason}
-        </p>
-        {quote.error && (
+        {result && <DemoPaymentResult result={result} />}
+        {!paymentStage && <p id="pay-note" className="pay-note">{quote.reason}</p>}
+        {error && (
           <p id="pay-error" className="pay-error" role="alert">
-            {quote.error}
+            {error}
           </p>
         )}
-        <button
+        {!paymentStage && <button
           id="pay-review"
           className="pay-review"
           type="submit"
@@ -1591,41 +1470,21 @@ function PayPreview({
           aria-haspopup="dialog"
         >
           {quote.actionLabel}
-        </button>
-        <p className="pay-preview-note">Preview only | no transaction</p>
+        </button>}
+        <p id="pay-preview-note" className="pay-preview-note">Preview only | no transaction</p>
       </form>
-      {income && p && quote.enabled && quote.amount !== null && (
-        <IncomePaymentDetails p={p} amount={quote.amount} />
-      )}
-      {review && (
+      {review && cashStage && (
         <Modal
           id="pay-dialog"
-          title={`Preview ${quote.route} ${cashStage ? "cash-out" : "payment"}`}
+          title={`Preview ${quote.route} cash-out`}
           className="pay-dialog"
           onClose={() => setReview(false)}
         >
           <dl>
-            {cashStage ? (
-              <div>
-                <dt>Estimated cash</dt>
-                <dd>{money(quote.cashOutput ?? 0)} USDC</dd>
-              </div>
-            ) : (
-              <>
-                <div>
-                  <dt>You would pay</dt>
-                  <dd>
-                    {number(quote.sourceAmount ?? 0)} {quote.sourceCurrency}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Estimated tokens for you</dt>
-                  <dd>
-                    {tokenNumber(quote.tokenOutput ?? 0)} {quote.route}
-                  </dd>
-                </div>
-              </>
-            )}
+            <div>
+              <dt>Estimated cash</dt>
+              <dd>{money(quote.cashOutput ?? 0)} USDC</dd>
+            </div>
           </dl>
           <p>{quote.reason}</p>
           <p className="pay-dialog-disclaimer">
@@ -1913,6 +1772,11 @@ function DemoOverview({
           </div>
         </div>
       </section>
+      <OperatorProfile
+        name={project ? project.values.operatorName : "Founder Haus team"}
+        introduction={project ? project.values.operatorIntroduction : "We’re a small team of founders and local hosts turning this house into a place to work, gather, and recharge. We handle day-to-day operations, welcome members and guests, and keep the community updated on income and expenses."}
+        photoUrl={project?.values.operatorPhoto}
+      />
       <div className="demo-model-note">
         <p>
           {project ? "Local project preview." : "Illustrative demo."} Figures
@@ -1922,71 +1786,6 @@ function DemoOverview({
         </p>
       </div>
     </div>
-  );
-}
-
-function DemoActivity({
-  p,
-  phase,
-}: {
-  p: Projection | null;
-  phase: ProjectPhase;
-}) {
-  const rows: { title: string; detail: string }[] = [];
-  if (p) {
-    if (phase === "liquidated")
-      rows.push({
-        title: "Asset sale modeled",
-        detail: `${money(p.fundSaleCash)} for FUND holders`,
-      });
-    if (p.purchaseCompleted) {
-      rows.push({
-        title: `Month ${p.monthsApplied} of revenue`,
-        detail: `${money(p.cumulativeRent)} received in this scenario`,
-      });
-      rows.push({
-        title: "Purchase modeled",
-        detail: `${money(p.purchaseBudget)} asset price`,
-      });
-    }
-    if (phase === "refunded")
-      rows.push({
-        title: "Refunds complete",
-        detail: `${money(p.refundedCash)} returned in this scenario`,
-      });
-    if (phase === "refunding")
-      rows.push({
-        title: "Refunds opened",
-        detail: `${money(p.refundableCash)} available in this scenario`,
-      });
-    rows.push({
-      title: phase === "raising" ? "Raise in progress" : "Fundraising",
-      detail: `${money(p.raised)} of ${money(p.raiseGoal)}`,
-    });
-  }
-  return (
-    <section className="demo-activity" aria-label="Scenario activity">
-      <h2>Activity</h2>
-      <p className="demo-activity-source">Modeled milestones</p>
-      {rows.length ? (
-        <ol>
-          {rows.map((row, index) => (
-            <li key={`${index}:${row.title}`}>
-              <span className="demo-activity-dot" aria-hidden="true" />
-              <div>
-                <h3>{row.title}</h3>
-                <p>{row.detail}</p>
-              </div>
-            </li>
-          ))}
-        </ol>
-      ) : (
-        <p>Check the modeling inputs to see this scenario.</p>
-      )}
-      <p className="demo-activity-note">
-        No transactions have been sent by this demo.
-      </p>
-    </section>
   );
 }
 
@@ -2484,8 +2283,8 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
                 Status: {statusLabels[phase]}
               </span>,
               ...demoStateMetadata(overview, phase),
-              `Mode: ${project ? "Local preview" : "Demo"}`,
             ].filter(Boolean)}
+            headerProgress={overview && !overview.purchaseCompleted && <FundingProgress raised={overview.raised} goal={overview.raiseGoal} historical={phase !== "raising"} compact />}
             payment={
               <aside
                 id="pay-panel"
@@ -2495,6 +2294,7 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
                 <PayPreview
                   key={reset}
                   p={p}
+                  projectProjection={overview}
                   phase={phase}
                   contributionError={derived.personalError || derived.error}
                   fundAmount={inputs.investment}
@@ -2502,7 +2302,7 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
                 />
               </aside>
             }
-            activity={<DemoActivity p={overview} phase={phase} />}
+            activity={<DemoActivity projection={overview} />}
             overview={
               <DemoOverview
                 name={name}

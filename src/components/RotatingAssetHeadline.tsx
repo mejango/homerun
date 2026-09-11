@@ -3,12 +3,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 const ASSETS = [
-  'home', 'business', 'equipment', 'energy',
+  'home', 'farms', 'business', 'equipment', 'energy',
   'coffee cart', 'bakery', 'solar farm', 'robot fleet',
   'moonbase', 'neighborhood', 'food truck', 'dream lab',
   'lemonade stand', 'garden', 'spaceship', 'treehouse',
   'bike shop', 'corner store', 'art studio', 'island',
 ];
+
+const possessive = (asset: string) => `${asset}'${asset === 'farms' ? '' : 's'}`;
 
 /** Reserve every wrapping case while the shared prefix moves without fading. */
 export function RotatingAssetHeadline({ playing }: { playing: boolean }) {
@@ -92,7 +94,7 @@ export function RotatingAssetHeadline({ playing }: { playing: boolean }) {
   }, [playing]);
 
   return <span ref={element} className="home-title-subject" data-current-asset={ASSETS[selected]} aria-hidden="true">
-    {ASSETS.map(asset => <span key={asset} className="home-asset-line home-asset-reserve"><span>Run your</span> {asset}&apos;s</span>)}
-    <span className="home-asset-line is-current"><span ref={prefix} className="home-title-prefix">Run your</span>{' '}<span key={selected} className="home-asset-word">{ASSETS[selected]}&apos;s</span></span>
+    {ASSETS.map(asset => <span key={asset} className="home-asset-line home-asset-reserve"><span>Run your</span> {possessive(asset)}</span>)}
+    <span className="home-asset-line is-current"><span ref={prefix} className="home-title-prefix">Run your</span>{' '}<span key={selected} className="home-asset-word">{possessive(ASSETS[selected])}</span></span>
   </span>;
 }

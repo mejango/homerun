@@ -50,7 +50,7 @@ try {
   await page.waitForSelector('.home-title-subject[data-rotating="true"]');
   assert.equal(await page.locator('.home-title-subject').getAttribute('data-current-asset'), 'home');
 
-  // The first four assets appear in the requested order without moving the headline or CTAs.
+  // The first five assets appear in the requested order without moving the headline or CTAs.
   const heroGeometry = () => page.locator('.home-copy').evaluate(element => {
     const heading = element.querySelector('h1').getBoundingClientRect();
     const actions = element.querySelector('.home-actions').getBoundingClientRect();
@@ -58,7 +58,7 @@ try {
   });
   const initialGeometry = await heroGeometry();
   const prefix = await page.locator('.home-title-prefix').elementHandle();
-  for (const asset of ['business', 'equipment', 'energy']) {
+  for (const asset of ['farms', 'business', 'equipment', 'energy']) {
     // Start observing before the noun changes so the first painted position is captured.
     const frames = await page.evaluate(({ prefix, asset }) => new Promise((resolve, reject) => {
       const subject = document.querySelector('.home-title-subject');

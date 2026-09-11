@@ -177,7 +177,7 @@ test('the shared operator address is validated regardless of optional INCOME con
 
 test('revnet operator controls are separate from economic FUND ownership and have no assigned permissions', () => {
   const disabled = deploymentDraft(draft({ operatorWallet: wallet, revnetOperatorEnabled: false }));
-  assert.deepEqual(disabled.operator, { address: wallet, fundOwnershipPercentAfterPurchase: 20 });
+  assert.deepEqual(disabled.operator, { name: '', introduction: '', photo: '', address: wallet, fundOwnershipPercentAfterPurchase: 20 });
   assert.equal(disabled.funding.ownerAddress, wallet);
   assert.equal(disabled.funding.ownershipAssigned, false);
   assert.equal(disabled.revnetOperator.enabled, false);
@@ -209,17 +209,46 @@ test('legacy nonblank operator addresses enable revnet controls unless explicitl
 });
 
 test('photos allow only bounded encoded raster data and reject remote or active content', () => {
-  for (const type of ['jpeg', 'png', 'webp']) {
-    assert.equal(normalizeCreateDraft(draft({ photo: `data:image/${type};base64,YWJjZA==` })).valid, true);
+  for (const field of ['photo', 'operatorPhoto']) {
+    for (const type of ['jpeg', 'png', 'webp']) {
+      assert.equal(normalizeCreateDraft(draft({ [field]: `data:image/${type};base64,YWJjZA==` })).valid, true);
+    }
+    for (const photo of [
+      'https://example.com/house.jpg', 'javascript:alert(1)', 'data:image/svg+xml;base64,YWJjZA==',
+      'data:text/html;base64,YWJjZA==', 'data:image/png;base64,', 'data:image/png;base64,%%AA',
+      'data:image/png;base64,YWJjZ', 'data:image/png;base64,Y=JjZA==', {}, null,
+      `data:image/png;base64,${'A'.repeat(1_500_000)}`,
+    ]) assert.ok(normalizeCreateDraft(draft({ [field]: photo })).errors[field], String(photo).slice(0, 80));
+    // A large legitimate encoding must be handled without recursive-regex stack overflow.
+    assert.equal(normalizeCreateDraft(draft({ [field]: `data:image/png;base64,${'A'.repeat(1_400_000)}` })).valid, true);
   }
-  for (const photo of [
-    'https://example.com/house.jpg', 'javascript:alert(1)', 'data:image/svg+xml;base64,YWJjZA==',
-    'data:text/html;base64,YWJjZA==', 'data:image/png;base64,', 'data:image/png;base64,%%AA',
-    'data:image/png;base64,YWJjZ', 'data:image/png;base64,Y=JjZA==', {}, null,
-    `data:image/png;base64,${'A'.repeat(1_500_000)}`,
-  ]) assert.ok(normalizeCreateDraft(draft({ photo })).errors.photo, String(photo).slice(0, 80));
-  // A large legitimate encoding must be handled without recursive-regex stack overflow.
-  assert.equal(normalizeCreateDraft(draft({ photo: `data:image/png;base64,${'A'.repeat(1_400_000)}` })).valid, true);
+});
+
+test('optional operator profiles are bounded and survive local save and download', () => {
+  const operatorPhoto = 'data:image/webp;base64,YWJjZA==';
+  const raw = draft({ operatorName: '  Solar Co-op  ', operatorIntroduction: '  We run the neighborhood solar garden.  ', operatorPhoto });
+  const { valid, values } = normalizeCreateDraft(raw);
+  assert.equal(valid, true);
+  assert.equal(values.operatorName, 'Solar Co-op');
+  assert.equal(values.operatorIntroduction, 'We run the neighborhood solar garden.');
+  const exported = deploymentDraft(values);
+  assert.deepEqual(exported.operator, {
+    name: values.operatorName, introduction: values.operatorIntroduction, photo: operatorPhoto,
+    address: null, fundOwnershipPercentAfterPurchase: values.operatorFundPercent,
+  });
+  const storage = memoryStorage();
+  const saved = saveCreatedProject(raw, storage);
+  assert.deepEqual(loadCreatedProject(saved.id, storage).values, values);
+  assert.deepEqual(loadCreatedProject(saved.id, storage).deployment.operator, exported.operator);
+  for (const [field, limit] of [['operatorName', 80], ['operatorIntroduction', 1200]]) {
+    assert.equal(normalizeCreateDraft(draft({ [field]: 'x'.repeat(limit) })).valid, true);
+    for (const invalid of ['x'.repeat(limit + 1), null, {}, 12]) {
+      assert.ok(normalizeCreateDraft(draft({ [field]: invalid })).errors[field]);
+    }
+  }
+  const legacy = normalizeCreateDraft({ name: 'Existing asset' });
+  assert.equal(legacy.valid, true);
+  for (const field of ['operatorName', 'operatorIntroduction', 'operatorPhoto']) assert.equal(legacy.values[field], '');
 });
 
 test('summary starts with no prior funding, preserves existing economic assumptions, and covers the acquisition', () => {

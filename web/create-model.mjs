@@ -23,6 +23,9 @@ export const CREATE_DEFAULTS = Object.freeze({
   networkEnvironment: 'production',
   revnetOperatorEnabled: true,
   operatorWallet: '',
+  operatorName: '',
+  operatorIntroduction: '',
+  operatorPhoto: '',
   photo: '',
 });
 
@@ -62,6 +65,7 @@ export function normalizeCreateDraft(raw = {}) {
 
   for (const [key, min, max, label] of [
     ['name', 2, 60, 'Project name'], ['location', 0, 100, 'Location'], ['description', 0, 600, 'Description'], ['revenueDescription', 0, 1000, 'Revenue plan'],
+    ['operatorName', 0, 80, 'Operator name'], ['operatorIntroduction', 0, 1200, 'Operator introduction'],
   ]) {
     const input = own(source, key) ? source[key] : CREATE_DEFAULTS[key];
     values[key] = typeof input === 'string' ? input.trim() : '';
@@ -123,10 +127,12 @@ export function normalizeCreateDraft(raw = {}) {
     !ADDRESS.test(values.operatorWallet) || /^0x0{40}$/i.test(values.operatorWallet)
   ))) errors.operatorWallet = 'Use a nonzero operator address beginning with 0x, or leave it blank for this preview.';
 
-  const photo = own(source, 'photo') ? source.photo : '';
-  values.photo = typeof photo === 'string' ? photo : '';
-  if (typeof photo !== 'string' || (photo && !validPhoto(photo))) {
-    errors.photo = 'Use a JPEG, PNG, or WebP image smaller than 1.5 MB after encoding.';
+  for (const key of ['photo', 'operatorPhoto']) {
+    const photo = own(source, key) ? source[key] : '';
+    values[key] = typeof photo === 'string' ? photo : '';
+    if (typeof photo !== 'string' || (photo && !validPhoto(photo))) {
+      errors[key] = 'Use a JPEG, PNG, or WebP image smaller than 1.5 MB after encoding.';
+    }
   }
 
   return { valid: Object.keys(errors).length === 0, errors, values };
@@ -184,7 +190,10 @@ export function deploymentDraft(raw) {
     },
     networkEnvironment: values.networkEnvironment,
     plannedNetworks: networks,
-    operator: { address: values.operatorWallet || null, fundOwnershipPercentAfterPurchase: values.operatorFundPercent },
+    operator: {
+      name: values.operatorName, introduction: values.operatorIntroduction, photo: values.operatorPhoto,
+      address: values.operatorWallet || null, fundOwnershipPercentAfterPurchase: values.operatorFundPercent,
+    },
     revnetOperator: {
       enabled: values.revnetOperatorEnabled,
       address: values.revnetOperatorEnabled ? values.operatorWallet || null : null,

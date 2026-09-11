@@ -14,6 +14,9 @@
   box-shadow: inset 0 0 0 1px #c4cdb7;
 }
 
+.compact { margin: 0; }
+.compact .track { height: 8px; border-radius: 999px; }
+
 .raised {
   display: block;
   height: 100%;

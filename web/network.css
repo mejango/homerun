@@ -7,7 +7,6 @@
 .site-header .brand, #reset-example { white-space: nowrap; }
 .brand-lockup { margin-left: calc(-1 * (var(--brand-icon-width) + var(--brand-gap))); flex-shrink: 0; --brand-icon-width: 29px; --brand-gap: 10px; }
 .brand-lockup .brand { align-items: baseline; gap: var(--brand-gap); }
-.brand-tagline { margin-top: 4px; padding-left: calc(var(--brand-icon-width) + var(--brand-gap)); font-size: 11px; line-height: 1.4; letter-spacing: .015em; }
 .brand-ball { display: inline-block; flex-shrink: 0; width: var(--brand-icon-width); text-align: center; color: var(--green); font-family: 'Apple Symbols', 'Segoe UI Symbol', sans-serif; font-size: .82em; font-weight: 400; letter-spacing: 0; vertical-align: .02em; }
 .header-note { display: none; }
 .deal-heading { padding: 24px 0; }
@@ -157,11 +156,9 @@ dialog pre { font: 11px/1.6 ui-monospace, monospace; white-space: pre-wrap; over
   .site-header { height: 68px; }
   .site-header:has(#reset-example) { height: auto; min-height: 68px; padding-block: 10px; }
   .site-header:has(#reset-example) .brand-lockup { min-width: 0; flex-shrink: 1; }
-  .site-header:has(#reset-example) .brand-tagline { text-wrap: balance; }
   #reset-example { flex-shrink: 0; }
   .live-contract-page > .site-header { height: auto; min-height: 68px; padding-block: 10px; }
   .live-contract-page > .site-header .brand-lockup { min-width: 0; flex-shrink: 1; }
-  .live-contract-page > .site-header .brand-tagline { text-wrap: balance; }
   .brand-lockup { --brand-icon-width: 26px; --brand-gap: 7px; }
   .deal-heading h1 { font-size: 36px; }
   .deal-heading p { font-size: 13px; max-width: 210px; }

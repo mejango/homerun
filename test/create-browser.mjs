@@ -26,7 +26,7 @@ async function check(name, callback) {
 const input = name => page.locator(`#create-${name}`);
 const next = () => page.locator('#create-next').click();
 const network = id => page.locator(`#create-networks [data-network="${id}"]`);
-const environment = id => page.locator(`#create-networkEnvironment [data-environment="${id}"]`);
+const environment = () => page.getByRole('combobox', { name: 'Network environment', exact: true });
 const selectedNetworks = () => page.locator('#create-networks [aria-pressed="true"]').evaluateAll(buttons => buttons.map(button => button.dataset.network));
 const operatorWallet = `0x${'a1'.repeat(20)}`;
 const networkIDs = ['ethereum', 'optimism', 'base', 'arbitrum'];
@@ -42,6 +42,7 @@ async function downloadSetup() {
   return setup;
 }
 async function currentStep(index) {
+  await page.locator('#draft-status').filter({ hasText: 'Draft saved in this browser' }).waitFor({ state: 'visible' });
   await page.locator(`.create-step[data-step-panel="${index}"]`).waitFor({ state: 'visible' });
   await page.locator(`[data-create-step="${index}"][aria-current="step"]`).waitFor({ state: 'visible' });
   assert.equal(await page.locator(`.create-step[data-step-panel="${index}"]`).isVisible(), true);
@@ -135,7 +136,7 @@ try {
     await page.locator('#create-back').click();
     await currentStep(1);
     assert.equal(await input('purchaseBudget').inputValue(), '1,000');
-    await page.reload();
+    await page.reload({ waitUntil: 'domcontentloaded' });
     await currentStep(1);
     assert.equal(await input('purchaseBudget').inputValue(), '1,000');
     assert.equal(await page.locator('#draft-name').textContent(), 'Neighborhood Workshop');
@@ -156,7 +157,7 @@ try {
     await currentStep(1);
     await next();
     assert.equal(await input('revenueDescription').inputValue(), revenuePlan);
-    await page.reload();
+    await page.reload({ waitUntil: 'domcontentloaded' });
     await currentStep(2);
     assert.equal(await input('revenueDescription').inputValue(), revenuePlan);
   });
@@ -213,8 +214,8 @@ try {
     assert.equal(await page.locator('#create-next').count(), 0);
     await page.getByRole('heading', { name: 'Launch the FUND raise', exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Save metadata and prepare deployment', exact: true }).isDisabled(), true);
-    assert.equal(await environment('production').getAttribute('aria-pressed'), 'true');
-    assert.equal(await environment('testnet').getAttribute('aria-pressed'), 'false');
+    assert.equal(await environment().inputValue(), 'production');
+    assert.deepEqual(await environment().locator('option').allTextContents(), ['Production', 'Testnets']);
     assert.deepEqual(await selectedNetworks(), networkIDs);
     for (const [id, name] of [['ethereum', 'Ethereum'], ['optimism', 'Optimism'], ['base', 'Base'], ['arbitrum', 'Arbitrum']]) {
       assert.equal(await network(id).getAttribute('aria-label'), name);
@@ -236,15 +237,15 @@ try {
   await check('Network environment switching resets all four and subsets persist through reload', async () => {
     await network('optimism').click();
     assert.deepEqual(await selectedNetworks(), ['ethereum', 'base', 'arbitrum']);
-    await environment('testnet').click();
+    await environment().selectOption('testnet');
     assert.deepEqual(await selectedNetworks(), networkIDs);
     for (const id of networkIDs) assert.match(await network(id).getAttribute('aria-label'), /Sepolia/);
     await network('optimism').click();
     await network('arbitrum').click();
     assert.deepEqual(await selectedNetworks(), ['ethereum', 'base']);
-    await page.reload();
+    await page.reload({ waitUntil: 'domcontentloaded' });
     await currentStep(3);
-    assert.equal(await environment('testnet').getAttribute('aria-pressed'), 'true');
+    assert.equal(await environment().inputValue(), 'testnet');
     assert.deepEqual(await selectedNetworks(), ['ethereum', 'base']);
     const setup = await downloadSetup();
     assert.equal(setup.networkEnvironment, 'testnet');
@@ -256,9 +257,9 @@ try {
     assert.match(await page.locator('#networks-error').textContent(), /at least one/);
     assert.equal(await page.locator('#create-success').count(), 0);
     await a11y('Empty network selection validation');
-    await environment('production').click();
+    await environment().selectOption('production');
     assert.deepEqual(await selectedNetworks(), networkIDs);
-    await environment('testnet').click();
+    await environment().selectOption('testnet');
     await network('optimism').click();
     await network('arbitrum').click();
     assert.equal(await input('networks').getAttribute('aria-describedby'), null);
@@ -283,7 +284,7 @@ try {
     assert.equal(await input('operatorWallet').inputValue(), operatorWallet);
     await input('operatorWallet').fill(operatorWallet);
     setup = await downloadSetup();
-    assert.deepEqual(setup.operator, { address: operatorWallet, fundOwnershipPercentAfterPurchase: 20 });
+    assert.deepEqual(setup.operator, { name: '', introduction: '', photo: '', address: operatorWallet, fundOwnershipPercentAfterPurchase: 20 });
     assert.equal(setup.funding.ownerAddress, setup.revnetOperator.address);
     assert.equal(setup.revnetOperator.address, operatorWallet);
     assert.equal(setup.revnetOperator.scope, 'INCOME');
@@ -293,7 +294,7 @@ try {
     assert.equal(setup.asset.name, 'Neighborhood Workshop');
     assert.equal(Object.hasOwn(setup.funding, 'durationDays'), false);
     assert.equal(await page.locator('#create-success').count(), 0);
-    await page.reload();
+    await page.reload({ waitUntil: 'domcontentloaded' });
     await currentStep(3);
     assert.equal(await input('operatorWallet').inputValue(), operatorWallet);
     assert.deepEqual(await selectedNetworks(), ['ethereum', 'base']);
@@ -384,7 +385,7 @@ try {
     await input('photo').setInputFiles(new URL('../web/assets/founder-haus/exterior.jpg', import.meta.url).pathname);
     await page.locator('#draft-photo').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#draft-photo').evaluate(img => img.complete && img.naturalWidth > 0), true);
-    await page.reload();
+    await page.reload({ waitUntil: 'domcontentloaded' });
     await currentStep(0);
     await page.locator('#draft-photo').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#draft-photo').evaluate(img => img.complete && img.naturalWidth > 0), true);
@@ -392,11 +393,59 @@ try {
     assert.equal(await page.locator('#draft-photo').count(), 0);
     for (let index = 0; index < 3; index++) await next();
   });
+  await check('Operator introductions and compressed pictures survive review, download, and reload', async () => {
+    await page.locator('[data-create-step="0"]').click();
+    const introduction = 'We run a neighborhood workshop.\nOur <team> looks after the tools & welcomes new members.';
+    await input('operatorName').fill('Workshop team');
+    await input('operatorIntroduction').fill(introduction);
+    await input('operatorPhoto').setInputFiles(new URL('../web/assets/founder-haus/exterior.jpg', import.meta.url).pathname);
+    await page.locator('.create-operator-photo-preview').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('.create-operator-photo-preview').evaluate(img => img.complete && img.naturalWidth > 0 && img.naturalWidth <= 800 && img.naturalHeight <= 800), true);
+    assert.equal(await page.locator('#draft-photo').count(), 0, 'Operator picture does not replace the asset cover.');
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await currentStep(0);
+    assert.equal(await input('operatorName').inputValue(), 'Workshop team');
+    assert.equal(await input('operatorIntroduction').inputValue(), introduction);
+    await page.locator('.create-operator-photo-preview').waitFor({ state: 'visible' });
+    for (let index = 0; index < 3; index++) await next();
+    const profile = page.locator('#create-review .operator-profile');
+    assert.equal(await profile.locator('.operator-profile-name').textContent(), 'Workshop team');
+    assert.equal(await profile.locator('.operator-profile-introduction').textContent(), introduction);
+    assert.equal(await profile.locator('team').count(), 0, 'Introductions remain plain text.');
+    const setup = await downloadSetup();
+    assert.equal(setup.operator.name, 'Workshop team');
+    assert.equal(setup.operator.introduction, introduction);
+    assert.match(setup.operator.photo, /^data:image\/jpeg;base64,/);
+    assert.equal(setup.operator.address, operatorWallet, 'A public introduction does not change operator permissions.');
+    await page.setViewportSize({ width: 320, height: 844 });
+    await noOverflow();
+    await a11y('Operator profile review on mobile');
+    await shot('create-operator-review-mobile.png');
+    await page.setViewportSize({ width: 1440, height: 1000 });
+  });
+  await check('Unsupported operator pictures are rejected without replacing the saved picture', async () => {
+    await page.locator('[data-create-step="0"]').click();
+    const previous = await page.locator('.create-operator-photo-preview').getAttribute('src');
+    await input('operatorPhoto').setInputFiles({ name: 'operator.svg', mimeType: 'image/svg+xml', buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>') });
+    assert.match(await page.locator('#operatorPhoto-error').textContent(), /JPG, PNG or WebP/);
+    assert.equal(await page.locator('.create-operator-photo-preview').getAttribute('src'), previous);
+    assert.equal(await page.locator('#create-next').isEnabled(), true);
+    await page.locator('#remove-operator-photo').click();
+    assert.equal(await page.locator('.create-operator-photo-preview').count(), 0);
+    assert.equal(await page.locator('#operatorPhoto-error').count(), 0);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await currentStep(0);
+    assert.equal(await page.locator('.create-operator-photo-preview').count(), 0);
+    assert.equal(await input('operatorName').inputValue(), 'Workshop team');
+  });
   await check('Reset restores the editable draft without creating or overwriting deployments', async () => {
     await page.goto(new URL('/create', home).href);
     await page.locator('#start-over').click();
     await currentStep(0);
     assert.equal(await input('name').inputValue(), '');
+    assert.equal(await input('operatorName').inputValue(), '');
+    assert.equal(await input('operatorIntroduction').inputValue(), '');
+    assert.equal(await page.locator('.create-operator-photo-preview').count(), 0);
     assert.equal(await page.evaluate(() => localStorage.getItem('homerun:fund-launch:v1')), null);
     assert.equal(await page.evaluate(() => localStorage.getItem('homerun:created-projects:v1')), null);
     await input('name').fill('Another project');
@@ -409,16 +458,16 @@ try {
     assert.equal(await input('stickySplitPercent').inputValue(), '10');
     await next(); await currentStep(3);
     assert.deepEqual(await selectedNetworks(), networkIDs);
-    assert.equal(await environment('production').getAttribute('aria-pressed'), 'true');
+    assert.equal(await environment().inputValue(), 'production');
   });
   await check('Legacy draft network and operator preferences migrate and reset to new defaults', async () => {
     await page.evaluate(wallet => localStorage.setItem('homerun:create-draft:v1', JSON.stringify({
       raw: { name: 'Legacy preview', network: 'base', operatorWallet: wallet }, step: 3,
     })), operatorWallet);
-    await page.reload();
+    await page.reload({ waitUntil: 'domcontentloaded' });
     await currentStep(3);
     assert.deepEqual(await selectedNetworks(), ['base']);
-    assert.equal(await environment('production').getAttribute('aria-pressed'), 'true');
+    assert.equal(await environment().inputValue(), 'production');
     assert.equal(await input('operatorWallet').inputValue(), operatorWallet);
     const setup = await downloadSetup();
     assert.deepEqual(setup.plannedNetworks.map(chain => chain.chainId), [8453]);
@@ -436,13 +485,13 @@ try {
         raw: { name: 'Saved example', operatorSplitPercent: String(operators), stickySplitPercent: String(holders) },
         step: 2, incomeDefaultsVersion: version,
       })), { operators, holders, version });
-      await page.reload();
+      await page.reload({ waitUntil: 'domcontentloaded' });
       await currentStep(2);
       assert.equal(await input('operatorSplitPercent').inputValue(), String(expected[0]));
       assert.equal(await input('stickySplitPercent').inputValue(), String(expected[1]));
       await input('operatorSplitPercent').fill('75');
       await input('stickySplitPercent').fill('15');
-      await page.reload();
+      await page.reload({ waitUntil: 'domcontentloaded' });
       assert.equal(await input('operatorSplitPercent').inputValue(), '75');
       assert.equal(await input('stickySplitPercent').inputValue(), '15');
     }

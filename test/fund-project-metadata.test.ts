@@ -5,17 +5,19 @@ import type { CreateValues } from '../src/components/CreateFlow'
 
 describe('FUND project metadata stays descriptive', () => {
   it('publishes the standard cover field and preserves the plan without the local photo payload', () => {
-    const values = { ...CREATE_DEFAULTS, name: ' Founder Haus ', description: ' A place to build. ', photo: 'data:image/png;base64,local-only' } as CreateValues
-    const metadata = buildFundProjectMetadata(values, { coverImageUri: 'ipfs://bafycover', logoUri: 'ipfs://bafylogo' })
+    const values = { ...CREATE_DEFAULTS, name: ' Founder Haus ', description: ' A place to build. ', photo: 'data:image/png;base64,local-only', operatorPhoto: 'data:image/jpeg;base64,operator-local-only', operatorName: ' Haus team ', operatorIntroduction: ' We care for this place. ' } as CreateValues
+    const metadata = buildFundProjectMetadata(values, { coverImageUri: 'ipfs://bafycover', logoUri: 'ipfs://bafylogo', operatorPhotoUri: 'ipfs://bafyoperator' })
     expect(metadata).toMatchObject({ name: 'Founder Haus', description: 'A place to build.', coverImageUri: 'ipfs://bafycover', logoUri: 'ipfs://bafylogo', homerun: { version: 1, kind: 'fund', incomeProject: null } })
     expect(metadata.homerun.setup).not.toHaveProperty('photo')
+    expect(metadata.homerun.setup).not.toHaveProperty('operatorPhoto')
     expect(JSON.stringify(metadata)).not.toContain('local-only')
-    expect(parseFundProjectMetadata(metadata)).toMatchObject({ name: 'Founder Haus', coverUrl: 'https://juicebox.center/ipfs/bafycover', logoUrl: 'https://juicebox.center/ipfs/bafylogo', plan: { purchaseBudget: values.purchaseBudget } })
+    expect(parseFundProjectMetadata(metadata)).toMatchObject({ name: 'Founder Haus', coverUrl: 'https://juicebox.center/ipfs/bafycover', logoUrl: 'https://juicebox.center/ipfs/bafylogo', operator: { name: 'Haus team', introduction: 'We care for this place.', photoUrl: 'https://juicebox.center/ipfs/bafyoperator' }, plan: { purchaseBudget: values.purchaseBudget } })
   })
 
   it('rejects unpublished local or external cover images', () => {
     for (const coverImageUri of ['blob:https://homerun.money/photo', 'data:image/png;base64,picture', 'https://tracker.example/image']) {
       expect(() => buildFundProjectMetadata(CREATE_DEFAULTS as CreateValues, { coverImageUri })).toThrow('IPFS')
+      expect(() => buildFundProjectMetadata(CREATE_DEFAULTS as CreateValues, { operatorPhotoUri: coverImageUri })).toThrow('IPFS')
     }
   })
 
@@ -37,6 +39,22 @@ describe('FUND project metadata stays descriptive', () => {
   it('does not interpret unknown metadata versions or project kinds as a Homerun plan', () => {
     expect(parseFundProjectMetadata({ homerun: { version: 2, kind: 'fund', setup: {} } }).plan).toBeNull()
     expect(parseFundProjectMetadata({ homerun: { version: 1, kind: 'income', setup: {} } }).plan).toBeNull()
+    expect(parseFundProjectMetadata({ homerun: { version: 2, kind: 'fund', setup: {}, operator: { name: 'Unrecognized profile' } } }).operator).toBeNull()
+  })
+
+  it('supports absent and partial operator profiles without inventing an identity', () => {
+    expect(parseFundProjectMetadata(buildFundProjectMetadata(CREATE_DEFAULTS as CreateValues)).operator).toBeNull()
+    const metadata = { homerun: { version: 1, kind: 'fund', setup: {}, operator: { introduction: 'Our story' } } }
+    expect(parseFundProjectMetadata(metadata).operator).toEqual({ name: null, introduction: 'Our story', photoUrl: null })
+    expect(parseFundProjectMetadata({ homerun: { ...metadata.homerun, operator: { name: ' ', introduction: 123, photoUri: 'https://tracker.example/photo' } } }).operator).toBeNull()
+  })
+
+  it('bounds profile copy and accepts only gateway-safe published photos', () => {
+    const homerun = { version: 1, kind: 'fund', setup: {}, operator: { name: 'a'.repeat(90), introduction: 'b'.repeat(1300), photoUri: 'ipfs://bafyoperator/photo.webp' } }
+    expect(parseFundProjectMetadata({ homerun }).operator).toEqual({ name: 'a'.repeat(80), introduction: 'b'.repeat(1200), photoUrl: 'https://juicebox.center/ipfs/bafyoperator/photo.webp' })
+    for (const photoUri of ['javascript:alert(1)', 'https://tracker.example/photo', 'data:image/png;base64,YWJjZA==', 'ipfs://cid/../private']) {
+      expect(parseFundProjectMetadata({ homerun: { ...homerun, operator: { name: 'Team', photoUri } } }).operator?.photoUrl).toBeNull()
+    }
   })
 
   it('rejects invalid model values without fabricating zero estimates', () => {

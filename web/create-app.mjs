@@ -44,13 +44,13 @@ document.querySelector('#main').innerHTML = `<div class="create-intro"><div><h1>
         <div class="create-field"><label for="create-photo">Cover photo (optional)</label><label class="photo-picker" for="create-photo"><span aria-hidden="true">＋</span><span>Choose a photo<small>JPG, PNG or WebP | up to 8 MB</small></span><input id="create-photo" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="photo-error"></label><button id="remove-photo" class="quiet-button" type="button" hidden>Remove photo</button><p class="create-error" id="photo-error" hidden></p></div>
       </section>
       <section class="create-step" data-step-panel="1" aria-labelledby="step-title-1" hidden><h2 id="step-title-1" tabindex="-1">Fundraise</h2>
-        <div class="fundraise-inputs"><fieldset class="income-field-group modeling-inputs fundraise-modeling" aria-describedby="fundraise-modeling-note"><legend>Modeling inputs</legend><p id="fundraise-modeling-note" class="input-purpose-note">Budget assumptions for the raise goal. These do not set contract withdrawal allowances.</p><div class="income-inputs">${field('purchaseBudget','Asset price',{prefix:'$'})}${field('opsReserve','Cash reserve',{prefix:'$',help:'Cash set aside to cover operating expenses.'})}</div></fieldset><fieldset class="income-field-group fundraise-contract"><legend>Contractual Settings</legend>${field('operatorFundPercent','Operator FUND ownership',{suffix:'%',help:'Allocated after a successful purchase.'})}</fieldset>
+        <div class="fundraise-inputs"><fieldset class="income-field-group modeling-inputs fundraise-modeling" aria-describedby="fundraise-modeling-note"><legend>Modeling inputs</legend><p id="fundraise-modeling-note" class="input-purpose-note">Budget assumptions for the raise goal. These do not set contract withdrawal allowances.</p><div class="income-inputs">${field('purchaseBudget','Asset price',{prefix:'$'})}${field('opsReserve','Cash reserve',{prefix:'$',help:'Cash set aside to cover operating expenses.'})}</div></fieldset><fieldset class="income-field-group fundraise-contract"><legend>Contractual settings</legend>${field('operatorFundPercent','Operator FUND ownership',{suffix:'%',help:'Allocated after a successful purchase.'})}</fieldset>
         <div class="create-callout fundraise-goal"><span>Total fundraising goal</span><strong id="create-raise-goal">—</strong><p id="create-fee-note"></p></div>
         <div class="create-callout fundraise-ownership"><span>FUND ownership after purchase</span><div id="create-fund-pie" class="fund-ownership-pie" role="img" aria-label="Operator FUND ownership"><strong id="create-fund-share" aria-hidden="true">—</strong></div><dl class="fund-ownership-legend"><div><dt><i class="fund-operator-swatch" aria-hidden="true"></i>Operators</dt><dd id="fund-operator-percent">—</dd></div><div><dt><i class="fund-contributor-swatch" aria-hidden="true"></i>Contributors</dt><dd id="fund-contributor-percent">—</dd></div></dl></div></div>
         <p class="create-note">Contributors receive FUND. If the purchase succeeds, FUND represents a share of net asset-sale proceeds. A failed raise returns the remaining funds.</p>
       </section>
       <section class="create-step" data-step-panel="2" aria-labelledby="step-title-2" hidden><h2 id="step-title-2" tabindex="-1">Income</h2>
-        <fieldset class="income-field-group modeling-inputs" aria-describedby="modeling-inputs-note"><legend>Modeling inputs</legend><p id="modeling-inputs-note" class="input-purpose-note">Revenue and expense assumptions for the projections. These do not set contract terms.</p><div class="income-inputs">${field('monthlyRent','Expected monthly revenue',{prefix:'$'})}${field('monthlyCosts','Expected monthly expenses',{prefix:'$'})}${field('rentGrowthPercent','Target revenue growth rate (%)',{suffix:'%',help:'Per year.'})}${field('costGrowthPercent','Target expense growth rate (%)',{suffix:'%',help:'Per year.'})}</div></fieldset><fieldset class="income-field-group"><legend>Contractual Settings</legend><p class="input-purpose-note">Sets how each new batch of INCOME tokens is shared.</p><div class="income-inputs">${field('operatorSplitPercent','To operators',{suffix:'%'})}${field('stickySplitPercent','To FUND holders',{suffix:'%'})}</div></fieldset>
+        <fieldset class="income-field-group modeling-inputs" aria-describedby="modeling-inputs-note"><legend>Modeling inputs</legend><p id="modeling-inputs-note" class="input-purpose-note">Revenue and expense assumptions for the projections. These do not set contract terms.</p><div class="income-inputs">${field('monthlyRent','Expected monthly revenue',{prefix:'$'})}${field('monthlyCosts','Expected monthly expenses',{prefix:'$'})}${field('rentGrowthPercent','Target revenue growth rate (%)',{suffix:'%',help:'Per year.'})}${field('costGrowthPercent','Target expense growth rate (%)',{suffix:'%',help:'Per year.'})}</div></fieldset><fieldset class="income-field-group"><legend>Contractual settings</legend><p class="input-purpose-note">Sets how each new batch of INCOME tokens is shared.</p><div class="income-inputs">${field('operatorSplitPercent','To operators',{suffix:'%'})}${field('stickySplitPercent','To FUND holders',{suffix:'%'})}</div></fieldset>
         <section class="income-preview-panel" aria-labelledby="income-preview-heading"><header><h3 id="income-preview-heading">Income preview</h3><p>Based on your inputs. Move the timeline to explore ownership.</p></header>
         <h4 class="income-chart-heading">New tokens per revenue payment</h4>
         <div id="create-income-split" class="create-split" aria-live="polite"></div>
@@ -62,7 +62,7 @@ document.querySelector('#main').innerHTML = `<div class="create-intro"><div><h1>
       <section class="create-step" data-step-panel="3" aria-labelledby="step-title-3" hidden><h2 id="step-title-3" tabindex="-1">Review</h2>
         <div id="create-review"></div>
         <fieldset class="create-network-settings"><legend>Networks</legend>
-          <div class="create-network-options"><div id="create-networkEnvironment" class="network-environments" role="group" aria-label="Deployment environment" tabindex="-1"><button type="button" data-environment="production">Production</button><button type="button" data-environment="testnet">Testnets</button></div>
+          <div class="create-network-options"><select id="create-networkEnvironment" name="networkEnvironment" class="network-environments" aria-label="Network environment" aria-describedby="networkEnvironment-error"><option value="production">Production</option><option value="testnet">Testnets</option></select>
           <div id="create-networks" class="network-symbols" role="group" aria-label="Selected networks" tabindex="-1" aria-describedby="networks-error">${NETWORK_FAMILIES.map(family=>`<button type="button" data-network="${family.id}" aria-label="${family.name}" title="${family.name}"><img src="${family.icon}" width="26" height="26" alt=""></button>`).join('')}</div></div>
           <p id="networks-error" class="create-error" hidden></p><p id="networkEnvironment-error" class="create-error" hidden></p>
         </fieldset>
@@ -139,7 +139,7 @@ function splitMarkup(values, customer) {
   return `<div class="create-split-content${active.some(([,value])=>value<8)?' is-narrow':''}"><div class="create-split-bar" aria-hidden="true">${active.map(([,value,color])=>`<span style="flex:${value};background:${color}"></span>`).join('')}</div><ul style="grid-template-columns:${active.map(([,value])=>`${value}fr`).join(' ')}">${active.map(([label,value,color])=>`<li style="--share:${value}%;--split-color:${color}"><strong>${number(value)}%</strong><span>${label}</span></li>`).join('')}</ul>${zero.length?`<p class="zero-shares">${zero.map(([label])=>`0% ${label}`).join(' | ')}</p>`:''}</div>`;
 }
 function render() {
-  for (const button of document.querySelectorAll('[data-environment]')) button.setAttribute('aria-pressed', String(raw.networkEnvironment === button.dataset.environment));
+  document.querySelector('#create-networkEnvironment').value = raw.networkEnvironment;
   for (const button of document.querySelectorAll('[data-network]')) {
     const family = NETWORK_FAMILIES.find(item=>item.id === button.dataset.network);
     const chain = family[raw.networkEnvironment] || family.production;
@@ -179,19 +179,19 @@ form.addEventListener('input', event => {
   const input = event.target;
   if (!input.name) return;
   raw[input.name] = input.type === 'checkbox' ? input.checked : input.value;
+  if (input.name === 'networkEnvironment') {
+    raw.networks = NETWORK_FAMILIES.map(family=>family.id);
+    const errors = normalizeCreateDraft(raw).errors;
+    showError('networks', errors.networks); showError('networkEnvironment', errors.networkEnvironment);
+  }
   if (input.getAttribute('aria-invalid') === 'true') showError(input.name, normalizeCreateDraft(raw).errors[input.name]);
   render(); save();
 });
 document.querySelector('.create-network-settings').addEventListener('click', event => {
-  const environment = event.target.closest('[data-environment]');
   const network = event.target.closest('[data-network]');
-  if (environment) {
-    raw.networkEnvironment = environment.dataset.environment;
-    raw.networks = NETWORK_FAMILIES.map(family=>family.id);
-  } else if (network) {
-    const selected = Array.isArray(raw.networks) ? raw.networks : [];
-    raw.networks = selected.includes(network.dataset.network) ? selected.filter(id=>id !== network.dataset.network) : [...selected, network.dataset.network];
-  } else return;
+  if (!network) return;
+  const selected = Array.isArray(raw.networks) ? raw.networks : [];
+  raw.networks = selected.includes(network.dataset.network) ? selected.filter(id=>id !== network.dataset.network) : [...selected, network.dataset.network];
   const errors = normalizeCreateDraft(raw).errors;
   showError('networks',errors.networks); showError('networkEnvironment',errors.networkEnvironment);
   render(); save();

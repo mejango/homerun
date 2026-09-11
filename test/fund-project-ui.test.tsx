@@ -67,6 +67,7 @@ describe('live FUND transaction tracking survives refreshed data', () => {
   let root: Root
   let host: HTMLDivElement
   beforeEach(() => {
+    HTMLElement.prototype.scrollIntoView ??= () => {}
     Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) })
     window.history.replaceState(null, '', '/')
     runtime.incomeId = undefined
@@ -79,10 +80,10 @@ describe('live FUND transaction tracking survives refreshed data', () => {
   })
   afterEach(async () => { await act(async () => root.unmount()); host.remove() })
   async function tab(label: string) {
-    let target = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"], [role="menuitemradio"]')].find(button => button.textContent === label)
+    let target = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(button => button.textContent === label)
     if (!target && ['Operators', 'Extras'].includes(label)) {
-      await act(async () => host.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!.click())
-      target = [...host.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')].find(button => button.textContent === label)
+      await act(async () => host.querySelector<HTMLButtonElement>('.hpl-overflow-trigger')!.click())
+      target = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(button => button.textContent === label)
     }
     expect(target, `Missing ${label} tab`).toBeDefined(); await act(async () => target!.click())
   }
@@ -101,7 +102,7 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     expect(runtime.mounted).toBe(0)
     runtime.query = { ...runtime.query, data: state(), isPending: false }
     await act(async () => root.render(<FundProject chainId={1} projectId="7" />))
-    expect([...host.querySelectorAll('[role="menuitemradio"]')].find(button => button.textContent === 'Operators')?.getAttribute('aria-checked')).toBe('true')
+    expect([...host.querySelectorAll('[role="tab"]')].find(button => button.textContent === 'Operators')?.getAttribute('aria-selected')).toBe('true')
     expect(host.querySelector('[data-testid="income"]')).not.toBeNull()
     expect(host.querySelector('.hpl-metadata')?.textContent).toContain('FUND treasury: <0.000001 ETH')
     expect(host.querySelector('.hpl-metadata')?.textContent).toContain('FUND supply: <0.000001')

@@ -60,10 +60,10 @@ async function open() {
 }
 async function tab(name) {
   if (['Extras', 'Operators'].includes(name)) {
-    const more = page.getByRole('button', { name: 'More project sections', exact: true });
+    const more = page.getByRole('button', { name: /^More project sections/ });
     if (await more.getAttribute('aria-expanded') !== 'true') await more.click();
-    await page.getByRole('menuitemradio', { name, exact: true }).click();
-    await expect(more).toHaveAttribute('aria-expanded', 'false');
+    await page.getByRole('tab', { name, exact: true }).click();
+    await expect(more).toHaveAttribute('aria-expanded', 'true');
     await expect(page.locator('.homerun-project-layout')).toHaveAttribute('data-project-tab', name.toLowerCase());
     await expect(page.getByRole('tabpanel', { name, exact: true })).toBeVisible();
     return;
@@ -133,6 +133,16 @@ async function tokens(selector) {
       .match(/[\d,.]+/)[0]
       .replaceAll(",", ""),
   );
+}
+async function paymentShare(expected) {
+  const label = expected > 0 && expected < 0.01
+    ? '<0.01%'
+    : `${new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(expected)}%`;
+  await expect(page.locator('#pay-result-share')).toHaveText(label);
+  const segment = page.locator('.demo-payment-result [data-payment-segment=payer]');
+  const length = Number((await segment.getAttribute('stroke-dasharray')).split(' ')[0]);
+  const radius = Number(await segment.getAttribute('r'));
+  assert.ok(Math.abs(length / (2 * Math.PI * radius) * 100 - expected) < 0.00001, 'The chart uses the full ownership fraction before label rounding.');
 }
 async function dismiss(id) {
   await page.keyboard.press("Escape");
@@ -254,21 +264,23 @@ try {
     },
   );
   await check(
-    "FUND payments change personal quotes without moving modeled project cash",
+    "FUND payments show their ownership result without moving modeled project cash",
     async () => {
       await open();
       const raised = await dollars("#project-raised");
+      await expect(page.locator("#pay-panel-title")).toHaveText("Fund");
+      await expect(page.locator(".pay-receipt > span")).toHaveText("You get");
       await page.locator("#pay-amount").fill("500");
       await expect(page.locator("#pay-output")).toHaveText("5,000,000");
       assert.equal(await dollars("#project-raised"), raised);
-      await page.locator("#pay-review").click();
-      await expect(page.locator("#pay-dialog[open]")).toBeVisible();
-      await expect(page.locator("#pay-dialog")).toContainText("5,000,000 FUND");
-      await expect(page.locator("#pay-dialog")).toContainText(
-        "Nothing is signed, paid, redeemed, or changed",
-      );
-      await dismiss("#pay-dialog");
-      await expect(page.locator("#pay-review")).toBeFocused();
+      await expect(page.locator(".demo-payment-result")).toHaveAttribute("data-payment-route", "FUND");
+      await expect(page.locator(".demo-payment-result svg[role=img]")).toBeVisible();
+      assert.equal(await dollars("#pay-result-balance"), raised + 500);
+      await paymentShare(500 / (raised + 500) * 100);
+      await expect(page.locator("#pay-review")).toHaveCount(0);
+      await page.locator("#pay-amount").press("Enter");
+      await expect(page.locator("#pay-dialog")).toHaveCount(0);
+      await expect(page.locator("#pay-amount")).toBeFocused();
       assert.equal(await dollars("#project-raised"), raised);
     },
   );
@@ -280,22 +292,53 @@ try {
       await page.locator("#pay-amount").fill("0.2");
       await expect(page.locator("#pay-output")).toHaveText("5,000,000");
       await expect(page.locator(".pay-conversion")).toContainText("2,500 USDC");
+      const balance = await dollars("#pay-result-balance");
+      const share = await tokens("#pay-result-share");
       await page.locator("#pay-currency").selectOption("USDC");
       await expect(page.locator("#pay-amount")).toHaveValue("500");
+      assert.equal(await dollars("#pay-result-balance"), balance);
+      assert.equal(await tokens("#pay-result-share"), share);
     },
   );
   await check(
-    "Invalid payments disable review and recover without losing focus",
+    "Invalid payments hide ownership results and recover without losing focus",
     async () => {
       await open();
       for (const value of ["", "-1", "abc", "0.001"]) {
         await page.locator("#pay-amount").fill(value);
-        await expect(page.locator("#pay-review")).toBeDisabled();
+        await expect(page.locator(".demo-payment-result")).toHaveCount(0);
+        await expect(page.locator("#pay-output")).toHaveText("—");
         await expect(page.locator("#pay-error")).not.toBeEmpty();
         await expect(page.locator("#pay-amount")).toBeFocused();
       }
       await page.locator("#pay-amount").fill("100");
-      await expect(page.locator("#pay-review")).toBeEnabled();
+      await expect(page.locator(".demo-payment-result")).toBeVisible();
+      await expect(page.locator("#pay-error")).toHaveCount(0);
+    },
+  );
+  await check(
+    "New FUND payments use the remaining goal even without a historical position",
+    async () => {
+      await open();
+      await field("raisedPercent", 0);
+      await page.locator("#pay-amount").fill("500");
+      await expect(page.locator("#pay-output")).toHaveText("5,000,000");
+      await expect(page.locator("#project-raised")).toHaveText("$0");
+      assert.equal(await dollars("#pay-result-balance"), 500);
+      await paymentShare(100);
+      await field("raisedPercent", 10);
+      const raised = await dollars("#project-raised");
+      const goal = await dollars("#project-goal");
+      await page.locator("#pay-amount").fill("75000");
+      await expect(page.locator("#pay-output")).toHaveText("750,000,000");
+      assert.ok(75000 > raised && 75000 < goal - raised);
+      assert.equal(await dollars("#pay-result-balance"), raised + 75000);
+      await paymentShare(75000 / (raised + 75000) * 100);
+      await page.locator("#pay-amount").fill((goal - raised + 0.01).toFixed(2));
+      await expect(page.locator(".demo-payment-result")).toHaveCount(0);
+      await expect(page.locator("#pay-error")).not.toBeEmpty();
+      await expect(page.locator("#pay-output")).toHaveText("—");
+      assert.equal(await dollars("#project-raised"), raised);
     },
   );
   await check(
@@ -305,6 +348,7 @@ try {
       await phase("funded");
       await expect(page.locator("#pay-review")).toBeDisabled();
       await expect(page.locator("#pay-amount")).toHaveCount(0);
+      await expect(page.locator(".demo-payment-result")).toHaveCount(0);
       assert.equal(await dollars("#escrow-cash"), 615384.62);
       await phase("refunding");
       await expect(page.locator("#pay-output")).toHaveText("10,000");
@@ -347,28 +391,35 @@ try {
       await open();
       await page.locator("#pay-amount").fill("12000");
       await phase("earning");
+      await expect(page.locator("#pay-panel-title")).toHaveText("Pay");
       await reveal("#your-fund-tokens");
       const fund = await tokens("#your-fund-tokens");
       const income = await tokens("#your-rev-tokens");
       const pool = await dollars("#cash-in-pool");
+      const supply = await tokens("#rev-total-supply");
       await page.locator("#pay-amount").fill("250.50");
       const expected = new Intl.NumberFormat("en-US", {
         maximumFractionDigits: 6,
       }).format(250.5 * 10 * 0.95 ** 4 * 0.1);
       await expect(page.locator("#pay-output")).toHaveText(expected);
+      await expect(page.locator(".demo-payment-result")).toHaveAttribute("data-payment-route", "INCOME");
+      await expect(page.locator(".demo-payment-result svg[role=img]")).toBeVisible();
+      await expect(page.locator("#pay-review")).toHaveCount(0);
+      assert.equal(await dollars("#pay-result-balance"), pool + 250.5);
+      const totalMinted = 250.5 * 10 * 0.95 ** 4;
+      await paymentShare(totalMinted * 0.1 / (supply + totalMinted) * 100);
       assert.equal(await tokens("#your-fund-tokens"), fund);
       assert.equal(await tokens("#your-rev-tokens"), income);
       assert.equal(await dollars("#cash-in-pool"), pool);
-      await page.locator("#income-payment-results > details > summary").click();
-      await expect(page.locator("#income-payment-results")).toContainText(
-        "historical FUND position stays unchanged",
-      );
-      assert.equal(
-        await page
-          .locator("[data-income-payment-chart=allocation] svg")
-          .count(),
-        1,
-      );
+      for (const value of ["", "abc", "-2", "1.001"]) {
+        await page.locator("#pay-amount").fill(value);
+        await expect(page.locator(".demo-payment-result")).toHaveCount(0);
+        await expect(page.locator("#pay-error")).not.toBeEmpty();
+        assert.equal(await tokens("#your-fund-tokens"), fund);
+        assert.equal(await tokens("#your-rev-tokens"), income);
+      }
+      await page.locator("#pay-amount").fill("250.50");
+      await expect(page.locator(".demo-payment-result")).toBeVisible();
       await phase("raising");
       await expect(page.locator("#pay-amount")).toHaveValue("12000");
       await phase("earning");
@@ -543,7 +594,7 @@ try {
     },
   );
   await check(
-    "Invalid assumptions disable review; reset also resets partially typed inputs",
+    "Invalid assumptions hide payment results; reset also resets partially typed inputs",
     async () => {
       await open();
       await field("purchaseBudget", "");
@@ -551,14 +602,14 @@ try {
         "aria-invalid",
         "true",
       );
-      await expect(page.locator("#pay-review")).toBeDisabled();
+      await expect(page.locator(".demo-payment-result")).toHaveCount(0);
       await tab('Extras');
       await expect(page.locator("#download-scenario")).toBeDisabled();
       await page.locator("#reset-example").click();
       await expect(page.locator("#field-purchaseBudget")).toHaveValue(
         "500,000",
       );
-      await expect(page.locator("#pay-review")).toBeEnabled();
+      await expect(page.locator(".demo-payment-result")).toBeVisible();
       await expect(page.locator("#project-goal")).toHaveText("$615,384.62");
     },
   );
@@ -681,7 +732,11 @@ try {
                 width + 1,
             );
           }
-          if (["raising", "refunding", "liquidated"].includes(stage)) {
+          if (["raising", "earning"].includes(stage)) {
+            const box = await page.locator(".demo-payment-result").boundingBox();
+            assert.ok(box.width <= width);
+          }
+          if (["refunding", "liquidated"].includes(stage)) {
             await page.locator("#pay-review").click();
             const box = await page.locator("#pay-dialog").boundingBox();
             assert.ok(box.width <= width);
@@ -703,6 +758,8 @@ try {
     await page.locator('#pay-amount').fill('2500');
     await expect(page.locator('#pay-output')).toHaveText('25,000,000');
     await expect(page.locator('#project-raised')).toHaveText('$0');
+    assert.equal(await dollars('#pay-result-balance'), 2500);
+    await paymentShare(100);
     await expect(page.locator('.demo-model-note')).toContainText('Local project preview');
     assert.ok(await page.locator('#created-asset-sketch').evaluate(canvas => canvas.width > 0 && canvas.height > 0));
     await page.evaluate(key => localStorage.removeItem(key), CREATED_PROJECTS_KEY);

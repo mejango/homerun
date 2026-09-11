@@ -74,9 +74,8 @@ describe('shared project layout', () => {
 
   async function click(label: string, name: string) {
     if (label === 'Project sections' && (name === 'Extras' || name === 'Operators')) {
-      await act(async () => host.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!.click())
-      await act(async () => Array.from(host.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find(item => item.textContent === name)!.click())
-      return
+      const trigger = host.querySelector<HTMLButtonElement>('.hpl-overflow-trigger')!
+      if (trigger.getAttribute('aria-expanded') !== 'true') await act(async () => trigger.click())
     }
     await act(async () => button(label, name).click())
   }
@@ -131,12 +130,12 @@ describe('shared project layout', () => {
     const element = <HomerunProjectLayout {...props()} />
     host.innerHTML = renderToString(element)
     expect(tabs('Project sections').every(item => item.disabled)).toBe(true)
-    expect(host.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')?.disabled).toBe(true)
+    expect(host.querySelector<HTMLButtonElement>('.hpl-overflow-trigger')?.disabled).toBe(true)
     button('Project sections', 'Stages').click()
     expect(window.location.hash).toBe('')
     await act(async () => { root = hydrateRoot(host, element) })
     expect(tabs('Project sections').every(item => !item.disabled)).toBe(true)
-    expect(host.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')?.disabled).toBe(false)
+    expect(host.querySelector<HTMLButtonElement>('.hpl-overflow-trigger')?.disabled).toBe(false)
     await click('Project sections', 'Stages')
     expect(selected('Project sections')).toBe('Stages')
     expect(window.location.hash).toBe('#stages')
@@ -269,50 +268,64 @@ describe('shared project layout', () => {
     }
   })
 
-  it('keeps overflow deep links and labels available and supports menu keyboard selection', async () => {
+  it('reveals optional tabs inline while preserving deep links, panel labels and pending drafts', async () => {
     window.history.replaceState(window.history.state, '', '#operators')
     await render()
     expect(tabs('Project sections').map(item => item.textContent)).toEqual(['Activity', 'Overview', 'Stages', 'Owners', 'Shop'])
     expect(tabs('Project sections').filter(item => item.tabIndex === 0)).toEqual([button('Project sections', 'Overview')])
-    const trigger = host.querySelector<HTMLButtonElement>('[aria-label="More project sections"][aria-haspopup="menu"]')!
-    const menu = host.querySelector<HTMLElement>('[role="menu"]')!
+    const trigger = host.querySelector<HTMLButtonElement>('.hpl-overflow-trigger')!
+    const operatorDraft = input('operators')!
+    operatorDraft.value = 'pending operator edit'
+    const operatorPanel = operatorDraft.closest('[role="tabpanel"]')!
     expect(trigger.dataset.active).toBe('true')
-    expect(trigger.textContent).toContain('Operators')
-    expect(menu.hidden).toBe(true)
-    const operatorPanel = input('operators')!.closest('[role="tabpanel"]')!
+    expect(trigger.getAttribute('aria-label')).toBe('More project sections, current: Operators')
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(host.querySelector('[role="menu"]')).toBeNull()
     expect(document.getElementById(operatorPanel.getAttribute('aria-labelledby')!)?.textContent).toBe('Operators')
     await act(async () => trigger.click())
-    expect(menu.hidden).toBe(false)
-    expect(document.activeElement?.textContent).toBe('Operators')
-    await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true })))
-    expect(document.activeElement?.textContent).toBe('Extras')
-    await act(async () => (document.activeElement as HTMLButtonElement).click())
-    expect(window.location.hash).toBe('#extras')
-    expect(menu.hidden).toBe(true)
-    expect(trigger.textContent).toContain('Extras')
-    expect(document.activeElement).toBe(trigger)
-    expect(host.querySelector('[role="menuitemradio"][aria-checked="true"]')?.textContent).toBe('Extras')
-    await traverse('back')
-    expect(trigger.textContent).toContain('Operators')
-    expect(input('operators')!.closest('[role="tabpanel"]')?.hasAttribute('hidden')).toBe(false)
-    expect(mounts.operators).toBe(1)
-  })
-
-  it('dismisses overflow with Escape or outside interaction without changing the selected pane', async () => {
-    await render()
-    const trigger = host.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!
-    const menu = host.querySelector<HTMLElement>('[role="menu"]')!
-    await act(async () => trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })))
-    expect(menu.hidden).toBe(false)
-    expect(document.activeElement?.textContent).toBe('Extras')
-    await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
-    expect(menu.hidden).toBe(true)
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    expect(tabs('Project sections').map(item => item.textContent)).toEqual(['Activity', 'Overview', 'Stages', 'Owners', 'Shop', 'Extras', 'Operators'])
+    expect(trigger.parentElement?.lastElementChild).toBe(trigger)
+    expect(button('Project sections', 'Operators').getAttribute('aria-selected')).toBe('true')
+    expect(document.getElementById(operatorPanel.getAttribute('aria-labelledby')!)).toBe(button('Project sections', 'Operators'))
+    await click('Project sections', 'Extras')
+    button('Project sections', 'Extras').focus()
+    await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })))
+    expect(selected('Project sections')).toBe('Operators')
+    expect(document.activeElement).toBe(button('Project sections', 'Operators'))
+    await act(async () => trigger.click())
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(window.location.hash).toBe('#operators')
+    expect(operatorPanel.hasAttribute('hidden')).toBe(false)
+    expect(input('operators')).toBe(operatorDraft)
+    expect(operatorDraft.value).toBe('pending operator edit')
+    expect(document.getElementById(operatorPanel.getAttribute('aria-labelledby')!)?.textContent).toBe('Operators')
+    expect(tabs('Project sections').filter(item => item.tabIndex === 0)).toEqual([button('Project sections', 'Overview')])
     expect(document.activeElement).toBe(trigger)
     await act(async () => trigger.click())
+    expect(selected('Project sections')).toBe('Operators')
+    await traverse('back')
+    expect(selected('Project sections')).toBe('Extras')
+    expect(mounts.operators).toBe(1)
+    expect(unmounts.operators ?? 0).toBe(0)
+  })
+
+  it('keeps inline expansion open during other interactions and collapses on Escape without changing the pane', async () => {
+    await render()
+    const trigger = host.querySelector<HTMLButtonElement>('.hpl-overflow-trigger')!
+    await act(async () => trigger.click())
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
     await act(async () => document.body.dispatchEvent(new Event('pointerdown', { bubbles: true })))
-    expect(menu.hidden).toBe(true)
-    expect(selected('Project sections')).toBe('Overview')
-    expect(window.location.hash).toBe('')
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    await click('Project sections', 'Extras')
+    button('Project sections', 'Extras').focus()
+    await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(document.activeElement).toBe(trigger)
+    expect(window.location.hash).toBe('#extras')
+    expect(input('extras')!.closest('[role="tabpanel"]')?.hasAttribute('hidden')).toBe(false)
+    expect(trigger.dataset.active).toBe('true')
+    expect(trigger.getAttribute('aria-label')).toBe('More project sections, current: Extras')
   })
 
   it('shows mobile Activity without remounting payment or the selected desktop pane', async () => {
