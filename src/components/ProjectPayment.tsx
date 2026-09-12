@@ -5,9 +5,11 @@ import { buildPayTx, buildPermit2ApproveTx, uniswapV4Deployment } from '@bananap
 import { addPermit2SignatureToDirectPaySwap, buildDirectPaySwapTx } from '@bananapus/nana-sdk-core/v6/direct-pay'
 import { permit2AllowanceNeedsRefresh, permit2SignatureNeedsOnchainFallback, readPermit2Allowance, shouldUsePermit2Signature } from '@bananapus/nana-sdk-core/v6/permit2'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { erc20Abi, formatUnits, isAddressEqual, zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
+import { ModalShell } from '@/components/ui/ModalShell'
+import { displayChainName } from '@/lib/chainDisplay'
 import { DisplayTokenAmount } from '@/components/DisplayTokenAmount'
 import { useReviewedPermit2Signature } from '@/hooks/useReviewedPermit2Signature'
 import { useSafeTx, txPhaseLabel, type TxRequest } from '@/hooks/useSafeTx'
@@ -48,7 +50,8 @@ async function paymentReceipt(client: PublicClient, hash: Hex) {
 
 /** FUND and INCOME share the reference clients' pay / direct-AMM execution
  * pipeline. The parent retains project-specific contract identity checks. */
-export function ProjectPayment({ chainId, projectId, tokenLabel, title, context: accountingContext, paused, reservedPercent, rulesetId, verify }: {
+export function ProjectPayment({ chainId, projectId, tokenLabel, title, context: accountingContext, paused, reservedPercent, rulesetId, verify, chainSelector, onBusyChange }: {
+  chainSelector?: ReactNode; onBusyChange?: (busy: boolean) => void
   chainId: JBChainId; projectId: bigint; tokenLabel: 'FUND' | 'INCOME'; title: string
   context: PaymentContext; paused: boolean; reservedPercent: number; rulesetId: string
   verify: (account: Address, minimumBlock?: bigint) => Promise<{ blockNumber: bigint }>
@@ -56,6 +59,7 @@ export function ProjectPayment({ chainId, projectId, tokenLabel, title, context:
   const { address, openSignIn } = useWallet()
   // The route query and all writes use the same chain-bound Wagmi client.
   const client = usePublicClient({ chainId }) as PublicClient | undefined
+  const [open, setOpen] = useState(false)
   const [input, setInput] = useState('')
   const [selectedToken, setSelectedToken] = useState<Address>()
   const tokenOptions = useQuery({
@@ -99,6 +103,8 @@ export function ProjectPayment({ chainId, projectId, tokenLabel, title, context:
   const zeroAllocation = reservedPercent === 10_000 && quote.data?.kind === 'pay' && minimum === 0n && quote.data.reservedTokenCount > 0n
   const quoted = !!quote.data && !quote.isError && !quote.isPlaceholderData && (minimum > 0n || zeroAllocation)
   const busy = preparing || [tx, approval, routerApproval].some(item => item.busy || item.phase === 'review')
+  const tracking = busy || [tx, approval, routerApproval].some(item => !!item.safeProposalHash && item.phase !== 'success')
+  useEffect(() => { onBusyChange?.(tracking) }, [onBusyChange, tracking])
   async function submit() {
     if (!address || !client || !quoted || count <= 0n || busy) return
     const guard = () => { if (!mounted.current || currentIntent.current !== intent) throw new Error('The page, account, amount, currency, or project rules changed. Review the payment again.') }
@@ -189,6 +195,10 @@ export function ProjectPayment({ chainId, projectId, tokenLabel, title, context:
   }
   return <section className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7">
     <h3 className="mb-5 text-2xl">{title}</h3>
+    {chainSelector ?? <p className="mb-4 text-sm">Pay on {displayChainName(chainId)}</p>}
+    <button type="button" className="btn-primary min-h-12 w-full px-5" disabled={paused} onClick={() => setOpen(true)}>{paused ? 'Payments paused' : `Pay on ${displayChainName(chainId)}`}</button>
+    {!open && <><Status tx={approval} chainId={chainId} /><Status tx={routerApproval} chainId={chainId} /><Status tx={tx} chainId={chainId} /></>}
+    {open && <ModalShell title={`Pay · ${tokenLabel}`} subtitle={displayChainName(chainId)} onClose={() => setOpen(false)} maxWidth="max-w-lg">
     <fieldset disabled={busy} className="m-0 min-w-0 border-0 p-0">
       <label className="mb-5 grid gap-2 text-sm">Pay with<select className="min-h-11 rounded border border-[#bfc9b5] bg-white px-3 pr-9" value={context.token} onChange={event => setSelectedToken(event.target.value as Address)}>{(tokenOptions.data?.length ? tokenOptions.data : [accountingContext]).map(option => <option key={option.token} value={option.token}>{option.symbol}</option>)}</select></label>
       <label className="grid gap-2 text-sm">Amount in {context.symbol}<input className="min-h-12 w-full rounded border border-[#bfc9b5] bg-white px-3 text-base" value={input} onChange={event => setInput(event.target.value)} inputMode="decimal" autoComplete="off" /></label>
@@ -200,5 +210,6 @@ export function ProjectPayment({ chainId, projectId, tokenLabel, title, context:
     {address ? <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={busy || paused || count <= 0n || !quoted} onClick={() => void submit()}>{preparing ? 'Preparing payment…' : txPhaseLabel(tx.phase, { idle: tokenLabel === 'FUND' ? 'Review contribution' : 'Review payment', pending: 'Confirming onchain…' })}</button> : <button type="button" className="btn-primary mt-5 min-h-11 px-5" onClick={openSignIn}>Connect wallet</button>}
     {status && <p className="mt-3 text-sm" role="status">{status}</p>}{error && <p className="mt-3 text-sm text-red-800" role="alert">{error}</p>}
     <Status tx={approval} chainId={chainId} /><Status tx={routerApproval} chainId={chainId} /><Status tx={tx} chainId={chainId} />
+    </ModalShell>}
   </section>
 }

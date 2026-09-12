@@ -1,3 +1,4 @@
+import './dialog-shim'
 import { act, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -215,10 +216,12 @@ describe('INCOME transaction surfaces', () => {
     runtime.query = { ...runtime.query, data: { ...state(), metadata: { ...state().metadata, reservedPercent: 10000 } } }
     runtime.payQuote = { beneficiaryTokenCount: 0n, reservedTokenCount: 10n * 10n ** 18n }
     await render()
-    const pay = section('Pay the project')
+    const panel = section('Pay the project')
+    await act(async () => panel.querySelector('button')!.click())
+    const pay = panel.querySelector('dialog')!
     await setInput(pay.querySelector('input')!, '1')
     expect(pay.textContent).toContain('gives you no INCOME')
-    const button = pay.querySelector('button')!
+    const button = [...pay.querySelectorAll('button')].find(button => button.textContent === 'Review payment')!
     expect(button.disabled).toBe(false)
     await act(async () => button.click())
     expect(runtime.send).toHaveBeenCalledTimes(1)
@@ -231,9 +234,11 @@ describe('INCOME transaction surfaces', () => {
   it('does not treat an unexpected zero quote as permission to send an unprotected payment', async () => {
     runtime.payQuote = { beneficiaryTokenCount: 0n, reservedTokenCount: 10n * 10n ** 18n }
     await render()
-    const pay = section('Pay the project')
+    const panel = section('Pay the project')
+    await act(async () => panel.querySelector('button')!.click())
+    const pay = panel.querySelector('dialog')!
     await setInput(pay.querySelector('input')!, '1')
-    expect(pay.querySelector('button')?.disabled).toBe(true)
+    expect([...pay.querySelectorAll('button')].find(button => button.textContent === 'Review payment')?.disabled).toBe(true)
     expect(runtime.send).not.toHaveBeenCalled()
   })
 

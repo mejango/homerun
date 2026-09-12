@@ -54,7 +54,7 @@ export function CreateIncomePreview({ inputs }: { inputs: Record<string, unknown
           </ul>
         </div>
         <div className="income-preview-revenue"><span>Revenue received</span><strong data-income-revenue>{money.format(state.revenue)}</strong></div>
-        <figcaption id="create-income-preview-note">Expenses use the cash reserve first, then operator token cash-outs. Operator ownership includes their FUND share. Projections assume all FUND participates in Sticky and rewards are fully vested; weekly reward vesting is not modeled.</figcaption>
+        <figcaption id="create-income-preview-note">The Owner receives initial INCOME and Sticky rewards through their FUND share. The Operator receives its ongoing INCOME split. Expenses use the cash reserve first, then Operator token cash-outs. Projections assume all FUND participates in Sticky and rewards are fully vested; weekly reward vesting is not modeled.</figcaption>
       </figure>}
   </div>;
 }

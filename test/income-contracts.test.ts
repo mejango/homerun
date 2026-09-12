@@ -19,7 +19,7 @@ const token = getAddress('0x0000000000000000000000000000000000000044')
 const salt = `0x${'12'.repeat(32)}` as const
 
 describe('INCOME ownership and economics', () => {
-  it('allocates initial tokens across complete combined FUND balances, including the completed operator share', () => {
+  it('allocates initial tokens across complete combined FUND balances, including the completed owner share', () => {
     expect(allocateInitialIncome([{ holder: second, balance: 80n }, { holder: first, balance: 20n }], 100n)).toEqual([
       { beneficiary: first, count: 100_000n * 10n ** 18n }, { beneficiary: second, count: 400_000n * 10n ** 18n },
     ])
@@ -41,8 +41,8 @@ describe('INCOME ownership and economics', () => {
   it('scales 70/10/20 through the 80% reserved bucket without confusing split and total percentages', () => {
     const splits = incomeReservedSplits(first, token, ADDRESSES.distributor)
     expect(splits).toEqual([
-      { preferAddToBalance: false, lockedUntil: 2 ** 48 - 1, projectId: 0n, percent: 875_000_000, beneficiary: first, hook: zeroAddress },
-      { preferAddToBalance: false, lockedUntil: 2 ** 48 - 1, projectId: 0n, percent: 125_000_000, beneficiary: token, hook: ADDRESSES.distributor },
+      { preferAddToBalance: false, lockedUntil: 0, projectId: 0n, percent: 875_000_000, beneficiary: first, hook: zeroAddress },
+      { preferAddToBalance: false, lockedUntil: 0, projectId: 0n, percent: 125_000_000, beneficiary: token, hook: ADDRESSES.distributor },
     ])
   })
   it('leaves the reserved split total exactly 1e9 for fractional division and permits no-operator allocation', () => {
@@ -59,13 +59,14 @@ describe('INCOME ownership and economics', () => {
     expect(stages[0]).toMatchObject({ startsAtOrAfter: 1_800_000_000, initialIssuance: 10n * 10n ** 18n, splitPercent: 8000, issuanceCutFrequency: INCOME_QUARTER_SECONDS, issuanceCutPercent: 50_000_000, cashOutTaxRate: 0 })
     expect(stages[1]).toMatchObject({ startsAtOrAfter: 1_800_000_000 + 8 * INCOME_QUARTER_SECONDS, initialIssuance: 1n, issuanceCutFrequency: 0, issuanceCutPercent: 0, cashOutTaxRate: 0, autoIssuances: [] })
     expect(stages[1].splits).toEqual(stages[0].splits)
-    expect(stages.flatMap(stage => stage.splits).every(split => split.lockedUntil === 2 ** 48 - 1)).toBe(true)
+    expect(stages.map(stage => stage.splits[0].lockedUntil)).toEqual([0, 0])
+    expect(stages.flatMap(stage => stage.splits).every(split => split.lockedUntil === 0)).toBe(true)
     expect(stages.map(stage => stage.extraMetadata & 4)).toEqual([4, 4])
   })
 })
 
 describe('canonical INCOME deploy plan', () => {
-  const input = { chainId: 8453 as const, name: 'Founder Haus INCOME', projectUri: 'ipfs://bafytestmetadata', salt, creationFee: 12n, startTimestamp: 1_800_000_000, operator: first, fundToken: token, initialAllocations: [{ chainId: 8453, count: INITIAL_INCOME_SUPPLY, beneficiary: first }] }
+  const input = { chainId: 8453 as const, name: 'Founder Haus INCOME', projectUri: 'ipfs://bafytestmetadata', salt, creationFee: 12n, startTimestamp: 1_800_000_000, owner: second, operator: first, fundToken: token, initialAllocations: [{ chainId: 8453, count: INITIAL_INCOME_SUPPLY, beneficiary: first }] }
   it('uses one unambiguous six-argument deployFor with USDC token-keyed accounting and a limited USD store', () => {
     const plan = buildIncomeDeployPlan(input)
     const calldata = encodeFunctionData({ abi: plan.abi, functionName: plan.functionName, args: plan.args })
@@ -73,13 +74,14 @@ describe('canonical INCOME deploy plan', () => {
     expect(decoded.functionName).toBe('deployFor')
     expect(plan.args).toHaveLength(6)
     expect(plan.value).toBe(12n)
-    expect(plan.args[1]).toMatchObject({ baseCurrency: 2, operator: first, scopeCashOutsToLocalBalances: false })
+    expect(plan.args[1]).toMatchObject({ baseCurrency: 2, operator: second, scopeCashOutsToLocalBalances: false })
+    expect(plan.args[1].stageConfigurations.map(stage => stage.splits[0].beneficiary)).toEqual([first, first])
     expect(plan.args[2]).toEqual([{ token: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', decimals: 6, currency: 3181390099 }])
     expect(plan.args[4]).toMatchObject({ baseline721HookConfiguration: { tiersConfig: { currency: 2, decimals: 6, tiers: [] } }, preventOperatorMinting: true, preventOperatorAdjustingTiers: true, preventOperatorUpdatingMetadata: true, preventOperatorIncreasingDiscountPercent: true })
     expect(plan.abi.filter(entry => entry.type === 'function' && entry.name === 'deployFor')).toHaveLength(1)
   })
   it.each([
-    { salt: zeroHash }, { projectUri: 'https://untrusted.test/metadata' }, { initialAllocations: [{ chainId: 8453, count: 1n, beneficiary: first }] },
+    { owner: zeroAddress }, { operator: zeroAddress }, { salt: zeroHash }, { projectUri: 'https://untrusted.test/metadata' }, { initialAllocations: [{ chainId: 8453, count: 1n, beneficiary: first }] },
     { initialAllocations: [{ chainId: 10, count: INITIAL_INCOME_SUPPLY, beneficiary: first }] },
     { initialAllocations: [{ chainId: 8453, count: INITIAL_INCOME_SUPPLY / 2n, beneficiary: first }, { chainId: 8453, count: INITIAL_INCOME_SUPPLY / 2n, beneficiary: first }] },
   ])('refuses unresolved or inconsistent deployment input %#', invalid => { expect(() => buildIncomeDeployPlan({ ...input, ...invalid })).toThrow() })

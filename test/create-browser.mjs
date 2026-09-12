@@ -28,6 +28,7 @@ const next = () => page.locator('#create-next').click();
 const network = id => page.locator(`#create-networks [data-network="${id}"]`);
 const environment = () => page.getByRole('combobox', { name: 'Network environment', exact: true });
 const selectedNetworks = () => page.locator('#create-networks [aria-pressed="true"]').evaluateAll(buttons => buttons.map(button => button.dataset.network));
+const ownerWallet = `0x${'b2'.repeat(20)}`;
 const operatorWallet = `0x${'a1'.repeat(20)}`;
 const networkIDs = ['ethereum', 'optimism', 'base', 'arbitrum'];
 const revenuePlan = 'Members pay for tool hire and repairs.\nWeekend <workshops> earn extra revenue & support maintenance.';
@@ -215,16 +216,16 @@ try {
     await page.getByRole('heading', { name: 'Launch the FUND raise', exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Save metadata and prepare deployment', exact: true }).isDisabled(), true);
     assert.equal(await environment().inputValue(), 'production');
-    assert.deepEqual(await environment().locator('option').allTextContents(), ['Production', 'Testnets']);
+    assert.deepEqual(await environment().locator('option').allTextContents(), ['Mainnets', 'Testnets']);
     assert.deepEqual(await selectedNetworks(), networkIDs);
     for (const [id, name] of [['ethereum', 'Ethereum'], ['optimism', 'Optimism'], ['base', 'Base'], ['arbitrum', 'Arbitrum']]) {
       assert.equal(await network(id).getAttribute('aria-label'), name);
       assert.equal((await network(id).textContent()).trim(), '');
       assert.equal(await network(id).locator('img').evaluate(img => img.complete && img.naturalWidth > 0 && img.src.endsWith('.svg')), true);
     }
-    assert.equal(await input('operatorWallet').isVisible(), true);
+    assert.match(await page.locator('#create-review').textContent(), /Operator · INCOME incentives/);
     const setup = await downloadSetup();
-    assert.equal(setup.schemaVersion, 3);
+    assert.equal(setup.schemaVersion, 5);
     assert.equal(setup.networkEnvironment, 'production');
     assert.deepEqual(setup.plannedNetworks.map(chain => chain.chainId), [1, 10, 8453, 42161]);
     assert.equal(Object.hasOwn(setup, 'plannedNetwork'), false);
@@ -264,42 +265,60 @@ try {
     await network('arbitrum').click();
     assert.equal(await input('networks').getAttribute('aria-describedby'), null);
   });
-  await check('One operator address serves FUND ownership and optional INCOME controls', async () => {
-    assert.equal(await input('operatorWallet').isVisible(), true);
+  await check('Owner controls the program while a separate Operator receives incentives', async () => {
     let setup = await downloadSetup();
-    assert.equal(setup.revnetOperator.enabled, true);
-    assert.equal(setup.revnetOperator.status, 'not-specified');
     assert.equal(setup.revnetOperator.address, null);
-    await input('operatorWallet').fill('not-a-wallet');
-    await currentStep(3);
-    assert.equal(await input('operatorWallet').getAttribute('aria-invalid'), 'true');
+    await page.locator('[data-create-step="0"]').click();
+    const legends = await page.locator('.create-operator-profile legend').allTextContents();
+    assert.deepEqual(legends, ['Owner', 'Operator']);
+    await input('ownerWallet').fill('not-a-wallet');
+    await next();
+    await currentStep(0);
+    assert.equal(await input('ownerWallet').getAttribute('aria-invalid'), 'true');
+    await input('ownerWallet').fill(ownerWallet);
     await input('operatorWallet').fill('0x0000000000000000000000000000000000000000');
+    await next();
     assert.equal(await input('operatorWallet').getAttribute('aria-invalid'), 'true');
     await input('operatorWallet').fill(operatorWallet);
+    await next(); await next(); await next(); await currentStep(3);
     setup = await downloadSetup();
-    assert.equal(setup.funding.ownerAddress, operatorWallet);
-    assert.equal(setup.revnetOperator.enabled, true);
-    assert.equal(setup.revnetOperator.address, operatorWallet);
-    assert.equal(setup.revnetOperator.status, 'specified');
-    assert.equal(await input('operatorWallet').inputValue(), operatorWallet);
-    await input('operatorWallet').fill(operatorWallet);
-    setup = await downloadSetup();
-    assert.deepEqual(setup.operator, { name: '', introduction: '', photo: '', address: operatorWallet, fundOwnershipPercentAfterPurchase: 20 });
-    assert.equal(setup.funding.ownerAddress, setup.revnetOperator.address);
-    assert.equal(setup.revnetOperator.address, operatorWallet);
-    assert.equal(setup.revnetOperator.scope, 'INCOME');
+    assert.equal(setup.funding.ownerAddress, ownerWallet);
+    assert.equal(setup.revnetOperator.address, ownerWallet);
+    assert.equal(setup.operator.address, operatorWallet);
+    assert.equal(setup.owner.address, ownerWallet);
+    assert.equal(setup.owner.fundOwnershipPercentAfterPurchase, 20);
+    assert.equal(Object.hasOwn(setup.operator, 'fundOwnershipPercentAfterPurchase'), false);
+    assert.equal(setup.income.operatorAddress, operatorWallet);
     assert.equal(setup.revnetOperator.permissionsAssigned, false);
     assert.deepEqual(setup.revnetOperator.chainIds, [11155111, 84532]);
     assert.equal(setup.execution.enabled, false);
     assert.equal(setup.asset.name, 'Neighborhood Workshop');
-    assert.equal(Object.hasOwn(setup.funding, 'durationDays'), false);
-    assert.equal(await page.locator('#create-success').count(), 0);
     await page.reload({ waitUntil: 'domcontentloaded' });
     await currentStep(3);
-    assert.equal(await input('operatorWallet').inputValue(), operatorWallet);
+    assert.match(await page.locator('#create-review').textContent(), new RegExp(ownerWallet));
+    assert.match(await page.locator('#create-review').textContent(), new RegExp(operatorWallet));
     assert.deepEqual(await selectedNetworks(), ['ethereum', 'base']);
-    await a11y('Review plan with testnet subset and revnet operator');
+    await a11y('Review with separate Owner and Operator');
     await shot('create-review-desktop.png');
+  });
+  await check('Minimum monthly revenue and consequences persist in review and export', async () => {
+    await page.locator('[data-create-step="2"]').click();
+    const consequences = 'After three missed months, the Owner publishes a recovery plan.\nInform all contributors.';
+    await input('minimumRevenue').fill('2,000.50');
+    await input('minimumRevenueConsequences').fill(consequences);
+    await input('monthlyRent').click();
+    assert.equal(await input('minimumRevenueConsequences').inputValue(), consequences);
+    assert.equal(await input('minimumRevenueConsequences').getAttribute('inputmode'), null);
+    await next();
+    let setup = await downloadSetup();
+    assert.equal(setup.income.minimumRevenue.monthlyAmountUSD, 2000.50);
+    assert.equal(setup.income.minimumRevenue.consequences, consequences);
+    assert.match(setup.income.minimumRevenue.enforcement, /no automatic contract changes/);
+    assert.match(await page.locator('#create-review').textContent(), /2,000.50 per month/);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await currentStep(3);
+    setup = await downloadSetup();
+    assert.equal(setup.income.minimumRevenue.consequences, consequences);
   });
   await check('Live entry requires a wallet and sign-in cannot create a fake deployment', async () => {
     const prepare = page.getByRole('button', { name: 'Save metadata and prepare deployment', exact: true });
@@ -322,7 +341,7 @@ try {
     await page.getByRole('link', { name: 'Homerun home', exact: true }).click();
     await page.locator('.create-homerun').click();
     await currentStep(3);
-    assert.equal(await input('operatorWallet').inputValue(), operatorWallet);
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('homerun:create-draft:v1')).raw.operatorWallet), operatorWallet);
     assert.deepEqual(await selectedNetworks(), ['ethereum', 'base']);
     const after = await page.evaluate(() => JSON.parse(localStorage.getItem('homerun:create-draft:v1')));
     assert.deepEqual(after.raw, before.raw);
@@ -330,7 +349,7 @@ try {
   await check('Modeling panels and FUND pie retain clear field purpose and ownership labels', async () => {
     await page.locator('[data-create-step="1"]').click();
     assert.equal(await page.locator('.fundraise-modeling .create-input').count(), 2);
-    assert.equal(await page.getByRole('img', { name: 'Operators 20%, contributors 80%.' }).count(), 1);
+    assert.equal(await page.getByRole('img', { name: 'Owner 20%, contributors 80%.' }).count(), 1);
     assert.equal(await page.locator('#fund-operator-percent').textContent(), '20%');
     assert.equal(await page.locator('#fund-contributor-percent').textContent(), '80%');
     await page.locator('[data-create-step="2"]').click();
@@ -468,7 +487,7 @@ try {
     await currentStep(3);
     assert.deepEqual(await selectedNetworks(), ['base']);
     assert.equal(await environment().inputValue(), 'production');
-    assert.equal(await input('operatorWallet').inputValue(), operatorWallet);
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('homerun:create-draft:v1')).raw.operatorWallet), operatorWallet);
     const setup = await downloadSetup();
     assert.deepEqual(setup.plannedNetworks.map(chain => chain.chainId), [8453]);
     assert.equal(setup.revnetOperator.address, operatorWallet);
@@ -476,7 +495,7 @@ try {
     await currentStep(0);
     for (let index = 0; index < 3; index++) await next();
     assert.deepEqual(await selectedNetworks(), networkIDs);
-    assert.equal(await input('operatorWallet').isVisible(), true);
+    assert.match(await page.locator('#create-review').textContent(), /Operator · INCOME incentives/);
     assert.equal(await page.evaluate(() => localStorage.getItem('homerun:created-projects:v1')), null);
   });
   await check('Earlier default allocations migrate once while custom and newly saved splits remain intact', async () => {

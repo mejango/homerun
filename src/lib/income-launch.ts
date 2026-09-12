@@ -1,11 +1,11 @@
-import { jbControllerAbi, jbProjectsAbi, jbSplitsAbi, revDeployerAbi, MappableAsset, parseSuckerDeployerConfig, USDC_ADDRESSES, type JBChainId } from '@bananapus/nana-sdk-core'
-import { RESERVED_TOKEN_SPLIT_GROUP_ID, v6Address } from '@bananapus/nana-sdk-core/v6'
-import { encodeAbiParameters, isAddressEqual, keccak256, parseAbiParameters, zeroAddress, zeroHash, type Address, type Hex, type PublicClient } from 'viem'
+import { jbProjectsAbi, revDeployerAbi, MappableAsset, parseSuckerDeployerConfig, USDC_ADDRESSES, type JBChainId } from '@bananapus/nana-sdk-core'
+import { v6Address } from '@bananapus/nana-sdk-core/v6'
+import { encodeAbiParameters, getAddress, isAddress, isAddressEqual, keccak256, parseAbiParameters, zeroAddress, zeroHash, type Address, type Hex, type PublicClient } from 'viem'
 import { type FundTransaction } from './fund-contracts'
 import { readFundProjectState, type FundProjectState } from './fund-state'
 import { readInitialIncomeAllocation } from './income-allocation-state'
 import { getFundGlobalClaim, fundGlobalManifestHash, globalIncomeSnapshotParameters, parseFundGlobalManifest, verifyFundGlobalManifestHistory, type FundGlobalManifest, type GlobalIncomeAllocation } from './fund-global-manifest'
-import { homerunIncomeDeployerAbi, incomeDistributorAbi, INCOME_QUARTER_SECONDS, INCOME_INITIAL_ISSUANCE, INCOME_CUT_PERCENT, INCOME_SPLIT_LOCK, registeredIncomeDeployer, registeredIncomeDistributor } from './income-contracts'
+import { homerunIncomeDeployerAbi, incomeDistributorAbi, INCOME_QUARTER_SECONDS, INCOME_INITIAL_ISSUANCE, INCOME_CUT_PERCENT, registeredIncomeDeployer, registeredIncomeDistributor } from './income-contracts'
 import { registeredStickyContract, stickyDeployerAbi } from './sticky-contracts'
 import { readStickyProjectState, type StickyProjectState } from './sticky-state'
 
@@ -22,7 +22,7 @@ export function closedFundIncomeBlockers(state: FundProjectState): string[] {
   const blockers: string[] = []
   if (!state.supportedController || !state.knownOwnerWrapper) blockers.push('This FUND uses an unsupported owner or controller.')
   if (!state.tokenAddress) blockers.push('Deploy the FUND ERC-20 before configuring ongoing holder rewards.')
-  if (!state.metadata.pausePay || state.metadata.cashOutTaxRate !== 10_000 || state.metadata.allowOwnerMinting || state.pendingReservedTokens !== 0n) blockers.push('Finish the successful raise, including offchain contributions and the operator allocation, then close minting before launching INCOME.')
+  if (!state.metadata.pausePay || state.metadata.cashOutTaxRate !== 10_000 || state.metadata.allowOwnerMinting || state.pendingReservedTokens !== 0n) blockers.push('Finish the successful raise, including offchain contributions and the owner allocation, then close minting before launching INCOME.')
   const vanillaHook = isAddressEqual(state.metadata.dataHook, zeroAddress) && !state.metadata.useDataHookForPay && !state.metadata.useDataHookForCashOut
   const hooks = state.rulesetSnapshot?.omnichainHooks
   const canonicalOmnichainHook = isAddressEqual(state.metadata.dataHook, v6Address('JBOmnichainDeployer', state.chainId)) && hooks &&
@@ -81,6 +81,17 @@ export async function verifyIncomeLaunchWiring(client: PublicClient, chainId: JB
   return deployer
 }
 
+/** New launches require the separate incentive recipient selector; old bindings remain readable. */
+export async function assertIncomeLaunchVersion(client: PublicClient, chainId: JBChainId, blockNumber: bigint): Promise<void> {
+  const deployer = registeredIncomeDeployer(chainId)
+  let version: bigint | undefined
+  if (deployer) {
+    try { version = await client.readContract({ address: deployer, abi: homerunIncomeDeployerAbi, functionName: 'LAUNCH_VERSION', blockNumber }) }
+    catch { /* Legacy launchers do not expose a compatible version. */ }
+  }
+  if (version !== 2n) throw new Error(`Chain ${chainId}: A verified launcher supporting separate Owner and Operator wallets is required before launching INCOME.`)
+}
+
 export type InitialIncomeSnapshot = ReturnType<typeof globalIncomeSnapshotParameters>
 
 export type PreparedIncomeLaunch = {
@@ -128,11 +139,14 @@ export function incomeConfigurationHash(input: {
  * bridge reports remote supply asynchronously. No global readiness oracle or temporary custom permission is added.
  */
 export async function prepareIncomeLaunch(client: PublicClient, input: {
-  chainId: JBChainId; fundProjectId: bigint; account: Address; manifest: unknown; manifestUri: string;
+  chainId: JBChainId; fundProjectId: bigint; account: Address; operator?: Address; manifest: unknown; manifestUri: string;
   stickyProjectId: bigint; name: string; projectUri: string; salt: Hex; operatorBps: number; fundHolderBps: number;
   startsAtOrAfter: number; clients?: ReadonlyMap<number, PublicClient>;
 }): Promise<PreparedIncomeLaunch> {
   const ipfsUri = /^ipfs:\/\/[^\s/?#]+(?:\/[^\s]*)?$/
+  // Legacy frozen plans omitted a separate recipient and awarded incentives to each local owner.
+  const operator = input.operator ?? input.account
+  if (!isAddress(operator) || isAddressEqual(operator, zeroAddress)) throw new Error('A valid operator wallet is required for the token incentives.')
   if (!input.name.trim() || input.name.length > 160 || !ipfsUri.test(input.projectUri)) throw new Error('A project name and published INCOME metadata URI are required.')
   if (!ipfsUri.test(input.manifestUri)) throw new Error('Publish the complete snapshot manifest to IPFS before preparing INCOME.')
   if (!/^0x[\da-fA-F]{64}$/.test(input.salt) || input.salt === zeroHash) throw new Error('A nonzero deployment salt is required.')
@@ -181,6 +195,7 @@ export async function prepareIncomeLaunch(client: PublicClient, input: {
     // A completed peer may already be distributing asset-sale proceeds or burning FUND. Its frozen
     // initial rights remain authoritative; only projects still awaiting launch must remain closed raises.
     if (existing === 0n) {
+      await assertIncomeLaunchVersion(source, allocation.chainId, fund.blockNumber)
       const blockers = incomeLaunchBlockers(fund)
       if (blockers.length) throw new Error(`Chain ${allocation.chainId}: ${blockers.join(' ')}`)
     }
@@ -188,20 +203,10 @@ export async function prepareIncomeLaunch(client: PublicClient, input: {
       const initialAllocation = await readInitialIncomeAllocation(source, { chainId: allocation.chainId, incomeProjectId: existing, fundProjectId: BigInt(allocation.fundProjectId) })
       if (!initialAllocation || initialAllocation.blockNumber < fund.blockNumber || !isAddressEqual(initialAllocation.vault, existingVault) || initialAllocation.manifestUri !== input.manifestUri) throw new Error('An existing linked INCOME has no verified initial vault for the original published manifest.')
       getFundGlobalClaim(manifest, initialAllocation, zeroAddress)
-      const [actualConfigurationHash, [ruleset]] = await Promise.all([
-        source.readContract({ address: v6Address('REVDeployer', allocation.chainId), abi: revDeployerAbi, functionName: 'hashedEncodedConfigurationOf', args: [existing], ...at }),
-        source.readContract({ address: v6Address('JBController', allocation.chainId), abi: jbControllerAbi, functionName: 'currentRulesetOf', args: [existing], ...at }),
-      ])
+      const actualConfigurationHash = await source.readContract({ address: v6Address('REVDeployer', allocation.chainId), abi: revDeployerAbi, functionName: 'hashedEncodedConfigurationOf', args: [existing], ...at })
       if (actualConfigurationHash !== expectedConfigurationHash) throw new Error('An existing linked INCOME uses a different start time, name, economics, or global allocation. Restore its original launch plan.')
-      // Stock identity deliberately excludes individual split weights/routing. Check the promised 70/10-style
-      // partition separately; recipients remain local and the operator recipient can differ by chain.
-      const splits = await source.readContract({ address: v6Address('JBSplits', allocation.chainId), abi: jbSplitsAbi, functionName: 'splitsOf', args: [existing, BigInt(ruleset.id), RESERVED_TOKEN_SPLIT_GROUP_ID], ...at })
-      const operatorPercent = Math.floor(input.operatorBps * 1_000_000_000 / (input.operatorBps + input.fundHolderBps))
-      const rewardRows = splits.filter(split => isAddressEqual(split.hook, registeredIncomeDistributor(allocation.chainId)!))
-      const operatorRows = splits.filter(split => isAddressEqual(split.hook, zeroAddress))
-      if (splits.length !== (input.operatorBps ? 2 : 1) || rewardRows.length !== 1 || rewardRows[0].percent !== 1_000_000_000 - operatorPercent
-        || (input.operatorBps !== 0 && (operatorRows.length !== 1 || operatorRows[0].percent !== operatorPercent))
-        || splits.some(split => split.lockedUntil !== INCOME_SPLIT_LOCK || split.projectId !== 0n || split.preferAddToBalance)) throw new Error('An existing linked INCOME uses different or unlocked operator and FUND reward allocations.')
+      // Stock identity deliberately excludes splits: each chain's Owner may update any recipient or split
+      // percentage after launch. Those changes do not alter the frozen initial plan for unlaunched chains.
     }
     return { allocation, source, fund, protocolHash }
   }))
@@ -228,7 +233,7 @@ export async function prepareIncomeLaunch(client: PublicClient, input: {
     fund, sticky, manifest, snapshot, localAllocation, manifestHash, configurationSalt, expectedConfigurationHash, startsAtOrAfter: input.startsAtOrAfter, creationFee,
     request: {
       chainId: input.chainId, address: deployer, abi: homerunIncomeDeployerAbi, functionName: 'deployIncome',
-      args: [input.fundProjectId, snapshot, { name: input.name.trim(), ticker: 'INCOME', uri: input.projectUri, salt: input.salt }, input.operatorBps, input.fundHolderBps, input.stickyProjectId, input.startsAtOrAfter, suckerConfiguration], value: creationFee,
+      args: [input.fundProjectId, snapshot, { name: input.name.trim(), ticker: 'INCOME', uri: input.projectUri, salt: input.salt }, input.operatorBps, input.fundHolderBps, input.stickyProjectId, input.startsAtOrAfter, suckerConfiguration, getAddress(operator)], value: creationFee,
     },
   }
 }

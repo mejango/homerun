@@ -18,6 +18,9 @@ export type ProjectionChartData = {
   monthsApplied: number;
   phase: string;
   history: HistoryRow[];
+  separateOwnerOperator?: boolean;
+  ownerFundMinted?: boolean;
+  fundOwnerMint?: number;
   operatorFundMinted: boolean;
   fundOperatorMint: number;
   fundSupply: number;
@@ -25,6 +28,7 @@ export type ProjectionChartData = {
   revSupply: number;
   personalRevTokens: number;
   revInvestorTokens: number;
+  revOwnerTokens?: number;
   revOperatorTokens: number;
   revRenterTokens: number;
   revStickyPendingTokens: number;
@@ -244,7 +248,9 @@ function OwnershipRing({ token, total, parts, note, empty }: {
 
 /** Current outstanding claims, distinct from the allocation of newly issued tokens. */
 export function OwnershipCharts({ projection: p }: ChartProps) {
-  const operatorFund = p.operatorFundMinted ? p.fundOperatorMint : 0;
+  const successFund = p.separateOwnerOperator ? p.ownerFundMinted ? p.fundOwnerMint ?? 0 : 0 : p.operatorFundMinted ? p.fundOperatorMint : 0;
+  const successLabel = p.separateOwnerOperator ? 'Owner' : 'Operators';
+  const successPossessive = p.separateOwnerOperator ? 'Owner’s' : 'operators’';
   return (
     <section className="ownership-section" aria-label="Token ownership at this stage">
       <div className="ownership-heading"><h3>Who holds the tokens?</h3><p>Shares of outstanding tokens at this stage.</p></div>
@@ -252,18 +258,19 @@ export function OwnershipCharts({ projection: p }: ChartProps) {
         <OwnershipRing token="FUND" total={p.fundSupply}
           parts={[
             { label: 'You', kind: 'you', value: p.personalFundTokens },
-            { label: 'Other investors', kind: 'investors', value: Math.max(0, p.fundSupply - p.personalFundTokens - operatorFund) },
-            { label: 'Operators', kind: 'operators', value: operatorFund },
+            { label: 'Other investors', kind: 'investors', value: Math.max(0, p.fundSupply - p.personalFundTokens - successFund) },
+            { label: successLabel, kind: p.separateOwnerOperator ? 'owner' : 'operators', value: successFund },
           ]}
           empty={p.phase === 'refunded' ? 'All FUND was redeemed for refunds.' : 'No FUND has been issued.'}
           note={p.phase === 'refunded' ? 'The asset was not purchased.' : p.purchaseCompleted
-            ? p.phase === 'liquidated' ? 'Sale claims are shown before FUND is redeemed.' : 'Includes the operators’ allocation at purchase.'
-            : 'Current fundraising tokens; the operators’ allocation comes after purchase.'} />
+            ? p.phase === 'liquidated' ? 'Sale claims are shown before FUND is redeemed.' : `Includes the ${successPossessive} allocation at purchase.`
+            : `Current fundraising tokens; the ${successPossessive} allocation comes after purchase.`} />
         <OwnershipRing token="INCOME" total={p.revSupply}
           parts={[
             { label: 'You', kind: 'you', value: p.personalRevTokens },
             { label: 'Other investors', kind: 'investors', value: Math.max(0, p.revInvestorTokens - p.personalRevTokens) },
-            { label: 'Operators', kind: 'operators', value: p.revOperatorTokens },
+            ...(p.separateOwnerOperator ? [{ label: 'Owner', kind: 'owner', value: p.revOwnerTokens ?? 0 }] : []),
+            { label: p.separateOwnerOperator ? 'Operator' : 'Operators', kind: 'operators', value: p.revOperatorTokens },
             { label: 'Customers', kind: 'customers', value: p.revRenterTokens },
             { label: 'Rewards waiting', kind: 'pending', value: p.revStickyPendingTokens },
             { label: 'Unallocated', kind: 'unallocated', value: p.revStickyUnallocatedTokens },

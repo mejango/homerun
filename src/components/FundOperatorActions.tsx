@@ -12,7 +12,7 @@ import { useWallet } from '@/hooks/useWallet'
 import { displayChainName, explorerTxUrl } from '@/lib/chainDisplay'
 import {
   FUND_WEIGHT, buildFundApproval, buildFundAssetAllowanceChange, buildFundMint, buildFundReturn, buildFundRulesetChange,
-  offchainFundAmount, operatorMintAmount, parseAmount, parsePercent,
+  offchainFundAmount, ownerMintAmount, parseAmount, parsePercent,
   type FundAssetAllowance, type FundRulesetAction, type FundRulesetSnapshot, type FundTransaction,
 } from '@/lib/fund-contracts'
 import { assertFundStateForWrite, readFundProjectState, readLinkedFundProjects, type FundProjectState } from '@/lib/fund-state'
@@ -60,7 +60,7 @@ const RULESET_LABELS: Record<PlanAction, string> = {
   pause: 'Pause FUND contributions; preserve current cash-out terms',
   resume: 'Resume FUND contributions under the current fundraising rules',
   close: 'Close fundraising: pause contributions and disable FUND cash-outs',
-  'enable-success-minting': 'Enable operator-controlled FUND minting after the confirmed asset purchase',
+  'enable-success-minting': 'Enable owner-controlled FUND minting after the confirmed asset purchase',
   'finish-success-minting': 'Disable owner minting; keep contributions and cash-outs closed',
   'failure-refunds': 'Open failure refunds: zero cash-out tax and remove every treasury withdrawal limit',
   'asset-sale-refunds': 'Open asset-sale cash-outs: zero cash-out tax and remove every treasury withdrawal limit',
@@ -458,16 +458,17 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
   const canQueue = state.permissions.queueRulesets
   const canMint = state.permissions.mintTokens
   const connectedOwner = !!address && isAddressEqual(address, state.owner)
-  const ownerBalance = useQuery({
-    queryKey: ['fund-operator-balance', state.chainId, state.projectId.toString(), state.owner, state.blockNumber.toString()],
+  const ownerHoldings = useQuery({
+    queryKey: ['fund-owner-balance', state.chainId, state.projectId.toString(), state.owner, state.blockNumber.toString()],
     enabled: mintKind === 'operator-share' && !linked && !connectedOwner,
     queryFn: () => client.readContract({ address: v6Address('JBTokens', state.chainId), abi: jbTokensAbi, functionName: 'totalBalanceOf', args: [state.owner, state.projectId], blockNumber: state.blockNumber }),
     staleTime: Infinity,
     retry: 1,
   })
-  const operatorBalance = connectedOwner ? state.creditBalance + state.erc20Balance : ownerBalance.data
+  const ownerBalance = connectedOwner ? state.creditBalance + state.erc20Balance : ownerHoldings.data
   let mintCount = 0n
-  try { mintCount = mintKind === 'offchain-contribution' ? offchainFundAmount(offchainUsd) : linked ? parseAmount(linkedOperatorCount, 18) : operatorBalance === undefined ? 0n : operatorMintAmount(state.totalSupply, operatorBalance, parsePercent(targetShare)) } catch { /* Invalid inputs disable the action. */ }
+  try { mintCount = mintKind === 'offchain-contribution' ? offchainFundAmount(offchainUsd) : linked ? parseAmount(linkedOperatorCount, 18) : ownerBalance === undefined ? 0n : ownerMintAmount(state.totalSupply, ownerBalance, parsePercent(targetShare)) } catch { /* Invalid inputs disable the action. */ }
+  // The historical action ID is retained, but this allocation always belongs to the current project owner.
   const mintRecipient = mintKind === 'operator-share' ? state.owner : destination(recipient)
   const returnRaw = context ? amountOrZero(returnAmount, context.decimals) : 0n
   const returnIntent = context && address ? encoded([state.chainId, state.projectId, address, context.terminal, context.token, returnRaw, returnReason]) : null
@@ -566,7 +567,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
     const latest = await readFundProjectState(client, { chainId: state.chainId, projectId: state.projectId, account: address })
     if (minimumBlock !== undefined && latest.blockNumber < minimumBlock) throw new Error('The network has not caught up with the confirmed approval. Wait a moment and try again.')
     assertFundStateForWrite(latest, address)
-    if (!isAddressEqual(latest.owner, state.owner)) throw new Error('Project ownership changed. Refresh and review the current operator.')
+    if (!isAddressEqual(latest.owner, state.owner)) throw new Error('Project ownership changed. Refresh and review the current owner.')
     if (encoded([...latest.linkedChainIds].sort((a, b) => a - b)) !== encoded([...state.linkedChainIds].sort((a, b) => a - b))) throw new Error('The project’s linked chains changed. Refresh and review its complete chain membership before continuing.')
     if (!isAddressEqual(latest.controller, state.controller)) throw new Error('The project controller changed. Refresh and review the project again.')
     return latest
@@ -586,7 +587,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
       const current = await fresh()
       if (!current.permissions.queueRulesets) throw new Error('This wallet does not have permission to change the project rules.')
       if (current.linkedChainIds.length > 1) {
-        if (!address) throw new Error('Connect the operator wallet.')
+        if (!address) throw new Error('Connect the project owner wallet.')
         const states = await readLinkedFundProjects(chainClient, current)
         for (const peer of states) {
           assertFundStateForWrite(peer, address)
@@ -618,7 +619,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
     if (baseBusy) throw new Error('Finish the current transaction before configuring the purchase allowance.')
     setPreparing(true); setError(null)
     try {
-      if (!address) throw new Error('Connect the operator wallet.')
+      if (!address) throw new Error('Connect the project owner wallet.')
       const selected = state.accountingContexts[input.contextIndex]
       if (!selected) throw new Error('Select a verified treasury currency.')
       const current = await fresh()
@@ -663,18 +664,18 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
       for (const peer of peers) {
         assertFundStateForWrite(peer, address)
         if (!peer.metadata.pausePay || peer.metadata.cashOutTaxRate !== 10_000 || !peer.metadata.allowOwnerMinting || peer.hasPendingRuleset) throw new Error(`Success minting must be active with no pending ruleset on ${displayChainName(peer.chainId)} before issuing FUND.`)
-        if (!isAddressEqual(peer.owner, current.owner)) throw new Error('The linked projects do not have the same operator. Review all project owners before issuing allocations.')
-        if (peer.pendingReservedTokens !== 0n) throw new Error('Distribute pending reserved FUND before calculating the operator allocation.')
+        if (!isAddressEqual(peer.owner, current.owner)) throw new Error('The linked projects do not have the same owner. Review all project owners before issuing allocations.')
+        if (peer.pendingReservedTokens !== 0n) throw new Error('Distribute pending reserved FUND before calculating the owner allocation.')
       }
       if (mintKind === 'offchain-contribution' && current.rulesetSnapshot.configuration?.weight !== FUND_WEIGHT) throw new Error('The project’s issuance rate differs from the initial FUND rate. Review its contribution records and current rules in Juicebox before minting.')
-      const currentBalance = await client.readContract({ address: v6Address('JBTokens', state.chainId), abi: jbTokensAbi, functionName: 'totalBalanceOf', args: [current.owner, state.projectId], blockNumber: current.blockNumber })
-      const count = mintKind === 'offchain-contribution' ? offchainFundAmount(offchainUsd) : linked ? parseAmount(linkedOperatorCount, 18) : operatorMintAmount(current.totalSupply, currentBalance, parsePercent(targetShare))
+      const currentBalance = await client.readContract({ address: v6Address('JBTokens', state.chainId), abi: jbTokensAbi, functionName: 'totalBalanceOf', args: [mintRecipient, state.projectId], blockNumber: current.blockNumber })
+      const count = mintKind === 'offchain-contribution' ? offchainFundAmount(offchainUsd) : linked ? parseAmount(linkedOperatorCount, 18) : ownerMintAmount(current.totalSupply, currentBalance, parsePercent(targetShare))
       if (count <= 0n) throw new Error('No additional FUND is needed for this allocation.')
-      const memo = mintKind === 'offchain-contribution' ? `Homerun: offchain contribution ${contributionReference.trim()}` : 'Homerun: operator share after successful purchase'
+      const memo = mintKind === 'offchain-contribution' ? `Homerun: offchain contribution ${contributionReference.trim()}` : 'Homerun: owner share after successful purchase'
       const request = buildFundMint({ snapshot: current.rulesetSnapshot, beneficiary: mintRecipient, tokenCount: count, kind: mintKind, memo })
       await tx.send({ ...request, label: `Mint ${formatUnits(count, 18)} FUND to ${mintRecipient}` }, {
         reviewNotice: mintKind === 'operator-share'
-          ? linked ? `Issue exactly ${formatUnits(count, 18)} FUND to the operator on ${displayChainName(state.chainId)}. This amount is entered by the operator after reconciling holdings on all linked chains, including unclaimed bridged FUND. Homerun does not infer a global ownership percentage from incomplete bridge supply.` : `Target ${targetShare}% operator ownership after this mint, including the operator’s current FUND. This is an operator-selected allocation, not a contract-enforced entitlement.`
+          ? linked ? `Issue exactly ${formatUnits(count, 18)} FUND to the owner on ${displayChainName(state.chainId)}. Reconcile the owner’s holdings on all linked chains, including unclaimed bridged FUND. The owner may distribute these tokens to the operator at their discretion. Homerun does not infer a global ownership percentage from incomplete bridge supply.` : `Target a ${targetShare}% FUND share for the owner after this mint, including the owner’s current FUND. The owner may distribute these tokens to the operator at their discretion. This is an owner-selected allocation, not a contract-enforced entitlement.`
           : `Record ${offchainUsd} USD contributed outside the contract. No payment enters the treasury in this transaction. Check that reference “${contributionReference.trim()}” has not already been minted; the contract does not deduplicate these references.`,
         reverify: async () => {
           const latest = await fresh()
@@ -686,8 +687,8 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
             if (!latestPeer || snapshotTerms(peer.rulesetSnapshot) !== snapshotTerms(latestPeer.rulesetSnapshot) || !isAddressEqual(latestPeer.owner, peer.owner)) throw new Error('The minting rules changed on a linked chain during review. Refresh and review again.')
             if (latestPeer.totalSupply !== peer.totalSupply || latestPeer.pendingReservedTokens !== 0n) throw new Error('FUND supply changed during review. Reconcile the allocation before minting.')
           }
-          const latestBalance = await client.readContract({ address: v6Address('JBTokens', state.chainId), abi: jbTokensAbi, functionName: 'totalBalanceOf', args: [latest.owner, state.projectId], blockNumber: latest.blockNumber })
-          if (latestBalance !== currentBalance) throw new Error('Operator holdings changed during review. Recalculate the allocation before minting.')
+          const latestBalance = await client.readContract({ address: v6Address('JBTokens', state.chainId), abi: jbTokensAbi, functionName: 'totalBalanceOf', args: [mintRecipient, state.projectId], blockNumber: latest.blockNumber })
+          if (latestBalance !== currentBalance) throw new Error('Owner holdings changed during review. Recalculate the allocation before minting.')
           const rebuilt = buildFundMint({ snapshot: latest.rulesetSnapshot, beneficiary: mintRecipient, tokenCount: count, kind: mintKind, memo })
           if (!sameRequest(request, rebuilt)) throw new Error('The mint request changed. Refresh and review again.')
         },
@@ -738,7 +739,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
   }
 
   return <div className="grid gap-7">
-    <p className="text-sm">Every action is reviewed, simulated, signed, and confirmed separately. The contracts store rules and balances; the operator is responsible for declaring the real-world purchase, failure, or sale.</p>
+    <p className="text-sm">Every action is reviewed, simulated, signed, and confirmed separately. The contracts store rules and balances; the owner declares the real-world purchase, failure, or sale.</p>
     {rulesetUnavailable && <p role="status" className="rounded border border-[#cbd7db] bg-[#edf2f4] p-4 text-sm text-[#3f5b66]">{rulesetUnavailable}</p>}
     {linked && <div className="grid gap-3 rounded border border-[#c4cdbb] p-4"><Field label="Shared ruleset start, in hours from now (1–168)" value={scheduleHours} onChange={setScheduleHours} disabled={busy} /><p className="text-sm">Linked ruleset changes require one separately confirmed transaction on every chain before this start time. Allow enough time for every wallet or Safe to execute.</p></div>}
     {!plan && (linked || recoveryLoadError) && <details className="text-sm"><summary className="cursor-pointer">Recover a linked ruleset plan</summary><p className="my-3">Restore a downloaded plan if this browser no longer has its saved intent. Imported hashes and status claims are checked against the blockchain before any remaining transaction can be offered.</p><label className="grid gap-2">Import recovery file<input type="file" accept="application/json,.json" disabled={!address || preparing} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void importRecovery(file) }} /></label></details>}
@@ -773,16 +774,17 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
 
     <section className="border-t border-[#c4cdbb] pt-5" aria-labelledby="fund-success-controls">
       <h3 id="fund-success-controls" className="mb-3 text-xl">Successful purchase and FUND allocations</h3>
-      <p className="mb-4 text-sm">Close the campaign, enable success minting, record offchain contributions, issue the operator allocation, then disable owner minting. Offchain contributors receive FUND after a successful purchase; failed offchain contributions are refunded outside the treasury.</p>
+      <p className="mb-4 text-sm">Close the campaign, enable success minting, record offchain contributions, issue the owner allocation, then disable owner minting. The owner receives the FUND success share and may distribute tokens to the operator at their discretion. Offchain contributors receive FUND after a successful purchase; failed offchain contributions are refunded outside the treasury.</p>
       <label className="mb-4 flex items-start gap-3 text-sm"><input className="mt-1 size-4 shrink-0" type="checkbox" checked={purchased} onChange={event => setPurchased(event.target.checked)} disabled={busy} />I confirm that the asset purchase succeeded and the contribution records are reconciled.</label>
       <button type="button" className="btn-secondary min-h-11 px-4" disabled={busy || !canQueue || !!rulesetUnavailable || !purchased || !closed || mintEnabled} onClick={() => void changeRules('enable-success-minting')}>Review enabling success mints</button>
       <div className="mt-5 grid gap-4">
-        <label className="grid gap-2 text-sm">Allocation<select className="min-h-12 rounded border border-[#bfc9b5] bg-white px-3 pr-9" value={mintKind} disabled={busy} onChange={event => setMintKind(event.target.value as typeof mintKind)}><option value="offchain-contribution">Offchain contribution</option><option value="operator-share">Operator share</option></select></label>
+        <label className="grid gap-2 text-sm">Allocation<select className="min-h-12 rounded border border-[#bfc9b5] bg-white px-3 pr-9" value={mintKind} disabled={busy} onChange={event => setMintKind(event.target.value as typeof mintKind)}><option value="offchain-contribution">Offchain contribution</option><option value="operator-share">Owner share</option></select></label>
+        {mintKind === 'operator-share' && <p className="break-words text-sm">Owner recipient: {state.owner}. This is the current Juicebox project owner.</p>}
         {mintKind === 'offchain-contribution' ? <><div className="grid gap-4 sm:grid-cols-2"><Field label="Contribution received in USD" value={offchainUsd} onChange={setOffchainUsd} disabled={busy} /><Field label="Contributor wallet" value={recipient} onChange={setRecipient} disabled={busy} decimal={false} /></div><Field label="Unique public contribution reference" value={contributionReference} onChange={setContributionReference} disabled={busy} decimal={false} /><p className="text-sm">Use a receipt reference without personal information. The reference is public onchain.</p></>
-          : linked ? <><Field label="Additional operator FUND to mint on this chain" value={linkedOperatorCount} onChange={setLinkedOperatorCount} disabled={busy} /><p className="text-sm">Recipient: {state.owner}. Reconcile all contributor allocations, operator holdings, and unclaimed bridged FUND across every chain before entering this amount. A global ownership percentage cannot be calculated from chain token supplies alone.</p></>
-            : <><Field label="Target operator FUND ownership after mint (%)" value={targetShare} onChange={setTargetShare} disabled={busy} /><p className="text-sm">Recipient: {state.owner}. Complete contributor mints first. The calculation includes existing operator holdings and the current FUND supply.</p></>}
-        <p className="break-words text-sm">{mintKind === 'operator-share' && !linked && address && !isAddressEqual(address, state.owner) ? 'The additional FUND amount is calculated using the operator’s holdings before review.' : `Additional FUND to mint: ${formatUnits(mintCount, 18)}.`} The exact request is verified with fresh contract reads before review.</p>
-        {mintKind === 'operator-share' && !linked && !connectedOwner && ownerBalance.isError && <p role="alert" className="text-sm">The operator’s FUND holdings could not be verified. Refresh before calculating this allocation.</p>}
+          : linked ? <><Field label="Additional owner FUND to mint on this chain" value={linkedOperatorCount} onChange={setLinkedOperatorCount} disabled={busy} /><p className="text-sm">Reconcile all contributor allocations, owner holdings, and unclaimed bridged FUND across every chain before entering this amount. A global ownership percentage cannot be calculated from chain token supplies alone.</p></>
+            : <><Field label="Target owner FUND ownership after mint (%)" value={targetShare} onChange={setTargetShare} disabled={busy} /><p className="text-sm">Complete contributor mints first. The calculation includes the owner’s existing holdings and the current FUND supply.</p></>}
+        <p className="break-words text-sm">Additional FUND to mint: {formatUnits(mintCount, 18)}. The exact request is verified with fresh contract reads before review.</p>
+        {mintKind === 'operator-share' && !linked && !connectedOwner && ownerHoldings.isError && <p role="alert" className="text-sm">The owner’s FUND holdings could not be verified. Refresh before calculating this allocation.</p>}
         {!mintEnabled && <p className="text-sm">Minting becomes available only when the current onchain ruleset has closed cash-outs and enabled owner minting.</p>}
         <div className="flex flex-wrap gap-3"><button type="button" className="btn-primary min-h-11 px-4" disabled={busy || !canMint || !!rulesetUnavailable || !purchased || !mintEnabled || mintCount <= 0n || !mintRecipient || (mintKind === 'offchain-contribution' && !contributionReference.trim())} onClick={() => void mint()}>Review FUND allocation</button><button type="button" className="btn-secondary min-h-11 px-4" disabled={busy || !canQueue || !!rulesetUnavailable || !mintEnabled} onClick={() => void changeRules('finish-success-minting')}>Review disabling owner minting</button></div>
         {!canMint && <p className="text-sm">This wallet does not have permission to mint FUND.</p>}

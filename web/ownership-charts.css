@@ -18,6 +18,7 @@
 .ownership-segment { stroke-width: 22; fill: none; }
 .ownership-you { stroke: #24533e; background: #24533e; }
 .ownership-investors { stroke: #6b8659; background: #6b8659; }
+.ownership-owner { stroke: #705e88; background: #705e88; }
 .ownership-operators { stroke: #986532; background: #986532; }
 .ownership-customers { stroke: #4f7180; background: #4f7180; }
 .ownership-pending { stroke: #ad914b; background: #ad914b; }

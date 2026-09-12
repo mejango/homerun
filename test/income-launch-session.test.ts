@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MappableAsset, parseSuckerDeployerConfig, type JBChainId } from '@bananapus/nana-sdk-core'
 import { encodeAbiParameters, encodeEventTopics, encodeFunctionData, parseAbi, zeroAddress, zeroHash, type Hex, type PublicClient } from 'viem'
-import { homerunIncomeDeployerAbi, INITIAL_INCOME_SUPPLY } from '../src/lib/income-contracts'
+import { legacyHomerunIncomeDeployerAbi as homerunIncomeDeployerAbi, homerunIncomeDeployerAbi as currentIncomeDeployerAbi, INITIAL_INCOME_SUPPLY } from '../src/lib/income-contracts'
 import type { FundTransaction } from '../src/lib/fund-contracts'
 import {
   beginIncomeLaunchSubmission, clearIncomeLaunchPending, exportIncomeLaunchPending, importIncomeLaunchPending,
@@ -110,6 +110,16 @@ describe('INCOME launch journal identity and persistence', () => {
 })
 
 describe('strict INCOME launch recovery imports', () => {
+  it('preserves distinct incentive recipients while the saved signer remains the FUND owner', () => {
+    const storage = memory()
+    const currentRequest = { ...request, abi: currentIncomeDeployerAbi, args: [...args, OTHER] }
+    const record = beginIncomeLaunchSubmission(storage, key, currentRequest, 9n, HOLDER, false, 100n)
+    expect(record.holder).toBe(HOLDER)
+    expect(record.data).toBe(encodeFunctionData({ abi: currentIncomeDeployerAbi, functionName: 'deployIncome', args: [...args, OTHER] }).toLowerCase())
+    expect(importIncomeLaunchPending(memory(), key, exportIncomeLaunchPending(record))).toEqual(record)
+    const invalidData = encodeFunctionData({ abi: currentIncomeDeployerAbi, functionName: 'deployIncome', args: [...args, zeroAddress] })
+    expect(() => importIncomeLaunchPending(memory(), key, JSON.stringify({ ...record, data: invalidData }))).toThrow()
+  })
   it('round-trips unknown and pending records without asserting execution', () => {
     const storage = memory(), unknown = begin(storage), restored = memory()
     expect(importIncomeLaunchPending(restored, key, exportIncomeLaunchPending(unknown))).toEqual(unknown)

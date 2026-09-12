@@ -173,7 +173,8 @@ struct HomerunInitialIncomeSnapshot {
 /// returning; all chains commit the same global 500,000 allocation and deploy asynchronously.
 /// Perpetual vault claims transfer existing tokens and never change FUND balances. The helper retains
 /// no project ownership, tokens, or operator permissions. Ongoing stock Sticky rewards use SHARE snapshots and
-/// four weekly vesting rounds, with no minimum stake-age requirement.
+/// four weekly vesting rounds, with no minimum stake-age requirement. All initial reserved splits are unlocked;
+/// the FUND owner retains stock Revnet authority to update their allocations and routing in either stage.
 contract HomerunIncomeDeployer is ReentrancyGuard {
     using SafeERC20 for IERC20;
     error InvalidProtocolWiring();
@@ -187,6 +188,7 @@ contract HomerunIncomeDeployer is ReentrancyGuard {
     error InvalidSnapshot();
     error UnsupportedRewardSource();
 
+    /// @dev The indexed `operator` is the FUND owner receiving stock Revnet authority, not the incentive recipient.
     event IncomeDeployed(
         uint256 indexed fundProjectId,
         uint256 indexed incomeProjectId,
@@ -197,6 +199,7 @@ contract HomerunIncomeDeployer is ReentrancyGuard {
         bytes32 merkleRoot
     );
 
+    uint256 public constant LAUNCH_VERSION = 2;
     uint256 public constant INITIAL_INCOME_SUPPLY = 500_000 ether;
     uint32 public constant QUARTER = 7_884_000;
     bytes32 public constant DISTRIBUTION_TYPEHASH = keccak256(
@@ -334,6 +337,7 @@ contract HomerunIncomeDeployer is ReentrancyGuard {
     /// @dev The supplied root is an owner attestation. It does not prove complete or truthful historical balances.
     /// The snapshot must precede managed Sticky deposits; the publication verifier enforces that history policy.
     /// @param stickyProjectId Canonical Sticky project accepting this FUND; ongoing rewards route to its SHARE token.
+    /// @param operator Nonzero initial recipient of operator incentives. The caller may update every reserved split.
     function deployIncome(
         uint256 fundProjectId,
         HomerunInitialIncomeSnapshot calldata snapshot,
@@ -342,7 +346,8 @@ contract HomerunIncomeDeployer is ReentrancyGuard {
         uint16 fundHoldersBps,
         uint256 stickyProjectId,
         uint48 startsAtOrAfter,
-        REVSuckerDeploymentConfig calldata suckerConfiguration
+        REVSuckerDeploymentConfig calldata suckerConfiguration,
+        address operator
     )
         external
         payable
@@ -355,7 +360,7 @@ contract HomerunIncomeDeployer is ReentrancyGuard {
         if (
             bytes(description.name).length == 0 || keccak256(bytes(description.ticker)) != keccak256("INCOME")
                 || bytes(description.uri).length == 0 || description.salt == bytes32(0)
-                || uint256(operatorBps) + fundHoldersBps > 10_000 || fundHoldersBps == 0
+                || uint256(operatorBps) + fundHoldersBps > 10_000 || fundHoldersBps == 0 || operator == address(0)
                 || block.chainid > type(uint32).max || startsAtOrAfter == 0 || startsAtOrAfter > block.timestamp
                 || uint256(startsAtOrAfter) + uint256(QUARTER) * 8 > type(uint48).max
         ) revert InvalidConfiguration();
@@ -364,7 +369,7 @@ contract HomerunIncomeDeployer is ReentrancyGuard {
         address fundToken = _requireClosedFund(fundProjectId);
         address rewardToken = _requireSticky(stickyProjectId, fundToken);
         REVConfig memory config =
-            _configuration(description, snapshot, rewardToken, operatorBps, fundHoldersBps, startsAtOrAfter);
+            _configuration(description, snapshot, rewardToken, operatorBps, fundHoldersBps, startsAtOrAfter, operator);
         incomeProjectIdOf[fundProjectId] = type(uint256).max;
         incomeProjectId = _launch(config, suckerConfiguration);
         address vault = _issueAndFundVault(incomeProjectId, allocation, snapshot, description.salt);
@@ -539,7 +544,8 @@ contract HomerunIncomeDeployer is ReentrancyGuard {
         address rewardToken,
         uint16 operatorBps,
         uint16 fundHoldersBps,
-        uint48 startsAtOrAfter
+        uint48 startsAtOrAfter,
+        address operator
     )
         internal
         view
@@ -548,6 +554,7 @@ contract HomerunIncomeDeployer is ReentrancyGuard {
         config.description = description;
         config.description.salt = configurationSaltFor(snapshot, description.salt);
         config.baseCurrency = 2;
+        // Stock Revnet calls its authority wallet the operator; Homerun's operator only receives incentives.
         config.operator = msg.sender;
         config.scopeCashOutsToLocalBalances = false;
         config.stageConfigurations = new REVStageConfig[](2);
@@ -555,12 +562,13 @@ contract HomerunIncomeDeployer is ReentrancyGuard {
         JBSplit[] memory splits = new JBSplit[](operatorBps == 0 ? 1 : 2);
         uint32 operatorSplit = uint32(uint256(operatorBps) * 1_000_000_000 / reservedBps);
         if (operatorBps != 0) {
+            // The Owner can replace this recipient through the stock controller in each stage's split group.
             splits[0] = JBSplit({
                 percent: operatorSplit,
                 projectId: 0,
-                beneficiary: payable(msg.sender),
+                beneficiary: payable(operator),
                 preferAddToBalance: false,
-                lockedUntil: type(uint48).max,
+                lockedUntil: 0,
                 hook: IJBSplitHook(address(0))
             });
         }
@@ -569,7 +577,7 @@ contract HomerunIncomeDeployer is ReentrancyGuard {
             projectId: 0,
             beneficiary: payable(rewardToken),
             preferAddToBalance: false,
-            lockedUntil: type(uint48).max,
+            lockedUntil: 0,
             hook: IJBSplitHook(TOKEN_DISTRIBUTOR)
         });
         REVAutoIssuance[] memory autoIssuances = new REVAutoIssuance[](snapshot.allocations.length);

@@ -123,7 +123,7 @@ export function FundDeploy({ values }: { values?: CreateValues }) {
     try {
       if (localStorage.getItem(FUND_LAUNCH_KEY)) throw new Error('A saved launch already exists. Reload to resume it.')
       const chainIds = plannedNetworks(values).map((chain: { chainId: number }) => chain.chainId)
-      const owner = getAddress(values.operatorWallet)
+      const owner = getAddress(values.ownerWallet)
       const sender = address
       const pin = await publishFundProjectMetadata(values)
       const fees = await Promise.all(chainIds.map(async (id: number) => {

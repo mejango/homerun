@@ -4,7 +4,7 @@
 project-state reader, launch receipt verifier, transaction simulation, and SDK
 payment/cash-out preparation against deployed Ethereum Juicebox V6 contracts.
 
-The run at Ethereum block **25,947,867** passed **29 local transactions**. Its
+The run at Ethereum block **25,962,537** passed **29 local transactions**. Its
 temporary FUND project was **11**. All receipts succeeded and resulting treasury,
 ruleset, ownership, supply, credit and ERC20 balances were checked through RPC.
 

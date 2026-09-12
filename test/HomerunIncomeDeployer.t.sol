@@ -350,10 +350,9 @@ contract IncomeTestOwner {
     }
 
     function start() external payable returns (uint256) {
-        return
-            _helper.deployIncome{value: 0.01 ether}(
-                1, _snapshot, _description(), 7000, 1000, 99, 1_000_000, _noSuckers()
-            );
+        return _helper.deployIncome{value: 0.01 ether}(
+            1, _snapshot, _description(), 7000, 1000, 99, 1_000_000, _noSuckers(), address(this)
+        );
     }
 
     function reenter() external returns (bool success) {
@@ -361,7 +360,17 @@ contract IncomeTestOwner {
         (success, result) = address(_helper).call{value: 0.01 ether}(
             abi.encodeCall(
                 HomerunIncomeDeployer.deployIncome,
-                (1, _snapshot, _description(), uint16(7000), uint16(1000), uint256(99), uint48(1_000_000), _noSuckers())
+                (
+                    1,
+                    _snapshot,
+                    _description(),
+                    uint16(7000),
+                    uint16(1000),
+                    uint256(99),
+                    uint48(1_000_000),
+                    _noSuckers(),
+                    address(this)
+                )
             )
         );
         if (result.length >= 4) reentryError = bytes4(result);
@@ -499,6 +508,7 @@ contract HomerunIncomeDeployerTest is Test {
     address private constant OPERATOR = address(0x100);
     address private constant ALICE = address(0x200);
     address private constant BOB = address(0x300);
+    address private constant OWNER = address(0x400);
     IncomeTestTokens private tokens;
     IncomeTestProjects private projects;
     IncomeTestController private controller;
@@ -601,11 +611,14 @@ contract HomerunIncomeDeployerTest is Test {
     }
 
     function _deploy() private returns (uint256) {
-        vm.prank(OPERATOR);
-        return
-            helper.deployIncome{value: 0.01 ether}(
-                1, _snapshot, _description(), 7000, 1000, 99, 1_000_000, _noSuckers()
-            );
+        return _deployFor(OPERATOR, OPERATOR);
+    }
+
+    function _deployFor(address owner, address operator) private returns (uint256) {
+        vm.prank(owner);
+        return helper.deployIncome{value: 0.01 ether}(
+            1, _snapshot, _description(), 7000, 1000, 99, 1_000_000, _noSuckers(), operator
+        );
     }
 
     function _leaf(uint256 index) private view returns (bytes32) {
@@ -651,6 +664,7 @@ contract HomerunIncomeDeployerTest is Test {
     }
 
     function testLaunchAtomicallyFundsBoundVaultAndPreservesOwner() public {
+        assertEq(helper.LAUNCH_VERSION(), 2);
         uint256 id = _deploy();
         HomerunInitialIncomeVault vault = HomerunInitialIncomeVault(helper.initialAllocationVaultOf(1));
         assertEq(id, 2);
@@ -692,7 +706,7 @@ contract HomerunIncomeDeployerTest is Test {
         assertEq(tokens.totalBalanceOf(ALICE, 1), 300 ether);
     }
 
-    function testCorrectImmutableIncomeConfiguration() public {
+    function testCorrectIncomeConfigurationWithEditableReservedSplits() public {
         _deploy();
         REVConfig memory config = abi.decode(revDeployer.lastConfig(), (REVConfig));
         assertEq(config.operator, OPERATOR);
@@ -706,11 +720,11 @@ contract HomerunIncomeDeployerTest is Test {
         assertEq(config.stageConfigurations[0].issuanceCutPercent, 50_000_000);
         assertEq(config.stageConfigurations[0].splits[0].percent, 875_000_000);
         assertEq(config.stageConfigurations[0].splits[0].beneficiary, OPERATOR);
-        assertEq(config.stageConfigurations[0].splits[0].lockedUntil, type(uint48).max);
+        assertEq(config.stageConfigurations[0].splits[0].lockedUntil, 0);
         assertEq(config.stageConfigurations[0].splits[1].percent, 125_000_000);
         assertEq(config.stageConfigurations[0].splits[1].beneficiary, tokens.tokenOf(99));
         assertEq(address(config.stageConfigurations[0].splits[1].hook), address(distributor));
-        assertEq(config.stageConfigurations[0].splits[1].lockedUntil, type(uint48).max);
+        assertEq(config.stageConfigurations[0].splits[1].lockedUntil, 0);
         assertEq(config.stageConfigurations[0].extraMetadata, 4);
         assertEq(config.stageConfigurations[1].startsAtOrAfter, block.timestamp + 7_884_000 * 8);
         assertEq(config.stageConfigurations[1].initialIssuance, 1);
@@ -757,7 +771,45 @@ contract HomerunIncomeDeployerTest is Test {
 
     function testUnauthorizedOwnerCannotLaunch() public {
         vm.expectRevert(HomerunIncomeDeployer.Unauthorized.selector);
-        helper.deployIncome(1, _snapshot, _description(), 7000, 1000, 99, 1_000_000, _noSuckers());
+        helper.deployIncome(1, _snapshot, _description(), 7000, 1000, 99, 1_000_000, _noSuckers(), OPERATOR);
+    }
+
+    function testOwnerRetainsAuthorityWhileSeparateOperatorReceivesBothStagesIncentives() public {
+        projects.setOwner(1, OWNER);
+        vm.deal(OWNER, 1 ether);
+        vm.expectRevert(HomerunIncomeDeployer.Unauthorized.selector);
+        _deployFor(OPERATOR, OPERATOR);
+        _assertRollback();
+
+        vm.expectEmit(true, true, true, false, address(helper));
+        emit HomerunIncomeDeployer.IncomeDeployed(1, 2, OWNER, address(0), address(0), address(0), bytes32(0));
+        uint256 id = _deployFor(OWNER, OPERATOR);
+        REVConfig memory config = abi.decode(revDeployer.lastConfig(), (REVConfig));
+        assertEq(projects.ownerOf(1), OWNER);
+        assertEq(projects.ownerOf(id), address(revOwner));
+        assertEq(config.operator, OWNER);
+        assertTrue(revOwner.isOperatorOf(id, OWNER));
+        assertFalse(revOwner.isOperatorOf(id, OPERATOR));
+        assertEq(revDeployer.feePayer(), OWNER);
+        assertEq(config.stageConfigurations.length, 2);
+        for (uint256 i; i < config.stageConfigurations.length; ++i) {
+            assertEq(config.stageConfigurations[i].splits[0].beneficiary, OPERATOR);
+            assertEq(config.stageConfigurations[i].splits[0].percent, 875_000_000);
+            assertEq(config.stageConfigurations[i].splits[0].lockedUntil, 0);
+            assertEq(config.stageConfigurations[i].splits[1].lockedUntil, 0);
+        }
+    }
+
+    function testZeroOperatorRejectedEvenWithoutOperatorIncentives() public {
+        uint16[2] memory operatorPercents = [uint16(0), uint16(7000)];
+        for (uint256 i; i < operatorPercents.length; ++i) {
+            vm.expectRevert(HomerunIncomeDeployer.InvalidConfiguration.selector);
+            vm.prank(OPERATOR);
+            helper.deployIncome{value: 0.01 ether}(
+                1, _snapshot, _description(), operatorPercents[i], 1000, 99, 1_000_000, _noSuckers(), address(0)
+            );
+            _assertRollback();
+        }
     }
 
     function testRejectsLiveMintingAndPendingReservedTokens() public {
@@ -976,7 +1028,7 @@ contract HomerunIncomeDeployerTest is Test {
     function testIncorrectCreationFeeDoesNotReserveFund() public {
         vm.prank(OPERATOR);
         vm.expectRevert(HomerunIncomeDeployer.WrongCreationFee.selector);
-        helper.deployIncome{value: 1}(1, _snapshot, _description(), 7000, 1000, 99, 1_000_000, _noSuckers());
+        helper.deployIncome{value: 1}(1, _snapshot, _description(), 7000, 1000, 99, 1_000_000, _noSuckers(), OPERATOR);
         assertEq(helper.incomeProjectIdOf(1), 0);
     }
 
@@ -997,11 +1049,28 @@ contract HomerunIncomeDeployerTest is Test {
 
     function testZeroCustomerAllocationIsSupported() public {
         vm.prank(OPERATOR);
-        helper.deployIncome{value: 0.01 ether}(1, _snapshot, _description(), 9000, 1000, 99, 1_000_000, _noSuckers());
+        helper.deployIncome{value: 0.01 ether}(
+            1, _snapshot, _description(), 9000, 1000, 99, 1_000_000, _noSuckers(), OPERATOR
+        );
         REVConfig memory config = abi.decode(revDeployer.lastConfig(), (REVConfig));
         assertEq(config.stageConfigurations[0].splitPercent, 10_000);
         assertEq(config.stageConfigurations[0].splits[0].percent, 900_000_000);
         assertEq(config.stageConfigurations[0].splits[1].percent, 100_000_000);
+    }
+
+    function testZeroOperatorAllocationLeavesUnlockedHolderSplitInBothStages() public {
+        vm.prank(OPERATOR);
+        helper.deployIncome{value: 0.01 ether}(
+            1, _snapshot, _description(), 0, 1000, 99, 1_000_000, _noSuckers(), OPERATOR
+        );
+        REVConfig memory config = abi.decode(revDeployer.lastConfig(), (REVConfig));
+        for (uint256 i; i < config.stageConfigurations.length; ++i) {
+            assertEq(config.stageConfigurations[i].splits.length, 1);
+            assertEq(config.stageConfigurations[i].splits[0].percent, 1_000_000_000);
+            assertEq(config.stageConfigurations[i].splits[0].beneficiary, tokens.tokenOf(99));
+            assertEq(address(config.stageConfigurations[i].splits[0].hook), address(distributor));
+            assertEq(config.stageConfigurations[i].splits[0].lockedUntil, 0);
+        }
     }
 
     function _globalSnapshot(uint104 localAmount) private view returns (HomerunInitialIncomeSnapshot memory snapshot) {
@@ -1046,10 +1115,9 @@ contract HomerunIncomeDeployerTest is Test {
         returns (uint256)
     {
         vm.prank(OPERATOR);
-        return
-            helper.deployIncome{value: 0.01 ether}(
-                1, snapshot, _description(), 7000, 1000, 99, 1_000_000, configuration
-            );
+        return helper.deployIncome{value: 0.01 ether}(
+            1, snapshot, _description(), 7000, 1000, 99, 1_000_000, configuration, OPERATOR
+        );
     }
 
     function testPartialGlobalAllocationMintsOnlyLocalShare() public {

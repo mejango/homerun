@@ -11,7 +11,7 @@ export const transactionStages: { id: TransactionStage; label: string }[] = [
   { id: 'liquidated', label: 'Asset sale' },
 ]
 export const transactionRoles: { id: TransactionRole; label: string }[] = [
-  { id: 'operator', label: 'Operator' },
+  { id: 'operator', label: 'Owner' },
   { id: 'fund', label: 'FUND holder' },
   { id: 'income', label: 'INCOME holder' },
   { id: 'anyone', label: 'Anyone' },
@@ -36,8 +36,8 @@ export const transactionCatalog: readonly TransactionEntry[] = [
   { id: 'withdraw', title: 'Withdraw for the asset purchase', role: 'operator', stages: ['funded', 'earning', 'liquidated'], description: 'With contributions and FUND cash-outs closed, use the confirmed allowance to pay a reviewed purchase recipient. Include the public purchase reference.' },
   { id: 'enable-minting', title: 'Enable success minting', role: 'operator', stages: ['funded'], description: 'After confirming the purchase, enable the permission needed to issue the agreed FUND allocations.' },
   { id: 'offchain', title: 'Issue FUND for offchain contributions', role: 'operator', stages: ['funded'], description: 'Mint a reviewed amount for a contribution already settled offchain. Offchain refunds are handled separately.' },
-  { id: 'operator-share', title: 'Issue the operator’s FUND share', role: 'operator', stages: ['funded'], description: 'Review and mint the success allocation using reconciled FUND supply. Bridge balances must be accounted for.' },
-  { id: 'disable-minting', title: 'Finish success minting', role: 'operator', stages: ['funded'], description: 'Disable owner minting after the contribution and operator allocations are complete.' },
+  { id: 'operator-share', title: 'Issue the Owner’s FUND share', role: 'operator', stages: ['funded'], description: 'Review and mint the Owner’s 20% success allocation using reconciled FUND supply. Account for bridge balances. The Owner may distribute this FUND to the Operator at their discretion.' },
+  { id: 'disable-minting', title: 'Finish success minting', role: 'operator', stages: ['funded'], description: 'Disable owner minting after the contribution and Owner allocations are complete.' },
   { id: 'erc20', title: 'Deploy the FUND wallet token', role: 'operator', stages: fundStages, description: 'Create the standard ERC-20 when the project does not have one. Existing FUND credits remain owned by their holders.' },
   { id: 'sticky-setup', title: 'Create the FUND staking pool', role: 'operator', stages: ['funded'], setup: true, description: 'Freeze the initial ownership snapshot, then create the stock Sticky pool on each network. Holders can later stake FUND for ongoing rewards.' },
   { id: 'income-launch', title: 'Launch INCOME', role: 'operator', stages: ['funded'], setup: true, description: 'Deploy the Revnet with the reviewed terms and fund each network’s initial claim vault. The initial allocation totals 500,000 INCOME across all networks.' },

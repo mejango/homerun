@@ -5,7 +5,7 @@ import { NATIVE_TOKEN, USDC_ADDRESSES } from '@bananapus/nana-sdk-core'
 import { tokenCurrencyId, v6Address, type JBRulesetConfig } from '@bananapus/nana-sdk-core/v6'
 import {
   buildFundLaunch, initialFundRuleset, parseAmount, parsePercent,
-  buildFundRulesetChange, operatorMintAmount, offchainFundAmount, buildFundMint,
+  buildFundRulesetChange, ownerMintAmount, offchainFundAmount, buildFundMint,
   buildFundReturn, buildFundPay, buildFundApproval, buildFundCashOut,
   buildFundClaimCredits, buildFundDeployErc20, buildFundTransferCredits,
   FUND_WEIGHT, type FundLaunchInput, type FundRulesetSnapshot, type FundTransaction,
@@ -167,14 +167,14 @@ test('success minting requires confirmed closed rules then can be revoked', () =
 
 test('operator issuance computes post-mint ownership including preexisting operator balance', () => {
   const supply = 500_000n * 10n ** 18n
-  assert.equal(operatorMintAmount(supply, 0n, 2000), 125_000n * 10n ** 18n)
+  assert.equal(ownerMintAmount(supply, 0n, 2000), 125_000n * 10n ** 18n)
   const existing = 50_000n * 10n ** 18n
-  const minted = operatorMintAmount(supply, existing, 2000)
+  const minted = ownerMintAmount(supply, existing, 2000)
   assert.equal((existing + minted) * 10_000n, (supply + minted) * 2000n)
-  assert.equal(operatorMintAmount(supply, 150_000n * 10n ** 18n, 2000), 0n)
-  assert.throws(() => operatorMintAmount(supply, 0n, 10_000))
-  assert.throws(() => operatorMintAmount(supply, supply + 1n, 2000))
-  assert.equal(operatorMintAmount(1n, 0n, 3333), 0n)
+  assert.equal(ownerMintAmount(supply, 150_000n * 10n ** 18n, 2000), 0n)
+  assert.throws(() => ownerMintAmount(supply, 0n, 10_000))
+  assert.throws(() => ownerMintAmount(supply, supply + 1n, 2000))
+  assert.equal(ownerMintAmount(1n, 0n, 3333), 0n)
 })
 
 test('returns and sale deposits use addToBalance, with exact token approvals and never mint FUND', () => {

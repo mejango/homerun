@@ -115,8 +115,8 @@ function reservedSplits(operatorPercent, stickyPercent, fundRewardMode) {
     denominator: 1_000_000_000,
     operator,
     [rewardKey]: 1_000_000_000 - operator,
-    lockedUntil: 281_474_976_710_655,
-    lockBothSplitsInEveryStage: true,
+    lockedUntil: 0,
+    lockBothSplitsInEveryStage: false,
     roundingReviewRequired: true,
   };
 }
@@ -410,7 +410,7 @@ export function ownerActionDraft(action, projection) {
         step('configure_holder_reward_route', 'Review and lock the holder reward allocation', 'Specify the operations and holder destinations for every issuance stage. At 75% operations and 15% to FUND holders, reserve 90% and split that reserve 75/90 and 15/90; the remaining 10% goes to customers. Lock both reviewed destinations in every stage. Verify transfer accounting, automatic delivery, replay protection and rounding before preparing a real deployment.', { fundHolderRewards: draft.changes.fundHolderRewards, revenuePolicy: draft.changes.revenuePolicy }),
       ] : [
         step('prepare_fund_sticky', 'Prepare the separate FUND Sticky project', 'Create or verify the third project accepting FH-FUND and its deployed SHARE ERC20. Review zero-tax underlying FUND recovery and all custody paths. This project wraps FUND; it neither buys the asset nor replaces the closing INCOME premint.', { fundSticky: draft.changes.fundSticky }),
-        step('configure_sticky_reward_route', 'Route and lock the ongoing FUND-staker allocation', 'Configure the reviewed total reserved issuance and split it between operations and FUND stakers. At 75% operations plus 15% for stakers, reserve 90%; split that reserve 75/90 and 15/90 with reviewed integer rounding. The remaining 10% of total issuance goes to customers. Lock BOTH reserved destinations in EVERY configured stage. The reward split hook is JBTokenDistributor and its beneficiary is the FUND Sticky SHARE ERC20, never raw FUND or JBStickyHook.', { rewardRoute: draft.changes.fundSticky.rewardRoute, revenuePolicy: draft.changes.revenuePolicy }),
+        step('configure_sticky_reward_route', 'Route the ongoing FUND-staker allocation', 'Configure the reviewed total reserved issuance and split it between operations and FUND stakers. At 75% operations plus 15% for stakers, reserve 90%; split that reserve 75/90 and 15/90 with reviewed integer rounding. The remaining 10% of total issuance goes to customers. Leave every split unlocked so the Owner can change recipients and allocations. The reward split hook is JBTokenDistributor and its beneficiary is the FUND Sticky SHARE ERC20, never raw FUND or JBStickyHook.', { rewardRoute: draft.changes.fundSticky.rewardRoute, revenuePolicy: draft.changes.revenuePolicy }),
       ]),
       step('premint_revenue_once', projection.revenuePremint === 0 ? 'Launch INCOME without an initial allocation' : 'Launch INCOME and fully mint its allocation together', projection.revenuePremint === 0
         ? 'This comparison sets the initial premint to zero. Skip autoIssueFor and all initial-allocation claims; launch the reviewed INCOME network with no pending free autoissuance. Ongoing FUND rewards remain separately configured. No FUND is burned.'

@@ -3,7 +3,7 @@
 import { getAccount, getPublicClient } from '@wagmi/core'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { bytesToHex, decodeEventLog, decodeFunctionData, encodeFunctionData, formatUnits, isAddressEqual, zeroAddress, type Hex, type PublicClient } from 'viem'
+import { bytesToHex, decodeEventLog, decodeFunctionData, encodeFunctionData, formatUnits, getAddress, isAddress, isAddressEqual, zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { IncomeProject } from '@/components/IncomeProject'
 import { StickyCreate } from '@/components/StickyCreate'
@@ -15,9 +15,9 @@ import { readFundProjectState, type FundProjectState } from '@/lib/fund-state'
 import { fundIpfsUrl } from '@/lib/fund-project-metadata'
 import { readFundGlobalSnapshot, type FundGlobalSnapshotInput } from '@/lib/fund-global-snapshot'
 import { buildFundGlobalManifest, canonicalSnapshotJson, fundGlobalManifestHash, getFundGlobalClaim, globalIncomeSnapshotParameters, parseFundGlobalManifest, serializeFundGlobalManifest, verifyFundGlobalManifestHistory, type FundGlobalManifest } from '@/lib/fund-global-manifest'
-import { homerunIncomeDeployerAbi, registeredIncomeDeployer } from '@/lib/income-contracts'
+import { homerunIncomeDeployerAbi, homerunIncomeRecoveryAbi, registeredIncomeDeployer } from '@/lib/income-contracts'
 import { readInitialIncomeAllocation } from '@/lib/income-allocation-state'
-import { incomeLaunchBlockers, prepareIncomeLaunch, readIncomeLaunchBinding, type PreparedIncomeLaunch } from '@/lib/income-launch'
+import { assertIncomeLaunchVersion, incomeLaunchBlockers, prepareIncomeLaunch, readIncomeLaunchBinding, type PreparedIncomeLaunch } from '@/lib/income-launch'
 import { beginIncomeLaunchSubmission, clearIncomeLaunchPending, importIncomeLaunchPending, incomeLaunchSessionKey, readIncomeLaunchPending, recordIncomeLaunchHash, verifyIncomeLaunchExecution, withIncomeLaunchLock, type IncomeLaunchPending } from '@/lib/income-launch-session'
 import { parseIncomeGlobalDraft, readIncomeGlobalDraft, saveIncomeGlobalDraft, serializeIncomeGlobalDraft, verifyIncomeGlobalDraftManifest, withIncomeGlobalDraftLock, type IncomeGlobalChainDraft, type IncomeGlobalLaunchDraft } from '@/lib/income-global-launch-draft'
 import { jbCenterIpfs } from '@/lib/jbcenter-ipfs'
@@ -30,7 +30,7 @@ const HASH = /^0x[\da-fA-F]{64}$/
 type LaunchInput = Parameters<typeof prepareIncomeLaunch>[1]
 type Review = { plan: PreparedIncomeLaunch; input: LaunchInput }
 type SnapshotProgress = Parameters<NonNullable<FundGlobalSnapshotInput['onProgress']>>[0]
-export type PlannedIncomeAllocation = { operatorPercent: number | null; fundStakerPercent: number | null }
+export type PlannedIncomeAllocation = { operatorPercent: number | null; fundStakerPercent: number | null; operatorWallet?: Address | null }
 type IncomeLaunchProps = { state: FundProjectState; client: PublicClient; name?: string; launchUnavailable?: boolean; plannedAllocation?: PlannedIncomeAllocation; embedExistingProject?: boolean }
 function message(reason: unknown) { return reason instanceof Error ? reason.message : 'INCOME could not be prepared. Try again.' }
 function changed() { window.dispatchEvent(new Event(JOURNAL_EVENT)) }
@@ -48,6 +48,8 @@ function GlobalIncomeLaunch({ state, client, name = 'Homerun INCOME', launchUnav
   const [draft, setDraft] = useState<IncomeGlobalLaunchDraft | null>(null), [ready, setReady] = useState(false), [storageError, setStorageError] = useState<string | null>(null)
   const [manifest, setManifest] = useState<FundGlobalManifest | null>(null), [manifestUri, setManifestUri] = useState('')
   const [operator, setOperator] = useState('70'), [stakers, setStakers] = useState('10'), [working, setWorking] = useState<string | null>(null), [progress, setProgress] = useState<SnapshotProgress | null>(null), [error, setError] = useState<string | null>(null)
+  const [operatorWallet, setOperatorWallet] = useState(plannedAllocation?.operatorWallet ?? '')
+  const operatorWalletTouched = useRef(false)
   const [verified, setVerified] = useState<Record<number, string>>({}), [existingIncomeId, setExistingIncomeId] = useState<bigint | null>(null)
   const action = useRef(false), abort = useRef<AbortController | null>(null), allocationTouched = useRef(false)
   const binding = useQuery({ queryKey: ['income-binding', state.chainId, state.projectId.toString()], queryFn: () => readIncomeLaunchBinding(client, state.chainId, state.projectId), staleTime: 10_000, refetchInterval: 15_000, retry: false })
@@ -55,7 +57,7 @@ function GlobalIncomeLaunch({ state, client, name = 'Homerun INCOME', launchUnav
   useEffect(() => { function read() { try { setDraft(readIncomeGlobalDraft(localStorage, state.chainId, state.projectId)); setStorageError(null) } catch (reason) { setStorageError(message(reason)) } finally { setReady(true) } } read(); window.addEventListener('storage', read); window.addEventListener(JOURNAL_EVENT, read); return () => { window.removeEventListener('storage', read); window.removeEventListener(JOURNAL_EVENT, read) } }, [state.chainId, state.projectId])
   const plannedOperator = plannedAllocation?.operatorPercent, plannedStakers = plannedAllocation?.fundStakerPercent
   useEffect(() => {
-    // Metadata proposes editable terms. A saved plan and the operator's own
+    // Metadata proposes editable terms. A saved plan and the owner's own
     // edits always take precedence, including while a freeze is being prepared.
     if (!ready || draft || storageError || allocationTouched.current || (plannedOperator === undefined && plannedStakers === undefined)) return
     const proposedOperator = plannedOperator ?? 70, proposedStakers = plannedStakers ?? 10
@@ -65,6 +67,9 @@ function GlobalIncomeLaunch({ state, client, name = 'Homerun INCOME', launchUnav
       setOperator(String(proposedOperator)); setStakers(String(proposedStakers))
     } catch { /* Ignore malformed metadata; the explicit form defaults remain editable. */ }
   }, [ready, draft, storageError, plannedOperator, plannedStakers])
+  useEffect(() => {
+    if (ready && !draft && !storageError && !operatorWalletTouched.current) setOperatorWallet(plannedAllocation?.operatorWallet ?? '')
+  }, [ready, draft, storageError, plannedAllocation?.operatorWallet])
   const manifestMatches = !!draft && !!manifest && fundGlobalManifestHash(manifest) === draft.manifestHash
   useEffect(() => {
     if (!draft || manifestMatches) return
@@ -97,12 +102,15 @@ function GlobalIncomeLaunch({ state, client, name = 'Homerun INCOME', launchUnav
   async function freeze() { await run('Verifying and saving the shared launch terms…', async () => {
     requireOwner(); if (!manifest || !manifestUri) throw new Error('Publish the complete snapshot first.')
     allocationTouched.current = true
+    operatorWalletTouched.current = true
+    if (!isAddress(operatorWallet) || isAddressEqual(operatorWallet, zeroAddress)) throw new Error('Enter the operator wallet that will receive token incentives. The FUND owner retains program control.')
+    const incentiveRecipient = getAddress(operatorWallet)
     const operatorBps = parsePercent(operator), fundHolderBps = parsePercent(stakers); if (!fundHolderBps || operatorBps + fundHolderBps > 10_000) throw new Error('Include a positive staker share and allocate no more than 100%.')
     const checked = await verifyFundGlobalManifestHistory(clients, manifest)
-    const blocks = await Promise.all(checked.allocations.map(async local => { const rpc = clients.get(local.chainId); if (!rpc) throw new Error(`A client for ${displayChainName(local.chainId)} is required.`); const block = await rpc.getBlock({ blockTag: 'latest' }); if (block.number === null || !block.hash || block.timestamp <= 0n) throw new Error('Every linked chain must provide a mined block.'); return Number(block.timestamp) }))
+    const blocks = await Promise.all(checked.allocations.map(async local => { const rpc = clients.get(local.chainId); if (!rpc) throw new Error(`A client for ${displayChainName(local.chainId)} is required.`); const block = await rpc.getBlock({ blockTag: 'latest' }); if (block.number === null || !block.hash || block.timestamp <= 0n) throw new Error('Every linked chain must provide a mined block.'); await assertIncomeLaunchVersion(rpc, local.chainId, block.number); return Number(block.timestamp) }))
     const startsAtOrAfter = Math.min(...blocks)
-    const metadata = await jbCenterIpfs.pinJson({ name: name.trim(), description: 'Initial INCOME belongs to all FUND snapshot holders across the linked chains, including unclaimed credits and pending bridge transfers. Ongoing staker rewards use Sticky.', tokens: { name: name.trim(), symbol: 'INCOME' }, homerun: { version: 1, type: 'income', manifestUri, manifestHash: fundGlobalManifestHash(checked), holderRewards: { mode: 'sticky' }, startsAtOrAfter, operatorBps, fundHolderBps } })
-    const next: IncomeGlobalLaunchDraft = { version: 1, root: { chainId: state.chainId, projectId: state.projectId.toString() }, helper: checked.helper, manifestUri, manifestHash: fundGlobalManifestHash(checked), sourceSetHash: checked.sourceSetHash, launchSalt: checked.launchSalt, name: name.trim(), metadataUri: `ipfs://${metadata.cid}`, startsAtOrAfter, operatorBps, fundHolderBps, chains: checked.allocations.map(local => ({ chainId: local.chainId, fundProjectId: local.fundProjectId, initialIncomeAmount: local.incomeAmount })) }
+    const metadata = await jbCenterIpfs.pinJson({ name: name.trim(), description: 'Initial INCOME belongs to all FUND snapshot holders across the linked chains, including unclaimed credits and pending bridge transfers. Ongoing staker rewards use Sticky.', tokens: { name: name.trim(), symbol: 'INCOME' }, homerun: { version: 1, type: 'income', manifestUri, manifestHash: fundGlobalManifestHash(checked), holderRewards: { mode: 'sticky' }, startsAtOrAfter, operatorBps, fundHolderBps, operatorWallet: incentiveRecipient } })
+    const next: IncomeGlobalLaunchDraft = { version: 1, root: { chainId: state.chainId, projectId: state.projectId.toString() }, helper: checked.helper, manifestUri, manifestHash: fundGlobalManifestHash(checked), sourceSetHash: checked.sourceSetHash, launchSalt: checked.launchSalt, name: name.trim(), metadataUri: `ipfs://${metadata.cid}`, startsAtOrAfter, operatorBps, fundHolderBps, operator: incentiveRecipient, chains: checked.allocations.map(local => ({ chainId: local.chainId, fundProjectId: local.fundProjectId, initialIncomeAmount: local.incomeAmount })) }
     await withIncomeGlobalDraftLock(() => saveIncomeGlobalDraft(localStorage, next)); changed()
   }) }
   async function restoreDraft(file?: File) { if (!file) return; await run('Restoring the frozen launch plan…', async () => { if (file.size > 1_000_000) throw new Error('The launch plan file is too large. Use the small launch-plan file rather than the ownership snapshot.'); const parsed = parseIncomeGlobalDraft(JSON.parse(await file.text())); if (!parsed.chains.some(local => local.chainId === state.chainId && BigInt(local.fundProjectId) === state.projectId)) throw new Error('This plan belongs to another FUND.'); await withIncomeGlobalDraftLock(() => saveIncomeGlobalDraft(localStorage, parsed)); changed() }) }
@@ -119,6 +127,7 @@ function GlobalIncomeLaunch({ state, client, name = 'Homerun INCOME', launchUnav
       <h3 className="text-xl">Shared launch plan</h3><p>{completed} of {draft.chains.length} networks confirmed.</p>
       <p className="text-sm">{completed === draft.chains.length ? 'Every network’s deployment and local initial allocation is confirmed.' : 'Each network deploys separately. Payments can begin locally before the other networks are ready; the overall launch remains incomplete until every deployment is confirmed.'}</p>
       <p className="text-sm">Shared issuance starts {new Date(draft.startsAtOrAfter * 1000).toISOString()}. New INCOME: {draft.operatorBps / 100}% operators, {draft.fundHolderBps / 100}% stakers, {(10_000 - draft.operatorBps - draft.fundHolderBps) / 100}% customers. These terms, the published snapshot, and metadata are frozen for every network.</p>
+      <p className="break-words text-sm">Operator incentive wallet: {draft.operator ?? 'This saved plan uses each FUND owner as its incentive recipient.'} Each FUND owner operates its INCOME revnet and executes program changes.</p>
       <button type="button" className="btn-secondary min-h-11 justify-self-start px-4" onClick={() => download(serializeIncomeGlobalDraft(draft), 'homerun-global-income-launch.json')}>Download launch plan</button>
       {!manifestMatches && <p className="text-sm">Loading the published ownership snapshot. You can restore its downloaded file below if IPFS is unavailable.</p>}
       {manifestMatches && manifest && draft.chains.map(local => <IncomeChainLaunch key={`${local.chainId}:${local.fundProjectId}`} local={local} draft={draft} manifest={manifest} clients={clients} rootState={state} onVerified={onVerified} launchUnavailable={launchUnavailable} rootIncomeId={existingIncomeId} embedExistingProject={embedExistingProject} />)}
@@ -127,7 +136,7 @@ function GlobalIncomeLaunch({ state, client, name = 'Homerun INCOME', launchUnav
       <p className="text-sm">Snapshot all linked networks before setting up Sticky. The scan checks finalized balances and unsettled bridge entitlements together.</p>
       <button type="button" className="btn-secondary min-h-11 justify-self-start px-4" disabled={!!manifestUri} onClick={() => void makeSnapshot()}>Create global ownership snapshot</button>
       {manifest && <div className="grid gap-3 rounded border border-[#c4cdbb] p-4"><p>500,000 INCOME across {manifest.allocations.length} networks.</p><ul className="space-y-1 text-sm">{manifest.allocations.map(local => <li key={local.chainId}>{displayChainName(local.chainId)}: {formatUnits(BigInt(local.incomeAmount), 18)} INCOME for {local.leafCount} holders</li>)}</ul><p className="text-sm">Every linked network remains in the launch plan, including networks whose initial allocation is zero.</p><div className="flex flex-wrap gap-3"><button type="button" className="btn-secondary min-h-11 px-4" onClick={() => download(serializeFundGlobalManifest(manifest), 'fund-global-initial-income.json')}>Download snapshot</button><button type="button" className="btn-secondary min-h-11 px-4" disabled={!!manifestUri} onClick={() => void publish()}>{manifestUri ? 'Snapshot published' : 'Publish snapshot'}</button></div></div>}
-      {manifestUri && <><h3 className="text-xl">2. Freeze the shared terms</h3><p className="text-sm">Save one plan before any network creates Sticky or INCOME. Initial issuance is 10 INCOME per dollar, decreasing 5% each quarter for eight quarters, then staying fixed.</p><div className="grid gap-4 sm:grid-cols-2"><label className="grid gap-2 text-sm">Operator share of new INCOME (%)<input className={inputClass} value={operator} inputMode="decimal" onChange={event => { allocationTouched.current = true; setOperator(event.target.value) }} /></label><label className="grid gap-2 text-sm">Staker share of new INCOME (%)<input className={inputClass} value={stakers} inputMode="decimal" onChange={event => { allocationTouched.current = true; setStakers(event.target.value) }} /></label></div><button type="button" className="btn-secondary min-h-11 justify-self-start px-4" onClick={() => void freeze()}>Save shared launch plan</button></>}
+      {manifestUri && <><h3 className="text-xl">2. Freeze the shared terms</h3><p className="text-sm">Save one plan before any network creates Sticky or INCOME. Initial issuance is 10 INCOME per dollar, decreasing 5% each quarter for eight quarters, then staying fixed.</p><label className="grid gap-2 text-sm">Operator incentive wallet<input className={inputClass} value={operatorWallet} onChange={event => { operatorWalletTouched.current = true; setOperatorWallet(event.target.value) }} /></label><p className="text-sm">This wallet receives token incentives. Each FUND owner keeps control of its INCOME revnet and executes program changes.</p><div className="grid gap-4 sm:grid-cols-2"><label className="grid gap-2 text-sm">Operator share of new INCOME (%)<input className={inputClass} value={operator} inputMode="decimal" onChange={event => { allocationTouched.current = true; setOperator(event.target.value) }} /></label><label className="grid gap-2 text-sm">Staker share of new INCOME (%)<input className={inputClass} value={stakers} inputMode="decimal" onChange={event => { allocationTouched.current = true; setStakers(event.target.value) }} /></label></div><button type="button" className="btn-secondary min-h-11 justify-self-start px-4" onClick={() => void freeze()}>Save shared launch plan</button></>}
     </fieldset>}
     {existingIncomeId && <><p className="my-4 text-sm">INCOME already exists on this network.{!draft && ' Restore the shared launch plan to finish or verify its other networks.'}</p>{embedExistingProject ? <IncomeProject chainId={state.chainId} projectId={existingIncomeId} fundProjectId={state.projectId} /> : <a className="inline-block underline" href={`/income/${state.chainId}/${existingIncomeId}`}>Open INCOME project →</a>}</>}
     {manifestMatches && manifest && <button type="button" className="btn-secondary mt-4 min-h-11 px-4" onClick={() => download(serializeFundGlobalManifest(manifest), 'fund-global-initial-income.json')}>Download ownership snapshot</button>}
@@ -154,7 +163,7 @@ function IncomeChainActions({ local, draft, manifest, clients, client, rootState
   const binding = useQuery({ queryKey: ['income-binding', chainId, local.fundProjectId], queryFn: () => readIncomeLaunchBinding(client, chainId, projectId), staleTime: 10_000, refetchInterval: 15_000, retry: false })
   useEffect(() => { function read() { try { setPending(readIncomeLaunchPending(localStorage, key)); setJournalError(null) } catch (reason) { setJournalError(message(reason)) } finally { setJournalReady(true) } } read(); window.addEventListener('storage', read); window.addEventListener(JOURNAL_EVENT, read); return () => { window.removeEventListener('storage', read); window.removeEventListener(JOURNAL_EVENT, read) } }, [key])
   const confirm = useCallback(async (record: IncomeLaunchPending, hash: Hex) => {
-    const decoded = decodeFunctionData({ abi: homerunIncomeDeployerAbi, data: record.data })
+    const decoded = decodeFunctionData({ abi: homerunIncomeRecoveryAbi, data: record.data })
     if (decoded.functionName !== 'deployIncome' || JSON.stringify(canonicalSnapshotJson(decoded.args[1])) !== JSON.stringify(canonicalSnapshotJson(globalIncomeSnapshotParameters(manifest, draft.manifestUri)))) throw new Error('The recovered transaction uses a different global allocation.')
     const status = await verifyIncomeLaunchExecution(client, record, hash)
     if (status === 'confirmed') {
@@ -183,7 +192,7 @@ function IncomeChainActions({ local, draft, manifest, clients, client, rootState
   const unavailable = launchUnavailable || !owner || !state || fund.isError || binding.isError || binding.isPending || !!binding.data || !journalReady || !!journalError || !!pending || !!local.execution || blockers.length > 0
   async function run(task: () => Promise<void>) { if (action.current) return; action.current = true; setWorking(true); setError(null); try { await task() } catch (reason) { setError(message(reason)) } finally { action.current = false; setWorking(false) } }
   async function stickyCreated(id: bigint) { try { await withIncomeGlobalDraftLock(() => { const current = sameFrozenPlan(draft); saveIncomeGlobalDraft(localStorage, { ...current, chains: current.chains.map(row => row.chainId === chainId ? { ...row, stickyProjectId: id.toString() } : row) }) }); changed() } catch (reason) { setError(message(reason)) } }
-  async function prepare() { await run(async () => { if (unavailable || !address || !local.stickyProjectId) throw new Error('Confirm Sticky and connect this network’s FUND owner first.'); sameFrozenPlan(draft); setReview(null); setAttested(false); const input: LaunchInput = { chainId, fundProjectId: projectId, account: address, manifest, manifestUri: draft.manifestUri, stickyProjectId: BigInt(local.stickyProjectId), name: draft.name, projectUri: draft.metadataUri, salt: draft.launchSalt, operatorBps: draft.operatorBps, fundHolderBps: draft.fundHolderBps, startsAtOrAfter: draft.startsAtOrAfter, clients }; setReview({ input, plan: await prepareIncomeLaunch(client, input) }) }) }
+  async function prepare() { await run(async () => { if (unavailable || !address || !local.stickyProjectId) throw new Error('Confirm Sticky and connect this network’s FUND owner first.'); sameFrozenPlan(draft); setReview(null); setAttested(false); const input: LaunchInput = { chainId, fundProjectId: projectId, account: address, operator: draft.operator, manifest, manifestUri: draft.manifestUri, stickyProjectId: BigInt(local.stickyProjectId), name: draft.name, projectUri: draft.metadataUri, salt: draft.launchSalt, operatorBps: draft.operatorBps, fundHolderBps: draft.fundHolderBps, startsAtOrAfter: draft.startsAtOrAfter, clients }; setReview({ input, plan: await prepareIncomeLaunch(client, input) }) }) }
   async function submit() { await run(async () => {
     if (unavailable || !address || !review || !attested || !isAddressEqual(address, review.input.account)) throw new Error('Review and attest to the global allocation with this FUND’s owner.'); const captured = review, account = address
     await withIncomeLaunchLock(key, async () => {

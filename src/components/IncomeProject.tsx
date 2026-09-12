@@ -14,6 +14,7 @@ import Image from 'next/image'
 import { IncomeLoanTools } from '@/components/IncomeLoanTools'
 import { IncomeBridgeActions } from '@/components/IncomeBridgeActions'
 import { IncomeReservedTokens } from '@/components/IncomeReservedTokens'
+import { IncomeOperatorActions } from '@/components/IncomeOperatorActions'
 import { ProjectActivity } from '@/components/ProjectActivity'
 import { DisplayTokenAmount } from '@/components/DisplayTokenAmount'
 import { InitialIncomeClaim } from '@/components/InitialIncomeClaim'
@@ -108,6 +109,7 @@ export type IncomeProjectSlots = {
   loans: ReactNode
   shop: ReactNode
   extras: ReactNode
+  operators: ReactNode
 }
 
 /** A single retained read supplies every slot, including a linked FUND page. */
@@ -159,7 +161,7 @@ export function IncomeProject({ chainId, projectId, fundProjectId }: { chainId: 
     owners={<OwnersTabs accountsYou={slots.accountsYou} accountsAll={slots.accountsAll} market={slots.market} settlement={slots.settlement} splits={slots.splits} loans={slots.loans} />}
     shop={slots.shop}
     extras={slots.extras}
-    operators={<Panel title="INCOME administration"><p>INCOME follows its deployed revnet schedule. Allocations and loan operations are available to their beneficiaries under Owners.</p>{slots.fundProjectId && <a className="mt-4 inline-block underline" href={`/project/${chainId}/${slots.fundProjectId}`}>Open FUND operator controls →</a>}</Panel>}
+    operators={<div className="grid gap-7">{slots.operators}<Panel title="INCOME administration"><p>INCOME follows its deployed revnet schedule. Allocations and loan operations are available to their beneficiaries under Owners.</p>{slots.fundProjectId && <a className="mt-4 inline-block underline" href={`/project/${chainId}/${slots.fundProjectId}`}>Open FUND Owner controls →</a>}</Panel></div>}
   />}</IncomeProjectRuntime>
 }
 
@@ -190,6 +192,7 @@ function IncomeActions({ state, client, fundProjectId, writesUnavailable, notice
     loans: gate(ready && <>{currency}{context && <IncomeBorrow state={state} client={client} context={context} />}<IncomeRepay state={state} client={client} /><IncomeLoanTools state={state} client={client} /></>),
     shop: projectId && <ProjectShop chainId={chainId} projectId={projectId} tokenLabel="INCOME" />,
     extras: projectId && <ProjectPayerAddresses chainId={chainId} projectId={projectId} tokenLabel="INCOME" />,
+    operators: gate(ready && <IncomeOperatorActions state={state} client={client} />),
   })
 }
 

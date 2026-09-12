@@ -284,13 +284,13 @@ export function buildFundRulesetChange(input: {
   return { requests, configurations, action: input.action }
 }
 
-/** Additional operator tokens for a target share after the mint, including tokens already owned. */
-export function operatorMintAmount(totalSupply: bigint, operatorBalance: bigint, targetBasisPoints: number): bigint {
+/** Additional owner tokens for a target share after the mint, including tokens already owned. */
+export function ownerMintAmount(totalSupply: bigint, ownerBalance: bigint, targetBasisPoints: number): bigint {
   nonnegative(totalSupply, 'Total FUND supply')
-  nonnegative(operatorBalance, 'Operator FUND balance')
-  if (operatorBalance > totalSupply) throw new Error('Operator balance cannot exceed total supply.')
-  if (!Number.isInteger(targetBasisPoints) || targetBasisPoints < 0 || targetBasisPoints >= 10_000) throw new Error('Operator share must be below 100%.')
-  const numerator = BigInt(targetBasisPoints) * totalSupply - 10_000n * operatorBalance
+  nonnegative(ownerBalance, 'Owner FUND balance')
+  if (ownerBalance > totalSupply) throw new Error('Owner balance cannot exceed total supply.')
+  if (!Number.isInteger(targetBasisPoints) || targetBasisPoints < 0 || targetBasisPoints >= 10_000) throw new Error('Owner share must be below 100%.')
+  const numerator = BigInt(targetBasisPoints) * totalSupply - 10_000n * ownerBalance
   if (numerator <= 0n) return 0n
   const denominator = 10_000n - BigInt(targetBasisPoints)
   // Round down by at most one token wei. Never grant more than the reviewed share.
@@ -298,6 +298,9 @@ export function operatorMintAmount(totalSupply: bigint, operatorBalance: bigint,
   if (totalSupply + mint > UINT208_MAX) throw new Error('Resulting FUND supply exceeds the protocol limit.')
   return mint
 }
+
+/** @deprecated Compatibility name for saved tooling; pass the project owner's holdings. */
+export const operatorMintAmount = ownerMintAmount
 
 export function offchainFundAmount(usdAmount: string): bigint {
   const usdc = parseAmount(usdAmount, 6)

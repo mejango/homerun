@@ -183,8 +183,8 @@ test('known RENT premint and hybrid stages appear without adding an operator pre
     assert.equal(stage.reservedSplitGroup.operator, 833_333_333);
     assert.equal(stage.reservedSplitGroup.fundSticky, 166_666_667);
     assert.equal(stage.reservedSplitGroup.operator + stage.reservedSplitGroup.fundSticky, 1_000_000_000);
-    assert.equal(stage.reservedSplitGroup.lockBothSplitsInEveryStage, true);
-    assert.equal(stage.reservedSplitGroup.lockedUntil, 281_474_976_710_655);
+    assert.equal(stage.reservedSplitGroup.lockBothSplitsInEveryStage, false);
+    assert.equal(stage.reservedSplitGroup.lockedUntil, 0);
     assert.equal(stage.reservedSplitGroup.roundingReviewRequired, true);
   }
   assert.equal(policy.stages[1].issuanceRevPerUSDC, 9.5);
@@ -333,7 +333,7 @@ test('draft creation is deterministic and leaves source state unchanged', () => 
   assert.deepEqual(state.completedOwnerActions, ['close_raise']);
 });
 
-test('default owner stages match quarterly model rates and lock both destinations through the flat final stage', () => {
+test('default owner stages match quarterly model rates and leave every destination unlocked through the flat final stage', () => {
   const projection = projectNetwork({}, 'funded');
   const policy = ownerActionDraft('complete_purchase', projection).changes.revenuePolicy;
   assert.equal(policy.issuanceCutPercent, 5);
@@ -351,8 +351,8 @@ test('default owner stages match quarterly model rates and lock both destination
     assert.equal(stage.fundHolderTokenPercent, 15);
     assert.equal(stage.reservedSplitGroup.operator, 833_333_333);
     assert.equal(stage.reservedSplitGroup.fundHolders, 166_666_667);
-    assert.equal(stage.reservedSplitGroup.lockBothSplitsInEveryStage, true);
-    assert.equal(stage.reservedSplitGroup.lockedUntil, 281_474_976_710_655);
+    assert.equal(stage.reservedSplitGroup.lockBothSplitsInEveryStage, false);
+    assert.equal(stage.reservedSplitGroup.lockedUntil, 0);
   });
 });
 

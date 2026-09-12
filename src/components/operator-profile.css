@@ -8,6 +8,7 @@
 .operator-profile .operator-profile-introduction { margin: 0; color: var(--muted, #647060); font-size: 14px; line-height: 1.7; white-space: pre-line; overflow-wrap: anywhere; }
 .create-operator-profile { margin: 12px 0 0; padding: 24px 0 0; border: 0; border-top: 1px solid var(--line, #d8dfcc); min-width: 0; }
 .create-operator-profile legend { float: left; width: 100%; margin-bottom: 12px; font-size: 18px; font-weight: 500; }
+.create-operator-profile > .create-field { clear: both; }
 .create-operator-profile > .create-help { clear: both; margin-bottom: 24px; }
 .create-operator-photo-preview { width: 96px; height: 96px; border-radius: 6px; object-fit: cover; }
 .review-block .operator-profile { margin-top: 16px; }

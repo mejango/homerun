@@ -10,18 +10,22 @@ export const CREATE_DEFAULTS = Object.freeze({
   location: '',
   description: '',
   revenueDescription: '',
+  minimumRevenue: 0,
+  minimumRevenueConsequences: '',
   purchaseBudget: 500_000,
   opsReserve: 100_000,
   monthlyRent: 10_000,
   monthlyCosts: 6_000,
   rentGrowthPercent: DEFAULT_NETWORK.rentGrowthPercent,
   costGrowthPercent: DEFAULT_NETWORK.costGrowthPercent,
+  // Historical draft key: this success allocation belongs to the Owner.
   operatorFundPercent: 20,
   operatorSplitPercent: 70,
   stickySplitPercent: 10,
   networks: Object.freeze(NETWORK_FAMILIES.map(family => family.id)),
   networkEnvironment: 'production',
   revnetOperatorEnabled: true,
+  ownerWallet: '',
   operatorWallet: '',
   operatorName: '',
   operatorIntroduction: '',
@@ -31,10 +35,10 @@ export const CREATE_DEFAULTS = Object.freeze({
 
 const ASSET_TYPES = new Set(['real-estate', 'business', 'equipment', 'energy', 'other']);
 const NETWORK_IDS = NETWORK_FAMILIES.map(family => family.id);
-const MONEY_FIELDS = ['purchaseBudget', 'opsReserve', 'monthlyRent', 'monthlyCosts'];
+const MONEY_FIELDS = ['purchaseBudget', 'opsReserve', 'monthlyRent', 'monthlyCosts', 'minimumRevenue'];
 const LABELS = {
-  purchaseBudget: 'Asset price', opsReserve: 'Cash reserve', monthlyRent: 'Monthly revenue',
-  monthlyCosts: 'Monthly expenses', operatorFundPercent: 'Operator FUND ownership',
+  purchaseBudget: 'Asset price', opsReserve: 'Cash reserve', monthlyRent: 'Monthly revenue', minimumRevenue: 'Minimum monthly revenue',
+  monthlyCosts: 'Monthly expenses', operatorFundPercent: 'Owner FUND ownership',
   rentGrowthPercent: 'Target revenue growth rate',
   costGrowthPercent: 'Target expense growth rate',
   operatorSplitPercent: 'Operator INCOME allocation', stickySplitPercent: 'FUND staker INCOME allocation',
@@ -65,6 +69,7 @@ export function normalizeCreateDraft(raw = {}) {
 
   for (const [key, min, max, label] of [
     ['name', 2, 60, 'Project name'], ['location', 0, 100, 'Location'], ['description', 0, 600, 'Description'], ['revenueDescription', 0, 1000, 'Revenue plan'],
+    ['minimumRevenueConsequences', 0, 2000, 'Minimum revenue consequences'],
     ['operatorName', 0, 80, 'Operator name'], ['operatorIntroduction', 0, 1200, 'Operator introduction'],
   ]) {
     const input = own(source, key) ? source[key] : CREATE_DEFAULTS[key];
@@ -116,16 +121,20 @@ export function normalizeCreateDraft(raw = {}) {
     errors.stickySplitPercent = message;
   }
 
-  const wallet = own(source, 'operatorWallet') ? source.operatorWallet : '';
-  values.operatorWallet = typeof wallet === 'string' ? wallet.trim() : '';
+  // Old drafts used one wallet for authority and incentives. Migrate only when
+  // the Owner field is absent; an explicitly empty Owner never inherits it.
+  for (const key of ['ownerWallet', 'operatorWallet']) {
+    const wallet = own(source, key) ? source[key] : key === 'ownerWallet' ? source.operatorWallet ?? '' : '';
+    values[key] = typeof wallet === 'string' ? wallet.trim() : '';
+    if (typeof wallet !== 'string' || (values[key] && (!ADDRESS.test(values[key]) || /^0x0{40}$/i.test(values[key])))) {
+      errors[key] = `Use a nonzero ${key === 'ownerWallet' ? 'owner' : 'operator'} address beginning with 0x, or leave it blank for this preview.`;
+    }
+  }
   values.revnetOperatorEnabled = own(source, 'revnetOperatorEnabled')
-    ? source.revnetOperatorEnabled : own(source, 'operatorWallet') ? Boolean(values.operatorWallet) : CREATE_DEFAULTS.revnetOperatorEnabled;
+    ? source.revnetOperatorEnabled : !own(source, 'ownerWallet') && own(source, 'operatorWallet') ? Boolean(values.operatorWallet) : CREATE_DEFAULTS.revnetOperatorEnabled;
   if (typeof values.revnetOperatorEnabled !== 'boolean') {
     errors.revnetOperatorEnabled = 'Choose whether to enable limited operator controls.';
   }
-  if (typeof wallet !== 'string' || (values.operatorWallet && (
-    !ADDRESS.test(values.operatorWallet) || /^0x0{40}$/i.test(values.operatorWallet)
-  ))) errors.operatorWallet = 'Use a nonzero operator address beginning with 0x, or leave it blank for this preview.';
 
   for (const key of ['photo', 'operatorPhoto']) {
     const photo = own(source, key) ? source[key] : '';
@@ -154,7 +163,8 @@ export function creationSummary(raw) {
   const { values } = normalized;
   const networkInputs = {
     ...DEFAULT_NETWORK,
-    ...Object.fromEntries([...MONEY_FIELDS, 'rentGrowthPercent', 'costGrowthPercent', 'operatorFundPercent', 'operatorSplitPercent', 'stickySplitPercent']
+    separateOwnerOperator: true,
+    ...Object.fromEntries([...MONEY_FIELDS.filter(key => key !== 'minimumRevenue'), 'rentGrowthPercent', 'costGrowthPercent', 'operatorFundPercent', 'operatorSplitPercent', 'stickySplitPercent']
       .map(key => [key, values[key]])),
     ongoingOperatorSplitPercent: values.operatorSplitPercent,
     investment: 0,
@@ -177,7 +187,7 @@ export function deploymentDraft(raw) {
   const networks = plannedNetworks(values);
   return {
     kind: 'homerun-deployment-preview',
-    schemaVersion: 3,
+    schemaVersion: 5,
     execution: {
       enabled: false,
       mode: 'local-preview',
@@ -190,21 +200,27 @@ export function deploymentDraft(raw) {
     },
     networkEnvironment: values.networkEnvironment,
     plannedNetworks: networks,
+    owner: {
+      address: values.ownerWallet || null,
+      role: 'Owns FUND, operates INCOME, and executes program changes.',
+      fundOwnershipPercentAfterPurchase: values.operatorFundPercent,
+      distribution: 'The Owner may distribute their FUND tokens to the Operator at their discretion.',
+    },
     operator: {
       name: values.operatorName, introduction: values.operatorIntroduction, photo: values.operatorPhoto,
-      address: values.operatorWallet || null, fundOwnershipPercentAfterPurchase: values.operatorFundPercent,
+      address: values.operatorWallet || null,
     },
     revnetOperator: {
       enabled: values.revnetOperatorEnabled,
-      address: values.revnetOperatorEnabled ? values.operatorWallet || null : null,
+      address: values.revnetOperatorEnabled ? values.ownerWallet || null : null,
       scope: 'INCOME',
-      status: values.revnetOperatorEnabled ? (values.operatorWallet ? 'specified' : 'not-specified') : 'disabled',
+      status: values.revnetOperatorEnabled ? (values.ownerWallet ? 'specified' : 'not-specified') : 'disabled',
       chainIds: networks.map(network => network.chainId),
       permissionsAssigned: false,
       description: 'This preview does not assign operator permissions.',
     },
     funding: {
-      ownerAddress: values.operatorWallet || null,
+      ownerAddress: values.ownerWallet || null,
       ownershipAssigned: false,
       token: 'FUND',
       currency: 'USDC',
@@ -218,7 +234,14 @@ export function deploymentDraft(raw) {
     },
     income: {
       token: 'INCOME',
+      operatorAddress: values.operatorWallet || null,
+      operatorChangePolicy: 'The Owner may change the Operator at any time by updating the INCOME split recipient. No split is locked; other recipients and allocations can also be changed.',
       revenueDescription: values.revenueDescription,
+      minimumRevenue: {
+        monthlyAmountUSD: values.minimumRevenue,
+        consequences: values.minimumRevenueConsequences,
+        enforcement: 'Owner-managed policy; no automatic contract changes.',
+      },
       activation: 'After a successful asset purchase',
       monthlyRevenueAssumption: values.monthlyRent,
       monthlyExpenseAssumption: values.monthlyCosts,
@@ -237,7 +260,7 @@ export function deploymentDraft(raw) {
       numberOfIssuanceCutsAssumption: Math.floor(networkInputs.issuanceCutYears * 12 / networkInputs.issuanceCutMonths),
       initialAllocation: {
         tokens: networkInputs.revenuePremint,
-        distribution: 'Pro rata to all FUND holders, including operators, inactive ERC20 balances and unclaimed token credits.',
+        distribution: 'Pro rata to all FUND holders, including the Owner, inactive ERC20 balances and unclaimed token credits.',
         balanceSources: ['erc20', 'unclaimed-credits'],
         requiresActivation: false, requiresStaking: false, vestingMonths: 0,
         implementationStatus: 'design-preview',

@@ -9,21 +9,22 @@ const close = (actual, expected, tolerance = 1e-7) => {
 const noCosts = { monthlyCosts: 0, rentGrowthPercent: 0, costGrowthPercent: 0 };
 const tokens = state => state.groups.map(group => group.tokens);
 
-test('purchase starts with the initial INCOME allocated across operator and contributor FUND ownership', () => {
+test('purchase allocates initial INCOME to Owner and contributor FUND ownership, with none for the Operator role', () => {
   const state = ownershipAtMonth({}, 0);
   assert.equal(state.totalSupply, 500_000);
   assert.equal(state.revenue, 0);
-  assert.deepEqual(state.groups.map(group => group.percent), [20, 80, 0]);
-  assert.deepEqual(tokens(state), [100_000, 400_000, 0]);
+  assert.deepEqual(state.groups.map(group => group.id), ['owner', 'operators', 'holders', 'customers']);
+  assert.deepEqual(state.groups.map(group => group.percent), [20, 0, 80, 0]);
+  assert.deepEqual(tokens(state), [100_000, 0, 400_000, 0]);
 });
 
-test('holder rewards are counted once and the operators include rewards from their FUND share', () => {
+test('FUND rewards go to the Owner and other holders while the Operator receives only its issuance split', () => {
   const state = ownershipAtMonth(noCosts, 1);
-  // $10,000 issues 100,000: 75,000 direct to operators plus their 20% of
-  // the 15,000 holder allocation. The other holders receive the remaining 12,000.
+  // $10,000 issues 100,000: 75,000 to the Operator, 3,000 to the Owner's
+  // FUND share, 12,000 to the other FUND holders, and 10,000 to customers.
   assert.equal(state.revenue, 10_000);
   assert.equal(state.totalSupply, 600_000);
-  assert.deepEqual(tokens(state), [178_000, 412_000, 10_000]);
+  assert.deepEqual(tokens(state), [103_000, 75_000, 412_000, 10_000]);
   close(state.groups.reduce((sum, group) => sum + group.percent, 0), 100);
 });
 
@@ -31,7 +32,7 @@ test('the timeline uses quarterly issuance cuts and stops cutting after two year
   const thirdMonth = ownershipAtMonth(noCosts, 3);
   // Months 1 and 2 mint 100,000; month 3 mints 95,000.
   assert.equal(thirdMonth.totalSupply, 795_000);
-  assert.deepEqual(tokens(thirdMonth), [330_100, 435_400, 29_500]);
+  assert.deepEqual(tokens(thirdMonth), [108_850, 221_250, 435_400, 29_500]);
   assert.equal(thirdMonth.revenue, 30_000);
   close(ownershipAtMonth(noCosts, 2).issuanceRate, 10);
   close(thirdMonth.issuanceRate, 9.5);
@@ -40,16 +41,17 @@ test('the timeline uses quarterly issuance cuts and stops cutting after two year
   close(ownershipAtMonth(noCosts, 60).issuanceRate, 10 * 0.95 ** 8);
 });
 
-test('the first month preserves operator ownership while the reserve covers expenses', () => {
+test('the reserve covers expenses first and subsequent cash-outs consume only the Operator incentives', () => {
   const state = ownershipAtMonth({}, 1);
   assert.equal(state.totalSupply, 600_000);
-  assert.deepEqual(tokens(state), [178_000, 412_000, 10_000]);
+  assert.deepEqual(tokens(state), [103_000, 75_000, 412_000, 10_000]);
   const exhausted = ownershipAtMonth({ opsReserve: 0 }, 1);
-  close(exhausted.groups[0].tokens, 0.4);
-  close(exhausted.totalSupply, 422_000.4);
+  close(exhausted.groups[0].tokens, 103_000);
+  close(exhausted.groups[1].tokens, 0);
+  close(exhausted.totalSupply, 525_000);
 });
 
-test('revenue, allocation, and initial operator ownership assumptions all affect the preview', () => {
+test('revenue, incentive allocation, and initial Owner FUND ownership affect their respective preview cohorts', () => {
   const state = ownershipAtMonth({
     ...noCosts,
     operatorFundPercent: 10,
@@ -59,8 +61,8 @@ test('revenue, allocation, and initial operator ownership assumptions all affect
     stickySplitPercent: 20,
   }, 1);
   assert.equal(state.revenue, 2_000);
-  // 50,000 initial + 12,000 direct + 400 holder rewards to operators.
-  assert.deepEqual(tokens(state), [62_400, 453_600, 4_000]);
+  // The Owner gets 50,000 initial + 400 holder rewards; the Operator gets 12,000.
+  assert.deepEqual(tokens(state), [50_400, 12_000, 453_600, 4_000]);
   assert.equal(state.totalSupply, 520_000);
 });
 
@@ -71,12 +73,12 @@ test('cumulative revenue includes the entered growth assumptions', () => {
 
 test('no revenue retains the initial pie and zero supply has finite empty shares', () => {
   const noRevenue = { monthlyRent: 0, monthlyCosts: 0 };
-  assert.deepEqual(tokens(ownershipAtMonth(noRevenue, 60)), [100_000, 400_000, 0]);
+  assert.deepEqual(tokens(ownershipAtMonth(noRevenue, 60)), [100_000, 0, 400_000, 0]);
   const empty = ownershipAtMonth({ ...noRevenue, revenuePremint: 0 }, 60);
   assert.equal(empty.totalSupply, 0);
   assert.equal(empty.revenue, 0);
-  assert.deepEqual(empty.groups.map(group => group.percent), [0, 0, 0]);
-  assert.deepEqual(tokens(empty), [0, 0, 0]);
+  assert.deepEqual(empty.groups.map(group => group.percent), [0, 0, 0, 0]);
+  assert.deepEqual(tokens(empty), [0, 0, 0, 0]);
 });
 
 test('full-participation preview remains independent of personal contribution and comparison-mode staking inputs', () => {
@@ -87,8 +89,9 @@ test('full-participation preview remains independent of personal contribution an
     personalStakePercent: 0,
     otherStakePercent: 0,
     stickyVestingMonths: 36,
+    separateOwnerOperator: false,
   }, 1);
-  assert.deepEqual(tokens(state), [178_000, 412_000, 10_000]);
+  assert.deepEqual(tokens(state), [103_000, 75_000, 412_000, 10_000]);
   close(state.groups.reduce((sum, group) => sum + group.percent, 0), 100);
 });
 

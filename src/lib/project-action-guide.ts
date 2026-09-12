@@ -15,7 +15,7 @@ export const projectActionSections: Record<ProjectActionSection, { title: string
   settlement: { title: 'Bridge actions', tabLabel: 'Settlement', href: '#owners/settlement' },
   splits: { title: 'Income distributions', tabLabel: 'Splits', href: '#owners/splits' },
   loans: { title: 'Loan actions', tabLabel: 'Loans', href: '#owners/loans' },
-  operators: { title: 'Operator actions', tabLabel: 'Operators', href: '#operators' },
+  operators: { title: 'Owner actions', tabLabel: 'Owner', href: '#operators' },
 }
 
 /** Payments belong to the persistent payment panel; cash-outs sit beside account balances. */

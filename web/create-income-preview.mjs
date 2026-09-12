@@ -2,8 +2,9 @@ import { projectNetwork } from './network-model.mjs';
 
 const MONTH_LIMIT = 60;
 const COHORTS = [
-  { id: 'operators', label: 'Operators', color: '#42674d', field: 'revOperatorTokens' },
-  { id: 'holders', label: 'FUND holders', color: '#b1bd91', field: 'revInvestorTokens' },
+  { id: 'owner', label: 'Owner', color: '#34546a', field: 'revOwnerTokens' },
+  { id: 'operators', label: 'Operator', color: '#42674d', field: 'revOperatorTokens' },
+  { id: 'holders', label: 'Other FUND holders', color: '#b1bd91', field: 'revInvestorTokens' },
   { id: 'customers', label: 'Customers', color: '#b58e66', field: 'revRenterTokens' },
 ];
 const number = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
@@ -25,6 +26,7 @@ export function ownershipAtMonth(networkInputs = {}, month = 0) {
     investment: 0,
     revenueMonths: month,
     fundRewardMode: 'holders',
+    separateOwnerOperator: true,
   }, 'earning');
   const totalSupply = projection.revSupply;
   const groups = COHORTS.map(({ id, label, color, field }) => ({
@@ -63,7 +65,7 @@ export function initCreateIncomePreview(container) {
         </ul>
       </div>
       <div class="income-preview-revenue"><span>Revenue received</span><strong data-income-revenue>$0</strong></div>
-      <figcaption id="create-income-preview-note">Expenses use the cash reserve first, then operator token cash-outs. Operator ownership includes their FUND share. Projections assume all FUND participates in Sticky and rewards are fully vested; weekly reward vesting is not modeled.</figcaption>
+      <figcaption id="create-income-preview-note">The Owner receives initial INCOME and Sticky rewards through their FUND share. The Operator receives its ongoing INCOME split. Expenses use the cash reserve first, then Operator token cash-outs. Projections assume all FUND participates in Sticky and rewards are fully vested; weekly reward vesting is not modeled.</figcaption>
     </figure>`;
 
   const slider = container.querySelector('#create-income-months');

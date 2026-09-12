@@ -11,7 +11,7 @@ const runtime = vi.hoisted(() => ({
   clients: new Map<number, PublicClient>(), funds: new Map<number, FundProjectState>(), bindings: new Map<number, bigint>(),
   bindingError: false, blockers: [] as string[], safe: false, manifest: null as FundGlobalManifest | null,
   send: vi.fn(), snapshot: vi.fn(), history: vi.fn(), prepare: vi.fn(), pinMedia: vi.fn(), pinJson: vi.fn(),
-  readBinding: vi.fn(), allocation: vi.fn(), verify: vi.fn(), waitSafe: vi.fn(), invalidate: vi.fn(), fetch: vi.fn(),
+  readBinding: vi.fn(), allocation: vi.fn(), verify: vi.fn(), waitSafe: vi.fn(), invalidate: vi.fn(), fetch: vi.fn(), version: vi.fn(),
 }))
 vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: runtime.account }), getPublicClient: (_config: unknown, options: {chainId: number}) => runtime.clients.get(options.chainId) }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.account }) }))
@@ -20,7 +20,7 @@ vi.mock('@tanstack/react-query', () => { const cache = { invalidateQueries: runt
 vi.mock('@/components/IncomeProject', () => ({ IncomeProject: ({ chainId, projectId }: {chainId: number; projectId: bigint}) => <div>Existing INCOME {chainId}/{projectId.toString()}</div> }))
 vi.mock('@/components/StickyCreate', () => ({ StickyCreate: ({ state, onCreated }: {state: FundProjectState; onCreated: (id: bigint) => void}) => <div data-sticky={state.chainId}><button type="button" onClick={() => onCreated(90n)}>Confirm Sticky {state.chainId}</button></div> }))
 vi.mock('@/lib/income-contracts', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/income-contracts')>(), registeredIncomeDeployer: () => runtime.helper }))
-vi.mock('@/lib/income-launch', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/income-launch')>(), incomeLaunchBlockers: () => runtime.blockers, prepareIncomeLaunch: runtime.prepare, readIncomeLaunchBinding: runtime.readBinding }))
+vi.mock('@/lib/income-launch', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/income-launch')>(), assertIncomeLaunchVersion: runtime.version, incomeLaunchBlockers: () => runtime.blockers, prepareIncomeLaunch: runtime.prepare, readIncomeLaunchBinding: runtime.readBinding }))
 vi.mock('@/lib/fund-global-snapshot', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/fund-global-snapshot')>(), readFundGlobalSnapshot: runtime.snapshot }))
 vi.mock('@/lib/fund-global-manifest', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/fund-global-manifest')>(), verifyFundGlobalManifestHistory: runtime.history }))
 vi.mock('@/lib/income-allocation-state', () => ({ readInitialIncomeAllocation: runtime.allocation }))
@@ -29,7 +29,7 @@ vi.mock('@/lib/jbcenter-ipfs', () => ({ JBCENTER_IPFS_GATEWAY: 'https://ipfs.tes
 vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => runtime.safe, waitForSafeExecutionHash: runtime.waitSafe }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 
-import { IncomeLaunch } from '../src/components/IncomeLaunch'
+import { IncomeLaunch, type PlannedIncomeAllocation } from '../src/components/IncomeLaunch'
 import { fundGlobalManifestHash, serializeFundGlobalManifest } from '../src/lib/fund-global-manifest'
 import { homerunIncomeDeployerAbi } from '../src/lib/income-contracts'
 import { beginIncomeLaunchSubmission, incomeLaunchSessionKey, readIncomeLaunchPending, type IncomeLaunchPending } from '../src/lib/income-launch-session'
@@ -60,13 +60,14 @@ describe('global INCOME launch flow', () => {
     runtime.send.mockResolvedValue(null); runtime.snapshot.mockResolvedValue(globalSnapshot()); runtime.history.mockImplementation(async (_clients, value) => value)
     runtime.prepare.mockImplementation(async (_client, input) => launchPlan(input)); runtime.pinMedia.mockImplementation(async file => { runtime.manifest = JSON.parse(await readFile(file)); return { cid: 'global-snapshot' } }); runtime.pinJson.mockResolvedValue({ cid: 'global-metadata' })
     runtime.verify.mockResolvedValue('confirmed'); runtime.readBinding.mockResolvedValue(10n); runtime.allocation.mockImplementation(async (_client, {chainId}) => allocation(chainId)); runtime.waitSafe.mockResolvedValue(hashFor(8453)); runtime.invalidate.mockResolvedValue(undefined)
+    runtime.version.mockResolvedValue(undefined)
     runtime.fetch.mockImplementation(async () => ({ ok: true, json: async () => runtime.manifest })); vi.stubGlobal('fetch', runtime.fetch)
     Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: async (_name: string, _options: unknown, callback: (lock: object) => Promise<void>) => callback({}) } })
     Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:test') }); Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
     host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   })
   afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals() })
-  async function render(launchUnavailable = false, plannedAllocation?: { operatorPercent: number | null; fundStakerPercent: number | null }) { await act(async () => root.render(<IncomeLaunch state={runtime.funds.get(8453)!} client={runtime.clients.get(8453)!} launchUnavailable={launchUnavailable} plannedAllocation={plannedAllocation} />)) }
+  async function render(launchUnavailable = false, plannedAllocation?: PlannedIncomeAllocation) { await act(async () => root.render(<IncomeLaunch state={runtime.funds.get(8453)!} client={runtime.clients.get(8453)!} launchUnavailable={launchUnavailable} plannedAllocation={{ operatorPercent: null, fundStakerPercent: null, operatorWallet: OWNER, ...plannedAllocation }} />)) }
   function section(chainId = 8453) { const node = host.querySelector(`[aria-label="${displayChainName(chainId)} INCOME launch"]`); if (!node) throw new Error(`Missing chain ${chainId}: ${host.textContent}`); return node }
   function button(text: string, scope: ParentNode = host) { const result = [...scope.querySelectorAll('button')].find(item => item.textContent === text); if (!result) throw new Error(`Missing button: ${text}: ${host.textContent}`); return result }
   async function click(text: string, scope: ParentNode = host) { await act(async () => { button(text, scope).click(); await Promise.allSettled(runtime.pinMedia.mock.results.filter(result => result.type === 'return').map(result => result.value)) }) }
@@ -121,6 +122,36 @@ describe('global INCOME launch flow', () => {
     await click('Confirm Sticky 8453'); await click('Prepare Base INCOME')
     expect(runtime.prepare).toHaveBeenCalledWith(runtime.clients.get(8453), expect.objectContaining({ operatorBps: 5000, fundHolderBps: 1500 }))
     expect(host.textContent).toContain('50% operators, 15% stakers, 35% customers')
+  })
+
+  it('freezes a separate incentive wallet without changing the FUND owner who launches INCOME', async () => {
+    const operatorWallet = '0x3333333333333333333333333333333333333333' as const
+    await render(false, { operatorPercent: 50, fundStakerPercent: 15, operatorWallet })
+    await click('Create global ownership snapshot'); await click('Publish snapshot'); await click('Save shared launch plan')
+    expect(draft()).toMatchObject({ operator: operatorWallet })
+    await click('Confirm Sticky 8453'); await click('Prepare Base INCOME')
+    expect(runtime.prepare).toHaveBeenCalledWith(runtime.clients.get(8453), expect.objectContaining({ account: OWNER, operator: operatorWallet }))
+    runtime.account = operatorWallet
+    await render(false, { operatorPercent: 50, fundStakerPercent: 15, operatorWallet })
+    expect(button('Prepare Base INCOME').matches(':disabled')).toBe(true)
+  })
+
+  it('requires an explicit incentive wallet and never silently substitutes the owner', async () => {
+    await render(false, { operatorPercent: 70, fundStakerPercent: 10, operatorWallet: null })
+    await click('Create global ownership snapshot'); await click('Publish snapshot'); await click('Save shared launch plan')
+    expect(readIncomeGlobalDraft(localStorage, 8453, 7n)).toBeNull()
+    expect(host.textContent).toContain('Enter the operator wallet')
+    expect(runtime.pinJson).not.toHaveBeenCalled()
+  })
+
+  it('checks compatible launchers on every network before freezing the plan or creating Sticky', async () => {
+    runtime.version.mockImplementation(async (_client, chainId) => { if (chainId === 10) throw new Error('A verified INCOME launcher supporting separate owner and operator wallets is required.') })
+    await render(); await click('Create global ownership snapshot'); await click('Publish snapshot'); await click('Save shared launch plan')
+    expect(runtime.version.mock.calls.map(([, chainId]) => chainId).sort((left, right) => left - right)).toEqual([...CHAIN_IDS])
+    expect(readIncomeGlobalDraft(localStorage, 8453, 7n)).toBeNull()
+    expect(host.textContent).toContain('supporting separate owner and operator')
+    expect(host.querySelector('[data-sticky]')).toBeNull()
+    expect(runtime.pinJson).not.toHaveBeenCalled(); expect(runtime.prepare).not.toHaveBeenCalled(); expect(runtime.send).not.toHaveBeenCalled()
   })
 
   it('seeds late metadata while the displayed shared terms are still untouched', async () => {

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('../src/lib/income-contracts', async original => ({ ...await original<typeof import('../src/lib/income-contracts')>(), registeredIncomeDeployer: () => '0x2222222222222222222222222222222222222222' }))
 import { beginIncomeLaunchSubmission, incomeLaunchSessionKey } from '../src/lib/income-launch-session'
 import { INCOME_GLOBAL_DRAFT_KEY, parseIncomeGlobalDraft, readIncomeGlobalDraft, saveIncomeGlobalDraft, serializeIncomeGlobalDraft, verifyIncomeGlobalDraftManifest, withIncomeGlobalDraftLock } from '../src/lib/income-global-launch-draft'
-import { globalDraft, globalManifest, hashFor, launchInput, launchPlan, OWNER } from './fixtures/income-global-launch'
+import { globalDraft, globalManifest, hashFor, launchInput, launchPlan, OWNER, TOKEN } from './fixtures/income-global-launch'
 
 function memory() { const values = new Map<string, string>(); return { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value) } } }
 beforeEach(() => { localStorage.clear() })
@@ -31,6 +31,17 @@ describe('frozen global INCOME launch descriptor', () => {
     const merged = saveIncomeGlobalDraft(storage, { ...initial, chains: initial.chains.map(local => local.chainId === 10 ? { ...local, stickyProjectId: '90' } : local) })
     expect(merged.chains[0].stickyProjectId).toBe('80'); expect(merged.chains[1].stickyProjectId).toBe('90')
     expect(() => saveIncomeGlobalDraft(storage, { ...merged, chains: merged.chains.map(local => local.chainId === 1 ? { ...local, stickyProjectId: '81' } : local) })).toThrow(/different confirmed action/)
+  })
+  it('freezes the incentive recipient and binds execution evidence to that wallet', () => {
+    const storage = memory(), draft = saveIncomeGlobalDraft(storage, { ...globalDraft(), operator: TOKEN })
+    expect(() => saveIncomeGlobalDraft(storage, { ...draft, operator: OWNER })).toThrow(/frozen global/)
+    expect(() => saveIncomeGlobalDraft(storage, { ...draft, operator: undefined })).toThrow(/frozen global/)
+    draft.chains[2].stickyProjectId = '90'
+    const record = beginIncomeLaunchSubmission(localStorage, incomeLaunchSessionKey(8453, 7n), launchPlan(launchInput(draft)).request, 7n, OWNER, false, 200n)
+    draft.chains[2].execution = { hash: hashFor(8453), record }
+    expect(parseIncomeGlobalDraft(draft).operator).toBe(TOKEN)
+    expect(() => parseIncomeGlobalDraft({ ...draft, operator: OWNER })).toThrow(/invalid/)
+    expect(() => parseIncomeGlobalDraft({ ...draft, operator: undefined })).toThrow(/invalid/)
   })
   it('stores receipt evidence without a trusted success flag and rejects evidence for different economics', () => {
     const draft = globalDraft(); draft.chains[2].stickyProjectId = '90'

@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {TestBaseWorkflow} from "@bananapus/core-v6/test/helpers/TestBaseWorkflow.sol";
+import {JBPermissioned} from "@bananapus/core-v6/src/abstract/JBPermissioned.sol";
 import {JBPermissionsData} from "@bananapus/core-v6/src/structs/JBPermissionsData.sol";
 import {JBPermissionIds} from "@bananapus/permission-ids-v6/src/JBPermissionIds.sol";
 import {JBRulesetConfig} from "@bananapus/core-v6/src/structs/JBRulesetConfig.sol";
@@ -12,7 +13,6 @@ import {JBAccountingContext} from "@bananapus/core-v6/src/structs/JBAccountingCo
 import {JBSplit} from "@bananapus/core-v6/src/structs/JBSplit.sol";
 import {JBSplitGroup} from "@bananapus/core-v6/src/structs/JBSplitGroup.sol";
 import {JBSplitGroupIds} from "@bananapus/core-v6/src/libraries/JBSplitGroupIds.sol";
-import {JBSplits} from "@bananapus/core-v6/src/JBSplits.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {IJBToken} from "@bananapus/core-v6/src/interfaces/IJBToken.sol";
 import {JBERC20} from "@bananapus/core-v6/src/JBERC20.sol";
@@ -68,6 +68,9 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
     address private constant BOB = address(0x300);
     address private constant CUSTOMER = address(0x400);
     address private constant FORWARDER = address(0x500);
+    address private constant OWNER = address(0x700);
+    address private constant NEXT_OPERATOR = address(0x800);
+    address private constant FINAL_OPERATOR = address(0x900);
     bytes32 private constant LAUNCH_SALT = bytes32(uint256(2));
     uint48 private constant STARTS_AT = 1_000_001;
     uint256 private _fundId;
@@ -270,7 +273,7 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
         REVSuckerDeploymentConfig memory suckers = _suckerConfig(fixture.snapshot);
         vm.prank(OPERATOR);
         incomeId = _helper.deployIncome(
-            _fundId, fixture.snapshot, description, operatorBps, 1000, _stickyId, STARTS_AT, suckers
+            _fundId, fixture.snapshot, description, operatorBps, 1000, _stickyId, STARTS_AT, suckers, OPERATOR
         );
         _vault = HomerunInitialIncomeVault(_helper.initialAllocationVaultOf(_fundId));
     }
@@ -550,6 +553,69 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
         assertEq(jbTokens().totalSupplyOf(incomeId), 500_000 ether);
     }
 
+    function testRealDistinctOwnerControlsIncomeWhileOperatorReceivesIncentives() public {
+        vm.prank(OPERATOR);
+        jbProjects().transferFrom(OPERATOR, OWNER, _fundId);
+        SnapshotFixture memory fixture = _snapshot(_holders());
+        REVDescription memory description =
+            REVDescription({name: "House income", ticker: "INCOME", uri: "ipfs://income", salt: LAUNCH_SALT});
+        REVSuckerDeploymentConfig memory suckers = _suckerConfig(fixture.snapshot);
+
+        vm.expectRevert(HomerunIncomeDeployer.Unauthorized.selector);
+        vm.prank(OPERATOR);
+        _helper.deployIncome(
+            _fundId, fixture.snapshot, description, 7000, 1000, _stickyId, STARTS_AT, suckers, OPERATOR
+        );
+
+        vm.prank(OWNER);
+        uint256 incomeId = _helper.deployIncome(
+            _fundId, fixture.snapshot, description, 7000, 1000, _stickyId, STARTS_AT, suckers, OPERATOR
+        );
+        assertEq(jbProjects().ownerOf(_fundId), OWNER);
+        assertEq(jbProjects().ownerOf(incomeId), address(_revOwner));
+        assertTrue(_revOwner.isOperatorOf(incomeId, OWNER));
+        assertFalse(_revOwner.isOperatorOf(incomeId, OPERATOR));
+        assertFalse(_revOwner.isOperatorOf(incomeId, address(_helper)));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                JBPermissioned.JBPermissioned_Unauthorized.selector,
+                address(_revOwner),
+                OPERATOR,
+                incomeId,
+                JBPermissionIds.SET_PROJECT_URI
+            )
+        );
+        vm.prank(OPERATOR);
+        jbController().setUriOf(incomeId, "ipfs://unauthorized-update");
+        vm.prank(OWNER);
+        jbController().setUriOf(incomeId, "ipfs://owner-update");
+        assertEq(jbController().uriOf(incomeId), "ipfs://owner-update");
+
+        (JBRuleset memory current,) = jbController().currentRulesetOf(incomeId);
+        (JBRuleset memory last,,) = jbController().latestQueuedRulesetOf(incomeId);
+        uint256[2] memory stageIds = [uint256(current.id), uint256(last.id)];
+        assertTrue(stageIds[0] != stageIds[1]);
+        for (uint256 i; i < stageIds.length; ++i) {
+            JBSplit[] memory splits = jbSplits().splitsOf(incomeId, stageIds[i], JBSplitGroupIds.RESERVED_TOKENS);
+            assertEq(splits.length, 2);
+            assertEq(splits[0].beneficiary, OPERATOR);
+            assertEq(splits[0].lockedUntil, 0);
+            assertEq(splits[1].lockedUntil, 0);
+            assertEq(splits[1].beneficiary, address(_share));
+            assertEq(address(splits[1].hook), address(_distributor));
+        }
+
+        _activateFundRewards();
+        assertEq(_payAndDistribute(incomeId), 200 ether);
+        IJBToken income = jbTokens().tokenOf(incomeId);
+        assertEq(income.balanceOf(OPERATOR), 700 ether);
+        assertEq(income.balanceOf(OWNER), 0);
+        assertEq(income.balanceOf(CUSTOMER), 200 ether);
+        assertEq(income.balanceOf(address(_distributor)), 100 ether);
+        assertEq(jbController().pendingReservedTokenBalanceOf(incomeId), 0);
+    }
+
     function testRealPaymentRoutesSeventyTenTwentyToOperatorDistributorAndCustomer() public {
         uint256 incomeId = _deploy(7000);
         _activateFundRewards();
@@ -647,39 +713,147 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
         assertEq(jbTokens().totalSupplyOf(_fundId), 500 ether);
     }
 
-    function testRealOperatorCannotRedirectEitherReservedAllocationInAnyStage() public {
-        uint256 incomeId = _deploy(7000);
+    function _deployWithDistinctOwner() private returns (uint256 incomeId) {
+        vm.prank(OPERATOR);
+        jbProjects().transferFrom(OPERATOR, OWNER, _fundId);
+        SnapshotFixture memory fixture = _snapshot(_holders());
+        REVDescription memory description =
+            REVDescription({name: "House income", ticker: "INCOME", uri: "ipfs://income", salt: LAUNCH_SALT});
+        REVSuckerDeploymentConfig memory suckers = _suckerConfig(fixture.snapshot);
+        vm.prank(OWNER);
+        incomeId = _helper.deployIncome(
+            _fundId, fixture.snapshot, description, 7000, 1000, _stickyId, STARTS_AT, suckers, OPERATOR
+        );
+        _vault = HomerunInitialIncomeVault(_helper.initialAllocationVaultOf(_fundId));
+    }
+
+    function _reservedSplitGroups(
+        uint256 incomeId,
+        uint256 stageId
+    )
+        private
+        view
+        returns (JBSplitGroup[] memory groups)
+    {
+        groups = new JBSplitGroup[](1);
+        groups[0] = JBSplitGroup({
+            groupId: JBSplitGroupIds.RESERVED_TOKENS,
+            splits: jbSplits().splitsOf(incomeId, stageId, JBSplitGroupIds.RESERVED_TOKENS)
+        });
+    }
+
+    function testRealOwnerCanRotateCurrentAndFinalStageOperatorsWithoutMovingExistingTokens() public {
+        uint256 incomeId = _deployWithDistinctOwner();
+        (JBRuleset memory current,) = jbController().currentRulesetOf(incomeId);
+        (JBRuleset memory last,,) = jbController().latestQueuedRulesetOf(incomeId);
+        assertTrue(current.id != last.id);
+        _activateFundRewards();
+        _payAndDistribute(incomeId);
+        IJBToken income = jbTokens().tokenOf(incomeId);
+        assertEq(income.balanceOf(OPERATOR), 700 ether);
+
+        JBSplitGroup[] memory groups = _reservedSplitGroups(incomeId, current.id);
+        bytes32 stickySplitHash = keccak256(abi.encode(groups[0].splits[1]));
+        groups[0].splits[0].beneficiary = payable(NEXT_OPERATOR);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                JBPermissioned.JBPermissioned_Unauthorized.selector,
+                address(_revOwner),
+                OPERATOR,
+                incomeId,
+                JBPermissionIds.SET_SPLIT_GROUPS
+            )
+        );
+        vm.prank(OPERATOR);
+        jbController().setSplitGroupsOf(incomeId, current.id, groups);
+        vm.prank(OWNER);
+        jbController().setSplitGroupsOf(incomeId, current.id, groups);
+        groups = _reservedSplitGroups(incomeId, current.id);
+        assertEq(groups[0].splits[0].beneficiary, NEXT_OPERATOR);
+        assertEq(groups[0].splits[0].percent, 875_000_000);
+        assertEq(keccak256(abi.encode(groups[0].splits[1])), stickySplitHash);
+        groups = _reservedSplitGroups(incomeId, last.id);
+        assertEq(groups[0].splits[0].beneficiary, OPERATOR, "current-stage change does not update final stage");
+
+        _payAndDistribute(incomeId);
+        assertEq(income.balanceOf(OPERATOR), 700 ether, "old operator keeps earned tokens without new incentives");
+        assertEq(income.balanceOf(NEXT_OPERATOR), 700 ether);
+        assertEq(income.balanceOf(address(_distributor)), 200 ether);
+
+        groups[0].splits[0].beneficiary = payable(FINAL_OPERATOR);
+        vm.prank(OWNER);
+        jbController().setSplitGroupsOf(incomeId, last.id, groups);
+        groups = _reservedSplitGroups(incomeId, last.id);
+        assertEq(groups[0].splits[0].beneficiary, FINAL_OPERATOR);
+        assertEq(groups[0].splits[0].percent, 875_000_000);
+        assertEq(keccak256(abi.encode(groups[0].splits[1])), stickySplitHash);
+        groups = _reservedSplitGroups(incomeId, current.id);
+        assertEq(groups[0].splits[0].beneficiary, NEXT_OPERATOR, "final-stage change does not update current stage");
+
+        vm.warp(last.start);
+        (JBRuleset memory finalRuleset,) = jbController().currentRulesetOf(incomeId);
+        assertEq(finalRuleset.id, last.id);
+        uint256 totalSupplyBefore = jbTokens().totalSupplyOf(incomeId);
+        uint256 customerTokens = _payAndDistribute(incomeId);
+        uint256 issuedTokens = jbTokens().totalSupplyOf(incomeId) - totalSupplyBefore;
+        uint256 reservedTokens = issuedTokens - customerTokens;
+        assertGt(reservedTokens, 0);
+        assertEq(income.balanceOf(FINAL_OPERATOR), reservedTokens * 875_000_000 / 1_000_000_000);
+        assertEq(income.balanceOf(address(_distributor)) - 200 ether, reservedTokens * 125_000_000 / 1_000_000_000);
+        assertEq(income.balanceOf(OPERATOR), 700 ether);
+        assertEq(income.balanceOf(NEXT_OPERATOR), 700 ether);
+        assertEq(income.balanceOf(OWNER), 0);
+        assertTrue(_revOwner.isOperatorOf(incomeId, OWNER));
+        assertFalse(_revOwner.isOperatorOf(incomeId, OPERATOR));
+        assertFalse(_revOwner.isOperatorOf(incomeId, NEXT_OPERATOR));
+        assertFalse(_revOwner.isOperatorOf(incomeId, FINAL_OPERATOR));
+    }
+
+    function testRealOwnerCanChangeStickyAllocationAndRoutingInBothStages() public {
+        uint256 incomeId = _deployWithDistinctOwner();
         (JBRuleset memory current,) = jbController().currentRulesetOf(incomeId);
         (JBRuleset memory last,,) = jbController().latestQueuedRulesetOf(incomeId);
         uint256[2] memory stageIds = [uint256(current.id), uint256(last.id)];
         assertTrue(stageIds[0] != stageIds[1]);
-        for (uint256 i; i < 2; ++i) {
-            JBSplit[] memory splits = jbSplits().splitsOf(incomeId, stageIds[i], JBSplitGroupIds.RESERVED_TOKENS);
-            assertEq(splits.length, 2);
-            assertEq(splits[0].lockedUntil, type(uint48).max);
-            assertEq(splits[1].lockedUntil, type(uint48).max);
-            assertEq(splits[1].beneficiary, address(_share));
-            assertEq(address(splits[1].hook), address(_distributor));
-            JBSplitGroup[] memory groups = new JBSplitGroup[](1);
-            groups[0] = JBSplitGroup({groupId: JBSplitGroupIds.RESERVED_TOKENS, splits: splits});
-            groups[0].splits[1].beneficiary = payable(CUSTOMER);
+        for (uint256 i; i < stageIds.length; ++i) {
+            JBSplitGroup[] memory groups = _reservedSplitGroups(incomeId, stageIds[i]);
+            assertEq(groups[0].splits.length, 2);
+            assertEq(groups[0].splits[0].lockedUntil, 0);
+            assertEq(groups[0].splits[1].lockedUntil, 0);
+            assertEq(groups[0].splits[1].percent, 125_000_000);
+            assertEq(groups[0].splits[1].beneficiary, address(_share));
+            assertEq(address(groups[0].splits[1].hook), address(_distributor));
+            groups[0].splits[0].percent = 800_000_000;
+            groups[0].splits[1].percent = 200_000_000;
+            groups[0].splits[1].beneficiary = payable(NEXT_OPERATOR);
+            groups[0].splits[1].hook = groups[0].splits[0].hook;
             vm.expectRevert(
                 abi.encodeWithSelector(
-                    JBSplits.JBSplits_PreviousLockedSplitsNotIncluded.selector, incomeId, stageIds[i]
+                    JBPermissioned.JBPermissioned_Unauthorized.selector,
+                    address(_revOwner),
+                    OPERATOR,
+                    incomeId,
+                    JBPermissionIds.SET_SPLIT_GROUPS
                 )
             );
             vm.prank(OPERATOR);
             jbController().setSplitGroupsOf(incomeId, stageIds[i], groups);
-            groups[0].splits[1].beneficiary = payable(address(_share));
-            groups[0].splits[0].beneficiary = payable(CUSTOMER);
-            vm.expectRevert(
-                abi.encodeWithSelector(
-                    JBSplits.JBSplits_PreviousLockedSplitsNotIncluded.selector, incomeId, stageIds[i]
-                )
-            );
-            vm.prank(OPERATOR);
+            vm.prank(OWNER);
             jbController().setSplitGroupsOf(incomeId, stageIds[i], groups);
+            assertEq(keccak256(abi.encode(_reservedSplitGroups(incomeId, stageIds[i]))), keccak256(abi.encode(groups)));
         }
+
+        _activateFundRewards();
+        assertEq(_payAndDistribute(incomeId), 200 ether);
+        IJBToken income = jbTokens().tokenOf(incomeId);
+        assertEq(income.balanceOf(OPERATOR), 640 ether);
+        assertEq(income.balanceOf(NEXT_OPERATOR), 160 ether);
+        assertEq(income.balanceOf(CUSTOMER), 200 ether);
+        assertEq(income.balanceOf(address(_distributor)), 0);
+        assertEq(income.balanceOf(OWNER), 0);
+        assertTrue(_revOwner.isOperatorOf(incomeId, OWNER));
+        assertFalse(_revOwner.isOperatorOf(incomeId, OPERATOR));
+        assertFalse(_revOwner.isOperatorOf(incomeId, NEXT_OPERATOR));
     }
 
     function _assertLocalAllocation(uint256 incomeId, uint256 expected) private view {
@@ -825,7 +999,7 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
         JBSplit[] memory splits = new JBSplit[](1);
         splits[0].percent = 1_000_000_000;
         splits[0].beneficiary = payable(OPERATOR);
-        splits[0].lockedUntil = type(uint48).max;
+        splits[0].lockedUntil = 0;
         REVAutoIssuance[] memory issuances = new REVAutoIssuance[](3);
         for (uint256 i; i < 3; ++i) {
             issuances[i] = REVAutoIssuance(

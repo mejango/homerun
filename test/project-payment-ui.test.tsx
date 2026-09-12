@@ -1,3 +1,4 @@
+import './dialog-shim'
 import React, { act, useEffect, useState, type ComponentProps } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
@@ -116,7 +117,10 @@ describe('shared payment execution', () => {
       element.dispatchEvent(new Event('input', { bubbles: true }))
     })
   }
-  async function render() { await act(async () => commitRender()) }
+  async function render() {
+    await act(async () => commitRender())
+    if (!host.querySelector('dialog')) await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent?.startsWith('Pay on '))?.click())
+  }
   async function input(value: string) { await act(async () => changeInput(value)) }
   async function waitUntil(assertion: () => void) {
     await vi.waitFor(async () => {
@@ -310,4 +314,23 @@ describe('shared payment execution', () => {
     expect(runtime.unmounts).toBe(0)
     expect(runtime.writes).toHaveLength(0)
   })
+  it('opens a payment modal and retains its amount and receipt watchers when closed', async () => {
+    await ready('2')
+    expect(host.querySelector('dialog[open]')).not.toBeNull()
+    await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="Close"]')!.click())
+    expect(host.querySelector('dialog')).toBeNull()
+    expect(runtime.unmounts).toBe(0)
+    await render()
+    expect(host.querySelector('input')!.value).toBe('2')
+    expect(runtime.mounts).toBe(3)
+  })
+
+  it('submits the selected chain and its own project ID', async () => {
+    props.chainId = 8453
+    props.projectId = 42n
+    await ready(); await submit()
+    expect(runtime.writes[0].request.chainId).toBe(8453)
+    expect(encoded(runtime.writes[0].request).args?.[0]).toBe(42n)
+  })
+
 })

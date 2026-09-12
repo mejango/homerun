@@ -5,16 +5,18 @@ import type { Hex } from 'viem'
 import type { CreateValues } from '../src/components/CreateFlow'
 import { FUND_LAUNCH_KEY, decodeLaunchSession, saveLaunch, updateLaunchStatus, type FundLaunchSession } from '../src/lib/fund-launch-session'
 
-const runtime = vi.hoisted(() => ({ send: vi.fn() }))
+const runtime = vi.hoisted(() => ({ send: vi.fn(), readContract: vi.fn(), getBlock: vi.fn(), publish: vi.fn(), checkDeployment: vi.fn() }))
 const owner = '0x1111111111111111111111111111111111111111' as const
 const salt = `0x${'12'.repeat(32)}` as Hex
-vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: '0x1111111111111111111111111111111111111111' }), getPublicClient: () => ({}) }))
+vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: '0x1111111111111111111111111111111111111111' }), getPublicClient: () => ({ readContract: runtime.readContract, getBlock: runtime.getBlock }) }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: '0x1111111111111111111111111111111111111111' }) }))
 vi.mock('@/components/WalletButton', () => ({ WalletButton: () => <span>Wallet</span> }))
 vi.mock('@/components/CreateFlow', () => ({ default: () => null }))
 vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => false, waitForSafeExecutionHash: vi.fn() }))
 vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({ phase: 'idle', busy: false, send: runtime.send, reset: vi.fn() }) }))
+vi.mock('@/lib/publish-fund-project-metadata', () => ({ publishFundProjectMetadata: runtime.publish }))
+vi.mock('@/lib/fund-launch-verification', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/fund-launch-verification')>(), checkLaunchDeployment: runtime.checkDeployment }))
 import { FundDeploy } from '../src/components/LiveCreate'
 
 type Callbacks = { beforeWrite: () => void; onWriteRejected: () => void }
@@ -28,6 +30,7 @@ describe('Create submission recovery', () => {
   beforeEach(() => {
     localStorage.clear()
     runtime.send.mockReset()
+    runtime.readContract.mockResolvedValue(0n); runtime.getBlock.mockResolvedValue({ timestamp: 1000n }); runtime.publish.mockResolvedValue({ cid: 'bafkreimetadata' }); runtime.checkDeployment.mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: async (_name: string, _options: unknown, callback: (lock: object) => Promise<void>) => callback({}) } })
     saveLaunch({ version: 1, name: 'Test asset', input: { owner, sender: owner, chainIds: [8453], projectUri: 'ipfs://bafkreimetadata', salt, mustStartAtOrAfter: 0, creationFees: { 8453: 0n } }, statuses: { 8453: { phase: 'ready' } } })
     host = document.createElement('div'); document.body.append(host); root = createRoot(host)
@@ -95,5 +98,25 @@ describe('Create submission recovery', () => {
     expect(host.textContent).toContain('Check confirmation')
     expect(host.textContent).not.toContain('Open FUND project')
     expect(runtime.send).not.toHaveBeenCalled()
+  })
+
+  it('prepares FUND ownership for the Owner wallet while keeping Operator separate in metadata', async () => {
+    localStorage.clear()
+    const values = { name: 'Owned asset', ownerWallet: '0x2222222222222222222222222222222222222222', operatorWallet: '0x3333333333333333333333333333333333333333', networks: ['base'], networkEnvironment: 'production' } as CreateValues
+    await act(async () => root.render(<FundDeploy values={values} />))
+    const prepare = [...host.querySelectorAll('button')].find(item => item.textContent === 'Save metadata and prepare deployment')!
+    await act(async () => prepare.click())
+    expect(saved().input.owner).toBe(values.ownerWallet)
+    expect(saved().input.sender).toBe(owner)
+    expect(runtime.publish).toHaveBeenCalledWith(expect.objectContaining({ ownerWallet: values.ownerWallet, operatorWallet: values.operatorWallet }))
+  })
+
+  it('does not assign Owner authority to Operator when Owner is missing', async () => {
+    localStorage.clear()
+    await act(async () => root.render(<FundDeploy values={{ name: 'Missing owner', ownerWallet: '', operatorWallet: owner, networks: ['base'], networkEnvironment: 'production' } as CreateValues} />))
+    const prepare = [...host.querySelectorAll('button')].find(item => item.textContent === 'Save metadata and prepare deployment')!
+    await act(async () => prepare.click())
+    expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()
+    expect(host.querySelector('[role="alert"]')).not.toBeNull()
   })
 })

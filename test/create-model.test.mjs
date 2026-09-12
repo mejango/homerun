@@ -176,8 +176,8 @@ test('the shared operator address is validated regardless of optional INCOME con
 });
 
 test('revnet operator controls are separate from economic FUND ownership and have no assigned permissions', () => {
-  const disabled = deploymentDraft(draft({ operatorWallet: wallet, revnetOperatorEnabled: false }));
-  assert.deepEqual(disabled.operator, { name: '', introduction: '', photo: '', address: wallet, fundOwnershipPercentAfterPurchase: 20 });
+  const disabled = deploymentDraft(draft({ ownerWallet: wallet, operatorWallet: wallet, revnetOperatorEnabled: false }));
+  assert.deepEqual(disabled.operator, { name: '', introduction: '', photo: '', address: wallet });
   assert.equal(disabled.funding.ownerAddress, wallet);
   assert.equal(disabled.funding.ownershipAssigned, false);
   assert.equal(disabled.revnetOperator.enabled, false);
@@ -187,7 +187,7 @@ test('revnet operator controls are separate from economic FUND ownership and hav
   assert.equal(unspecified.revnetOperator.status, 'not-specified');
   assert.equal(unspecified.revnetOperator.address, null);
   const enabled = deploymentDraft(draft({
-    revnetOperatorEnabled: true, operatorWallet: wallet, networks: ['base', 'ethereum'], networkEnvironment: 'testnet',
+    revnetOperatorEnabled: true, ownerWallet: wallet, operatorWallet: wallet, networks: ['base', 'ethereum'], networkEnvironment: 'testnet',
   }));
   assert.equal(enabled.revnetOperator.address, wallet);
   assert.equal(enabled.revnetOperator.status, 'specified');
@@ -234,7 +234,7 @@ test('optional operator profiles are bounded and survive local save and download
   const exported = deploymentDraft(values);
   assert.deepEqual(exported.operator, {
     name: values.operatorName, introduction: values.operatorIntroduction, photo: operatorPhoto,
-    address: null, fundOwnershipPercentAfterPurchase: values.operatorFundPercent,
+    address: null,
   });
   const storage = memoryStorage();
   const saved = saveCreatedProject(raw, storage);
@@ -349,10 +349,10 @@ test('selected revenue growth persists and exports while legacy previews retain 
 });
 
 test('deployment export remains a JSON-safe local plan and separates FUND launch from later INCOME preparation', () => {
-  const result = deploymentDraft(draft({ networks: ['ethereum'], revnetOperatorEnabled: true, operatorWallet: wallet }));
+  const result = deploymentDraft(draft({ networks: ['ethereum'], revnetOperatorEnabled: true, ownerWallet: wallet, operatorWallet: wallet }));
   assert.deepEqual(JSON.parse(JSON.stringify(result)), result);
   assert.equal(result.kind, 'homerun-deployment-preview');
-  assert.equal(result.schemaVersion, 3);
+  assert.equal(result.schemaVersion, 5);
   assert.equal(result.execution.enabled, false);
   assert.equal(result.execution.status, 'not-deployed');
   assert.equal(result.networkEnvironment, 'production');
@@ -386,7 +386,7 @@ test('saved projects round-trip independently, carry unique IDs, and preserve ea
   const first = saveCreatedProject(draft(), storage);
   const second = saveCreatedProject(draft({
     name: 'Corner Shop', assetType: 'business', networks: ['optimism', 'base'], networkEnvironment: 'testnet',
-    revnetOperatorEnabled: true, operatorWallet: wallet,
+    revnetOperatorEnabled: true, ownerWallet: wallet, operatorWallet: wallet,
   }), storage);
   assert.notEqual(first.id, second.id);
   assert.ok(Number.isFinite(Date.parse(first.createdAt)));
@@ -408,6 +408,7 @@ test('legacy saved projects rebuild the multi-network planning schema and operat
   delete entry.values.networks;
   delete entry.values.networkEnvironment;
   delete entry.values.revnetOperatorEnabled;
+  delete entry.values.ownerWallet;
   entry.values.network = 'base';
   entry.values.operatorWallet = wallet;
   entry.deployment = { schemaVersion: 1, plannedNetwork: { chainId: 1 }, execution: { enabled: true } };
@@ -415,7 +416,7 @@ test('legacy saved projects rebuild the multi-network planning schema and operat
   const loaded = loadCreatedProject(entry.id, storage);
   assert.deepEqual(loaded.values.networks, ['base']);
   assert.equal(loaded.values.revnetOperatorEnabled, true);
-  assert.equal(loaded.deployment.schemaVersion, 3);
+  assert.equal(loaded.deployment.schemaVersion, 5);
   assert.deepEqual(loaded.deployment.plannedNetworks, [{ id: 'base', name: 'Base', chainId: 8453 }]);
   assert.equal(loaded.deployment.execution.enabled, false);
   assert.equal(loaded.deployment.revnetOperator.address, wallet);
@@ -580,4 +581,46 @@ test('expense growth validates, compounds separately, persists and exports with 
   delete created.values.costGrowthPercent;
   storage.setItem(CREATED_PROJECTS_KEY, JSON.stringify([created]));
   assert.equal(loadCreatedProject(created.id, storage).values.costGrowthPercent, 3);
+});
+
+
+test('Owner authority is independent from the Operator incentive recipient', () => {
+  const owner = `0x${'b2'.repeat(20)}`;
+  const values = normalizeCreateDraft(draft({ ownerWallet: owner, operatorWallet: wallet })).values;
+  const setup = deploymentDraft(values);
+  assert.equal(setup.owner.address, owner);
+  assert.equal(setup.owner.fundOwnershipPercentAfterPurchase, 20);
+  assert.equal(Object.hasOwn(setup.operator, 'fundOwnershipPercentAfterPurchase'), false);
+  assert.equal(setup.income.operatorAddress, wallet);
+  assert.match(setup.income.operatorChangePolicy, /Owner may change the Operator at any time/);
+  assert.equal(normalizeCreateDraft({ name: 'New owner', ownerWallet: owner, operatorWallet: '' }).values.revnetOperatorEnabled, true);
+  assert.equal(setup.funding.ownerAddress, owner);
+  assert.equal(setup.revnetOperator.address, owner);
+  assert.equal(setup.operator.address, wallet);
+  assert.equal(deploymentDraft(draft({ ownerWallet: '', operatorWallet: wallet })).funding.ownerAddress, null);
+  assert.equal(normalizeCreateDraft({ name: 'Legacy owner', operatorWallet: wallet }).values.ownerWallet, wallet);
+  for (const ownerWallet of ['0x123', `0x${'0'.repeat(40)}`, null, {}]) {
+    assert.ok(normalizeCreateDraft(draft({ ownerWallet })).errors.ownerWallet);
+  }
+});
+
+test('minimum revenue and written consequences persist without changing financial projections', () => {
+  const consequence = 'Review three months of revenue.\nThe Owner will publish a recovery plan.';
+  const configured = draft({ minimumRevenue: '5,000.25', minimumRevenueConsequences: consequence });
+  const { values, networkInputs } = creationSummary(configured);
+  assert.equal(values.minimumRevenue, 5000.25);
+  assert.equal(values.minimumRevenueConsequences, consequence);
+  assert.deepEqual(projectNetwork(networkInputs, 'earning'), projectNetwork(creationSummary(draft()).networkInputs, 'earning'));
+  const storage = memoryStorage();
+  const saved = saveCreatedProject(configured, storage);
+  const policy = loadCreatedProject(saved.id, storage).deployment.income.minimumRevenue;
+  assert.equal(policy.monthlyAmountUSD, 5000.25);
+  assert.equal(policy.consequences, consequence);
+  assert.match(policy.enforcement, /no automatic contract changes/);
+  for (const minimumRevenue of [-1, '1.001', 'oops', Infinity]) {
+    assert.ok(normalizeCreateDraft(draft({ minimumRevenue })).errors.minimumRevenue);
+  }
+  for (const minimumRevenueConsequences of [null, {}, 'x'.repeat(2001)]) {
+    assert.ok(normalizeCreateDraft(draft({ minimumRevenueConsequences })).errors.minimumRevenueConsequences);
+  }
 });

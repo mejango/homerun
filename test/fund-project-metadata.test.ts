@@ -36,6 +36,47 @@ describe('FUND project metadata stays descriptive', () => {
     expect(result).not.toHaveProperty('permissions')
   })
 
+  it('preserves distinct Owner and Operator wallets with minimum revenue and its published consequences', () => {
+    const ownerWallet = '0x0000000000000000000000000000000000000001'
+    const operatorWallet = '0x0000000000000000000000000000000000000002'
+    const values = {
+      ...CREATE_DEFAULTS,
+      ownerWallet,
+      operatorWallet,
+      minimumRevenue: 8_000,
+      minimumRevenueConsequences: 'Owner reviews operating costs.\nOperator publishes a recovery plan.',
+    } as CreateValues
+    const published = buildFundProjectMetadata(values)
+    expect(published.homerun.setup).toMatchObject({ ownerWallet, operatorWallet, minimumRevenue: 8_000, minimumRevenueConsequences: values.minimumRevenueConsequences })
+    const parsed = parseFundProjectMetadata(JSON.parse(JSON.stringify(published)))
+    expect(parsed.plan).toMatchObject({ ownerWallet, operatorWallet, minimumRevenue: 8_000, minimumRevenueConsequences: values.minimumRevenueConsequences })
+    expect(parsed).not.toHaveProperty('permissions')
+    expect(parsed).not.toHaveProperty('owner')
+    expect(published.homerun.incomeProject).toBeNull()
+  })
+
+  it('supports legacy combined wallets without replacing a new explicitly empty Owner', () => {
+    const operatorWallet = '0x0000000000000000000000000000000000000002'
+    const parsePlan = (setup: Record<string, unknown>) => parseFundProjectMetadata({ homerun: { version: 1, kind: 'fund', setup } }).plan
+    expect(parsePlan({ operatorWallet })).toMatchObject({ ownerWallet: operatorWallet, operatorWallet, minimumRevenue: null, minimumRevenueConsequences: null })
+    expect(parsePlan({ ownerWallet: '', operatorWallet })).toMatchObject({ ownerWallet: null, operatorWallet })
+    expect(parsePlan({})).toMatchObject({ ownerWallet: null, operatorWallet: null })
+  })
+
+  it('preserves accepted mixed-case wallet inputs by canonicalizing their checksum', () => {
+    const input = '0xAbcdefabcdefabcdefabcdefabcdefabcdefabcd'
+    const canonical = '0xABcdEFABcdEFabcdEfAbCdefabcdeFABcDEFabCD'
+    const published = buildFundProjectMetadata({ ...CREATE_DEFAULTS, ownerWallet: input, operatorWallet: input } as CreateValues)
+    expect(parseFundProjectMetadata(published).plan).toMatchObject({ ownerWallet: canonical, operatorWallet: canonical })
+  })
+
+  it('bounds the minimum revenue commitment and validates descriptive wallet addresses', () => {
+    const parsePlan = (setup: Record<string, unknown>) => parseFundProjectMetadata({ homerun: { version: 1, kind: 'fund', setup } }).plan
+    for (const value of [-1, Infinity, '8000', 1_000_000_000_001]) expect(parsePlan({ minimumRevenue: value })?.minimumRevenue).toBeNull()
+    expect(parsePlan({ minimumRevenue: 0, minimumRevenueConsequences: `  ${'a'.repeat(2_100)}  ` })).toMatchObject({ minimumRevenue: 0, minimumRevenueConsequences: 'a'.repeat(2_000) })
+    for (const value of ['', 'not-a-wallet', '0x0000000000000000000000000000000000000000', 123]) expect(parsePlan({ ownerWallet: value, operatorWallet: value })).toMatchObject({ ownerWallet: null, operatorWallet: null })
+  })
+
   it('does not interpret unknown metadata versions or project kinds as a Homerun plan', () => {
     expect(parseFundProjectMetadata({ homerun: { version: 2, kind: 'fund', setup: {} } }).plan).toBeNull()
     expect(parseFundProjectMetadata({ homerun: { version: 1, kind: 'income', setup: {} } }).plan).toBeNull()

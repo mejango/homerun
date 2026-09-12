@@ -211,7 +211,7 @@ try {
     await expect(purchaseDialog).toHaveCount(0)
     await expect(guide('operators')).toHaveAttribute('data-action-stage', 'funded')
     await openOther('operators')
-    await inspect('operators', 'operator-share', ['Issue the operator’s FUND share'])
+    await inspect('operators', 'operator-share', ['Issue the Owner’s FUND share'])
     await expect(guide('operators').locator('[data-project-action="fund-transfer"]')).toHaveCount(0)
     assert.equal(await entry('operators', 'operator-share').getAttribute('data-owner-action'), null)
     await accessible('[data-action-section="operators"]')

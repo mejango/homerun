@@ -16,12 +16,15 @@ export interface CreateValues {
   location: string;
   description: string;
   revenueDescription: string;
+  minimumRevenue: number;
+  minimumRevenueConsequences: string;
   purchaseBudget: number;
   opsReserve: number;
   monthlyRent: number;
   monthlyCosts: number;
   rentGrowthPercent: number;
   costGrowthPercent: number;
+  /** Legacy draft key for the Owner’s FUND success allocation. */
   operatorFundPercent: number;
   operatorSplitPercent: number;
   /** Ongoing INCOME allocation for eligible FUND stakers using Sticky. */
@@ -29,6 +32,7 @@ export interface CreateValues {
   networks: string[];
   networkEnvironment: 'production' | 'testnet';
   revnetOperatorEnabled: boolean;
+  ownerWallet: string;
   operatorWallet: string;
   operatorName?: string;
   operatorIntroduction?: string;
@@ -49,10 +53,10 @@ export interface CreateFlowProps {
 
 const labels = ['The asset', 'Fundraise', 'Income', 'Review & create'];
 const groups: FieldName[][] = [
-  ['name', 'assetType', 'location', 'description', 'photo', 'operatorName', 'operatorIntroduction', 'operatorPhoto'],
+  ['name', 'assetType', 'location', 'description', 'photo', 'ownerWallet', 'operatorWallet', 'operatorName', 'operatorIntroduction', 'operatorPhoto'],
   ['purchaseBudget', 'opsReserve', 'operatorFundPercent'],
-  ['revenueDescription', 'monthlyRent', 'monthlyCosts', 'rentGrowthPercent', 'costGrowthPercent', 'operatorSplitPercent', 'stickySplitPercent'],
-  ['networks', 'networkEnvironment', 'revnetOperatorEnabled', 'operatorWallet'],
+  ['revenueDescription', 'minimumRevenue', 'minimumRevenueConsequences', 'monthlyRent', 'monthlyCosts', 'rentGrowthPercent', 'costGrowthPercent', 'operatorSplitPercent', 'stickySplitPercent'],
+  ['networks', 'networkEnvironment', 'revnetOperatorEnabled'],
 ];
 const money = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: Number.isInteger(value) ? 0 : 2 }).format(value);
 const number = (value: number) => new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(value);
@@ -69,7 +73,7 @@ type FieldProps = {
 function Field({ name, label, value, error, onChange, onBlur, prefix, suffix, help, placeholder, maxLength, rows }: FieldProps) {
   const id = `create-${name}`;
   const displayed = typeof value === 'number' ? number(value) : String(value ?? '');
-  const numeric = [...groups[1], ...groups[2]].includes(name) && name !== 'revenueDescription';
+  const numeric = [...groups[1], ...groups[2]].includes(name) && !['revenueDescription', 'minimumRevenueConsequences'].includes(name);
   const common = { id, name, value: displayed, maxLength, placeholder, 'aria-invalid': Boolean(error),
     'aria-describedby': [help && `${name}-help`, error && `${name}-error`].filter(Boolean).join(' ') || undefined,
     onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => onChange(name, event.target.value),
@@ -146,6 +150,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
         for (const key of Object.keys(CREATE_DEFAULTS) as FieldName[]) {
           if (Object.hasOwn(saved.raw, key)) next[key] = saved.raw[key];
         }
+        if (!Object.hasOwn(saved.raw, 'ownerWallet')) next.ownerWallet = typeof saved.raw.operatorWallet === 'string' ? saved.raw.operatorWallet : '';
         if (!Object.hasOwn(saved.raw, 'networks') && typeof saved.raw.network === 'string') next.networks = [saved.raw.network];
         if (!Array.isArray(next.networks)) next.networks = [...CREATE_DEFAULTS.networks];
         if (!['production', 'testnet'].includes(String(next.networkEnvironment))) next.networkEnvironment = 'production';
@@ -217,7 +222,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
   }
 
   function formatField(name: FieldName) {
-    if (![...groups[1], ...groups[2]].includes(name) || name === 'revenueDescription') return;
+    if (![...groups[1], ...groups[2]].includes(name) || ['revenueDescription', 'minimumRevenueConsequences'].includes(name)) return;
     const result = normalize(raw);
     if (!result.errors[name]) update(name, number(result.values[name] as number));
   }
@@ -313,7 +318,11 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
                 {photo && <button id="remove-photo" className="quiet-button" type="button" onClick={() => removePhoto('photo')}>Remove photo</button>}
                 {errors.photo && <p className="create-error" id="photo-error">{errors.photo}</p>}
               </div>
+              <fieldset className="create-operator-profile"><legend>Owner</legend>
+                {field('ownerWallet', 'Owner wallet', { placeholder: '0x…', help: 'Owns the FUND Juicebox, receives its success allocation, and controls the INCOME revnet. The Owner can change the Operator and all INCOME splits at any time.' })}
+              </fieldset>
               <fieldset className="create-operator-profile"><legend>Operator</legend>
+                {field('operatorWallet', 'Operator wallet', { placeholder: '0x…', help: 'Receives the INCOME token split. The Owner can replace this recipient; receiving INCOME does not grant program control.' })}
                 <p className="create-help">Introduce the person or team running this project.</p>
                 {field('operatorName', 'Name (optional)', { placeholder: 'Your name or team', maxLength: 80 })}
                 {field('operatorIntroduction', 'Introduction (optional)', { rows: 4, maxLength: 1200, placeholder: 'Tell people about yourself, your experience, and your plans for the project.' })}
@@ -333,7 +342,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
                   <div className="income-inputs">{field('purchaseBudget', 'Asset price', { prefix: '$' })}{field('opsReserve', 'Cash reserve', { prefix: '$', help: 'Cash set aside to cover operating expenses.' })}</div>
                 </fieldset>
                 <fieldset className="income-field-group fundraise-contract"><legend>Contractual settings</legend>
-                  {field('operatorFundPercent', 'Operator FUND ownership', { suffix: '%', help: 'Allocated after a successful purchase.' })}
+                  {field('operatorFundPercent', 'Owner FUND ownership', { suffix: '%', help: 'Allocated to the Owner after a successful purchase. The Owner may distribute these tokens to the Operator at their discretion.' })}
                 </fieldset>
                 <div className="create-callout fundraise-goal"><span>Total fundraising goal</span><strong id="create-raise-goal">{summary ? money(summary.raiseGoal) : '—'}</strong>
                   <p id="create-fee-note">{summary ? `Includes ${money(summary.values.purchaseBudget)} for the asset, ${money(summary.values.opsReserve)} in reserve, and ${money(Math.round((summary.raiseGoal - summary.values.purchaseBudget - summary.values.opsReserve) * 100) / 100)} in assumed payout fees.` : 'Complete the asset and funding inputs to calculate the goal.'}</p>
@@ -341,10 +350,10 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
                 <div className="create-callout fundraise-ownership"><span>FUND ownership after purchase</span>
                   <div id="create-fund-pie" className="fund-ownership-pie" role="img"
                     style={{ background: summary ? `conic-gradient(#42674d ${summary.values.operatorFundPercent}%, #b1bd91 0)` : '#dfe5d5' }}
-                    aria-label={summary ? `Operators ${number(summary.values.operatorFundPercent)}%, contributors ${number(summary.investorFundPercent)}%.` : 'Enter valid funding inputs to preview FUND ownership.'}>
+                    aria-label={summary ? `Owner ${number(summary.values.operatorFundPercent)}%, contributors ${number(summary.investorFundPercent)}%.` : 'Enter valid funding inputs to preview FUND ownership.'}>
                     <strong id="create-fund-share" aria-hidden="true">{summary ? `${number(summary.values.operatorFundPercent)}%` : '—'}</strong>
                   </div>
-                  <dl className="fund-ownership-legend"><div><dt><i className="fund-operator-swatch" aria-hidden="true" />Operators</dt><dd id="fund-operator-percent">{summary ? `${number(summary.values.operatorFundPercent)}%` : '—'}</dd></div>
+                  <dl className="fund-ownership-legend"><div><dt><i className="fund-operator-swatch" aria-hidden="true" />Owner</dt><dd id="fund-operator-percent">{summary ? `${number(summary.values.operatorFundPercent)}%` : '—'}</dd></div>
                     <div><dt><i className="fund-contributor-swatch" aria-hidden="true" />Contributors</dt><dd id="fund-contributor-percent">{summary ? `${number(summary.investorFundPercent)}%` : '—'}</dd></div></dl>
                 </div>
               </div>
@@ -358,7 +367,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
                   {field('rentGrowthPercent', 'Target revenue growth rate (%)', { suffix: '%', help: 'Per year.' })}{field('costGrowthPercent', 'Target expense growth rate (%)', { suffix: '%', help: 'Per year.' })}
                 </div>
               </fieldset>
-              <fieldset className="income-field-group"><legend>Contractual settings</legend><p className="input-purpose-note">Sets how each new batch of INCOME tokens is shared. The FUND-staker allocation goes to eligible Sticky participants.</p>
+              <fieldset className="income-field-group"><legend>Contractual settings</legend><p className="input-purpose-note">Sets how each new batch of INCOME tokens is initially shared. The Owner can change all split recipients and allocations; no split is locked. The FUND-staker allocation goes to eligible Sticky participants.</p>
                 <div className="income-inputs">{field('operatorSplitPercent', 'To operators', { suffix: '%' })}{field('stickySplitPercent', 'To FUND stakers', { suffix: '%' })}</div>
               </fieldset>
               <section className="income-preview-panel" aria-labelledby="income-preview-heading"><header><h3 id="income-preview-heading">Income preview</h3><p>Based on your inputs. Move the timeline to explore ownership.</p></header>
@@ -367,6 +376,10 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
                 <CreateIncomePreview inputs={summary?.networkInputs || null} />
               </section>
               {field('revenueDescription', 'How will it earn revenue? (optional)', { rows: 3, maxLength: 1000, placeholder: 'Describe what customers will pay for.' })}
+              <fieldset className="income-field-group"><legend>Minimum revenue</legend>
+                {field('minimumRevenue', 'Minimum monthly revenue', { prefix: '$', help: 'The monthly revenue threshold for this plan. Set to 0 for no minimum.' })}
+                {field('minimumRevenueConsequences', 'What happens if revenue falls below the minimum?', { rows: 4, maxLength: 2000, placeholder: 'Describe the review period, actions the Owner will take, and how contributors will be informed.', help: 'Published with the income plan. The Owner must carry out these actions; this field does not trigger automatic contract changes.' })}
+              </fieldset>
               <details className="create-terms"><summary>Starting token terms</summary><p>At purchase, 500,000 initial INCOME is allocated across all FUND holders, including inactive ERC20 balances and unclaimed token credits. Claiming this initial allocation requires no activation, staking or vesting. Revenue starts by issuing 10 INCOME per USDC, shared using the percentages above. Issuance falls 5% each quarter for two years.</p><p>Ongoing FUND rewards use stock Sticky: rewards follow your share balance at each snapshot and unlock in four weekly vesting rounds after you start the reward claim. There is no minimum staking period or stake-age bonus. Staying staked longer earns additional reward rounds. Live use requires a verified deployment. Borrowing or cashing out INCOME does not sell FUND.</p></details>
             </>}
             {step === 3 && <>
@@ -374,18 +387,26 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
                 <section className="review-block"><div><h3>{String(raw.name || 'Untitled')}</h3><button type="button" onClick={() => navigate(0)}>Edit asset</button></div>
                   <p>{String(raw.location || 'Location not specified')}</p>{raw.description && <p>{String(raw.description)}</p>}
                 </section>
+                <section className="review-block"><div><h3>Owner &amp; Operator</h3><button type="button" onClick={() => navigate(0)}>Edit wallets</button></div>
+                  <dl><div><dt>Owner · program control and FUND allocation</dt><dd className="break-all">{normalized.values.ownerWallet || 'Not specified'}</dd></div>
+                    <div><dt>Operator · INCOME incentives</dt><dd className="break-all">{normalized.values.operatorWallet || 'Not specified'}</dd></div></dl>
+                </section>
+                <section className="review-block"><div><h3>Minimum revenue</h3><button type="button" onClick={() => navigate(2)}>Edit income</button></div>
+                  <p>{normalized.values.minimumRevenue ? `${money(normalized.values.minimumRevenue)} per month` : 'No minimum specified'}</p>
+                  {normalized.values.minimumRevenueConsequences && <p className="whitespace-pre-line">{normalized.values.minimumRevenueConsequences}</p>}
+                </section>
                 {(normalized.values.operatorName || normalized.values.operatorIntroduction || operatorPhoto) && <section className="review-block"><div><h3>Operator</h3><button type="button" onClick={() => navigate(0)}>Edit operator</button></div>
                   <OperatorProfile name={normalized.values.operatorName} introduction={normalized.values.operatorIntroduction} photoUrl={operatorPhoto} showHeading={false} />
                 </section>}
                 <section className="review-block"><div><h3>The raise</h3><button type="button" onClick={() => navigate(1)}>Edit raise</button></div>
                   <dl><div><dt>Goal</dt><dd>{summary ? money(summary.raiseGoal) : '—'}</dd></div>
-                    <div><dt>FUND ownership after purchase</dt><dd>{summary ? `${number(summary.investorFundPercent)}% contributors / ${number(summary.values.operatorFundPercent)}% operator` : '—'}</dd></div></dl>
+                    <div><dt>FUND ownership after purchase</dt><dd>{summary ? `${number(summary.investorFundPercent)}% contributors / ${number(summary.values.operatorFundPercent)}% Owner` : '—'}</dd></div></dl>
                 </section>
               </div>
               <fieldset className="create-network-settings"><legend>Networks</legend><div className="create-network-options">
                 <select id="create-networkEnvironment" className="network-environments" aria-label="Network environment" value={String(raw.networkEnvironment)}
                   onChange={event => { update('networkEnvironment', event.target.value); update('networks', NETWORK_FAMILIES.map(family => family.id)); }}>
-                  <option value="production">Production</option><option value="testnet">Testnets</option>
+                  <option value="production">Mainnets</option><option value="testnet">Testnets</option>
                 </select>
                 <div id="create-networks" className="network-symbols" role="group" aria-label="Deployment networks" aria-describedby={normalized.errors.networks ? 'networks-error' : undefined}>
                   {NETWORK_FAMILIES.map(family => {
@@ -399,9 +420,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
                   })}
                 </div>
               </div>{normalized.errors.networks && <p className="create-error" id="networks-error">{normalized.errors.networks}</p>}</fieldset>
-              <section className="create-operator-settings"><div id="revnet-operator-address">
-                {field('operatorWallet', 'Operator address', { placeholder: '0x…', help: 'Owns the FUND project and manages the limited INCOME operator controls on the selected networks.' })}
-              </div></section>
+
               <details className="create-terms"><summary>What creation sets up</summary><p>Creation deploys the initial FUND fundraising Juicebox. INCOME is deployed separately after a successful purchase. Review the network, contract settings, and wallet transaction before signing.</p></details>
               <div id="create-contract-actions">
                 {normalized.valid ? renderDeploy?.(normalized.values) : <p className="create-error" role="status">Correct the setup fields before preparing the FUND transaction.{Object.entries(normalized.errors).map(([key, error]) => <span key={key} style={{ display: 'block' }}>{error}</span>)}</p>}
@@ -421,7 +440,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
         <AssetArt type={String(raw.assetType)} photo={photo} /><h2 id="draft-name">{String(raw.name || '').trim() || 'Untitled'}</h2>
         {raw.location && <p id="draft-location">{String(raw.location)}</p>}
         <dl><div><dt>Fundraising goal</dt><dd id="draft-goal">{summary ? money(summary.raiseGoal) : '—'}</dd></div><div><dt>Monthly revenue estimate</dt><dd id="draft-revenue">{summary ? money(summary.values.monthlyRent) : '—'}</dd></div></dl>
-        {summary && <div id="draft-ownership" className="draft-ownership"><div className="ownership-mini" aria-hidden="true"><span style={{ width: `${summary.investorFundPercent}%` }} /></div><p>{number(summary.investorFundPercent)}% contributor FUND <span>|</span> {number(summary.values.operatorFundPercent)}% operator FUND</p></div>}
+        {summary && <div id="draft-ownership" className="draft-ownership"><div className="ownership-mini" aria-hidden="true"><span style={{ width: `${summary.investorFundPercent}%` }} /></div><p>{number(summary.investorFundPercent)}% contributor FUND <span>|</span> {number(summary.values.operatorFundPercent)}% Owner FUND</p></div>}
       </div></aside>
     </div>
   </>;

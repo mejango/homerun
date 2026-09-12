@@ -2,7 +2,7 @@
 import { decodeFunctionData, getAddress, isAddress, isAddressEqual, zeroAddress, zeroHash, type Address, type Hex } from 'viem'
 import { FUND_CHAIN_IDS } from './fund-contracts'
 import { fundGlobalManifestHash, parseFundGlobalManifest, type FundGlobalManifest } from './fund-global-manifest'
-import { homerunIncomeDeployerAbi } from './income-contracts'
+import { homerunIncomeRecoveryAbi } from './income-contracts'
 import { exportIncomeLaunchPending, type IncomeLaunchPending } from './income-launch-session'
 
 export const INCOME_GLOBAL_DRAFT_KEY = 'homerun:income-global-launch:drafts:v1'
@@ -15,6 +15,8 @@ export type IncomeGlobalLaunchDraft = {
   version: 1; root: { chainId: number; projectId: string }; helper: Address
   manifestUri: string; manifestHash: Hex; sourceSetHash: Hex; launchSalt: Hex
   name: string; metadataUri: string; startsAtOrAfter: number; operatorBps: number; fundHolderBps: number
+  /** Explicit incentive recipient. Legacy plans used each chain's submitting FUND owner. */
+  operator?: Address
   chains: IncomeGlobalChainDraft[]
 }
 type Store = Pick<Storage, 'getItem' | 'setItem'>
@@ -32,8 +34,10 @@ export function parseIncomeGlobalDraft(value: unknown): IncomeGlobalLaunchDraft 
     || typeof raw.name !== 'string' || !raw.name.trim() || raw.name.length > 160 || !ipfs(raw.metadataUri)
     || typeof raw.startsAtOrAfter !== 'number' || !Number.isSafeInteger(raw.startsAtOrAfter) || raw.startsAtOrAfter <= 0 || raw.startsAtOrAfter >= 2 ** 48
     || typeof raw.operatorBps !== 'number' || typeof raw.fundHolderBps !== 'number' || !Number.isInteger(raw.operatorBps) || !Number.isInteger(raw.fundHolderBps) || raw.operatorBps < 0 || raw.fundHolderBps <= 0 || raw.operatorBps + raw.fundHolderBps > 10_000
+    || (raw.operator !== undefined && (typeof raw.operator !== 'string' || !isAddress(raw.operator) || isAddressEqual(raw.operator, zeroAddress)))
     || !Array.isArray(raw.chains) || !raw.chains.length || raw.chains.length > FUND_CHAIN_IDS.length) throw invalid()
   const descriptor: IncomeGlobalLaunchDraft = { version: 1, root: { chainId: root.chainId, projectId: root.projectId }, helper: getAddress(raw.helper), manifestUri: raw.manifestUri, manifestHash: raw.manifestHash.toLowerCase() as Hex, sourceSetHash: raw.sourceSetHash.toLowerCase() as Hex, launchSalt: raw.launchSalt.toLowerCase() as Hex, name: raw.name, metadataUri: raw.metadataUri, startsAtOrAfter: raw.startsAtOrAfter, operatorBps: raw.operatorBps, fundHolderBps: raw.fundHolderBps, chains: [] }
+  if (raw.operator !== undefined) descriptor.operator = getAddress(raw.operator as Address)
   for (const row of raw.chains) {
     const local = object(row)
     if (!chain(local.chainId) || !uint(local.fundProjectId, true) || !uint(local.initialIncomeAmount) || (descriptor.chains.at(-1)?.chainId ?? 0) >= local.chainId || (local.stickyProjectId !== undefined && (!uint(local.stickyProjectId, true) || local.stickyProjectId === local.fundProjectId))) throw invalid()
@@ -42,9 +46,10 @@ export function parseIncomeGlobalDraft(value: unknown): IncomeGlobalLaunchDraft 
       const evidence = object(local.execution)
       if (!hash(evidence.hash) || !next.stickyProjectId) throw invalid()
       const record = JSON.parse(exportIncomeLaunchPending(evidence.record as IncomeLaunchPending)) as IncomeLaunchPending
-      const decoded = decodeFunctionData({ abi: homerunIncomeDeployerAbi, data: record.data })
+      const decoded = decodeFunctionData({ abi: homerunIncomeRecoveryAbi, data: record.data })
       if (decoded.functionName !== 'deployIncome') throw invalid()
-      const [fundId, snapshot, description, operator, stakers, stickyId, start] = decoded.args
+      const [fundId, snapshot, description, operator, stakers, stickyId, start, , recipient] = decoded.args
+      if (!isAddressEqual(recipient ?? record.holder, descriptor.operator ?? record.holder)) throw invalid()
       if (record.chainId !== next.chainId || record.projectId !== next.fundProjectId || !isAddressEqual(record.target, descriptor.helper) || fundId.toString() !== next.fundProjectId || snapshot.manifestHash.toLowerCase() !== descriptor.manifestHash || snapshot.manifestUri !== descriptor.manifestUri || snapshot.sourceSetHash.toLowerCase() !== descriptor.sourceSetHash || description.salt.toLowerCase() !== descriptor.launchSalt || description.name !== descriptor.name || description.uri !== descriptor.metadataUri || operator !== descriptor.operatorBps || stakers !== descriptor.fundHolderBps || stickyId.toString() !== next.stickyProjectId || start !== descriptor.startsAtOrAfter) throw invalid()
       next.execution = { hash: evidence.hash.toLowerCase() as Hex, record }
     }

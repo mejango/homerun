@@ -1,4 +1,5 @@
 import type { JBProjectMetadata } from '@bananapus/nana-sdk-core'
+import { getAddress, isAddress, zeroAddress, type Address } from 'viem'
 import type { CreateValues } from '@/components/CreateFlow'
 import { JBCENTER_IPFS_GATEWAY } from './jbcenter-ipfs'
 
@@ -50,10 +51,14 @@ export type FundProjectMetadata = {
     photoUrl: string | null
   } | null
   plan: {
+    ownerWallet: Address | null
+    operatorWallet: Address | null
     purchaseBudget: number | null
     opsReserve: number | null
     monthlyRent: number | null
     monthlyCosts: number | null
+    minimumRevenue: number | null
+    minimumRevenueConsequences: string | null
     operatorFundPercent: number | null
     operatorSplitPercent: number | null
     fundHolderSplitPercent: number | null
@@ -81,6 +86,12 @@ function number(value: unknown, maximum = 1_000_000_000_000): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= maximum ? value : null
 }
 
+function wallet(value: unknown): Address | null {
+  if (typeof value !== 'string') return null
+  const address = value.trim()
+  return isAddress(address, { strict: false }) && address !== zeroAddress ? getAddress(address) : null
+}
+
 /** Metadata can describe a plan; it cannot grant permissions or prove a phase. */
 export function parseFundProjectMetadata(value: unknown): FundProjectMetadata {
   const metadata = record(value)
@@ -101,10 +112,14 @@ export function parseFundProjectMetadata(value: unknown): FundProjectMetadata {
     logoUrl: fundIpfsUrl(metadata.logoUri),
     operator: operator && (operator.name || operator.introduction || operator.photoUrl) ? operator : null,
     plan: setup ? {
+      ownerWallet: wallet(Object.hasOwn(setup, 'ownerWallet') ? setup.ownerWallet : setup.operatorWallet),
+      operatorWallet: wallet(setup.operatorWallet),
       purchaseBudget: number(setup.purchaseBudget),
       opsReserve: number(setup.opsReserve),
       monthlyRent: number(setup.monthlyRent),
       monthlyCosts: number(setup.monthlyCosts),
+      minimumRevenue: number(setup.minimumRevenue),
+      minimumRevenueConsequences: text(setup.minimumRevenueConsequences, 2_000),
       operatorFundPercent: number(setup.operatorFundPercent, 100),
       operatorSplitPercent: number(setup.operatorSplitPercent, 100),
       fundHolderSplitPercent: number(setup.stickySplitPercent, 100),

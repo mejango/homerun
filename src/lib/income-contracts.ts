@@ -14,7 +14,11 @@ export const INCOME_INITIAL_ISSUANCE = 10n * 10n ** 18n
 export const INCOME_QUARTER_SECONDS = 7_884_000
 export const INCOME_CUT_PERCENT = 50_000_000
 export const INCOME_SLIPPAGE_BPS = 100n
-export const INCOME_SPLIT_LOCK = 2 ** 48 - 1
+/** Every new split remains editable by the Owner through the stock controller. */
+export const INCOME_SPLIT_LOCK = 0
+export const INCOME_OPERATOR_SPLIT_LOCK = INCOME_SPLIT_LOCK
+/** Older deployments may retain permanent locks; existing transactions remain recoverable. */
+export const LEGACY_INCOME_SPLIT_LOCK = 2 ** 48 - 1
 
 /** Source: HomerunIncomeDeployer.sol. Enabled only after a verified deployment enters the SDK registry. */
 export const homerunIncomeDeployerAbi = parseAbi([
@@ -23,6 +27,7 @@ export const homerunIncomeDeployerAbi = parseAbi([
   'struct SuckerMapping { address localToken; uint32 minGas; bytes32 remoteToken; }',
   'struct SuckerDeployerConfig { address deployer; bytes32 peer; SuckerMapping[] mappings; }',
   'struct SuckerConfiguration { SuckerDeployerConfig[] deployerConfigurations; bytes32 salt; }',
+  'function LAUNCH_VERSION() view returns (uint256)',
   'function CONTROLLER() view returns (address)',
   'function DIRECTORY() view returns (address)',
   'function PROJECTS() view returns (address)',
@@ -40,9 +45,17 @@ export const homerunIncomeDeployerAbi = parseAbi([
   'function initialAllocationVaultOf(uint256 fundProjectId) view returns (address)',
   'function distributionIdFor(uint256 fundProjectId, InitialSnapshot snapshot, bytes32 salt) view returns (bytes32)',
   'function configurationSaltFor(InitialSnapshot snapshot, bytes32 launchSalt) pure returns (bytes32)',
-  'function deployIncome(uint256 fundProjectId, InitialSnapshot snapshot, (string name, string ticker, string uri, bytes32 salt) description, uint16 operatorBps, uint16 fundHoldersBps, uint256 stickyProjectId, uint48 startsAtOrAfter, SuckerConfiguration suckerConfiguration) payable returns (uint256 incomeProjectId)',
+  'function deployIncome(uint256 fundProjectId, InitialSnapshot snapshot, (string name, string ticker, string uri, bytes32 salt) description, uint16 operatorBps, uint16 fundHoldersBps, uint256 stickyProjectId, uint48 startsAtOrAfter, SuckerConfiguration suckerConfiguration, address operator) payable returns (uint256 incomeProjectId)',
   'event IncomeDeployed(uint256 indexed fundProjectId, uint256 indexed incomeProjectId, address indexed operator, address fundToken, address initialAllocationVault, address rewardToken, bytes32 merkleRoot)',
 ])
+
+/** Decode old saved submissions without changing the calldata whose execution must be verified. */
+export const legacyHomerunIncomeDeployerAbi = homerunIncomeDeployerAbi.map(entry => {
+  if (entry.type !== 'function' || entry.name !== 'deployIncome') return entry
+  const [fund, snapshot, description, operatorBps, fundHolderBps, sticky, start, suckers] = entry.inputs
+  return { ...entry, inputs: [fund, snapshot, description, operatorBps, fundHolderBps, sticky, start, suckers] as const }
+})
+export const homerunIncomeRecoveryAbi = [...homerunIncomeDeployerAbi, ...legacyHomerunIncomeDeployerAbi.filter(entry => entry.type === 'function' && entry.name === 'deployIncome')] as const
 
 /** Source: nana-core-v6 JBERC20 / IJBActiveVotes. No token custody or approval is involved. */
 export const fundVotesAbi = parseAbi([
@@ -115,7 +128,7 @@ export function allocateInitialIncome(holders: readonly { holder: Address; balan
     if (entry.balance <= 0n) throw new Error('Snapshot balances must be positive.')
     return { beneficiary, balance: entry.balance }
   }).sort((a, b) => a.beneficiary.toLowerCase().localeCompare(b.beneficiary.toLowerCase()))
-  if (normalized.reduce((sum, entry) => sum + entry.balance, 0n) !== totalFundSupply) throw new Error('The holder snapshot does not cover the entire FUND supply, including credits and the operator allocation.')
+  if (normalized.reduce((sum, entry) => sum + entry.balance, 0n) !== totalFundSupply) throw new Error('The holder snapshot does not cover the entire FUND supply, including credits and the owner allocation.')
   const allocations = normalized.map(entry => ({ beneficiary: entry.beneficiary, count: INITIAL_INCOME_SUPPLY * entry.balance / totalFundSupply }))
   const remainder = INITIAL_INCOME_SUPPLY - allocations.reduce((sum, entry) => sum + entry.count, 0n)
   // Match the public manifest: at most holders.length - 1 atoms go to the lowest address, including zero.
@@ -130,7 +143,7 @@ export function incomeReservedSplits(operator: Address, fundToken: Address, dist
   const operatorPercent = Math.floor(operatorBps * 1_000_000_000 / reserved)
   const base = { preferAddToBalance: false, lockedUntil: INCOME_SPLIT_LOCK, projectId: 0n }
   return [
-    ...(operatorPercent ? [{ ...base, percent: operatorPercent, beneficiary: getAddress(operator), hook: zeroAddress }] : []),
+    ...(operatorPercent ? [{ ...base, lockedUntil: INCOME_OPERATOR_SPLIT_LOCK, percent: operatorPercent, beneficiary: getAddress(operator), hook: zeroAddress }] : []),
     { ...base, percent: 1_000_000_000 - operatorPercent, beneficiary: getAddress(fundToken), hook: getAddress(distributor) },
   ]
 }
@@ -162,7 +175,7 @@ export function incomeStageConfigurations(input: {
  */
 export function buildIncomeDeployPlan(input: {
   chainId: JBChainId; name: string; projectUri: string; salt: Hex; creationFee: bigint;
-  startTimestamp: number; operator: Address; fundToken: Address;
+  startTimestamp: number; owner: Address; operator: Address; fundToken: Address;
   initialAllocations: readonly REVAutoIssuance[]; operatorBps?: number; fundHolderBps?: number;
 }) {
   const distributor = registeredIncomeDistributor(input.chainId)
@@ -185,7 +198,7 @@ export function buildIncomeDeployPlan(input: {
     chainId: input.chainId,
     config: {
       description: { name: input.name.trim(), ticker: 'INCOME', uri: input.projectUri, salt: input.salt },
-      baseCurrency, operator: getAddress(input.operator), scopeCashOutsToLocalBalances: false,
+      baseCurrency, operator: checkedAddress(input.owner, 'owner'), scopeCashOutsToLocalBalances: false,
       stageConfigurations: incomeStageConfigurations({ ...input, distributor }),
     },
     accountingContexts: [buildAccountingContext(USDC_ADDRESSES[input.chainId], 6)],

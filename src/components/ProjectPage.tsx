@@ -43,7 +43,7 @@ type Projection = ReturnType<typeof projectNetwork>;
 type NetworkInputs = {
   -readonly [
     Key in keyof typeof DEFAULT_NETWORK
-  ]: (typeof DEFAULT_NETWORK)[Key] extends number ? number : string;
+  ]: (typeof DEFAULT_NETWORK)[Key] extends number ? number : (typeof DEFAULT_NETWORK)[Key] extends boolean ? boolean : string;
 };
 type CreatedProject = NonNullable<ReturnType<typeof loadCreatedProject>>;
 type OwnerDraft = Omit<ReturnType<typeof modelOwnerActionDraft>, "steps"> & {
@@ -764,7 +764,7 @@ function TokenTerms({ p }: { p: Projection }) {
       <p>
         Each contributed dollar receives 10,000 FUND. After purchase,
         contributors share {percent(100 - p.operatorFundPercent)} of FUND and
-        operators hold {percent(p.operatorFundPercent)}. Each FUND has the same
+        {p.separateOwnerOperator ? 'the Owner holds' : 'operators hold'} {percent(p.operatorFundPercent)}. Each FUND has the same
         share of net asset-sale proceeds.
       </p>
       <p>
@@ -780,8 +780,8 @@ function TokenTerms({ p }: { p: Projection }) {
           <dd id="fund-total-supply">{number(p.fundTotalSupply)}</dd>
         </div>
         <div>
-          <dt>Asset tokens for operators</dt>
-          <dd id="operator-fund-mint">{number(p.fundOperatorMint)}</dd>
+          <dt>Asset tokens for {p.separateOwnerOperator ? 'the Owner' : 'operators'}</dt>
+          <dd id="operator-fund-mint">{number(p.separateOwnerOperator ? p.fundOwnerMint : p.fundOperatorMint)}</dd>
         </div>
         <div>
           <dt>New INCOME per $1 of revenue</dt>
@@ -832,7 +832,7 @@ function Allocation({ p }: { p: Projection }) {
       </div>
       <p>
         These percentages divide new tokens. The FUND-staker allocation goes to
-        eligible Sticky participants, including operators who stake. Projections
+        eligible Sticky participants, including {p.separateOwnerOperator ? 'the Owner when staked' : 'operators who stake'}. Projections
         assume all FUND participates and is eligible at each snapshot with fully
         vested rewards; weekly reward vesting is not modeled.
       </p>
@@ -988,7 +988,7 @@ function PhasePanel({
               />
               <p>
                 After purchase, all FUND holders share{" "}
-                {number(p.revenuePremint)} initial INCOME, including operators,
+                {number(p.revenuePremint)} initial INCOME, including {p.separateOwnerOperator ? 'the Owner' : 'operators'},
                 inactive ERC20 balances and unclaimed token credits. Initial
                 claims require no activation, staking or vesting. The INCOME
                 revnet starts at $0, then receives monthly revenue. FUND remains
@@ -1000,7 +1000,7 @@ function PhasePanel({
             <>
               <p>
                 Refunds redeem FUND proportionally. There is no cash-out tax,
-                operator success mint or INCOME allocation. Expenses can reduce
+                {p.separateOwnerOperator ? 'Owner' : 'operator'} success mint or INCOME allocation. Expenses can reduce
                 recovery; protocol fees may apply. Off-chain contributions are
                 refunded off-chain.
               </p>
@@ -1989,7 +1989,7 @@ function DemoOwners({
           <section className="demo-section">
             <h2>All owners</h2>
             <p>
-              Modeled ownership across contributors, operators and customers.
+              Modeled ownership across contributors, {p.separateOwnerOperator ? 'the Owner, the Operator' : 'operators'} and customers.
               This demo represents groups, not indexed wallet accounts.
             </p>
             <div id="fund-ownership-preview">

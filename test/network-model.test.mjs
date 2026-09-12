@@ -80,6 +80,47 @@ test('closing mints the operator share and distributes REV across the resulting 
   assert.equal(closed.opsReserveCash, 100_000);
 });
 
+test('separate roles allocate success FUND and holder INCOME to the Owner, with only direct issuance for the Operator', () => {
+  const state = projectNetwork({ ...flat, separateOwnerOperator: true, monthlyCosts: 0, revenueMonths: 1 }, 'earning');
+  close(state.fundOwnerMint / state.fundTotalSupply * 100, 20);
+  assert.equal(state.fundOperatorMint, 0);
+  assert.equal(state.ownerFundMinted, true);
+  assert.equal(state.operatorFundMinted, false);
+  close(state.revOwnerTokens, 103_000);
+  close(state.revOperatorTokens, 75_000);
+  close(state.revInvestorTokens, 412_000);
+  close(state.revRenterTokens, 10_000);
+  close(state.cumulativeOwnerFundRewards, 3_000);
+  assert.equal(state.cumulativeOperatorFundRewards, 0);
+  for (const row of state.history) {
+    close(row.revSupply, row.revOwnerTokens + row.revOperatorTokens + row.revInvestorTokens + row.revRenterTokens + row.revStickyPendingTokens + row.revStickyUnallocatedTokens);
+    close(row.revSupply, state.revenuePremint + row.cumulativeRevMinted - row.cumulativeRevBurned);
+  }
+});
+
+test('an Operator with no incentive split cannot spend the Owner or other FUND holders INCOME on expenses', () => {
+  const state = projectNetwork({ ...flat, separateOwnerOperator: true, opsReserve: 0, operatorSplitPercent: 0, ongoingOperatorSplitPercent: 0, stickySplitPercent: 100, revenueMonths: 1 }, 'earning');
+  close(state.revOwnerTokens, 120_000);
+  close(state.revInvestorTokens, 480_000);
+  assert.equal(state.revOperatorTokens, 0);
+  assert.equal(state.cumulativeRevBurned, 0);
+  assert.equal(state.revCash, 10_000);
+  assert.equal(state.unpaidOps, 6_000);
+});
+
+test('separate Owner staking rewards vest to the Owner while legacy demos retain their combined role', () => {
+  const state = projectNetwork({ ...stakingScenario, separateOwnerOperator: true, revenueMonths: 2 }, 'earning');
+  const legacy = projectNetwork({ ...stakingScenario, revenueMonths: 2 }, 'earning');
+  close(state.ownerStakedFundTokens, legacy.operatorStakedFundTokens);
+  assert.equal(state.operatorStakedFundTokens, 0);
+  close(state.cumulativeOwnerStickyVested, legacy.cumulativeOperatorStickyVested);
+  assert.equal(state.cumulativeOperatorStickyVested, 0);
+  close(state.revOwnerTokens + state.revOperatorTokens, legacy.revOperatorTokens);
+  assert.equal(legacy.revOwnerTokens, 0);
+  close(state.revSupply, legacy.revSupply);
+  assert.throws(() => projectNetwork({ separateOwnerOperator: 'true' }), TypeError);
+});
+
 test('preclosing FUND cash-outs use the tax curve and refunds use the cash remaining after spending', () => {
   const inputs = {
     purchaseBudget: 1_000, opsReserve: 0, payoutFeePercent: 0,

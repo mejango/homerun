@@ -13,6 +13,9 @@ export const DEFAULT_NETWORK = Object.freeze({
   investment: 10_000,
   raisedPercent: 60,
   operatorFundPercent: 20,
+  // Retained demos combine the FUND success holder and operating recipient.
+  // New creation previews separate Owner FUND ownership from Operator incentives.
+  separateOwnerOperator: false,
   monthlyRent: 10_000,
   monthlyCosts: 6_000,
   rentGrowthPercent: 3,
@@ -106,6 +109,7 @@ function validate(inputs, phase) {
   if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs)) throw new TypeError('Network inputs must be an object.');
   if (!PHASES.has(phase)) throw new RangeError(`Unknown network phase: ${String(phase)}.`);
   const config = { ...DEFAULT_NETWORK, ...inputs };
+  if (typeof config.separateOwnerOperator !== 'boolean') throw new TypeError('separateOwnerOperator must be a boolean.');
   if (!['holders', 'staking'].includes(config.fundRewardMode)) throw new RangeError('fundRewardMode must be holders or staking.');
   const cents = Object.fromEntries(MONEY_INPUTS.map((name) => [name, money(name, config[name])]));
   if (cents.purchaseBudget === 0) throw new RangeError('purchaseBudget must be at least one cent.');
@@ -155,6 +159,8 @@ function validate(inputs, phase) {
  * Default rewards go immediately to all FUND holders, including operators,
  * without staking. Holder balances are constant in this illustration; a live
  * distributor must account for transfers and credits before each allocation.
+ * With separateOwnerOperator, the Owner gets the FUND success share, initial
+ * INCOME and its FUND rewards; only the Operator's issuance pays operating costs.
  * The optional staking comparison uses constant participation. Its cohorts vest
  * at the start of month m + stickyVestingMonths, before rent; a zero-month delay
  * vests immediately after issuance. Vested tokens are automatically claimed.
@@ -203,7 +209,8 @@ export function projectNetwork(inputs = {}, phase = 'raising') {
 
   let revCash = 0;
   let investorRev = config.revenuePremint * (1 - operatorFraction);
-  let operatorRev = config.revenuePremint * operatorFraction;
+  let ownerRev = config.separateOwnerOperator ? config.revenuePremint * operatorFraction : 0;
+  let operatorRev = config.separateOwnerOperator ? 0 : config.revenuePremint * operatorFraction;
   let renterRev = 0;
   let stickyPending = 0;
   let stickyUnallocated = 0;
@@ -214,10 +221,11 @@ export function projectNetwork(inputs = {}, phase = 'raising') {
   let cumulativeOperatorStickyVested = 0;
   let cumulativeOtherInvestorStickyVested = 0;
   const cohorts = new Map();
-  const totalRevSupply = () => investorRev + operatorRev + renterRev + stickyPending + stickyUnallocated;
+  const totalRevSupply = () => investorRev + ownerRev + operatorRev + renterRev + stickyPending + stickyUnallocated;
   const vestSticky = (cohort) => {
     investorRev += cohort.personal + cohort.other;
-    operatorRev += cohort.operator;
+    if (config.separateOwnerOperator) ownerRev += cohort.operator;
+    else operatorRev += cohort.operator;
     personalSticky += cohort.personal;
     personalPendingSticky = Math.max(0, personalPendingSticky - cohort.personal);
     stickyPending = Math.max(0, stickyPending - cohort.total);
@@ -327,6 +335,7 @@ export function projectNetwork(inputs = {}, phase = 'raising') {
       revCash: usd(revCash),
       revSupply: supply,
       revInvestorTokens: investorRev,
+      revOwnerTokens: ownerRev,
       revOperatorTokens: operatorRev,
       revRenterTokens: renterRev,
       revStickyPendingTokens: stickyPending,
@@ -339,7 +348,8 @@ export function projectNetwork(inputs = {}, phase = 'raising') {
       personalPendingStickyTokens: personalPendingSticky,
       personalStakedFundTokens: personalStakedFund,
       otherStakedFundTokens: otherStakedFund,
-      operatorStakedFundTokens: operatorStakedFund,
+      ownerStakedFundTokens: config.separateOwnerOperator ? operatorStakedFund : 0,
+      operatorStakedFundTokens: config.separateOwnerOperator ? 0 : operatorStakedFund,
       eligibleStakedFundTokens: automaticHolderRewards ? 0 : eligibleStakedFund,
       eligibleFundRewardTokens: eligibleStakedFund,
       personalFundRewardTokens: personalSticky,
@@ -372,9 +382,11 @@ export function projectNetwork(inputs = {}, phase = 'raising') {
       cumulativeStickyMinted,
       cumulativeStickyVested,
       cumulativeFundRewardsAllocated: cumulativeStickyVested,
-      cumulativeOperatorFundRewards: cumulativeOperatorStickyVested,
+      cumulativeOwnerFundRewards: config.separateOwnerOperator ? cumulativeOperatorStickyVested : 0,
+      cumulativeOperatorFundRewards: config.separateOwnerOperator ? 0 : cumulativeOperatorStickyVested,
       cumulativeOtherInvestorFundRewards: cumulativeOtherInvestorStickyVested,
-      cumulativeOperatorStickyVested,
+      cumulativeOwnerStickyVested: config.separateOwnerOperator ? cumulativeOperatorStickyVested : 0,
+      cumulativeOperatorStickyVested: config.separateOwnerOperator ? 0 : cumulativeOperatorStickyVested,
       cumulativeOtherInvestorStickyVested,
       reserveNeeded: usd(reserveNeeded),
       personalCashout: usd(personalRevCash),
@@ -415,7 +427,8 @@ export function projectNetwork(inputs = {}, phase = 'raising') {
     raised: usd(raised),
     escrowCash: phase === 'raising' || phase === 'funded' || phase === 'refunding' ? usd(availableEscrow) : 0,
     fundInvestorSupply: investorFundSupply,
-    fundOperatorMint: operatorFundMint,
+    fundOwnerMint: config.separateOwnerOperator ? operatorFundMint : 0,
+    fundOperatorMint: config.separateOwnerOperator ? 0 : operatorFundMint,
     fundTotalSupply: totalFundSupply,
     fundSupply,
     personalFundTokens: phase === 'refunded' ? 0 : personalFundTokens,
@@ -428,7 +441,8 @@ export function projectNetwork(inputs = {}, phase = 'raising') {
     personalRefund: usd(personalRefund),
     personalFundCashout: usd(personalFundCashout),
     fundCashOutTaxPercent: phase === 'raising' ? 10 : phase === 'funded' || phase === 'earning' ? 100 : 0,
-    operatorFundMinted: isClosed,
+    ownerFundMinted: isClosed && config.separateOwnerOperator,
+    operatorFundMinted: isClosed && !config.separateOwnerOperator,
     revenuePreminted: isClosed,
     purchaseCompleted: isClosed,
     netSaleProceeds: usd(netSale),
