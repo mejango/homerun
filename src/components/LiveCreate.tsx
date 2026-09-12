@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { getPublicClient, getAccount } from '@wagmi/core'
 import { jbProjectsAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
@@ -110,6 +111,7 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
 }
 
 export function FundDeploy({ values }: { values?: CreateValues }) {
+  const router = useRouter()
   const { address } = useWallet()
   const [session, setSession] = useState<FundLaunchSession | null>(null)
   const [loaded, setLoaded] = useState(false)
@@ -219,7 +221,7 @@ export function FundDeploy({ values }: { values?: CreateValues }) {
   }
   const complete = !!session && Object.values(session.statuses).every(status => status.phase === 'confirmed')
   const activeChain = session?.input.chainIds.find(id => session.statuses[id].phase !== 'confirmed')
-  useEffect(() => { if (complete) { busyRef.current = false; setRunning(false) } }, [complete])
+  useEffect(() => { if (complete) { busyRef.current = false; setRunning(false); router.replace('/create/success') } }, [complete, router])
   return <div className="fund-launch">
     <h2 className="text-xl">Create your project</h2>
     <p>Create the FUND raise on your selected chains. INCOME and the Owner’s success allocation are separate later actions.</p>

@@ -6,6 +6,8 @@ import type { CreateValues } from '../src/components/CreateFlow'
 import { FUND_LAUNCH_KEY, decodeLaunchSession, saveLaunch, updateLaunchStatus, type FundLaunchSession } from '../src/lib/fund-launch-session'
 
 const runtime = vi.hoisted(() => ({ send: vi.fn(), readContract: vi.fn(), getBlock: vi.fn(), publish: vi.fn(), checkDeployment: vi.fn() }))
+const navigate = vi.hoisted(() => ({ replace: vi.fn() }))
+vi.mock('next/navigation', () => ({ useRouter: () => navigate }))
 const owner = '0x1111111111111111111111111111111111111111' as const
 const salt = `0x${'12'.repeat(32)}` as Hex
 vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: '0x1111111111111111111111111111111111111111' }), getPublicClient: () => ({ readContract: runtime.readContract, getBlock: runtime.getBlock }) }))
@@ -18,6 +20,7 @@ vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({ phase: 'idle', busy: f
 vi.mock('@/lib/publish-fund-project-metadata', () => ({ publishFundProjectMetadata: runtime.publish }))
 vi.mock('@/lib/fund-launch-verification', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/fund-launch-verification')>(), checkLaunchDeployment: runtime.checkDeployment }))
 import { FundDeploy } from '../src/components/LiveCreate'
+import CreateSuccess from '../src/components/CreateSuccess'
 
 type Callbacks = { beforeWrite: () => void; onWriteRejected: () => void }
 function saved(): FundLaunchSession {
@@ -41,6 +44,22 @@ describe('Create submission recovery', () => {
     const button = [...host.querySelectorAll('button')].find(item => item.textContent === 'Review and deploy FUND')!
     await act(async () => button.click())
   }
+
+  it('opens the success page after confirmation and links to the created Homerun project', async () => {
+    updateLaunchStatus(salt, 8453, { phase: 'signing' })
+    updateLaunchStatus(salt, 8453, { phase: 'confirmed', hash: `0x${'ab'.repeat(32)}`, projectId: '42' })
+    await act(async () => root.render(<FundDeploy />))
+    expect(navigate.replace).toHaveBeenCalledWith('/create/success')
+    await act(async () => root.render(<CreateSuccess />))
+    expect(host.textContent).toContain('Project created successfully')
+    expect(host.querySelector('a')?.getAttribute('href')).toBe('/project/8453/42')
+  })
+
+  it('does not claim success for an unfinished deployment', async () => {
+    await act(async () => root.render(<CreateSuccess />))
+    expect(host.textContent).not.toContain('Project created successfully')
+    expect(host.querySelector('a')?.getAttribute('href')).toBe('/create/recover')
+  })
 
   it('drops an unsigned four-chain plan when the user selects only Base', async () => {
     localStorage.removeItem(FUND_LAUNCH_KEY)
