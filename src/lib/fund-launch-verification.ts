@@ -1,6 +1,7 @@
-import { jbControllerAbi, jbProjectsAbi, jbDirectoryAbi, jbMultiTerminalAbi, jbFundAccessLimitsAbi, jbOmnichainDeployerAbi, jbPricesAbi, USDC_ADDRESSES, type JBChainId } from '@bananapus/nana-sdk-core'
+import { erc2771ForwarderAbi, jbControllerAbi, jbProjectsAbi, jbDirectoryAbi, jbMultiTerminalAbi, jbFundAccessLimitsAbi, jbOmnichainDeployerAbi, jbPricesAbi, USDC_ADDRESSES, type JBChainId } from '@bananapus/nana-sdk-core'
 import { BASE_CURRENCY_USD, tokenCurrencyId, v6Address } from '@bananapus/nana-sdk-core/v6'
 import { decodeEventLog, decodeFunctionData, encodeFunctionData, isAddressEqual, parseAbi, type Address, type PublicClient, type TransactionReceipt } from 'viem'
+import type { RelayrEntry } from './relayr'
 import { buildFundLaunch, initialFundRuleset, type FundLaunchInput, type FundTransaction } from './fund-contracts'
 
 const safeExecutionAbi = parseAbi([
@@ -25,9 +26,20 @@ export async function checkLaunchDeployment(client: PublicClient, request: FundT
 }
 
 /** A Safe service hash mapping is a lookup hint, not proof of the signed call. */
-async function verifyMinedCall(client: PublicClient, request: FundTransaction, input: FundLaunchInput, receipt: TransactionReceipt, safe: boolean, requireSafeSuccess = true): Promise<void> {
+async function verifyMinedCall(client: PublicClient, request: FundTransaction, input: FundLaunchInput, receipt: TransactionReceipt, safe: boolean, requireSafeSuccess = true, forwarded?: RelayrEntry): Promise<void> {
   const tx = await client.getTransaction({ hash: receipt.transactionHash })
   const data = encodeFunctionData(request)
+  if (forwarded) {
+    const forwarder = v6Address('ERC2771Forwarder', request.chainId as JBChainId)
+    if (safe || forwarded.chain !== request.chainId || !isAddressEqual(forwarded.target, forwarder)
+      || !tx.to || !isAddressEqual(tx.to, forwarder) || tx.input !== forwarded.data || tx.value !== BigInt(forwarded.value)) throw new Error('The relayed transaction does not match the signed forwarder execution.')
+    const decoded = decodeFunctionData({ abi: erc2771ForwarderAbi, data: tx.input })
+    if (decoded.functionName !== 'execute') throw new Error('Unsupported forwarder execution.')
+    const inner = decoded.args[0]
+    if (!isAddressEqual(inner.from, input.sender) || !isAddressEqual(inner.to, request.address)
+      || inner.data.toLowerCase() !== data.toLowerCase() || inner.value !== request.value || tx.value !== inner.value) throw new Error('The relayed deployment differs from the saved project configuration.')
+    return
+  }
   if (!safe) {
     if (!isAddressEqual(tx.from, input.sender) || !tx.to || !isAddressEqual(tx.to, request.address)
       || tx.value !== (request.value ?? 0n) || tx.input.toLowerCase() !== data.toLowerCase()) throw new Error('The mined transaction does not match this reviewed deployment.')
@@ -63,14 +75,14 @@ export async function verifyFailedFundLaunch(client: PublicClient, request: Fund
 }
 
 /** A successful receipt alone does not establish that the intended project exists. */
-export async function verifyFundLaunch(client: PublicClient, request: FundTransaction, input: FundLaunchInput, receipt: TransactionReceipt, safe: boolean): Promise<bigint> {
+export async function verifyFundLaunch(client: PublicClient, request: FundTransaction, input: FundLaunchInput, receipt: TransactionReceipt, safe: boolean, forwarded?: RelayrEntry): Promise<bigint> {
   if (receipt.status !== 'success') throw new Error('The deployment transaction reverted.')
   if (await client.getChainId() !== request.chainId) throw new Error('RPC returned the wrong chain.')
   const expected = buildFundLaunch(input).requests.find(value => value.chainId === request.chainId)
   if (!expected || !isAddressEqual(expected.address, request.address) || expected.value !== request.value || encodeFunctionData(expected) !== encodeFunctionData(request)) throw new Error('This request does not match the saved FUND deployment plan.')
   const block = await client.getBlock({ blockNumber: receipt.blockNumber })
   if (block.hash?.toLowerCase() !== receipt.blockHash.toLowerCase()) throw new Error('The deployment receipt is no longer in the canonical chain. Check confirmation again.')
-  await verifyMinedCall(client, request, input, receipt, safe)
+  await verifyMinedCall(client, request, input, receipt, safe, true, forwarded)
   const chainId = request.chainId as JBChainId
   const controller = v6Address('JBController', chainId)
   const projects = v6Address('JBProjects', chainId)

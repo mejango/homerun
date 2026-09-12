@@ -11,9 +11,11 @@ import { wagmiConfig } from '@/providers/Providers'
 import { WalletButton } from './WalletButton'
 import CreateFlow, { type CreateValues } from './CreateFlow'
 import { buildFundLaunch, type FundTransaction } from '@/lib/fund-contracts'
-import { FUND_LAUNCH_KEY, decodeLaunchSession, encodeLaunchSession, saveLaunch, updateLaunchStatus, refreshLaunchCreationFee, archiveLaunch, sameSender, type FundLaunchSession, type LaunchStatus } from '@/lib/fund-launch-session'
+import { FUND_LAUNCH_KEY, decodeLaunchSession, encodeLaunchSession, saveLaunch, updateLaunchStatus, refreshLaunchCreationFee, archiveLaunch, loadLaunchSession, sameSender, type FundLaunchSession, type LaunchStatus } from '@/lib/fund-launch-session'
 import { checkLaunchDeployment, verifyFundLaunch, verifyFailedFundLaunch } from '@/lib/fund-launch-verification'
 import { publishFundProjectMetadata } from '@/lib/publish-fund-project-metadata'
+import { runRelayrLaunch } from '@/lib/fund-launch-relayr'
+import { displayChainName } from '@/lib/chainDisplay'
 import { SUPPORTED_CHAINS } from '@/lib/chains'
 import { plannedNetworks } from '../../web/create-networks.mjs'
 import { isSafeConnection, waitForSafeExecutionHash } from '@/lib/safe-connector'
@@ -25,7 +27,8 @@ function publicClient(chainId: number): PublicClient {
   return client as PublicClient
 }
 
-function LaunchChain({ session, request, status, update, refreshFee }: {
+function LaunchChain({ session, request, status, update, refreshFee, runId = 0, onStopped }: {
+  runId?: number; onStopped?: () => void
   session: FundLaunchSession; request: FundTransaction; status: LaunchStatus; update: (status: LaunchStatus, expectedPhase?: LaunchStatus['phase']) => void; refreshFee: (fee: bigint) => void
 }) {
   const tx = useSafeTx(request.chainId)
@@ -48,11 +51,6 @@ function LaunchChain({ session, request, status, update, refreshFee }: {
     } catch (cause) { setError(`Confirmation is unresolved. Keep this launch saved and check again. ${message(cause)}`) }
     finally { verifyLock.current = false; setVerifying(false) }
   }
-  useEffect(() => {
-    if (tx.phase === 'success' && tx.receipt && status.phase !== 'confirmed') void verify(status.hash ?? tx.receipt.transactionHash, status.safe ?? false, tx.receipt.transactionHash)
-  // Verification is triggered only for a newly confirmed hash; persisted progress is explicit below.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tx.phase, tx.receipt?.transactionHash])
 
   async function submitLaunch() {
     setError('')
@@ -73,9 +71,9 @@ function LaunchChain({ session, request, status, update, refreshFee }: {
           update(status, 'signing')
           submissionAttempted = false
         },
-        reviewNotice: 'Creates only the FUND fundraising Juicebox. The owner can change future rules. INCOME, operator success tokens, and asset withdrawals are not created by this transaction.',
+        reviewNotice: 'Creates only the FUND fundraising Juicebox. The owner can change future rules. INCOME, Owner success tokens, and asset withdrawals are not created by this transaction.',
       })
-      if (hash) update({ phase: 'pending', hash, safe })
+      if (hash) { update({ phase: 'pending', hash, safe }); await verify(hash, safe) }
       else if (submissionAttempted) setError('The wallet did not return a transaction hash. Check your wallet history before trying another deployment.')
     } catch (cause) { setError(message(cause)) }
   }
@@ -86,6 +84,18 @@ function LaunchChain({ session, request, status, update, refreshFee }: {
       await submitLaunch()
     })
   }
+  const lastRun = useRef(0)
+  useEffect(() => {
+    if (!runId || lastRun.current === runId) return
+    lastRun.current = runId
+    void (async () => {
+      if (status.phase === 'pending' && status.hash) await verify(status.hash, status.safe ?? false, status.executionHash)
+      else if (status.phase === 'ready' || status.phase === 'reverted') await launch()
+      if (loadLaunchSession()?.statuses[request.chainId]?.phase !== 'confirmed') onStopped?.()
+    })().catch(() => onStopped?.())
+  // One explicit Create/Continue gesture starts each destination once.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runId])
   return <section className="contract-panel">
     <h3>{chain.name}</h3>
     <p role="status">{status.phase === 'confirmed' ? 'FUND deployment verified onchain.' : status.phase === 'pending' ? status.safe ? 'Safe proposal awaiting execution.' : 'Transaction submitted; confirmation pending.' : status.phase === 'signing' ? 'Deployment review or wallet confirmation in progress.' : status.phase === 'reverted' ? 'The deployment reverted. No project was created by this transaction.' : 'Ready for transaction review.'}</p>
@@ -105,6 +115,10 @@ export function FundDeploy({ values }: { values?: CreateValues }) {
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState('')
   const [preparing, setPreparing] = useState(false)
+  const [running, setRunning] = useState(false)
+  const [progress, setProgress] = useState('')
+  const [runId, setRunId] = useState(0)
+  const busyRef = useRef(false)
   useEffect(() => {
     try { const saved = localStorage.getItem(FUND_LAUNCH_KEY); if (saved) setSession(decodeLaunchSession(saved)) }
     catch (cause) { setError(message(cause)) }
@@ -116,9 +130,31 @@ export function FundDeploy({ values }: { values?: CreateValues }) {
     window.addEventListener('storage', sync); return () => window.removeEventListener('storage', sync)
   }, [])
 
-  const persist = (next: FundLaunchSession) => { setSession(saveLaunch(next)) }
+  const persist = (next: FundLaunchSession) => { const saved = saveLaunch(next); setSession(saved); return saved }
+  async function run(next: FundLaunchSession) {
+    if (busyRef.current) return
+    busyRef.current = true; setRunning(true); setError('')
+    let directStarted = false
+    try {
+      sameSender(getAccount(wagmiConfig).address, next.input.sender)
+      if (!next.transport && next.input.chainIds.length > 1 && !isSafeConnection(wagmiConfig) && Object.values(next.statuses).every(status => status.phase === 'ready')) {
+        next = persist({ ...next, transport: 'relayr' })
+      }
+      if (next.transport === 'relayr') {
+        await runRelayrLaunch({ session: next, account: next.input.sender, onStatus: () => setSession(loadLaunchSession()), onProgress: setProgress })
+        setProgress('Your project is created on every selected chain.')
+      } else {
+        setProgress('Confirm the deployment in your wallet.')
+        directStarted = true
+        setRunId(value => value + 1)
+        return
+      }
+    } catch (cause) { setError(message(cause)) }
+    finally { if (!directStarted) { busyRef.current = false; setRunning(false); setSession(loadLaunchSession()) } }
+  }
+  function stopDirect() { busyRef.current = false; setRunning(false) }
   async function prepare() {
-    if (!address || !values) return
+    if (!address || !values || preparing || busyRef.current) return
     setPreparing(true); setError('')
     try {
       if (localStorage.getItem(FUND_LAUNCH_KEY)) throw new Error('A saved launch already exists. Reload to resume it.')
@@ -141,7 +177,9 @@ export function FundDeploy({ values }: { values?: CreateValues }) {
       }
       const built = buildFundLaunch(input)
       await Promise.all(built.requests.map(request => checkLaunchDeployment(publicClient(request.chainId), request)))
-      persist({ version: 1, name: values.name, input, statuses: Object.fromEntries(chainIds.map((id: number) => [id, { phase: 'ready' as const }])) })
+      const next = persist({ version: 1, name: values.name, input, transport: chainIds.length > 1 && !isSafeConnection(wagmiConfig) ? 'relayr' : 'direct', statuses: Object.fromEntries(chainIds.map((id: number) => [id, { phase: 'ready' as const }])) })
+      setPreparing(false)
+      await run(next)
     } catch (cause) { setError(message(cause)) }
     finally { setPreparing(false) }
   }
@@ -167,17 +205,29 @@ export function FundDeploy({ values }: { values?: CreateValues }) {
       persist({ ...imported, statuses })
     } catch (cause) { setError(message(cause)) }
   }
-  return <div className="contract-panel">
-    <h2>Launch the FUND raise</h2>
-    <p>Create the initial fundraising Juicebox. Contributions issue 10,000 FUND per US dollar. The initial cash-out tax is 10%; the owner can change future rules. Asset price and cash reserve remain modeling estimates, with no withdrawal allowance created here.</p>
-    <p>INCOME and the operator’s success allocation are separate later actions. Selecting several networks links their FUND projects using the standard Juicebox bridges; each network requires its own confirmed deployment.</p>
-    <WalletButton />
-    {!session && <><div className="contract-actions">{values && <button type="button" disabled={!address || preparing || !loaded || !!error} onClick={() => void prepare()}>{preparing ? 'Preparing the deployment…' : 'Save metadata and prepare deployment'}</button>}{error && <button type="button" onClick={() => setError('')}>Try again</button>}</div><label>Restore a deployment record<input type="file" accept="application/json,.json" disabled={!loaded || preparing} onChange={event => { const file = event.target.files?.[0]; if (file) void restore(file); event.target.value = '' }} /></label></>}
-    {session && <><p><strong>{session.name}</strong>. Owner <code>{session.input.owner}</code></p><p>The saved deployment uses the settings prepared here. Editing the form does not change an in-progress launch.</p><button type="button" onClick={download}>Download deployment record</button>
-      {requests.map(request => <LaunchChain key={`${session.input.salt}:${request.chainId}`} session={session} request={request} status={session.statuses[request.chainId]} update={(status, expectedPhase) => setSession(updateLaunchStatus(session.input.salt, request.chainId, status, expectedPhase))} refreshFee={fee => setSession(refreshLaunchCreationFee(session.input.salt, request.chainId, fee))} />)}
-      {Object.values(session.statuses).every(status => status.phase === 'confirmed') && <button type="button" onClick={() => { try { archiveLaunch(session.input.salt); setSession(null) } catch (cause) { setError(message(cause)) } }}>Finish this launch and start another</button>}
-    </>}
+  const complete = !!session && Object.values(session.statuses).every(status => status.phase === 'confirmed')
+  const activeChain = session?.input.chainIds.find(id => session.statuses[id].phase !== 'confirmed')
+  useEffect(() => { if (complete) { busyRef.current = false; setRunning(false) } }, [complete])
+  return <div className="fund-launch">
+    <h2 className="text-xl">Create your project</h2>
+    <p>Create the FUND raise on your selected chains. INCOME and the Owner’s success allocation are separate later actions.</p>
+    {!address && <WalletButton />}
+    {!session ? <button type="button" className="create-primary" disabled={!address || preparing || !loaded || !!error} onClick={() => void prepare()}>{preparing ? 'Preparing your project…' : 'Create project'}</button>
+      : <>
+        <ul className="fund-launch-progress" aria-label="Deployment progress">{session.input.chainIds.map(id => <li key={id}><span>{displayChainName(id)}</span><span>{({ ready: 'Ready', signing: 'Confirm in wallet', authorized: 'Signed', pending: session.statuses[id].safe ? 'Awaiting Safe execution' : 'Deploying', confirmed: 'Created', reverted: 'Needs retry', unresolved: 'Checking execution', expired: 'Signature expired' })[session.statuses[id].phase]}</span></li>)}</ul>
+        {progress && <p role="status">{progress}</p>}
+        {!complete && <button type="button" className="create-primary" disabled={running || preparing || !address} onClick={() => void run(session)}>{running ? 'Creating your project…' : 'Continue creation'}</button>}
+        {complete && <a className="create-primary" href={`/project/${session.input.chainIds[0]}/${session.statuses[session.input.chainIds[0]].projectId}`}>Open project ↗</a>}
+      </>}
     {(error || invalid) && <p role="alert">{error || invalid}</p>}
+    {!session && error && <button type="button" onClick={() => setError('')}>Try again</button>}
+    <details className="fund-launch-recovery"><summary>Deployment recovery</summary>
+      {!session ? <label>Restore a deployment record<input type="file" accept="application/json,.json" disabled={!loaded || preparing} onChange={event => { const file = event.target.files?.[0]; if (file) void restore(file); event.target.value = '' }} /></label>
+        : <><p>{session.name}. Owner <code>{session.input.owner}</code>. This saved launch retains its original settings.</p><button type="button" onClick={download}>Download deployment record</button>
+          {session.transport !== 'relayr' && requests.map(request => <LaunchChain key={`${session.input.salt}:${request.chainId}`} session={session} request={request} status={session.statuses[request.chainId]} runId={running && activeChain === request.chainId ? runId : 0} onStopped={stopDirect} update={(status, expectedPhase) => setSession(updateLaunchStatus(session.input.salt, request.chainId, status, expectedPhase))} refreshFee={fee => setSession(refreshLaunchCreationFee(session.input.salt, request.chainId, fee))} />)}
+          {complete && <button type="button" onClick={() => { try { archiveLaunch(session.input.salt); setSession(null); setProgress('') } catch (cause) { setError(message(cause)) } }}>Finish this launch and start another</button>}
+        </>}
+    </details>
   </div>
 }
 

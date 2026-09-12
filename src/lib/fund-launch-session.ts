@@ -1,9 +1,11 @@
 import { type Address, type Hex } from 'viem'
+import type { LaunchRelayrJournal } from './fund-launch-relayr'
 import { buildFundLaunch, type FundLaunchInput } from './fund-contracts'
 
 export const FUND_LAUNCH_KEY = 'homerun:fund-launch:v1'
 export type LaunchStatus = {
-  phase: 'ready' | 'signing' | 'pending' | 'confirmed' | 'reverted'
+  phase: 'ready' | 'signing' | 'pending' | 'confirmed' | 'reverted' | 'authorized' | 'unresolved' | 'expired'
+  error?: string
   hash?: Hex
   safe?: boolean
   /** Actual receipt hash, kept separate from a pending Safe proposal identifier. */
@@ -12,6 +14,9 @@ export type LaunchStatus = {
 }
 export type FundLaunchSession = {
   version: 1
+  transport?: 'direct' | 'relayr'
+  relayr?: LaunchRelayrJournal
+  paymentChainId?: number
   name: string
   input: FundLaunchInput
   statuses: Record<number, LaunchStatus>
@@ -40,7 +45,7 @@ export function decodeLaunchSession(raw: string): FundLaunchSession {
   for (const id of input.chainIds) {
     const status = value.statuses?.[id]
     if (typeof input.creationFees?.[id] !== 'bigint' || input.creationFees[id] < 0n || !status
-      || !['ready', 'signing', 'pending', 'confirmed', 'reverted'].includes(status.phase)
+      || !['ready', 'signing', 'pending', 'confirmed', 'reverted', ...(value.transport === 'relayr' ? ['authorized', 'unresolved', 'expired'] : [])].includes(status.phase)
       || (status.hash !== undefined && !/^0x[\da-f]{64}$/i.test(status.hash))
       || (status.executionHash !== undefined && !/^0x[\da-f]{64}$/i.test(status.executionHash))
       || (status.safe !== undefined && typeof status.safe !== 'boolean')
@@ -50,7 +55,15 @@ export function decodeLaunchSession(raw: string): FundLaunchSession {
       || (status.phase === 'confirmed' && (!status.hash || !/^[1-9]\d*$/.test(status.projectId ?? '')))) throw new Error('Saved launch progress is incomplete. Verify the submitted transaction before continuing.')
     if (status.projectId !== undefined && (typeof status.projectId !== 'string' || !/^[1-9]\d*$/.test(status.projectId) || BigInt(status.projectId) >= 1n << 256n)) throw new Error('Saved project ID is invalid.')
   }
+  if (value.transport !== undefined && !['direct', 'relayr'].includes(value.transport)) throw new Error('Invalid launch transport.')
+  if (value.relayr && value.transport !== 'relayr') throw new Error('Relayed authorizations cannot use direct deployment.')
   return value
+}
+
+export function loadLaunchSession(_options?: { strict?: boolean }): FundLaunchSession | null {
+  const raw = localStorage.getItem(FUND_LAUNCH_KEY)
+  try { return raw ? decodeLaunchSession(raw) : null }
+  catch (cause) { throw new Error('Saved launch authorizations could not be read. Keep the original deployment record before continuing.', { cause }) }
 }
 
 function frozenInput(session: FundLaunchSession): string {
@@ -59,7 +72,10 @@ function frozenInput(session: FundLaunchSession): string {
 
 const transitions: Record<LaunchStatus['phase'], readonly LaunchStatus['phase'][]> = {
   ready: ['ready', 'signing'],
-  signing: ['signing', 'pending', 'confirmed', 'reverted'],
+  authorized: ['authorized', 'signing', 'confirmed', 'reverted', 'expired', 'unresolved'],
+  unresolved: ['unresolved', 'signing', 'confirmed', 'reverted', 'expired'],
+  expired: ['expired', 'signing'],
+  signing: ['signing', 'pending', 'confirmed', 'reverted', 'authorized', 'unresolved', 'expired'],
   pending: ['pending', 'confirmed', 'reverted'],
   confirmed: ['confirmed'],
   reverted: ['reverted', 'signing'],
@@ -78,10 +94,12 @@ export function saveLaunch(session: FundLaunchSession, options: { cancelledChain
   if (existing) {
     const previous = decodeLaunchSession(existing)
     if (previous.input.salt !== validated.input.salt) throw new Error('Another FUND launch is already saved. Finish that launch before preparing another.')
+    if ((previous.transport ?? 'direct') !== (validated.transport ?? 'direct') && !(validated.transport === 'relayr' && !previous.relayr && Object.values(previous.statuses).every(status => status.phase === 'ready'))) throw new Error('A submitted launch cannot change transport.')
+    if (previous.relayr?.published && !validated.relayr) throw new Error('Published authorizations must be retained for recovery.')
     if (frozenInput(previous) !== frozenInput(validated)) throw new Error('A saved launch plan is immutable. Finish it before changing deployment parameters.')
     for (const chainId of previous.input.chainIds) {
       assertTransition(previous.statuses[chainId], validated.statuses[chainId], options.cancelledChainId === chainId)
-      if (previous.input.creationFees[chainId] !== validated.input.creationFees[chainId] && !['ready', 'reverted'].includes(previous.statuses[chainId].phase)) throw new Error('A submitted or unresolved deployment fee cannot change.')
+      if (previous.input.creationFees[chainId] !== validated.input.creationFees[chainId] && !['ready', 'reverted'].includes(previous.statuses[chainId].phase) && !(validated.transport === 'relayr' && validated.relayr?.phase === 'signing')) throw new Error('A submitted or unresolved deployment fee cannot change.')
     }
   }
   localStorage.setItem(FUND_LAUNCH_KEY, encodeLaunchSession(validated))

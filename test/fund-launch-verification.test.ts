@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { jbControllerAbi, jbProjectsAbi, USDC_ADDRESSES, type JBChainId } from '@bananapus/nana-sdk-core'
+import { erc2771ForwarderAbi, jbControllerAbi, jbProjectsAbi, USDC_ADDRESSES, type JBChainId } from '@bananapus/nana-sdk-core'
 import { tokenCurrencyId, v6Address } from '@bananapus/nana-sdk-core/v6'
 import { encodeAbiParameters, encodeEventTopics, encodeFunctionData, parseAbi, zeroAddress, type Abi, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import { buildFundLaunch, initialFundRuleset, type FundLaunchInput } from '../src/lib/fund-contracts'
@@ -54,6 +54,26 @@ function fixture(options: { linked?: boolean; safe?: boolean; future?: boolean; 
 }
 
 describe('FUND launch confirmation', () => {
+  it('verifies relayed launches against the signed call and every project postcondition', async () => {
+    const f = fixture({ linked: true })
+    const target = v6Address('ERC2771Forwarder', 8453)
+    const data = encodeFunctionData({ abi: erc2771ForwarderAbi, functionName: 'execute', args: [{
+      from: owner, to: f.request.address, value: f.request.value!, gas: 2_000_000n,
+      deadline: 2000, data: encodeFunctionData(f.request), signature: `0x${'dd'.repeat(65)}`,
+    }] })
+    const entry = { chain: 8453, target, data, value: f.request.value!.toString() }
+    Object.assign(f.tx, { from: other, to: target, input: data })
+    expect(await verifyFundLaunch(f.client, f.request, f.input, f.receipt, false, entry)).toBe(7n)
+    f.values.ownerOf = other
+    await expect(verifyFundLaunch(f.client, f.request, f.input, f.receipt, false, entry)).rejects.toThrow()
+    f.values.ownerOf = owner
+    f.values.uriOf = 'ipfs://wrong'
+    await expect(verifyFundLaunch(f.client, f.request, f.input, f.receipt, false, entry)).rejects.toThrow()
+    f.values.uriOf = f.input.projectUri
+    await expect(verifyFundLaunch(f.client, f.request, { ...f.input, sender: other }, f.receipt, false, entry)).rejects.toThrow(/saved project configuration/)
+    Object.assign(f.tx, { to: other })
+    await expect(verifyFundLaunch(f.client, f.request, f.input, f.receipt, false, entry)).rejects.toThrow(/signed forwarder/)
+  })
   it('checks current fee, correct RPC and deployed code before signing', async () => {
     const f = fixture()
     await checkLaunchDeployment(f.client, f.request)

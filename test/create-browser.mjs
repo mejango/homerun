@@ -213,8 +213,8 @@ try {
     assert.match(await page.locator('#create-review').textContent(), /Neighborhood Workshop/);
     assert.match(await page.locator('#create-review').textContent(), /\$1,025\.65/);
     assert.equal(await page.locator('#create-next').count(), 0);
-    await page.getByRole('heading', { name: 'Launch the FUND raise', exact: true }).waitFor();
-    assert.equal(await page.getByRole('button', { name: 'Save metadata and prepare deployment', exact: true }).isDisabled(), true);
+    await page.getByRole('heading', { name: 'Create your project', exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Create project', exact: true }).isDisabled(), true);
     assert.equal(await environment().inputValue(), 'production');
     assert.deepEqual(await environment().locator('option').allTextContents(), ['Mainnets', 'Testnets']);
     assert.deepEqual(await selectedNetworks(), networkIDs);
@@ -322,7 +322,7 @@ try {
     assert.equal(setup.income.minimumRevenue.consequences, consequences);
   });
   await check('Live entry requires a wallet and sign-in cannot create a fake deployment', async () => {
-    const prepare = page.getByRole('button', { name: 'Save metadata and prepare deployment', exact: true });
+    const prepare = page.getByRole('button', { name: 'Create project', exact: true });
     assert.equal(await prepare.isDisabled(), true);
     assert.match(await page.locator('#create-contract-actions').textContent(), /INCOME.*separate later actions/);
     assert.equal(await page.locator('#create-next').count(), 0);

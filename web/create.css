@@ -253,3 +253,15 @@
 .fund-ownership-legend i { width: 8px; height: 8px; flex-shrink: 0; border-radius: 2px; }
 .fund-operator-swatch { background: #42674d; }
 .fund-contributor-swatch { background: #b1bd91; }
+
+.fund-launch { display: grid; gap: 16px; margin-top: 24px; }
+.fund-launch > h2 { margin: 0; font: 500 20px/1.3 var(--sans); }
+.fund-launch > p { margin: 0; color: #647060; font-size: 13px; line-height: 1.6; }
+.fund-launch > .create-primary { justify-self: start; }
+.fund-launch-progress { display: grid; gap: 10px; padding: 0; margin: 0; list-style: none; font-size: 13px; }
+.fund-launch-progress li { display: flex; justify-content: space-between; gap: 16px; }
+.fund-launch-progress li > span:last-child { color: #647060; text-align: right; }
+.fund-launch-recovery { margin-top: 8px; font-size: 12px; }
+.fund-launch-recovery > summary { cursor: pointer; color: #647060; }
+.fund-launch-recovery button { margin: 8px 8px 0 0; }
+.fund-launch-recovery > label { display: grid; gap: 8px; margin-top: 12px; }
