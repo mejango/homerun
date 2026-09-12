@@ -46,6 +46,16 @@ describe('Create submission recovery', () => {
     await act(async () => button.click())
   }
 
+  it('cancels an unsubmitted launch and preserves the setup draft', async () => {
+    localStorage.setItem('homerun:create-draft:v1', 'keep this draft')
+    await act(async () => root.render(<FundDeploy />))
+    const cancel = [...host.querySelectorAll('button')].find(button => button.textContent === 'Cancel creation and edit details')!
+    await act(async () => cancel.click())
+    expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()
+    expect(localStorage.getItem('homerun:create-draft:v1')).toBe('keep this draft')
+    expect(host.textContent).toContain('Create project')
+  })
+
   it('shows pre-wallet errors outside the collapsed recovery controls', async () => {
     runtime.txError = 'Insufficient funds for gas'
     await act(async () => root.render(<FundDeploy />))

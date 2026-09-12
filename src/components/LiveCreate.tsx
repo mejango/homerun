@@ -12,7 +12,7 @@ import { wagmiConfig } from '@/providers/Providers'
 import { WalletButton } from './WalletButton'
 import CreateFlow, { type CreateValues } from './CreateFlow'
 import { buildFundLaunch, type FundTransaction } from '@/lib/fund-contracts'
-import { FUND_LAUNCH_KEY, discardUnsignedLaunch, decodeLaunchSession, encodeLaunchSession, saveLaunch, updateLaunchStatus, refreshLaunchCreationFee, archiveLaunch, loadLaunchSession, sameSender, type FundLaunchSession, type LaunchStatus } from '@/lib/fund-launch-session'
+import { FUND_LAUNCH_KEY, canCancelLaunch, cancelUnsubmittedLaunch, discardUnsignedLaunch, decodeLaunchSession, encodeLaunchSession, saveLaunch, updateLaunchStatus, refreshLaunchCreationFee, archiveLaunch, loadLaunchSession, sameSender, type FundLaunchSession, type LaunchStatus } from '@/lib/fund-launch-session'
 import { checkLaunchDeployment, verifyFundLaunch, verifyFailedFundLaunch } from '@/lib/fund-launch-verification'
 import { publishFundProjectMetadata } from '@/lib/publish-fund-project-metadata'
 import { runRelayrLaunch } from '@/lib/fund-launch-relayr'
@@ -250,6 +250,9 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
         })}</ul>
         {progress && <p role="status">{progress}</p>}
         {!complete && <button type="button" className="create-primary" disabled={running || preparing || !address} onClick={() => void run(session)}>{running ? 'Creating your project…' : 'Continue creation'}</button>}
+        {!complete && canCancelLaunch(session) && <button type="button" className="quiet-button" disabled={running || preparing} onClick={() => {
+          void cancelUnsubmittedLaunch(session.input.salt).then(() => { setSession(null); setError(''); setProgress(''); onLockChange?.(null) }).catch(cause => setError(message(cause)))
+        }}>Cancel creation and edit details</button>}
         {complete && <a className="create-primary" href={`/project/${session.input.chainIds[0]}/${session.statuses[session.input.chainIds[0]].projectId}`}>Open project ↗</a>}
       </>}
     {(error || invalid) && <p role="alert">{error || invalid}</p>}

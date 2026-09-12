@@ -153,3 +153,26 @@ export function discardUnsignedLaunch(salt: Hex): boolean {
   localStorage.removeItem(FUND_LAUNCH_KEY)
   return true
 }
+
+export function canCancelLaunch(session: FundLaunchSession): boolean {
+  const phases = session.transport === 'relayr' ? ['ready', 'signing', 'authorized'] : ['ready']
+  return Object.values(session.statuses).every(status => phases.includes(status.phase) && !status.hash && !status.executionHash)
+    && (!session.relayr || (['signing', 'quoting'].includes(session.relayr.phase)
+      && !session.relayr.published && !session.relayr.quote && !session.relayr.paymentHash
+      && !session.relayr.superseded?.length && !session.relayr.records.length))
+}
+
+/** Discard only unpublished work, while excluding writers in every browser tab. */
+export async function cancelUnsubmittedLaunch(salt: Hex): Promise<void> {
+  if (!navigator.locks) throw new Error('This browser cannot coordinate cancellation across tabs.')
+  await navigator.locks.request('homerun:fund-launch', { ifAvailable: true }, async relayLock => {
+    if (!relayLock) throw new Error('Finish or close the active wallet request before cancelling.')
+    await navigator.locks.request(`homerun:fund-launch:${salt}`, { ifAvailable: true }, directLock => {
+      if (!directLock) throw new Error('Finish or close the active wallet request before cancelling.')
+      const session = requireLaunch(salt)
+      if (!canCancelLaunch(session)) throw new Error('This launch may already be submitted. Resume it to check its execution before starting another.')
+      localStorage.setItem(`${FUND_LAUNCH_KEY}:cancelled:${salt}`, encodeLaunchSession(session))
+      localStorage.removeItem(FUND_LAUNCH_KEY)
+    })
+  })
+}

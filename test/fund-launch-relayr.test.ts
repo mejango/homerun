@@ -41,7 +41,7 @@ vi.mock('@/lib/relayr', async importOriginal => ({
 
 import { relayrPaymentDetails, RELAYR_PAYMENT_ADDRESS, RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_SELECTOR } from '@/lib/relayr'
 import { canRelayrLaunch, runRelayrLaunch } from '@/lib/fund-launch-relayr'
-import { FUND_LAUNCH_KEY, loadLaunchSession, saveLaunch as saveLaunchSession, type FundLaunchSession as LaunchSession } from '@/lib/fund-launch-session'
+import { FUND_LAUNCH_KEY, canCancelLaunch, cancelUnsubmittedLaunch, loadLaunchSession, saveLaunch as saveLaunchSession, type FundLaunchSession as LaunchSession } from '@/lib/fund-launch-session'
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111' as Address
 const TARGET = '0x2222222222222222222222222222222222222222' as Address
@@ -514,4 +514,20 @@ it('rejects arbitrary contract wallet code before requesting signatures', async 
   clients.get(1)!.getCode.mockResolvedValue('0x6000')
   await expect(run()).rejects.toThrow(/contract wallet/)
   expect(m.forward).not.toHaveBeenCalled()
+})
+
+
+it('cancels a closed pre-signature review but preserves published authorizations', async () => {
+  const draft = session()
+  draft.statuses[1] = { phase: 'signing' }
+  draft.relayr = { account: ACCOUNT, phase: 'signing', signed: [], records: [] }
+  saveLaunchSession(draft)
+  expect(canCancelLaunch(draft)).toBe(true)
+  await cancelUnsubmittedLaunch(draft.input.salt)
+  expect(loadLaunchSession()).toBeNull()
+  draft.relayr.published = true
+  saveLaunchSession(draft)
+  expect(canCancelLaunch(draft)).toBe(false)
+  await expect(cancelUnsubmittedLaunch(draft.input.salt)).rejects.toThrow(/already be submitted/)
+  expect(loadLaunchSession()).not.toBeNull()
 })
