@@ -203,7 +203,7 @@ function ItemEditor({ initial, categories, currencyLocked, maximumItems, onClose
 
   function close() {
     if (uploading) return
-    if (dirty) setDiscard(true)
+    if (dirty && !discard) setDiscard(true)
     else onClose()
   }
 
@@ -212,7 +212,7 @@ function ItemEditor({ initial, categories, currencyLocked, maximumItems, onClose
     subtitle={discard ? 'Your existing demo inventory will stay as it is.' : review ? 'Check each item before saving it to your demo inventory.' : 'Stage your items, then review how they will appear in the shop.'}
     onClose={close} busy={!!uploading} maxWidth="max-w-3xl"
     footer={<div className="ds-footer">
-      {discard ? <><button type="button" className="ds-button ds-button-secondary" onClick={() => setDiscard(false)}>Keep editing</button><button type="button" className="ds-button ds-button-primary" onClick={onClose}>Discard changes</button></>
+      {discard ? <button type="button" className="ds-button ds-button-secondary" onClick={() => setDiscard(false)}>Keep editing</button>
         : review ? <><button type="button" className="ds-button ds-button-secondary" onClick={() => setReview(false)}>Back to editor</button><button type="button" className="ds-button ds-button-primary" onClick={() => onSave(items.map(item => ({ ...item, name: item.name.trim(), description: item.description.trim(), category: item.category.trim(), splits: item.splits.map(split => ({ ...split })) })), currency)}>{initial.mode === 'edit' ? 'Save demo changes' : items.length === 1 ? 'Add item to demo shop' : `Add ${items.length} items to demo shop`}</button></>
           : <><button type="button" className="ds-button ds-button-secondary" disabled={!!uploading} onClick={close}>Cancel</button><button type="submit" form={formId} className="ds-button ds-button-primary" disabled={!!uploading}>{uploading ? 'Reading media…' : 'Review items'}</button></>}
     </div>}
