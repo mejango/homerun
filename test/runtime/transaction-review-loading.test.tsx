@@ -67,7 +67,7 @@ function requestReview(title: string) {
 }
 
 function requestFunding() {
-  return api.requireFundingChainSelection([{ chainId: 8453, label: 'Base · 0.001 ETH' }])
+  return api.requireFundingChainSelection([{ chainId: 8453, label: 'Base: 0.001 ETH' }])
 }
 
 function button(label: string) {

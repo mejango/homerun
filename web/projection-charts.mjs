@@ -53,7 +53,7 @@ function historyChart(p, { title, series, note, kind }) {
   const selectedText = row => `Month ${row.month}. ${series.map((item, index) => `${item.name}: ${money(row.values[index])}`).join('. ')}`;
   const ticks = [...new Set([0, Math.round(domain / 2), domain])];
   return `<figure class="projection-chart pc-history" data-projection-chart="history" data-chart-kind="${kind}" data-chart-data="${escape(JSON.stringify(data))}">
-    <figcaption id="${id}">${title}<span>After purchase · months 0–${last.month}${p.phase === 'liquidated' ? ' · before sale' : ''}</span></figcaption>
+    <figcaption id="${id}">${title}<span>After purchase: months 0–${last.month}${p.phase === 'liquidated' ? ': before sale' : ''}</span></figcaption>
     <p class="pc-sr-only" id="${id}-summary">${escape(summary)}</p>
     <div class="pc-plot">
       <div class="pc-y-axis" aria-hidden="true">${[0, .5, 1].map(fraction => `<span style="bottom:${fraction * 100}%">${compactMoney(maximum * fraction)}</span>`).join('')}</div>

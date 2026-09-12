@@ -198,7 +198,7 @@ export function ProjectPayment({ chainId, projectId, tokenLabel, title, context:
     {chainSelector ?? <p className="payment-chain-label mb-2">{tokenLabel === 'FUND' ? 'Fund' : 'Pay'} on {displayChainName(chainId)}</p>}
     <button type="button" className="btn-primary min-h-12 w-full px-5" disabled={paused} onClick={() => setOpen(true)}>{paused ? 'Payments paused' : `Pay on ${displayChainName(chainId)}`}</button>
     {!open && <><Status tx={approval} chainId={chainId} /><Status tx={routerApproval} chainId={chainId} /><Status tx={tx} chainId={chainId} /></>}
-    {open && <ModalShell title={`Pay · ${tokenLabel}`} subtitle={displayChainName(chainId)} onClose={() => setOpen(false)} maxWidth="max-w-lg">
+    {open && <ModalShell title={`Pay: ${tokenLabel}`} subtitle={displayChainName(chainId)} onClose={() => setOpen(false)} maxWidth="max-w-lg">
     <fieldset disabled={busy} className="m-0 min-w-0 border-0 p-0">
       <label className="mb-5 grid gap-2 text-sm">Pay with<select className="min-h-11 rounded border border-[#bfc9b5] bg-white px-3 pr-9" value={context.token} onChange={event => setSelectedToken(event.target.value as Address)}>{(tokenOptions.data?.length ? tokenOptions.data : [accountingContext]).map(option => <option key={option.token} value={option.token}>{option.symbol}</option>)}</select></label>
       <label className="grid gap-2 text-sm">Amount in {context.symbol}<input className="min-h-12 w-full rounded border border-[#bfc9b5] bg-white px-3 text-base" value={input} onChange={event => setInput(event.target.value)} inputMode="decimal" autoComplete="off" /></label>

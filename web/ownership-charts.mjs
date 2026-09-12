@@ -12,7 +12,7 @@ function ownershipRing({ token, total, parts, note, empty }) {
   let offset = 0;
   const segments = visible.map(part => {
     const share = part.value / total * 100;
-    const segment = `<circle class="ownership-segment ownership-${part.kind}" cx="70" cy="70" r="49" pathLength="100" stroke-dasharray="${share} ${100 - share}" stroke-dashoffset="${-offset}"><title>${escape(`${part.label}: ${formatPercent(share)} · ${formatNumber(part.value)} ${token}`)}</title></circle>`;
+    const segment = `<circle class="ownership-segment ownership-${part.kind}" cx="70" cy="70" r="49" pathLength="100" stroke-dasharray="${share} ${100 - share}" stroke-dashoffset="${-offset}"><title>${escape(`${part.label}: ${formatPercent(share)}: ${formatNumber(part.value)} ${token}`)}</title></circle>`;
     offset += share;
     return segment;
   }).join('');

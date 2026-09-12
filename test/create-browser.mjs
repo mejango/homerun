@@ -224,7 +224,7 @@ try {
       await network(id).locator('img').evaluate(img => img.decode());
       assert.equal(await network(id).locator('img').evaluate(img => img.complete && img.naturalWidth > 0 && img.src.endsWith('.svg')), true);
     }
-    assert.match(await page.locator('#create-review').textContent(), /Operator · INCOME incentives/);
+    assert.match(await page.locator('#create-review').textContent(), /Operator: INCOME incentives/);
     const setup = await downloadSetup();
     assert.equal(setup.schemaVersion, 5);
     assert.equal(setup.networkEnvironment, 'production');
@@ -496,7 +496,7 @@ try {
     await currentStep(0);
     for (let index = 0; index < 3; index++) await next();
     assert.deepEqual(await selectedNetworks(), networkIDs);
-    assert.match(await page.locator('#create-review').textContent(), /Operator · INCOME incentives/);
+    assert.match(await page.locator('#create-review').textContent(), /Operator: INCOME incentives/);
     assert.equal(await page.evaluate(() => localStorage.getItem('homerun:created-projects:v1')), null);
   });
   await check('Earlier default allocations migrate once while custom and newly saved splits remain intact', async () => {

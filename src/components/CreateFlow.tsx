@@ -399,8 +399,8 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
                   <p>{String(raw.location || 'Location not specified')}</p>{raw.description && <p>{String(raw.description)}</p>}
                 </section>
                 <section className="review-block"><div><h3>Owner &amp; Operator</h3><button type="button" disabled={locked} onClick={() => navigate(0)}>Edit wallets</button></div>
-                  <dl><div><dt>Owner · program control and FUND allocation</dt><dd className="break-all">{normalized.values.ownerWallet || 'Not specified'}</dd></div>
-                    <div><dt>Operator · INCOME incentives</dt><dd className="break-all">{normalized.values.operatorWallet || 'Not specified'}</dd></div></dl>
+                  <dl><div><dt>Owner: program control and FUND allocation</dt><dd className="break-all">{normalized.values.ownerWallet || 'Not specified'}</dd></div>
+                    <div><dt>Operator: INCOME incentives</dt><dd className="break-all">{normalized.values.operatorWallet || 'Not specified'}</dd></div></dl>
                 </section>
                 <section className="review-block"><div><h3>Minimum revenue</h3><button type="button" disabled={locked} onClick={() => navigate(2)}>Edit income</button></div>
                   <p>{normalized.values.minimumRevenue ? `${money(normalized.values.minimumRevenue)} per month` : 'No minimum specified'}</p>

@@ -241,14 +241,14 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
     {selectionChanged && <p role="alert">This launch already has wallet authorizations for {session!.input.chainIds.map(displayChainName).join(', ')}. Continue completes that saved launch; changing the selection above cannot replace signed requests.</p>}
     {!session ? <button type="button" className="create-primary" disabled={!address || preparing || !loaded || !!error} onClick={() => void prepare()}>{preparing ? 'Preparing your project…' : 'Create project'}</button>
       : <>
-        {signingChain !== undefined && <div className="fund-launch-action" role="status"><strong>Action needed in your wallet</strong><span>Open your wallet and confirm the request for {displayChainName(signingChain)}.</span></div>}
+        {signingChain !== undefined && <div className="fund-launch-action" role="status"><span>Confirm the {displayChainName(signingChain)} request in your wallet.</span></div>}
         <ul className="fund-launch-progress" aria-label="Deployment progress">{session.input.chainIds.map(id => {
           const phase = session.statuses[id].phase
           const needsWallet = signingChain === id
-          const label = ({ ready: running ? 'Queued' : 'Not started', signing: needsWallet ? 'Your turn · Wallet' : 'Resume to check', authorized: '✓ Signed', pending: session.statuses[id].safe ? 'Awaiting Safe execution' : 'Deploying…', confirmed: '✓ Created', reverted: 'Retry needed', unresolved: 'Checking…', expired: 'New signature needed' })[phase]
+          const label = ({ ready: running ? 'Queued' : 'Not started', signing: needsWallet ? 'Awaiting confirmation' : 'Resume to check', authorized: '✓ Signed', pending: session.statuses[id].safe ? 'Awaiting Safe execution' : 'Deploying…', confirmed: '✓ Created', reverted: 'Retry needed', unresolved: 'Checking…', expired: 'New signature needed' })[phase]
           return <li key={id} data-action={needsWallet || undefined}><span>{displayChainName(id)}</span><span className="fund-launch-badge" data-state={needsWallet ? 'action' : phase}>{label}</span></li>
         })}</ul>
-        {progress && <p role="status">{progress}</p>}
+        {progress && signingChain === undefined && <p role="status">{progress}</p>}
         {!complete && <button type="button" className="create-primary" disabled={running || preparing || !address} onClick={() => void run(session)}>{running ? 'Creating your project…' : 'Continue creation'}</button>}
         {!complete && canCancelLaunch(session) && <button type="button" className="quiet-button" disabled={running || preparing} onClick={() => {
           void cancelUnsubmittedLaunch(session.input.salt).then(() => { setSession(null); setError(''); setProgress(''); onLockChange?.(null) }).catch(cause => setError(message(cause)))

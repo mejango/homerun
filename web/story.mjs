@@ -8,7 +8,7 @@ const stages = [
     title: 'Invest in a property.',
     body: 'Your money joins this property’s raise and stays in escrow until closing funds are committed. You receive a subscription receipt.',
     visual: `<div class="story-transfer"><div><span>You invest</span><strong>$10,000</strong></div>${arrow}<div><span>You receive</span><strong>10,000</strong><small>subscription receipts</small></div></div><div class="story-receipt"><span class="receipt-mark">W</span><div><strong>Founder Haus</strong><span>Part of a $2,000,000 property raise</span></div><span class="receipt-status">In escrow</span></div>`,
-    caption: 'Illustrative terms · $1 per receipt',
+    caption: 'Illustrative terms: $1 per receipt',
   },
   {
     label: 'Close',
@@ -28,7 +28,7 @@ const stages = [
     label: 'Use tokens',
     title: 'Choose how to use your tokens.',
     body: 'You can keep holding, cash out at the current backed value, or borrow against your own tokens. Taking an early exit can mean a loss.',
-    visual: `<div class="exit-quote"><span>Suppose backing reaches $0.40 per token</span><strong>$4,000</strong><span>Cash-out value of your 10,000 tokens · before fees</span></div><div class="story-choices" role="group" aria-label="Compare ways to use your tokens"><button type="button" data-choice="cashout" aria-pressed="true">Cash out ${arrow}</button><button type="button" data-choice="borrow" aria-pressed="false">Borrow ${arrow}</button></div><p id="choice-note" class="choice-note" aria-live="polite">Receive $4,000 before fees. Your 10,000 tokens are retired, ending their future claims.</p>`,
+    visual: `<div class="exit-quote"><span>Suppose backing reaches $0.40 per token</span><strong>$4,000</strong><span>Cash-out value of your 10,000 tokens: before fees</span></div><div class="story-choices" role="group" aria-label="Compare ways to use your tokens"><button type="button" data-choice="cashout" aria-pressed="true">Cash out ${arrow}</button><button type="button" data-choice="borrow" aria-pressed="false">Borrow ${arrow}</button></div><p id="choice-note" class="choice-note" aria-live="polite">Receive $4,000 before fees. Your 10,000 tokens are retired, ending their future claims.</p>`,
     caption: 'Original investment: $10,000. Current value is not a promised return.',
   },
   {
@@ -51,7 +51,7 @@ export function storyPage() {
   return `<div class="container story-page">
     <section class="story-intro">
       <div><span class="eyebrow">Property investing with Rooftop</span><h1>Finance a property.<br>Get paid from its rent.</h1><p>Your investment closes the deal.<br>Rent builds the cash backing your tokens.</p></div>
-      <figure class="story-property"><img src="${propertyImage}" alt="Illustration of Founder Haus, an apartment building around a garden" fetchpriority="high"><figcaption><div><strong>Founder Haus</strong><span>Refinance · $2,000,000 raise</span></div><span class="example-tag">Illustration</span></figcaption></figure>
+      <figure class="story-property"><img src="${propertyImage}" alt="Illustration of Founder Haus, an apartment building around a garden" fetchpriority="high"><figcaption><div><strong>Founder Haus</strong><span>Refinance: $2,000,000 raise</span></div><span class="example-tag">Illustration</span></figcaption></figure>
     </section>
 
     <section class="investment-story" aria-labelledby="life-title">
