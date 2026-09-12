@@ -11,7 +11,7 @@ import { wagmiConfig } from '@/providers/Providers'
 import { WalletButton } from './WalletButton'
 import CreateFlow, { type CreateValues } from './CreateFlow'
 import { buildFundLaunch, type FundTransaction } from '@/lib/fund-contracts'
-import { FUND_LAUNCH_KEY, decodeLaunchSession, encodeLaunchSession, saveLaunch, updateLaunchStatus, refreshLaunchCreationFee, archiveLaunch, loadLaunchSession, sameSender, type FundLaunchSession, type LaunchStatus } from '@/lib/fund-launch-session'
+import { FUND_LAUNCH_KEY, discardUnsignedLaunch, decodeLaunchSession, encodeLaunchSession, saveLaunch, updateLaunchStatus, refreshLaunchCreationFee, archiveLaunch, loadLaunchSession, sameSender, type FundLaunchSession, type LaunchStatus } from '@/lib/fund-launch-session'
 import { checkLaunchDeployment, verifyFundLaunch, verifyFailedFundLaunch } from '@/lib/fund-launch-verification'
 import { publishFundProjectMetadata } from '@/lib/publish-fund-project-metadata'
 import { runRelayrLaunch } from '@/lib/fund-launch-relayr'
@@ -130,6 +130,18 @@ export function FundDeploy({ values }: { values?: CreateValues }) {
     window.addEventListener('storage', sync); return () => window.removeEventListener('storage', sync)
   }, [])
 
+  const selectionKey = values?.networkEnvironment && values?.networks?.length
+    ? plannedNetworks(values).map((chain: { chainId: number }) => chain.chainId).join(',') : ''
+  const selectionChanged = !!session && !!selectionKey && session.input.chainIds.join(',') !== selectionKey
+  useEffect(() => {
+    if (!session || !selectionChanged || running || preparing) return
+    try {
+      if (discardUnsignedLaunch(session.input.salt)) {
+        setSession(null); setError(''); setProgress('')
+      }
+    } catch (cause) { setError(message(cause)) }
+  }, [session, selectionChanged, running, preparing])
+
   const persist = (next: FundLaunchSession) => { const saved = saveLaunch(next); setSession(saved); return saved }
   async function run(next: FundLaunchSession) {
     if (busyRef.current) return
@@ -212,6 +224,7 @@ export function FundDeploy({ values }: { values?: CreateValues }) {
     <h2 className="text-xl">Create your project</h2>
     <p>Create the FUND raise on your selected chains. INCOME and the Owner’s success allocation are separate later actions.</p>
     {!address && <WalletButton />}
+    {selectionChanged && <p role="alert">This launch already has wallet authorizations for {session!.input.chainIds.map(displayChainName).join(', ')}. Continue completes that saved launch; changing the selection above cannot replace signed requests.</p>}
     {!session ? <button type="button" className="create-primary" disabled={!address || preparing || !loaded || !!error} onClick={() => void prepare()}>{preparing ? 'Preparing your project…' : 'Create project'}</button>
       : <>
         <ul className="fund-launch-progress" aria-label="Deployment progress">{session.input.chainIds.map(id => <li key={id}><span>{displayChainName(id)}</span><span>{({ ready: 'Ready', signing: 'Confirm in wallet', authorized: 'Signed', pending: session.statuses[id].safe ? 'Awaiting Safe execution' : 'Deploying', confirmed: 'Created', reverted: 'Needs retry', unresolved: 'Checking execution', expired: 'Signature expired' })[session.statuses[id].phase]}</span></li>)}</ul>

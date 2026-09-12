@@ -1,5 +1,8 @@
 'use client'
 
+import { isEip7702DelegatedEoaRuntime } from './cross-chain-authority'
+
+
 import {
   JBCoreContracts,
   erc2771ForwarderAbi,
@@ -407,7 +410,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         if (request.deadline < Math.floor(Date.now() / 1000) + 120) {
           throw new LaunchSignaturesNeedRefresh('Launch signatures are about to expire. Review fresh authorizations before payment.')
         }
-        if (!trusted || !valid || (code && code !== '0x')) {
+        if (!trusted || !valid || (code && code !== '0x' && !isEip7702DelegatedEoaRuntime(code))) {
           throw new Error('The wallet, forwarder, or launch authorization changed. Check the original bundle before continuing.')
         }
         // Simulate the exact signed forwarder execution as well as its authorization.
@@ -435,8 +438,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         client.readContract({ address: request.address, abi: TRUSTED_FORWARDER_ABI, functionName: 'isTrustedForwarder', args: [forwarder] }),
         client.readContract({ address: forwarder, abi: erc2771ForwarderAbi, functionName: 'nonces', args: [account] }),
       ])
-      if ((code && code !== '0x') || !forwarderCode || forwarderCode === '0x' || !trusted) {
-        throw new Error(`An ordinary wallet and the canonical trusted forwarder are required on ${chainName(chainId)}.`)
+      if ((code && code !== '0x' && !isEip7702DelegatedEoaRuntime(code)) || !forwarderCode || forwarderCode === '0x' || !trusted) {
+        throw new Error(`Cannot prepare ${chainName(chainId)}: ${code && code !== '0x' && !isEip7702DelegatedEoaRuntime(code) ? 'this contract wallet cannot sign Relayr requests' : !forwarderCode || forwarderCode === '0x' ? 'the Relayr forwarder is not deployed' : 'the project deployer does not trust the Relayr forwarder'}.`)
       }
       if (journal.retryNonces?.[chainId] !== undefined && nonce !== BigInt(journal.retryNonces[chainId])) {
         throw new Error('An earlier launch authorization may have executed. Check its original destination before signing again.')

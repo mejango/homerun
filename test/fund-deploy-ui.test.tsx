@@ -42,6 +42,15 @@ describe('Create submission recovery', () => {
     await act(async () => button.click())
   }
 
+  it('drops an unsigned four-chain plan when the user selects only Base', async () => {
+    localStorage.removeItem(FUND_LAUNCH_KEY)
+    saveLaunch({ version: 1, name: 'Test asset', transport: 'relayr', input: { owner, sender: owner, chainIds: [1, 10, 8453, 42161], projectUri: 'ipfs://bafkreimetadata', salt, mustStartAtOrAfter: 1000, creationFees: { 1: 0n, 10: 0n, 8453: 0n, 42161: 0n } }, statuses: Object.fromEntries([1, 10, 8453, 42161].map(id => [id, { phase: 'ready' }])) })
+    await act(async () => root.render(<FundDeploy values={{ networkEnvironment: 'production', networks: ['base'] } as CreateValues} />))
+    expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()
+    expect(host.textContent).not.toContain('Continue creation')
+    expect(host.textContent).toContain('Create project')
+  })
+
   it('cancelling review leaves the saved launch ready without claiming a wallet submission', async () => {
     runtime.send.mockImplementation(async () => { expect(saved().statuses[8453].phase).toBe('ready'); return null })
     await launch()

@@ -502,3 +502,16 @@ describe('Relayr quote authentication', () => {
     expect(() => relayrPaymentDetails(payment, BUNDLE, NOW + 601)).toThrow()
   })
 })
+
+
+it('allows delegated EOA signatures while still rejecting contract wallets', async () => {
+  clients.get(1)!.getCode.mockImplementation(async ({ address }) => address === ACCOUNT ? `0xef0100${'11'.repeat(20)}` : '0x6000')
+  await run()
+  expect(m.pay).toHaveBeenCalledTimes(1)
+})
+
+it('rejects arbitrary contract wallet code before requesting signatures', async () => {
+  clients.get(1)!.getCode.mockResolvedValue('0x6000')
+  await expect(run()).rejects.toThrow(/contract wallet/)
+  expect(m.forward).not.toHaveBeenCalled()
+})

@@ -142,3 +142,14 @@ export function archiveLaunch(salt: Hex): void {
 export function sameSender(actual: Address | undefined, expected: Address): void {
   if (actual?.toLowerCase() !== expected.toLowerCase()) throw new Error('Reconnect the wallet that prepared this launch. Every linked deployment must use the same sender.')
 }
+
+/** Only a plan that has never acquired an authorization can follow edited networks. */
+export function discardUnsignedLaunch(salt: Hex): boolean {
+  const session = requireLaunch(salt)
+  if (!Object.values(session.statuses).every(status => status.phase === 'ready')
+    || session.relayr?.signed.length || session.relayr?.superseded?.length
+    || session.relayr?.published || session.relayr?.quote || session.relayr?.paymentHash
+    || (session.relayr && session.relayr.phase !== 'signing')) return false
+  localStorage.removeItem(FUND_LAUNCH_KEY)
+  return true
+}
