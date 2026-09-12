@@ -192,6 +192,7 @@
 .income-field-group legend { padding: 0; margin-bottom: 8px; font: 500 12px/1.4 var(--sans); color: #365344; }
 .income-field-group .income-inputs { gap: 10px 16px; }
 .income-field-group .create-field { margin: 0; gap: 5px; }
+.income-field-group > .create-field + .create-field { margin-top: 30px; }
 .income-field-group .create-help:empty { display: none; }
 .income-field-group .create-field > label { min-height: 0; }
 .income-preview-panel { margin-top: 18px; padding: 20px; border: 1px solid #d8dfcc; border-radius: 5px; background: #eef1e7; }

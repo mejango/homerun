@@ -221,6 +221,7 @@ try {
     for (const [id, name] of [['ethereum', 'Ethereum'], ['optimism', 'Optimism'], ['base', 'Base'], ['arbitrum', 'Arbitrum']]) {
       assert.equal(await network(id).getAttribute('aria-label'), name);
       assert.equal((await network(id).textContent()).trim(), '');
+      await network(id).locator('img').evaluate(img => img.decode());
       assert.equal(await network(id).locator('img').evaluate(img => img.complete && img.naturalWidth > 0 && img.src.endsWith('.svg')), true);
     }
     assert.match(await page.locator('#create-review').textContent(), /Operator · INCOME incentives/);

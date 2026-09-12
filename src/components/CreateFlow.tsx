@@ -319,7 +319,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
                 {errors.photo && <p className="create-error" id="photo-error">{errors.photo}</p>}
               </div>
               <fieldset className="create-operator-profile"><legend>Owner</legend>
-                {field('ownerWallet', 'Owner wallet', { placeholder: '0x…', help: 'Owns the FUND Juicebox, receives its success allocation, and controls the INCOME revnet. The Owner can change the Operator and all INCOME splits at any time.' })}
+                {field('ownerWallet', 'Owner wallet', { placeholder: '0x…', help: 'Owns the FUND Juicebox, receives its success allocation, and controls the INCOME revnet. The Owner is responsible for managing the money raised and can change the Operator and all INCOME splits at any time.' })}
               </fieldset>
               <fieldset className="create-operator-profile"><legend>Operator</legend>
                 {field('operatorWallet', 'Operator wallet', { placeholder: '0x…', help: 'Receives the INCOME token split. The Owner can replace this recipient; receiving INCOME does not grant program control.' })}
