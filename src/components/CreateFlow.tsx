@@ -46,6 +46,7 @@ type Errors = Partial<Record<FieldName | 'form', string>>;
 type Normalized = { valid: boolean; errors: Errors; values: CreateValues };
 type Summary = { values: CreateValues; networkInputs: Record<string, unknown>; raiseGoal: number; customerSplitPercent: number; investorFundPercent: number };
 export interface CreateFlowProps {
+  lockedChains?: readonly number[] | null;
   /** Supply the live FUND creation controls from a client component. */
   renderDeploy?: (values: CreateValues) => ReactNode;
   renderIntegration?: (values: CreateValues) => ReactNode;
@@ -128,7 +129,7 @@ function IncomeSplit({ summary }: { summary: Summary | null }) {
   </div>;
 }
 
-export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFlowProps) {
+export default function CreateFlow({ renderDeploy, renderIntegration, lockedChains }: CreateFlowProps) {
   const [raw, setRaw] = useState<RawValues>(initialValues);
   const [step, setStep] = useState(0);
   const [furthest, setFurthest] = useState(0);
@@ -179,6 +180,14 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
     } catch { setStorageNotice('Unable to save this draft. Keep this tab open while you work.'); }
   }, [raw, step, hydrated]);
 
+  const locked = !!lockedChains;
+  useEffect(() => {
+    if (!lockedChains) return;
+    const environment = lockedChains.some(id => NETWORK_FAMILIES.some(family => family.testnet.chainId === id)) ? 'testnet' : 'production';
+    const networks = NETWORK_FAMILIES.filter(family => lockedChains.includes(family[environment].chainId)).map(family => family.id);
+    setRaw(previous => previous.networkEnvironment === environment && JSON.stringify(previous.networks) === JSON.stringify(networks) ? previous : { ...previous, networkEnvironment: environment, networks });
+  }, [lockedChains]);
+
   const normalized = useMemo(() => normalize(raw), [raw]);
   const summary = useMemo(() => {
     try { return creationSummary({ ...raw, name: String(raw.name || '').trim() || 'Untitled' }) as unknown as Summary; }
@@ -188,11 +197,13 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
   const operatorPhoto = normalized.errors.operatorPhoto ? '' : normalized.values.operatorPhoto;
 
   function update(name: FieldName, value: RawValues[FieldName]) {
+    if (locked) return;
     setRaw(previous => ({ ...previous, [name]: value }));
     setErrors(previous => ({ ...previous, [name]: undefined, form: undefined }));
   }
 
   function navigate(index: number) {
+    if (locked) return;
     setStep(index);
     setFurthest(previous => Math.max(previous, index));
     requestAnimationFrame(() => heading.current?.focus());
@@ -294,7 +305,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
       <section className="create-editor" aria-label="Design the rules">
         <nav className="create-steps" aria-label="Setup steps">
           {labels.map((label, index) => <button key={label} type="button" data-create-step={index}
-            disabled={index > furthest || photoBusy.photo || photoBusy.operatorPhoto} aria-current={index === step ? 'step' : undefined}
+            disabled={locked || index > furthest || photoBusy.photo || photoBusy.operatorPhoto} aria-current={index === step ? 'step' : undefined}
             data-complete={index < step} onClick={() => { if (index <= step || validateStep()) navigate(index); }}><span>{index + 1}</span>{label}</button>)}
         </nav>
         <form id="create-form" noValidate onSubmit={event => { event.preventDefault(); continueStep(); }}>
@@ -384,26 +395,26 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
             </>}
             {step === 3 && <>
               <div id="create-review">
-                <section className="review-block"><div><h3>{String(raw.name || 'Untitled')}</h3><button type="button" onClick={() => navigate(0)}>Edit asset</button></div>
+                <section className="review-block"><div><h3>{String(raw.name || 'Untitled')}</h3><button type="button" disabled={locked} onClick={() => navigate(0)}>Edit asset</button></div>
                   <p>{String(raw.location || 'Location not specified')}</p>{raw.description && <p>{String(raw.description)}</p>}
                 </section>
-                <section className="review-block"><div><h3>Owner &amp; Operator</h3><button type="button" onClick={() => navigate(0)}>Edit wallets</button></div>
+                <section className="review-block"><div><h3>Owner &amp; Operator</h3><button type="button" disabled={locked} onClick={() => navigate(0)}>Edit wallets</button></div>
                   <dl><div><dt>Owner · program control and FUND allocation</dt><dd className="break-all">{normalized.values.ownerWallet || 'Not specified'}</dd></div>
                     <div><dt>Operator · INCOME incentives</dt><dd className="break-all">{normalized.values.operatorWallet || 'Not specified'}</dd></div></dl>
                 </section>
-                <section className="review-block"><div><h3>Minimum revenue</h3><button type="button" onClick={() => navigate(2)}>Edit income</button></div>
+                <section className="review-block"><div><h3>Minimum revenue</h3><button type="button" disabled={locked} onClick={() => navigate(2)}>Edit income</button></div>
                   <p>{normalized.values.minimumRevenue ? `${money(normalized.values.minimumRevenue)} per month` : 'No minimum specified'}</p>
                   {normalized.values.minimumRevenueConsequences && <p className="whitespace-pre-line">{normalized.values.minimumRevenueConsequences}</p>}
                 </section>
-                {(normalized.values.operatorName || normalized.values.operatorIntroduction || operatorPhoto) && <section className="review-block"><div><h3>Operator</h3><button type="button" onClick={() => navigate(0)}>Edit operator</button></div>
+                {(normalized.values.operatorName || normalized.values.operatorIntroduction || operatorPhoto) && <section className="review-block"><div><h3>Operator</h3><button type="button" disabled={locked} onClick={() => navigate(0)}>Edit operator</button></div>
                   <OperatorProfile name={normalized.values.operatorName} introduction={normalized.values.operatorIntroduction} photoUrl={operatorPhoto} showHeading={false} />
                 </section>}
-                <section className="review-block"><div><h3>The raise</h3><button type="button" onClick={() => navigate(1)}>Edit raise</button></div>
+                <section className="review-block"><div><h3>The raise</h3><button type="button" disabled={locked} onClick={() => navigate(1)}>Edit raise</button></div>
                   <dl><div><dt>Goal</dt><dd>{summary ? money(summary.raiseGoal) : '—'}</dd></div>
                     <div><dt>FUND ownership after purchase</dt><dd>{summary ? `${number(summary.investorFundPercent)}% contributors / ${number(summary.values.operatorFundPercent)}% Owner` : '—'}</dd></div></dl>
                 </section>
               </div>
-              <fieldset className="create-network-settings"><legend>Networks</legend><div className="create-network-options">
+              <fieldset className="create-network-settings" disabled={locked}><legend>Networks</legend>{locked && <p className="input-purpose-note">Creation is in progress. These networks and project settings are fixed for this launch.</p>}<div className="create-network-options">
                 <select id="create-networkEnvironment" className="network-environments" aria-label="Network environment" value={String(raw.networkEnvironment)}
                   onChange={event => { update('networkEnvironment', event.target.value); update('networks', NETWORK_FAMILIES.map(family => family.id)); }}>
                   <option value="production">Mainnets</option><option value="testnet">Testnets</option>
@@ -429,11 +440,11 @@ export default function CreateFlow({ renderDeploy, renderIntegration }: CreateFl
             </>}
           </section>
           {errors.form && <p id="create-form-error" className="create-error" role="alert">{errors.form}</p>}
-          <div className="create-actions">{step > 0 && <button type="button" id="create-back" className="quiet-button" onClick={() => navigate(step - 1)}>← Back</button>}
+          <div className="create-actions">{step > 0 && <button type="button" id="create-back" disabled={locked} className="quiet-button" onClick={() => navigate(step - 1)}>← Back</button>}
             {step < 3 && <button type="submit" id="create-next" className="create-primary" disabled={photoBusy.photo || photoBusy.operatorPhoto}>Continue <span aria-hidden="true">→</span></button>}
           </div>
         </form>
-        <div className="draft-status"><span id="draft-status" role="status">{storageNotice}</span><button type="button" id="start-over" className="quiet-button" onClick={reset}>Start over</button></div>
+        <div className="draft-status"><span id="draft-status" role="status">{storageNotice}</span><button type="button" id="start-over" disabled={locked} className="quiet-button" onClick={reset}>Start over</button></div>
         {summary && (renderIntegration ? renderIntegration(summary.values) : <SiteIntegration configuration={deploymentDraft(summary.values)} />)}
       </section>
       <aside className="create-aside" aria-label="Your project preview"><div className="draft-preview">

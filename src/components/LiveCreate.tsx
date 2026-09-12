@@ -110,7 +110,7 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
   </section>
 }
 
-export function FundDeploy({ values }: { values?: CreateValues }) {
+export function FundDeploy({ values, onLockChange }: { values?: CreateValues; onLockChange?: (chains: readonly number[] | null) => void }) {
   const router = useRouter()
   const { address } = useWallet()
   const [session, setSession] = useState<FundLaunchSession | null>(null)
@@ -134,6 +134,9 @@ export function FundDeploy({ values }: { values?: CreateValues }) {
 
   const selectionKey = values?.networkEnvironment && values?.networks?.length
     ? plannedNetworks(values).map((chain: { chainId: number }) => chain.chainId).join(',') : ''
+  useEffect(() => {
+    onLockChange?.(session?.input.chainIds ?? (preparing && selectionKey ? selectionKey.split(',').map(Number) : null))
+  }, [session, preparing, selectionKey, onLockChange])
   const selectionChanged = !!session && !!selectionKey && session.input.chainIds.join(',') !== selectionKey
   useEffect(() => {
     if (!session || !selectionChanged || running || preparing) return
@@ -253,4 +256,7 @@ export function FundDeploy({ values }: { values?: CreateValues }) {
   </div>
 }
 
-export default function LiveCreate() { return <CreateFlow renderDeploy={values => <FundDeploy values={values} />} /> }
+export default function LiveCreate() {
+  const [lockedChains, setLockedChains] = useState<readonly number[] | null>(null)
+  return <CreateFlow lockedChains={lockedChains} renderDeploy={values => <FundDeploy values={values} onLockChange={setLockedChains} />} />
+}
