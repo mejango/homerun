@@ -57,6 +57,7 @@ function useBackdropDismiss(onDismiss: () => void) {
 
 function Driver({
   requestId,
+  cancelledThrough,
   request,
   onOpenChange,
   onSettled,
@@ -65,6 +66,7 @@ function Driver({
   onEntryChange,
 }: {
   requestId: number
+  cancelledThrough: number
   request: ParaRequest
   onOpenChange: (open: boolean) => void
   onSettled: () => void
@@ -153,6 +155,11 @@ function Driver({
   )
 
   useEffect(() => {
+    if (requestId <= cancelledThrough) {
+      handledRequest.current = Math.max(handledRequest.current, requestId)
+      setSheetOpen(false)
+      return
+    }
     if (requestId <= handledRequest.current) return
     handledRequest.current = requestId
     if (request.kind === 'auth') {
@@ -163,7 +170,7 @@ function Driver({
       // A declined popup or an on-ramp provider the portal has switched off.
       // Nothing to recover: the affordance is optional either way.
     })
-  }, [requestId, request, startAddFunds])
+  }, [requestId, cancelledThrough, request, startAddFunds])
 
   const closeSheet = useCallback(() => {
     setSheetOpen(false)
@@ -247,6 +254,8 @@ function Driver({
 /** Loaded only after a user requests embedded sign-in or the on-ramp. */
 export default function ParaModalHost({
   requestId,
+  cancelledThrough,
+  onCancelRequest,
   request,
   onOpenChange,
   onSettled,
@@ -254,6 +263,8 @@ export default function ParaModalHost({
   onEntryChange,
 }: {
   requestId: number
+  cancelledThrough: number
+  onCancelRequest: () => void
   request: ParaRequest
   onOpenChange: (open: boolean) => void
   onSettled: () => void
@@ -290,8 +301,10 @@ export default function ParaModalHost({
   const [driverLive, setDriverLive] = useState(false)
   // `requestId > 0` matters: the host is also mounted ahead of time to warm
   // Para up, and nothing should be on screen for that.
-  const showShell = !driverLive && request.kind === 'auth' && requestId > 0
+  const showShell = !driverLive && request.kind === 'auth' && requestId > cancelledThrough
   const open = driverOpen || showShell
+  const loadingCancelRef = useRef<(() => void) | null>(null)
+  loadingCancelRef.current = showShell ? onCancelRequest : null
 
   // Stable identities: Driver keys effects off these, so a closure recreated
   // each render would re-run them every render. The callers' own handlers are
@@ -306,13 +319,18 @@ export default function ParaModalHost({
 
   useBeforePaint(() => {
     if (!host) return
-    // Escape belongs to Para's own dismissal path. Closing the host natively
-    // would leave Para believing its modal was still open.
-    const preventNativeCancel = (event: Event) => event.preventDefault()
+    // During loading there is no live sheet to handle Escape. Cancel the
+    // pending request as well as hiding the shell, so SDK readiness cannot
+    // reopen it. A live sheet keeps its own dismissal and busy-state rules.
+    const preventNativeCancel = (event: Event) => {
+      event.preventDefault()
+      loadingCancelRef.current?.()
+    }
     host.addEventListener('cancel', preventNativeCancel)
     document.body.append(host)
     return () => {
       host.removeEventListener('cancel', preventNativeCancel)
+      if (host.open) host.close()
       host.remove()
     }
   }, [host])
@@ -340,7 +358,7 @@ export default function ParaModalHost({
       {showShell ? (
         <div className="flex h-full w-full items-center justify-center overflow-y-auto bg-slate-900/55 p-6">
           <div className="card w-full max-w-sm p-6">
-            <SignInShell entry={entry} onEntryChange={onEntryChange} />
+            <SignInShell entry={entry} onEntryChange={onEntryChange} onClose={onCancelRequest} />
           </div>
         </div>
       ) : null}
@@ -365,6 +383,7 @@ export default function ParaModalHost({
       >
         <Driver
           requestId={requestId}
+          cancelledThrough={cancelledThrough}
           request={request}
           onOpenChange={reportOpen}
           onSettled={onSettled}

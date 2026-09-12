@@ -3,6 +3,7 @@
 import type { TOAuthMethod } from '@getpara/web-sdk'
 import { useConnectors } from 'wagmi'
 import { BrandMark, WalletFallbackMark } from '@/components/BrandMarks'
+import { ModalCloseButton } from '@/components/ui/ModalShell'
 import { offerableWallets } from '@/lib/wallet-list'
 
 /** Kept in step with the sheet's own list. */
@@ -31,9 +32,11 @@ const OAUTH_METHODS: { method: TOAuthMethod; label: string }[] = [
 export function SignInShell({
   entry,
   onEntryChange,
+  onClose,
 }: {
   entry: string
   onEntryChange: (value: string) => void
+  onClose: () => void
 }) {
   const connectors = offerableWallets(useConnectors())
 
@@ -43,6 +46,7 @@ export function SignInShell({
         <div>
           <h2 className="font-agrandir text-2xl font-medium text-ink">Sign in</h2>
         </div>
+        <ModalCloseButton aria-label="Close sign in" onClick={onClose} />
       </div>
 
       <div className="mt-5">

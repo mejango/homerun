@@ -118,6 +118,7 @@ export function Providers({ children }: PropsWithChildren) {
   const [externalWalletOpen, setExternalWalletOpen] = useState(false)
   const [paraHostLoaded, setParaHostLoaded] = useState(false)
   const [paraRequestId, setParaRequestId] = useState(0)
+  const [paraCancelledThrough, setParaCancelledThrough] = useState(0)
   const [paraRequest, setParaRequest] = useState<ParaRequest>({ kind: 'auth' })
   const [paraModalOpen, setParaModalOpen] = useState(false)
   const [paraSessionVersion, setParaSessionVersion] = useState(0)
@@ -189,6 +190,12 @@ export function Providers({ children }: PropsWithChildren) {
     setParaRequest({ kind: 'addFunds', ...request })
     setParaRequestId(current => current + 1)
   }, [])
+  const cancelLoadingSignIn = useCallback(() => {
+    // Keep request IDs monotonic: a delayed SDK mount must not reopen a
+    // cancelled request, while the next explicit sign-in click still works.
+    setParaCancelledThrough(current => Math.max(current, paraRequestId))
+    setParaModalOpen(false)
+  }, [paraRequestId])
   const markParaSettled = useCallback(
     () => setParaSessionVersion(current => current + 1),
     [],
@@ -224,16 +231,19 @@ export function Providers({ children }: PropsWithChildren) {
           {paraHostLoaded ? (
             <Suspense
               fallback={
-                paraRequest.kind === 'auth' && paraRequestId > 0 ? (
+                paraRequest.kind === 'auth' && paraRequestId > paraCancelledThrough ? (
                   <SignInPlaceholder
                     entry={signInEntry}
                     onEntryChange={setSignInEntry}
+                    onClose={cancelLoadingSignIn}
                   />
                 ) : null
               }
             >
               <ParaModalHost
                 requestId={paraRequestId}
+                cancelledThrough={paraCancelledThrough}
+                onCancelRequest={cancelLoadingSignIn}
                 request={paraRequest}
                 onOpenChange={setParaModalOpen}
                 onSettled={markParaSettled}
