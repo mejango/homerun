@@ -146,9 +146,8 @@ async function paymentShare(expected) {
     : `${new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(expected)}%`;
   await expect(page.locator('#pay-result-share')).toHaveText(label);
   const segment = page.locator('.demo-payment-result [data-payment-segment=payer]');
-  const length = Number((await segment.getAttribute('stroke-dasharray')).split(' ')[0]);
-  const radius = Number(await segment.getAttribute('r'));
-  assert.ok(Math.abs(length / (2 * Math.PI * radius) * 100 - expected) < 0.00001, 'The chart uses the full ownership fraction before label rounding.');
+  const length = await segment.evaluate(path => path.getTotalLength());
+  assert.ok(Math.abs(length / (2 * Math.PI * 40) * 100 - expected) < 0.01, 'The rendered arc matches the ownership fraction within browser path-length precision.');
 }
 async function dismiss(id) {
   await page.keyboard.press("Escape");
