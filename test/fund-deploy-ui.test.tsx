@@ -5,7 +5,7 @@ import type { Hex } from 'viem'
 import type { CreateValues } from '../src/components/CreateFlow'
 import { FUND_LAUNCH_KEY, decodeLaunchSession, saveLaunch, updateLaunchStatus, type FundLaunchSession } from '../src/lib/fund-launch-session'
 
-const runtime = vi.hoisted(() => ({ send: vi.fn(), readContract: vi.fn(), getBlock: vi.fn(), publish: vi.fn(), checkDeployment: vi.fn() }))
+const runtime = vi.hoisted(() => ({ txError: '' as string, send: vi.fn(), readContract: vi.fn(), getBlock: vi.fn(), publish: vi.fn(), checkDeployment: vi.fn() }))
 const navigate = vi.hoisted(() => ({ replace: vi.fn() }))
 vi.mock('next/navigation', () => ({ useRouter: () => navigate }))
 const owner = '0x1111111111111111111111111111111111111111' as const
@@ -16,7 +16,7 @@ vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: '0x1111111111
 vi.mock('@/components/WalletButton', () => ({ WalletButton: () => <span>Wallet</span> }))
 vi.mock('@/components/CreateFlow', () => ({ default: () => null }))
 vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => false, waitForSafeExecutionHash: vi.fn() }))
-vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({ phase: 'idle', busy: false, send: runtime.send, reset: vi.fn() }) }))
+vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({ phase: 'idle', busy: false, error: runtime.txError, send: runtime.send, reset: vi.fn() }) }))
 vi.mock('@/lib/publish-fund-project-metadata', () => ({ publishFundProjectMetadata: runtime.publish }))
 vi.mock('@/lib/fund-launch-verification', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/fund-launch-verification')>(), checkLaunchDeployment: runtime.checkDeployment }))
 import { FundDeploy } from '../src/components/LiveCreate'
@@ -32,6 +32,7 @@ describe('Create submission recovery', () => {
   let host: HTMLDivElement
   beforeEach(() => {
     localStorage.clear()
+    runtime.txError = ''
     runtime.send.mockReset()
     runtime.readContract.mockResolvedValue(0n); runtime.getBlock.mockResolvedValue({ timestamp: 1000n }); runtime.publish.mockResolvedValue({ cid: 'bafkreimetadata' }); runtime.checkDeployment.mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: async (_name: string, _options: unknown, callback: (lock: object) => Promise<void>) => callback({}) } })
@@ -44,6 +45,13 @@ describe('Create submission recovery', () => {
     const button = [...host.querySelectorAll('button')].find(item => item.textContent === 'Review and deploy FUND')!
     await act(async () => button.click())
   }
+
+  it('shows pre-wallet errors outside the collapsed recovery controls', async () => {
+    runtime.txError = 'Insufficient funds for gas'
+    await act(async () => root.render(<FundDeploy />))
+    const visibleAlert = [...host.querySelectorAll('[role="alert"]')].find(node => !node.closest('details'))
+    expect(visibleAlert?.textContent).toBe('Insufficient funds for gas')
+  })
 
   it('opens the success page after confirmation and links to the created Homerun project', async () => {
     updateLaunchStatus(salt, 8453, { phase: 'signing' })

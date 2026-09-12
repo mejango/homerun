@@ -118,6 +118,15 @@ describe('useSafeTx', () => {
     }
   })
 
+  it('requests the transaction without a redundant switch when already on its chain', async () => {
+    mocks.getAccount.mockImplementation(() => ({ address: ALICE, chainId: 10 }))
+    const hook = await renderHook()
+    await act(async () => { await hook.ref.current!.send(request) })
+    expect(mocks.switchChain).not.toHaveBeenCalled()
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    await act(async () => hook.renderer.unmount())
+  })
+
   it('runs exact review, chain/account checks, simulation, and the simulated write', async () => {
     const hook = await renderHook()
     let result: Awaited<ReturnType<SafeTxValue['send']>> = null

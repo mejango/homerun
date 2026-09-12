@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { getPublicClient, getAccount } from '@wagmi/core'
 import { jbProjectsAbi, type JBChainId } from '@bananapus/nana-sdk-core'
@@ -28,8 +28,9 @@ function publicClient(chainId: number): PublicClient {
   return client as PublicClient
 }
 
-function LaunchChain({ session, request, status, update, refreshFee, runId = 0, onStopped }: {
+function LaunchChain({ session, request, status, update, refreshFee, runId = 0, onStopped, onFeedback }: {
   runId?: number; onStopped?: () => void
+  onFeedback?: (phase: string, error: string) => void
   session: FundLaunchSession; request: FundTransaction; status: LaunchStatus; update: (status: LaunchStatus, expectedPhase?: LaunchStatus['phase']) => void; refreshFee: (fee: bigint) => void
 }) {
   const tx = useSafeTx(request.chainId)
@@ -37,6 +38,7 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
   const [recoveryHash, setRecoveryHash] = useState('')
   const [recoverySafe, setRecoverySafe] = useState(false)
   const [verifying, setVerifying] = useState(false)
+  useEffect(() => { onFeedback?.(tx.phase, error || tx.error || '') }, [tx.phase, tx.error, error, onFeedback])
   const verifyLock = useRef(false)
   const chain = SUPPORTED_CHAINS.find(value => value.id === request.chainId)!
   const verify = async (hash: Hex, safe: boolean, knownExecutionHash?: Hex) => {
@@ -169,6 +171,12 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
     } catch (cause) { setError(message(cause)) }
     finally { if (!directStarted) { busyRef.current = false; setRunning(false); setSession(loadLaunchSession()) } }
   }
+  const directFeedback = useCallback((phase: string, detail: string) => {
+    if (detail) setError(detail)
+    const text: Record<string, string> = { review: 'Review the transaction to continue.', simulating: 'Checking the transaction before opening your wallet…', signing: 'Open MetaMask or your connected wallet to confirm the transaction.', pending: 'Transaction submitted. Waiting for confirmation…' }
+    if (detail) setProgress('')
+    else if (text[phase]) setProgress(text[phase])
+  }, [])
   function stopDirect() { busyRef.current = false; setRunning(false) }
   async function prepare() {
     if (!address || !values || preparing || busyRef.current) return
@@ -249,7 +257,7 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
     <details className="fund-launch-recovery"><summary>Deployment recovery</summary>
       {!session ? <label>Restore a deployment record<input type="file" accept="application/json,.json" disabled={!loaded || preparing} onChange={event => { const file = event.target.files?.[0]; if (file) void restore(file); event.target.value = '' }} /></label>
         : <><p>{session.name}. Owner <code>{session.input.owner}</code>. This saved launch retains its original settings.</p><button type="button" onClick={download}>Download deployment record</button>
-          {session.transport !== 'relayr' && requests.map(request => <LaunchChain key={`${session.input.salt}:${request.chainId}`} session={session} request={request} status={session.statuses[request.chainId]} runId={running && activeChain === request.chainId ? runId : 0} onStopped={stopDirect} update={(status, expectedPhase) => setSession(updateLaunchStatus(session.input.salt, request.chainId, status, expectedPhase))} refreshFee={fee => setSession(refreshLaunchCreationFee(session.input.salt, request.chainId, fee))} />)}
+          {session.transport !== 'relayr' && requests.map(request => <LaunchChain key={`${session.input.salt}:${request.chainId}`} session={session} request={request} status={session.statuses[request.chainId]} runId={running && activeChain === request.chainId ? runId : 0} onStopped={stopDirect} onFeedback={directFeedback} update={(status, expectedPhase) => setSession(updateLaunchStatus(session.input.salt, request.chainId, status, expectedPhase))} refreshFee={fee => setSession(refreshLaunchCreationFee(session.input.salt, request.chainId, fee))} />)}
           {complete && <button type="button" onClick={() => { try { archiveLaunch(session.input.salt); setSession(null); setProgress('') } catch (cause) { setError(message(cause)) } }}>Finish this launch and start another</button>}
         </>}
     </details>

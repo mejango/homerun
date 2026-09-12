@@ -282,6 +282,7 @@ export function useSafeTx(chainId: number) {
             if (!approved) throw new TransactionReviewCancelledError()
           },
           switchChain: async reviewedChainId => {
+            if (getAccount(wagmiConfig).chainId === reviewedChainId) return
             await switchChainAsync({ chainId: reviewedChainId }).catch(() => {
               throw new Error('Switch your wallet to the right chain to continue.')
             })
