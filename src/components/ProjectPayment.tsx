@@ -194,8 +194,8 @@ export function ProjectPayment({ chainId, projectId, tokenLabel, title, context:
     } catch (reason) { setError(message(reason)); setStatus(null) } finally { setPreparing(false) }
   }
   return <section className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7">
-    <h3 className="mb-5 text-2xl">{title}</h3>
-    {chainSelector ?? <p className="mb-4 text-sm">Pay on {displayChainName(chainId)}</p>}
+    <h3 className="sr-only">{title}</h3>
+    {chainSelector ?? <p className="payment-chain-label mb-2">{tokenLabel === 'FUND' ? 'Fund' : 'Pay'} on {displayChainName(chainId)}</p>}
     <button type="button" className="btn-primary min-h-12 w-full px-5" disabled={paused} onClick={() => setOpen(true)}>{paused ? 'Payments paused' : `Pay on ${displayChainName(chainId)}`}</button>
     {!open && <><Status tx={approval} chainId={chainId} /><Status tx={routerApproval} chainId={chainId} /><Status tx={tx} chainId={chainId} /></>}
     {open && <ModalShell title={`Pay · ${tokenLabel}`} subtitle={displayChainName(chainId)} onClose={() => setOpen(false)} maxWidth="max-w-lg">

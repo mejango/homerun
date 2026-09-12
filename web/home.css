@@ -2,7 +2,7 @@
 
 .home-page .site-header { position: relative; z-index: 2; }
 .home-page .site-header::after { content: ''; position: absolute; bottom: 0; left: 32px; right: 32px; height: 1px; background: var(--line); }
-.home-main { max-width: 1600px; margin: auto; }
+.home-main { width: 100%; margin: 0; }
 .ballpark-hero { position: relative; isolation: isolate; height: clamp(650px, 61vw, 900px); overflow: hidden; }
 .home-copy { position: absolute; z-index: 1; left: 20px; right: 20px; top: clamp(18px, 2.7vw, 40px); text-align: center; }
 .home-copy h1 { font: 400 clamp(38px, 4.5vw, 64px)/1.06 var(--serif); letter-spacing: -.045em; }
@@ -107,4 +107,8 @@
 @media (max-width: 760px) {
   #ballpark { --scene-top: 140; }
   .ballpark-hero { height: 724px; }
+}
+
+@media (min-width: 1600px) {
+  .ballpark-hero { height: calc(62.5vw + 136px); }
 }

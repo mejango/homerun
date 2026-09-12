@@ -36,8 +36,8 @@ export function FundPaymentNetworks({ state, children }: {
   const client = usePublicClient({ chainId: active.chainId }) as PublicClient | undefined
   const options = available.some(project => project.chainId === active.chainId) ? available : [...available, active]
   const selector = <div className="mb-5">
-    <label className="grid gap-2 text-sm">Pay on
-      <select aria-label="Pay on" disabled={busy} className="min-h-11 rounded border border-[#bfc9b5] bg-white px-3" value={active.chainId} onChange={event => {
+    <label className="payment-chain-label">Fund on
+      <select aria-label="Fund on" disabled={busy} className="payment-chain-select" value={active.chainId} onChange={event => {
         const project = available.find(candidate => candidate.chainId === Number(event.target.value))
         if (project) { setPicked(project); setSelected(project.chainId) }
       }}>

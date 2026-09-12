@@ -7,9 +7,11 @@ import { Brand } from "./Brand";
 import { WalletButton } from '@/components/WalletButton';
 import { DEFAULT_NETWORK, projectNetwork } from "../../web/network-model.mjs";
 import {
+  CREATE_DEFAULTS,
   creationSummary,
   loadCreatedProject,
 } from "../../web/create-model.mjs";
+import { plannedNetworks } from "../../web/create-networks.mjs";
 import { FIELD_HELP } from "../../web/field-help.mjs";
 import { drawAssetSketch } from "../../web/asset-sketch.mjs";
 import { payPanelQuote as modelPayPanelQuote } from "../../web/pay-panel.mjs";
@@ -1298,6 +1300,7 @@ function Contribution({
 }
 
 function PayPreview({
+  chains,
   p,
   projectProjection,
   phase,
@@ -1305,6 +1308,7 @@ function PayPreview({
   fundAmount,
   onFundAmount,
 }: {
+  chains: { chainId: number; name: string }[];
   p: Projection | null;
   projectProjection: Projection | null;
   phase: ProjectPhase;
@@ -1312,6 +1316,7 @@ function PayPreview({
   fundAmount: number;
   onFundAmount: (value: number) => void;
 }) {
+  const [selectedChain, setSelectedChain] = useState(chains[0].chainId);
   const [currency, setCurrency] = useState("USDC");
   const [fundRaw, setFundRaw] = useState(number(fundAmount));
   const [incomeRaw, setIncomeRaw] = useState("100");
@@ -1362,11 +1367,11 @@ function PayPreview({
               ? "Cash out"
               : income ? "Pay" : "Fund"}
         </h2>
+        {paymentStage && <label className="payment-chain-label"><span>on</span><select className="payment-chain-select" aria-label={income ? "Pay on" : "Fund on"} value={selectedChain} onChange={event => setSelectedChain(Number(event.target.value))}>{chains.map(chain => <option key={chain.chainId} value={chain.chainId}>{chain.name}</option>)}</select></label>}
       </div>
       {income && <p className="pay-context">Revenue payment, month {projectProjection?.monthsApplied ?? 0} preview</p>}
       <form
         id="pay-form"
-        style={!income ? { marginTop: 20 } : undefined}
         onSubmit={(event) => {
           event.preventDefault();
           if (cashStage && quote.enabled) setReview(true);
@@ -2291,6 +2296,7 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
               >
                 <PayPreview
                   key={reset}
+                  chains={plannedNetworks(project?.values ?? CREATE_DEFAULTS)}
                   p={p}
                   projectProjection={overview}
                   phase={phase}

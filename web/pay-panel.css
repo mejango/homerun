@@ -8,7 +8,12 @@
 }
 .pay-panel [hidden], .pay-dialog [hidden] { display: none !important; }
 .pay-panel-heading, .pay-dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
-.pay-panel-heading h2 { margin: 0; font: 30px/1.1 var(--serif, Georgia, serif); letter-spacing: -.025em; }
+.pay-panel-heading { justify-content: flex-start; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+.pay-panel-heading h2 { margin: 0; font: 500 14px/1.4 var(--sans, sans-serif); }
+.payment-chain-label { display: inline-flex; align-items: center; gap: 4px; font: 500 14px/1.4 var(--sans, sans-serif); }
+.payment-chain-select { max-width: 100%; min-height: 32px; padding: 2px 4px; border: 0; border-radius: 3px; background: transparent; color: inherit; font: inherit; text-decoration: underline; text-underline-offset: 4px; cursor: pointer; }
+.payment-chain-select:focus-visible { outline: 2px solid #345d3f; outline-offset: 2px; }
+.payment-chain-select:disabled { cursor: wait; opacity: .6; }
 .pay-route { border: 1px solid #b7c5ad; border-radius: 3px; padding: 5px 7px; font-size: 10px; letter-spacing: .07em; color: #31543c; white-space: nowrap; }
 .pay-context { margin: 12px 0 20px; font-size: 12px; line-height: 1.5; color: #55634f; }
 #pay-form { padding: 0; margin: 0; border: 0; background: transparent; }
