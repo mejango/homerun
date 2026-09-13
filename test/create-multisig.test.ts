@@ -1,13 +1,11 @@
-import { describe, expect, it, vi } from 'vitest'
-import { decodeFunctionData, encodeFunctionResult, encodeFunctionData, getAddress, zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
+import { describe, expect, it } from 'vitest'
+import { decodeFunctionData, encodeFunctionData, getAddress, keccak256, zeroAddress, type Hex, type PublicClient } from 'viem'
 import { CREATE_DEFAULTS, normalizeCreateDraft, deploymentDraft } from '../web/create-model.mjs'
 import { buildFundLaunch } from '@/lib/fund-contracts'
 import { decodeLaunchSession, encodeLaunchSession, type FundLaunchSession } from '@/lib/fund-launch-session'
-import { bundleMultisigLaunch, unbundleMultisigLaunch, verifyMultisigLaunchSimulation, multisigInitializer, predictMultisig, validateMultisigs, resolveCreateMultisigs, verifyCreatedMultisigs, SAFE_CREATE_ABI, CREATE_BATCH_ABI, SAFE_FACTORY, SAFE_SINGLETON, SAFE_FALLBACK, MULTICALL3, type CreateMultisig } from '@/lib/create-multisig'
+import { bundleMultisigLaunch, unbundleMultisigLaunch, multisigInitializer, predictMultisig, validateMultisigs, resolveCreateMultisigs, SAFE_CREATE_ABI, CREATE_BATCH_ABI, SAFE_FACTORY, SAFE_FALLBACK, MULTICALL3, type CreateMultisig } from '@/lib/create-multisig'
 import type { CreateValues } from '@/components/CreateFlow'
 
-const identity = vi.hoisted(() => vi.fn())
-vi.mock('@/lib/cross-chain-authority', () => ({ readAuthorityIdentity: identity }))
 const owners = [1, 2, 3].map(value => getAddress(`0x${String(value).repeat(40)}`))
 const salt = `0x${'ab'.repeat(32)}` as Hex
 const policy = { owners, threshold: 2, saltNonce: salt, proxyCreationCode: '0x6000' as Hex }
@@ -63,34 +61,27 @@ describe('create multisig policies', () => {
     expect(() => unbundleMultisigLaunch({ ...batch, data: encodeFunctionData({ abi: CREATE_BATCH_ABI, functionName: 'aggregate3Value', args: [mutated] }) }, [plan, operator])).toThrow('differs')
     expect(() => unbundleMultisigLaunch(batch, [operator, plan])).toThrow('differs')
   })
-  it('does not fund a batch when the factory silently fails to create a missing Safe', async () => {
-    identity.mockResolvedValue({ kind: 'eoa' })
-    const data = encodeFunctionResult({ abi: CREATE_BATCH_ABI, functionName: 'aggregate3Value', result: [{ success: false, returnData: '0x' }, { success: true, returnData: '0x' }] })
-    await expect(verifyMultisigLaunchSimulation({} as PublicClient, [plan], data)).rejects.toThrow('policy')
-    identity.mockResolvedValue({ kind: 'safe', singleton: SAFE_SINGLETON, threshold: 2, hasModules: false, guard: zeroAddress, fallbackHandler: SAFE_FALLBACK, owners })
-    await expect(verifyMultisigLaunchSimulation({} as PublicClient, [plan], data)).resolves.toBeUndefined()
+  it('preserves addresses, initializer bytes and saved Relayr batches from before the SDK extraction', () => {
+    expect(plan.address).toBe('0x2c2e53f2EaD461436cE80e12792415BA12174a81')
+    expect(keccak256(multisigInitializer(policy))).toBe('0xe4311245ea7d1a003d6f0e055cc733003a7efa391562c2f4435a01e7f89ff487')
+    const entry = { chain: 1, target: owners[0], data: '0x12345678' as Hex, value: '17', virtual_nonce: 42 }
+    const batch = bundleMultisigLaunch(entry, [plan])
+    expect(keccak256(batch.data)).toBe('0xd43010484eea1cc91843003241ca2f7f17b183de262f29d312ab08f7b927e190')
+    expect(unbundleMultisigLaunch(batch, [plan])).toEqual(entry)
+    expect(() => unbundleMultisigLaunch({ ...batch, value: '18' }, [plan])).toThrow()
+    expect(bundleMultisigLaunch(entry)).toBe(entry)
   })
-  it('pins receipt recovery policy reads to the execution block, including raw bounded RPC calls', async () => {
-    const request = vi.fn().mockResolvedValue('0x6000')
-    identity.mockImplementationOnce(async (reader: PublicClient, address: Address) => {
-      await reader.getCode({ address })
-      await reader.getStorageAt({ address, slot: `0x${'00'.repeat(32)}` })
-      await reader.request({ method: 'eth_call', params: [{ to: address, data: '0x' }, 'latest'] })
-      return { kind: 'safe', singleton: SAFE_SINGLETON, threshold: 2, hasModules: false, guard: zeroAddress, fallbackHandler: SAFE_FALLBACK, owners }
-    })
-    await verifyCreatedMultisigs({ request } as unknown as PublicClient, [plan], false, 123n)
-    expect(request.mock.calls.map(([call]) => call.params.at(-1))).toEqual(['0x7b', '0x7b', '0x7b'])
+  it('retains Homerun signer limits and unique Owner/Operator roles around the broader SDK', () => {
+    const manyOwners = Array.from({ length: 21 }, (_, index) => getAddress(`0x${(index + 2).toString(16).padStart(40, '0')}`))
+    expect(() => multisigInitializer({ owners: [owners[0]], threshold: 1 })).toThrow('2–20')
+    expect(() => multisigInitializer({ owners: manyOwners, threshold: 2 })).toThrow('2–20')
+    expect(() => validateMultisigs([plan, plan])).toThrow('deployment plan')
+    expect(() => validateMultisigs([{ ...plan, role: 'other' } as unknown as CreateMultisig])).toThrow('multisig address')
   })
-  it('requires the deployed Safe policy and refuses missing, modified or module-enabled authority', async () => {
-    const client = {} as PublicClient
-    const safe = { kind: 'safe', singleton: SAFE_SINGLETON, threshold: 2, hasModules: false, guard: zeroAddress, fallbackHandler: SAFE_FALLBACK, owners }
-    identity.mockResolvedValue(safe)
-    await expect(verifyCreatedMultisigs(client, [plan])).resolves.toBe(true)
-    for (const changed of [{ kind: 'eoa' }, { ...safe, threshold: 1 }, { ...safe, owners: [owners[0]] }, { ...safe, hasModules: true }, null]) {
-      identity.mockResolvedValue(changed)
-      await expect(verifyCreatedMultisigs(client, [plan])).rejects.toThrow('policy')
-    }
-    identity.mockResolvedValue({ kind: 'eoa' })
-    await expect(verifyCreatedMultisigs(client, [plan], true)).resolves.toBe(false)
+  it('ignores inactive operator inputs when using an existing shared address', async () => {
+    const values = { ...CREATE_DEFAULTS, ownerMode: 'existing', ownerWallet: owners[0], ownerIsOperator: true, operatorMode: 'create', operatorSigners: ['bad'], operatorThreshold: 99 } as CreateValues
+    const resolved = await resolveCreateMultisigs(values, [{} as PublicClient], salt)
+    expect(resolved).toMatchObject({ owner: owners[0], operator: owners[0], plans: [] })
+    expect(resolved.values.operatorWallet).toBe(owners[0])
   })
 })

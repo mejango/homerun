@@ -9,6 +9,8 @@ import { OperatorProfile } from '../src/components/OperatorProfile'
 import { DemoProjectPage } from '../src/components/ProjectPage'
 import { CREATE_DEFAULTS, saveCreatedProject } from '../web/create-model.mjs'
 
+const PROFILE_DEFAULTS = { ...CREATE_DEFAULTS, ownerMode: 'existing', operatorMode: 'existing', ownerIsOperator: false }
+
 let root: Root
 let host: HTMLDivElement
 
@@ -31,7 +33,7 @@ describe('project Owner and Operator profiles', () => {
   it('renders distinct saved descriptions and full account links in a project preview', async () => {
     const owner = getAddress(`0x${'b2'.repeat(20)}`)
     const operator = getAddress(`0x${'a1'.repeat(20)}`)
-    const project = saveCreatedProject({ ...CREATE_DEFAULTS, name: 'Community house', photo: 'data:image/png;base64,aW1hZ2U=', ownerWallet: owner, operatorWallet: operator,
+    const project = saveCreatedProject({ ...PROFILE_DEFAULTS, name: 'Community house', photo: 'data:image/png;base64,aW1hZ2U=', ownerWallet: owner, operatorWallet: operator,
       ownerName: 'Community trust', ownerIntroduction: 'The trust holds and maintains the house.',
       operatorName: 'Local hosts', operatorIntroduction: 'We welcome members and manage events.' })
     await act(async () => root.render(<DemoProjectPage project={project} />))
@@ -47,7 +49,7 @@ describe('project Owner and Operator profiles', () => {
   })
 
   it('keeps both roles visible when a demo has no configured wallet addresses', async () => {
-    const project = saveCreatedProject({ ...CREATE_DEFAULTS, name: 'Community house', photo: 'data:image/png;base64,aW1hZ2U=' })
+    const project = saveCreatedProject({ ...PROFILE_DEFAULTS, name: 'Community house', photo: 'data:image/png;base64,aW1hZ2U=' })
     await act(async () => root.render(<DemoProjectPage project={project} />))
     for (const role of ['Owner', 'Operator']) {
       const profile = host.querySelector(`[aria-label="${role} introduction"]`)!

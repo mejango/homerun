@@ -173,6 +173,31 @@ describe('relayed launch execution and recovery', () => {
     expect(m.pay).toHaveBeenCalledTimes(1)
   })
 
+  it('bundles separate Owner and Operator Safes on each chain with one funding payment', async () => {
+    storage.clear()
+    const value = session([1, 10])
+    const policy = { owners: [ACCOUNT, TARGET], threshold: 2, saltNonce: value.input.salt, proxyCreationCode: '0x6000' as Hex }
+    const owner: CreateMultisig = { ...policy, role: 'owner', address: predictMultisig(policy) }
+    const operator: CreateMultisig = { ...policy, threshold: 1, role: 'operator', address: predictMultisig({ ...policy, threshold: 1 }) }
+    value.input = { ...value.input, owner: owner.address, operator: operator.address, multisigs: [owner, operator] }
+    saveLaunchSession(value)
+    const result = [owner, operator].map(plan => ({ success: true, returnData: toHex(BigInt(plan.address), { size: 32 }) }))
+    for (const chainId of [1, 10]) clients.get(chainId)!.call.mockResolvedValue({ data: encodeFunctionResult({
+      abi: CREATE_BATCH_ABI, functionName: 'aggregate3Value', result: [...result, { success: true, returnData: '0x' }],
+    }) })
+    await run(value)
+    expect(m.forward).toHaveBeenCalledTimes(2)
+    expect(m.pay).toHaveBeenCalledTimes(1)
+    expect(entries.map(entry => entry.chain)).toEqual([1, 10])
+    for (const entry of entries) {
+      expect(entry.target).toBe(MULTICALL3)
+      expect(unbundleMultisigLaunch(entry, [owner, operator]).target).toBe(jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][entry.chain as JBChainId])
+      expect(loadLaunchSession()?.statuses[entry.chain].phase).toBe('confirmed')
+    }
+    await run()
+    expect(m.pay).toHaveBeenCalledTimes(1)
+  })
+
   it('stops before authorizing or paying when a multisig prerequisite cannot be verified', async () => {
     m.multisigCheck.mockRejectedValueOnce(new Error('Safe creation code changed'))
     await expect(run()).rejects.toThrow('Safe creation code changed')
