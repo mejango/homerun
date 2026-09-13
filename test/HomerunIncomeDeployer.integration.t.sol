@@ -13,6 +13,7 @@ import {JBAccountingContext} from "@bananapus/core-v6/src/structs/JBAccountingCo
 import {JBSplit} from "@bananapus/core-v6/src/structs/JBSplit.sol";
 import {JBSplitGroup} from "@bananapus/core-v6/src/structs/JBSplitGroup.sol";
 import {JBSplitGroupIds} from "@bananapus/core-v6/src/libraries/JBSplitGroupIds.sol";
+import {JBMetadataResolver} from "@bananapus/core-v6/src/libraries/JBMetadataResolver.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {IJBToken} from "@bananapus/core-v6/src/interfaces/IJBToken.sol";
 import {JBERC20} from "@bananapus/core-v6/src/JBERC20.sol";
@@ -32,7 +33,15 @@ import {JBSuckerRegistry} from "@bananapus/suckers-v6/src/JBSuckerRegistry.sol";
 import {JB721TiersHookStore} from "@bananapus/721-hook-v6/src/JB721TiersHookStore.sol";
 import {JB721TiersHook} from "@bananapus/721-hook-v6/src/JB721TiersHook.sol";
 import {JB721TiersHookDeployer} from "@bananapus/721-hook-v6/src/JB721TiersHookDeployer.sol";
+import {JB721TiersHookProjectDeployer} from "@bananapus/721-hook-v6/src/JB721TiersHookProjectDeployer.sol";
 import {JB721CheckpointsDeployer} from "@bananapus/721-hook-v6/src/JB721CheckpointsDeployer.sol";
+import {JB721TierConfig} from "@bananapus/721-hook-v6/src/structs/JB721TierConfig.sol";
+import {JB721TiersHookFlags} from "@bananapus/721-hook-v6/src/structs/JB721TiersHookFlags.sol";
+import {JBDeploy721TiersHookConfig} from "@bananapus/721-hook-v6/src/structs/JBDeploy721TiersHookConfig.sol";
+import {IJB721TiersHook} from "@bananapus/721-hook-v6/src/interfaces/IJB721TiersHook.sol";
+import {JBQueueRulesetsConfig} from "@bananapus/721-hook-v6/src/structs/JBQueueRulesetsConfig.sol";
+import {JBPayDataHookRulesetConfig} from "@bananapus/721-hook-v6/src/structs/JBPayDataHookRulesetConfig.sol";
+import {JBPayDataHookRulesetMetadata} from "@bananapus/721-hook-v6/src/structs/JBPayDataHookRulesetMetadata.sol";
 import {JBAddressRegistry} from "@bananapus/address-registry-v6/src/JBAddressRegistry.sol";
 import {JBBuybackHookRegistry} from "@bananapus/buyback-hook-v6/src/JBBuybackHookRegistry.sol";
 import {CTPublisher} from "@croptop/core-v6/src/CTPublisher.sol";
@@ -241,8 +250,8 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
                 .setPermissionsFor(
                     OPERATOR,
                     JBPermissionsData({
-                    operator: address(_omnichain), projectId: uint64(_fundId), permissionIds: permissionIds
-                })
+                        operator: address(_omnichain), projectId: uint64(_fundId), permissionIds: permissionIds
+                    })
                 );
             vm.warp(vm.getBlockTimestamp() + 1);
             _omnichain.queueRulesetsOf(_fundId, rulesets, "success allocations complete");
@@ -616,6 +625,103 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
         assertEq(jbController().pendingReservedTokenBalanceOf(incomeId), 0);
     }
 
+    function _shopItems() private pure returns (JB721TierConfig[] memory tiers) {
+        tiers = new JB721TierConfig[](1);
+        tiers[0].price = 25e6;
+        tiers[0].initialSupply = 100;
+        tiers[0].encodedIpfsUri = bytes32(uint256(123));
+        tiers[0].flags.useVotingUnits = true;
+    }
+
+    function testRealIncomeOwnerCanAddSellAndRemoveItemsWithoutChangingRulesets() public {
+        uint256 incomeId = _deployWithDistinctOwner();
+        JB721TiersHook hook = JB721TiersHook(address(_revOwner.tiered721HookOf(incomeId)));
+        (JBRuleset memory before,) = jbController().currentRulesetOf(incomeId);
+        assertEq(hook.owner(), address(_revOwner));
+        assertEq(hook.baseURI(), "ipfs://");
+        assertEq(hook.contractURI(), "ipfs://income");
+        for (uint256 i; i < 2; ++i) {
+            address unauthorized = i == 0 ? OPERATOR : address(_helper);
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    JBPermissioned.JBPermissioned_Unauthorized.selector,
+                    address(_revOwner),
+                    unauthorized,
+                    incomeId,
+                    JBPermissionIds.ADJUST_721_TIERS
+                )
+            );
+            vm.prank(unauthorized);
+            hook.adjustTiers(_shopItems(), new uint256[](0));
+        }
+        vm.prank(OWNER);
+        hook.adjustTiers(_shopItems(), new uint256[](0));
+        assertEq(hook.STORE().maxTierIdOf(address(hook)), 1);
+        uint16[] memory tierIds = new uint16[](1);
+        tierIds[0] = 1;
+        bytes4[] memory ids = new bytes4[](1);
+        ids[0] = JBMetadataResolver.getId("pay", hook.METADATA_ID_TARGET());
+        bytes[] memory entries = new bytes[](1);
+        entries[0] = abi.encode(false, tierIds);
+        bytes memory metadata = JBMetadataResolver.createMetadata(ids, entries);
+        usdcToken().mint(CUSTOMER, 25e6);
+        vm.startPrank(CUSTOMER);
+        usdcToken().approve(address(jbMultiTerminal()), 25e6);
+        uint256 customerTokens =
+            jbMultiTerminal().pay(incomeId, address(usdcToken()), 25e6, CUSTOMER, 0, "weekend stay", metadata);
+        vm.stopPrank();
+        assertEq(hook.balanceOf(CUSTOMER), 1);
+        assertEq(customerTokens, 50 ether);
+        uint256[] memory removed = new uint256[](1);
+        removed[0] = 1;
+        vm.prank(OWNER);
+        hook.adjustTiers(new JB721TierConfig[](0), removed);
+        assertEq(hook.balanceOf(CUSTOMER), 1);
+        (JBRuleset memory afterRuleset,) = jbController().currentRulesetOf(incomeId);
+        assertEq(afterRuleset.id, before.id);
+    }
+
+    function testRealShopAuthorityRotatesWithOwnerWithoutAddingMintMetadataOrDiscountPowers() public {
+        uint256 incomeId = _deployWithDistinctOwner();
+        JB721TiersHook hook = JB721TiersHook(address(_revOwner.tiered721HookOf(incomeId)));
+        assertTrue(
+            jbPermissions()
+                .hasPermission(OWNER, address(_revOwner), incomeId, JBPermissionIds.ADJUST_721_TIERS, false, false)
+        );
+        assertFalse(
+            jbPermissions().hasPermission(OWNER, address(_revOwner), incomeId, JBPermissionIds.MINT_721, false, false)
+        );
+        assertFalse(
+            jbPermissions()
+                .hasPermission(OWNER, address(_revOwner), incomeId, JBPermissionIds.SET_721_METADATA, false, false)
+        );
+        assertFalse(
+            jbPermissions()
+                .hasPermission(
+                    OWNER, address(_revOwner), incomeId, JBPermissionIds.SET_721_DISCOUNT_PERCENT, false, false
+                )
+        );
+        JB721TiersHookFlags memory flags = hook.STORE().flagsOf(address(hook));
+        assertTrue(flags.noNewTiersWithReserves);
+        assertTrue(flags.noNewTiersWithVotes);
+        assertTrue(flags.noNewTiersWithOwnerMinting);
+        vm.prank(OWNER);
+        _revOwner.setOperatorOf(incomeId, NEXT_OPERATOR);
+        assertFalse(
+            jbPermissions()
+                .hasPermission(OWNER, address(_revOwner), incomeId, JBPermissionIds.ADJUST_721_TIERS, false, false)
+        );
+        assertTrue(
+            jbPermissions()
+                .hasPermission(
+                    NEXT_OPERATOR, address(_revOwner), incomeId, JBPermissionIds.ADJUST_721_TIERS, false, false
+                )
+        );
+        vm.prank(NEXT_OPERATOR);
+        hook.adjustTiers(_shopItems(), new uint256[](0));
+        assertEq(hook.STORE().maxTierIdOf(address(hook)), 1);
+    }
+
     function testRealPaymentRoutesSeventyTenTwentyToOperatorDistributorAndCustomer() public {
         uint256 incomeId = _deploy(7000);
         _activateFundRewards();
@@ -969,6 +1075,197 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
         uint256 incomeId = _deploy(7000);
         _assertLocalAllocation(incomeId, 500_000 ether);
         assertEq(_helper.incomeProjectIdOf(_fundId), incomeId);
+    }
+
+    function testRealStockedOmnichainFundShopCanLaunchSeparateIncomeShop() public {
+        _useOmnichainFund = true;
+        _createAndCloseFund();
+        _createSticky();
+        (JBRuleset memory current,) = jbController().currentRulesetOf(_fundId);
+        (IJB721TiersHook fundHook,) = _omnichain.tiered721HookOf(_fundId, current.id);
+        vm.prank(OPERATOR);
+        fundHook.adjustTiers(_shopItems(), new uint256[](0));
+        uint256 incomeId = _deploy(7000);
+        IJB721TiersHook incomeHook = _revOwner.tiered721HookOf(incomeId);
+        assertTrue(address(incomeHook) != address(fundHook));
+        assertEq(fundHook.STORE().maxTierIdOf(address(fundHook)), 1);
+        assertEq(incomeHook.STORE().maxTierIdOf(address(incomeHook)), 0);
+        _assertLocalAllocation(incomeId, 500_000 ether);
+    }
+
+    function _attachFundShop(JB721TiersHookDeployer deployer, bool cashOut) private returns (IJB721TiersHook hook) {
+        JBDeploy721TiersHookConfig memory config;
+        config.name = "FUND shop";
+        config.symbol = "FUNDSTORE";
+        config.baseUri = "ipfs://";
+        config.tiersConfig.currency = 2;
+        config.tiersConfig.decimals = 6;
+        config.tiersConfig.tiers = _shopItems();
+        vm.startPrank(OPERATOR);
+        hook = deployer.deployHookFor(_fundId, config, bytes32(0));
+        JB721TiersHook(address(hook)).transferOwnershipToProject(_fundId);
+        (, JBRulesetMetadata memory metadata) = jbController().currentRulesetOf(_fundId);
+        JBRulesetConfig[] memory rulesets = new JBRulesetConfig[](1);
+        rulesets[0].weight = 1 ether;
+        rulesets[0].metadata = metadata;
+        rulesets[0].metadata.dataHook = address(hook);
+        rulesets[0].metadata.useDataHookForPay = true;
+        rulesets[0].metadata.useDataHookForCashOut = cashOut;
+        jbController().queueRulesetsOf(_fundId, rulesets, "closed FUND with shop");
+        vm.stopPrank();
+        vm.warp(block.timestamp + 1);
+        vm.roll(block.number + 1);
+    }
+
+    function testRealStockedSingleChainFundShopCanLaunchSeparateIncomeShop() public {
+        IJB721TiersHook fundHook = _attachFundShop(JB721TiersHookDeployer(address(_omnichain.HOOK_DEPLOYER())), false);
+        uint256 incomeId = _deploy(7000);
+        IJB721TiersHook incomeHook = _revOwner.tiered721HookOf(incomeId);
+        assertTrue(address(incomeHook) != address(fundHook));
+        assertEq(fundHook.STORE().maxTierIdOf(address(fundHook)), 1);
+        assertEq(incomeHook.STORE().maxTierIdOf(address(incomeHook)), 0);
+        _assertLocalAllocation(incomeId, 500_000 ether);
+    }
+
+    function _firstShopMetadata(JBRulesetMetadata memory previous)
+        private
+        pure
+        returns (JBPayDataHookRulesetMetadata memory metadata)
+    {
+        metadata.reservedPercent = previous.reservedPercent;
+        metadata.cashOutTaxRate = previous.cashOutTaxRate;
+        metadata.baseCurrency = previous.baseCurrency;
+        metadata.pausePay = previous.pausePay;
+        metadata.pauseCreditTransfers = previous.pauseCreditTransfers;
+        metadata.allowOwnerMinting = previous.allowOwnerMinting;
+        metadata.allowSetCustomToken = previous.allowSetCustomToken;
+        metadata.allowTerminalMigration = previous.allowTerminalMigration;
+        metadata.allowSetTerminals = previous.allowSetTerminals;
+        metadata.allowSetController = previous.allowSetController;
+        metadata.allowAddAccountingContext = previous.allowAddAccountingContext;
+        metadata.allowAddPriceFeed = previous.allowAddPriceFeed;
+        metadata.ownerMustSendPayouts = previous.ownerMustSendPayouts;
+        metadata.holdFees = previous.holdFees;
+        metadata.scopeCashOutsToLocalBalances = previous.scopeCashOutsToLocalBalances;
+        metadata.useDataHookForCashOut = previous.useDataHookForCashOut;
+        metadata.metadata = previous.metadata;
+    }
+
+    function testRealFirstShopAtomicProjectDeployerPreservesTermsAndRestoresScopedPermission() public {
+        JB721TiersHookProjectDeployer projectDeployer =
+            new JB721TiersHookProjectDeployer(jbDirectory(), jbPermissions(), _omnichain.HOOK_DEPLOYER(), FORWARDER);
+        (JBRuleset memory previous, JBRulesetMetadata memory previousMetadata) =
+            jbController().currentRulesetOf(_fundId);
+        JBSplitGroup[] memory splitGroups = new JBSplitGroup[](1);
+        splitGroups[0].groupId = JBSplitGroupIds.RESERVED_TOKENS;
+        splitGroups[0].splits = new JBSplit[](1);
+        splitGroups[0].splits[0].percent = 1_000_000_000;
+        splitGroups[0].splits[0].beneficiary = payable(BOB);
+        vm.prank(OPERATOR);
+        jbController().setSplitGroupsOf(_fundId, previous.id, splitGroups);
+
+        JBDeploy721TiersHookConfig memory shop;
+        shop.name = "House FUND shop";
+        shop.symbol = "SHOP";
+        shop.baseUri = "ipfs://";
+        shop.contractUri = jbController().uriOf(_fundId);
+        shop.tiersConfig.currency = 2;
+        shop.tiersConfig.decimals = 6;
+        shop.tiersConfig.tiers = _shopItems();
+        shop.flags.issueTokensForSplits = true;
+        JBQueueRulesetsConfig memory queue;
+        queue.projectId = uint64(_fundId);
+        queue.memo = "Create project shop";
+        queue.rulesetConfigurations = new JBPayDataHookRulesetConfig[](1);
+        queue.rulesetConfigurations[0].duration = previous.duration;
+        queue.rulesetConfigurations[0].weight = previous.weight;
+        queue.rulesetConfigurations[0].weightCutPercent = previous.weightCutPercent;
+        queue.rulesetConfigurations[0].approvalHook = previous.approvalHook;
+        queue.rulesetConfigurations[0].splitGroups = splitGroups;
+        queue.rulesetConfigurations[0].metadata = _firstShopMetadata(previousMetadata);
+        bytes32 salt = bytes32(uint256(731));
+        uint64 deployerNonce = vm.getNonce(address(_omnichain.HOOK_DEPLOYER()));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                JBPermissioned.JBPermissioned_Unauthorized.selector,
+                OPERATOR,
+                address(projectDeployer),
+                _fundId,
+                JBPermissionIds.QUEUE_RULESETS
+            )
+        );
+        vm.prank(OPERATOR);
+        projectDeployer.queueRulesetsOf(_fundId, shop, queue, jbController(), salt);
+        // The failed controller call also rolls back the first item's hook deployment.
+        assertEq(vm.getNonce(address(_omnichain.HOOK_DEPLOYER())), deployerNonce);
+        (JBRuleset memory stillCurrent,) = jbController().currentRulesetOf(_fundId);
+        assertEq(stillCurrent.id, previous.id);
+
+        uint8[] memory priorPermissions = new uint8[](1);
+        priorPermissions[0] = JBPermissionIds.SET_PROJECT_URI;
+        vm.prank(OPERATOR);
+        jbPermissions()
+            .setPermissionsFor(OPERATOR, JBPermissionsData(address(projectDeployer), uint64(_fundId), priorPermissions));
+        uint256 priorBitmap = jbPermissions().permissionsOf(address(projectDeployer), OPERATOR, _fundId);
+        uint8[] memory creationPermissions = new uint8[](2);
+        creationPermissions[0] = priorPermissions[0];
+        creationPermissions[1] = JBPermissionIds.QUEUE_RULESETS;
+        vm.prank(OPERATOR);
+        jbPermissions()
+            .setPermissionsFor(
+                OPERATOR, JBPermissionsData(address(projectDeployer), uint64(_fundId), creationPermissions)
+            );
+        assertEq(jbPermissions().permissionsOf(address(projectDeployer), OPERATOR, 0), 0);
+        assertEq(jbPermissions().permissionsOf(address(projectDeployer), OPERATOR, _feeProjectId), 0);
+        vm.prank(OPERATOR);
+        (uint256 rulesetId, IJB721TiersHook hook) =
+            projectDeployer.queueRulesetsOf(_fundId, shop, queue, jbController(), salt);
+        vm.prank(OPERATOR);
+        jbPermissions()
+            .setPermissionsFor(OPERATOR, JBPermissionsData(address(projectDeployer), uint64(_fundId), priorPermissions));
+        assertEq(jbPermissions().permissionsOf(address(projectDeployer), OPERATOR, _fundId), priorBitmap);
+
+        (JBRuleset memory configured, JBRulesetMetadata memory configuredMetadata) =
+            jbController().getRulesetOf(_fundId, rulesetId);
+        assertTrue(rulesetId != previous.id);
+        assertEq(configured.duration, previous.duration);
+        assertEq(configured.weight, previous.weight);
+        assertEq(configured.weightCutPercent, previous.weightCutPercent);
+        assertEq(address(configured.approvalHook), address(previous.approvalHook));
+        previousMetadata.dataHook = address(hook);
+        previousMetadata.useDataHookForPay = true;
+        assertEq(abi.encode(configuredMetadata), abi.encode(previousMetadata));
+        assertEq(
+            abi.encode(jbSplits().splitsOf(_fundId, rulesetId, JBSplitGroupIds.RESERVED_TOKENS)),
+            abi.encode(splitGroups[0].splits)
+        );
+        assertEq(JB721TiersHook(address(hook)).owner(), OPERATOR);
+        assertEq(hook.projectId(), _fundId);
+        assertEq(hook.STORE().maxTierIdOf(address(hook)), 1);
+        assertEq(hook.STORE().tierOf(address(hook), 1, false).price, 25e6);
+        assertEq(jbController().uriOf(_fundId), shop.contractUri);
+        assertEq(jbTokens().totalSupplyOf(_fundId), 500 ether);
+
+        vm.warp(block.timestamp + 1);
+        vm.roll(block.number + 1);
+        uint256 incomeId = _deploy(7000);
+        IJB721TiersHook incomeHook = _revOwner.tiered721HookOf(incomeId);
+        assertTrue(address(incomeHook) != address(hook));
+        assertEq(incomeHook.STORE().maxTierIdOf(address(incomeHook)), 0);
+    }
+
+    function testRealNoncanonicalFundShopCannotEnterIncomeSnapshot() public {
+        _attachFundShop(_hookDeployer(), false);
+        SnapshotFixture memory fixture = _snapshot(_holders());
+        vm.expectRevert(HomerunIncomeDeployer.UnsupportedFund.selector);
+        _deploySnapshot(7000, fixture);
+    }
+
+    function testRealFundShopWithNftCashOutsCannotEnterIncomeSnapshot() public {
+        _attachFundShop(JB721TiersHookDeployer(address(_omnichain.HOOK_DEPLOYER())), true);
+        SnapshotFixture memory fixture = _snapshot(_holders());
+        vm.expectRevert(HomerunIncomeDeployer.UnsupportedFund.selector);
+        _deploySnapshot(7000, fixture);
     }
 
     /// @notice Golden vector independently encoded with Viem, including a zero-valued global issuance row.

@@ -664,7 +664,7 @@ contract HomerunIncomeDeployerTest is Test {
     }
 
     function testLaunchAtomicallyFundsBoundVaultAndPreservesOwner() public {
-        assertEq(helper.LAUNCH_VERSION(), 2);
+        assertEq(helper.LAUNCH_VERSION(), 3);
         uint256 id = _deploy();
         HomerunInitialIncomeVault vault = HomerunInitialIncomeVault(helper.initialAllocationVaultOf(1));
         assertEq(id, 2);
@@ -734,8 +734,14 @@ contract HomerunIncomeDeployerTest is Test {
         assertEq(nft.baseline721HookConfiguration.tiersConfig.currency, 2);
         assertEq(nft.baseline721HookConfiguration.tiersConfig.decimals, 6);
         assertEq(nft.baseline721HookConfiguration.tiersConfig.tiers.length, 0);
+        assertEq(nft.baseline721HookConfiguration.baseUri, "ipfs://");
+        assertEq(nft.baseline721HookConfiguration.contractUri, config.description.uri);
+        assertTrue(nft.baseline721HookConfiguration.flags.noNewTiersWithReserves);
+        assertTrue(nft.baseline721HookConfiguration.flags.noNewTiersWithVotes);
+        assertTrue(nft.baseline721HookConfiguration.flags.noNewTiersWithOwnerMinting);
+        assertFalse(nft.preventOperatorAdjustingTiers);
         assertTrue(
-            nft.preventOperatorAdjustingTiers && nft.preventOperatorUpdatingMetadata && nft.preventOperatorMinting
+            nft.preventOperatorUpdatingMetadata && nft.preventOperatorMinting
                 && nft.preventOperatorIncreasingDiscountPercent
         );
     }

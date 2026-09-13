@@ -110,7 +110,8 @@ function mediaOk(media: DemoShopItem['media']): boolean {
   } catch { return false }
 }
 
-export function validateDemoShopItem(item: DemoShopItem, currency: DemoShopCurrency): Record<string, string> {
+export function validateDemoShopItem(item: DemoShopItem, currency: DemoShopCurrency, priceDecimals = currency === 'ETH' ? 18 : 6): Record<string, string> {
+  if (!Number.isInteger(priceDecimals) || priceDecimals < 0 || priceDecimals > 255) return { price: 'The shop pricing precision could not be read.' }
   const errors: Record<string, string> = {}
   for (const [field, limit] of Object.entries(stringLimits)) {
     const value = item[field as keyof typeof stringLimits]
@@ -119,8 +120,8 @@ export function validateDemoShopItem(item: DemoShopItem, currency: DemoShopCurre
   if (Object.keys(errors).length) return errors
   if (!item.id.trim()) errors.id = 'This item needs an identifier.'
   if (!item.name.trim()) errors.name = 'Enter an item name.'
-  const price = decimalUnits(item.price, currency === 'ETH' ? 18 : 6)
-  if (price === null || price <= 0n || price > MAX_PRICE) errors.price = `Enter a positive ${currency} price with at most ${currency === 'ETH' ? 18 : 6} decimal places.`
+  const price = decimalUnits(item.price, priceDecimals)
+  if (price === null || price <= 0n || price > MAX_PRICE) errors.price = `Enter a positive ${currency} price with at most ${priceDecimals} decimal places.`
   if (item.supply.trim() && !integerInRange(item.supply, 1n, 999_999_998n)) errors.supply = 'Use 1–999,999,998 items, or leave empty for unlimited.'
   if (discountUnits(item.discountPct) === null) errors.discountPct = 'Use 0–100%, in 0.5% steps.'
   if (item.reserveN.trim()) {
@@ -156,12 +157,12 @@ export function validateDemoShopItem(item: DemoShopItem, currency: DemoShopCurre
 }
 
 /** Same smallest-unit rounding as the stock JB721TiersHookStore. */
-export function demoShopPrice(item: DemoShopItem, currency: DemoShopCurrency): string {
-  const decimals = currency === 'ETH' ? 18 : 6
-  const price = decimalUnits(item.price, decimals)
+export function demoShopPrice(item: DemoShopItem, currency: DemoShopCurrency, priceDecimals = currency === 'ETH' ? 18 : 6): string {
+  if (!Number.isInteger(priceDecimals) || priceDecimals < 0 || priceDecimals > 255) return '—'
+  const price = decimalUnits(item.price, priceDecimals)
   const discount = discountUnits(item.discountPct)
   if (price === null || price <= 0n || price > MAX_PRICE || discount === null) return '—'
-  return `${formatUnits(effectiveTierPrice(price, Number(discount)), decimals)} ${currency}`
+  return `${formatUnits(effectiveTierPrice(price, Number(discount)), priceDecimals)} ${currency}`
 }
 
 export function demoShopStorageKey(projectKey: string, phase: DemoShopPhase): string {

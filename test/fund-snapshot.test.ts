@@ -567,7 +567,40 @@ describe('local components of a global snapshot', () => {
     await expect(read(rpc)).rejects.toThrow('historical bridges')
   })
 
-  it.each(['empty', 'tiers', 'wrong-store', 'wrong-project', 'wrong-scope', 'wrong-owner', 'cash-out'] as const)('checks an existing omnichain NFT hook before accepting a closed global component (%s)', async mode => {
+  it.each(['valid', 'unregistered', 'wrong-owner', 'cash-out', 'unpaused', 'minting', 'reserves', 'refunds'] as const)('checks a direct nonempty FUND shop at the final ownership block (%s)', async mode => {
+    const hook = '0x00000000000000000000000000000000000000AA'
+    const store = v6Address('JB721TiersHookStore', CHAIN_ID)
+    const rpc = fixture({
+      metadata: { dataHook: hook, useDataHookForPay: true, useDataHookForCashOut: mode === 'cash-out', pausePay: mode !== 'unpaused', allowOwnerMinting: mode === 'minting', cashOutTaxRate: mode === 'refunds' ? 0 : 10_000 },
+      values: { pendingReservedTokenBalanceOf: mode === 'reserves' ? 1n : 0n },
+    })
+    const original = rpc.readContract.getMockImplementation()!
+    rpc.readContract.mockImplementation(async request => {
+      expect(request.blockNumber).toBe(SNAPSHOT_BLOCK)
+      if (request.address === v6Address('JBAddressRegistry', CHAIN_ID) && request.functionName === 'deployerOf') {
+        expect(request.args).toEqual([hook])
+        return mode === 'unregistered' ? zeroAddress : v6Address('JB721TiersHookDeployer', CHAIN_ID)
+      }
+      if (request.address === hook) {
+        if (request.functionName === 'DIRECTORY') return DIRECTORY
+        if (request.functionName === 'PROJECTS') return PROJECTS
+        if (request.functionName === 'STORE') return store
+        if (request.functionName === 'projectId') return PROJECT_ID
+        if (request.functionName === 'jbOwner') return [zeroAddress, PROJECT_ID, 0]
+        if (request.functionName === 'owner') return mode === 'wrong-owner' ? zeroAddress : OWNER
+      }
+      if (request.address === store && request.functionName === 'maxTierIdOf') return 100n
+      return original(request)
+    })
+    if (mode === 'valid') {
+      const result = await read(rpc, { creationBlockNumber: CREATION_BLOCK })
+      expect(result.totalFundSupply).toBe(95n)
+      expect(result.holders).toEqual(rpc.holders.map(holder => ({ ...holder, balance: holder.creditBalance + holder.erc20Balance })))
+      expect(rpc.getLogs.mock.calls.every(([request]) => request.address !== hook)).toBe(true)
+    } else await expect(read(rpc, { creationBlockNumber: CREATION_BLOCK })).rejects.toThrow()
+  })
+
+  it.each(['empty', 'tiers', 'unregistered', 'wrong-store', 'wrong-directory', 'wrong-projects', 'wrong-project', 'wrong-scope', 'wrong-owner', 'cash-out'] as const)('checks an existing omnichain NFT hook before accepting a closed global component (%s)', async mode => {
     const omnichain = v6Address('JBOmnichainDeployer', CHAIN_ID)
     const hook = '0x00000000000000000000000000000000000000AA'
     const store = v6Address('JB721TiersHookStore', CHAIN_ID)
@@ -577,7 +610,13 @@ describe('local components of a global snapshot', () => {
       expect(request.blockNumber).toBe(SNAPSHOT_BLOCK)
       if (request.address === omnichain && request.functionName === 'extraDataHookOf') return { dataHook: zeroAddress, useDataHookForPay: false, useDataHookForCashOut: false }
       if (request.address === omnichain && request.functionName === 'tiered721HookOf') return [hook, mode === 'cash-out']
+      if (request.address === v6Address('JBAddressRegistry', CHAIN_ID) && request.functionName === 'deployerOf') {
+        expect(request.args).toEqual([hook])
+        return mode === 'unregistered' ? zeroAddress : v6Address('JB721TiersHookDeployer', CHAIN_ID)
+      }
       if (request.address === hook) {
+        if (request.functionName === 'DIRECTORY') return mode === 'wrong-directory' ? OWNER : DIRECTORY
+        if (request.functionName === 'PROJECTS') return mode === 'wrong-projects' ? OWNER : PROJECTS
         if (request.functionName === 'STORE') return mode === 'wrong-store' ? OWNER : store
         if (request.functionName === 'projectId') return mode === 'wrong-project' ? PROJECT_ID + 1n : PROJECT_ID
         if (request.functionName === 'jbOwner') return [zeroAddress, mode === 'wrong-scope' ? PROJECT_ID + 1n : PROJECT_ID, 0]
@@ -586,7 +625,12 @@ describe('local components of a global snapshot', () => {
       if (request.address === store && request.functionName === 'maxTierIdOf') return mode === 'tiers' ? 1n : 0n
       return original(request)
     })
-    if (mode === 'empty') expect((await component(rpc)).totalFundSupply).toBe(95n)
+    if (mode === 'empty' || mode === 'tiers') {
+      const result = await component(rpc)
+      expect(result.totalFundSupply).toBe(95n)
+      expect(result.holders).toEqual(rpc.holders.map(holder => ({ ...holder, balance: holder.creditBalance + holder.erc20Balance })))
+      expect(rpc.readContract.mock.calls.some(([request]) => ['votingUnitsOf', 'payCreditsOf', 'ownerOf'].includes(request.functionName) && request.address === hook)).toBe(false)
+    }
     else await expect(component(rpc)).rejects.toThrow()
   })
 })

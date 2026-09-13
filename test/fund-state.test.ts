@@ -46,6 +46,7 @@ type FixtureOptions = {
   values?: Record<string, unknown>
   allowedPermissions?: number[]
   omnichain?: boolean
+  directShop?: boolean
   bridge?: { address: Address; peer: Address; peerChainId: number; projectId?: bigint }
 }
 
@@ -64,6 +65,11 @@ function rpcFixture(options: FixtureOptions = {}) {
     metadata.dataHook = v6Address('JBOmnichainDeployer', chainId)
     metadata.useDataHookForPay = true
     metadata.useDataHookForCashOut = true
+  }
+  if (options.directShop) {
+    metadata.dataHook = TIER_HOOK
+    metadata.useDataHookForPay = true
+    metadata.useDataHookForCashOut = false
   }
   const ruleset: JBRuleset = {
     cycleNumber: 1, id: 71, basedOnId: 0, start: 1_800_000_000, duration: 0,
@@ -106,6 +112,11 @@ function rpcFixture(options: FixtureOptions = {}) {
   if (options.omnichain) {
     add(metadata.dataHook, 'extraDataHookOf', { dataHook: zeroAddress, useDataHookForPay: false, useDataHookForCashOut: false }, [projectId, 71n])
     add(metadata.dataHook, 'tiered721HookOf', [TIER_HOOK, false], [projectId, 71n])
+  }
+  if (options.omnichain || options.directShop) {
+    add(v6Address('JBAddressRegistry', chainId), 'deployerOf', v6Address('JB721TiersHookDeployer', chainId), [TIER_HOOK])
+    add(TIER_HOOK, 'DIRECTORY', v6Address('JBDirectory', chainId))
+    add(TIER_HOOK, 'PROJECTS', v6Address('JBProjects', chainId))
     add(TIER_HOOK, 'STORE', v6Address('JB721TiersHookStore', chainId))
     add(TIER_HOOK, 'projectId', projectId)
     add(TIER_HOOK, 'jbOwner', [zeroAddress, projectId, 0])
@@ -309,7 +320,7 @@ describe('readFundProjectState', () => {
     await expect(read(rpcFixture({ values }))).rejects.toThrow(/inconsistent project token accounting/i)
   })
 
-  it('proves a recorded omnichain NFT hook has no tiers and is scoped to the current owner and project', async () => {
+  it('proves a recorded omnichain NFT hook is canonical and scoped to the current owner and project', async () => {
     const fixture = rpcFixture({ omnichain: true, values: { payoutLimitsOf: [], surplusAllowancesOf: [] } })
     const state = await read(fixture)
     expect(state.rulesetSnapshot.configuration).not.toBeNull()
@@ -318,20 +329,42 @@ describe('readFundProjectState', () => {
       tiered721Hook: TIER_HOOK, tiered721UseDataHookForCashOut: false, tiered721HasTiers: false,
     })
     const hookReads = fixture.readContract.mock.calls.map(([request]) => request)
-      .filter(request => ['extraDataHookOf', 'tiered721HookOf', 'STORE', 'projectId', 'jbOwner', 'owner', 'maxTierIdOf'].includes(request.functionName))
-    expect(hookReads).toHaveLength(7)
+      .filter(request => ['extraDataHookOf', 'tiered721HookOf', 'deployerOf', 'DIRECTORY', 'PROJECTS', 'STORE', 'projectId', 'jbOwner', 'owner', 'maxTierIdOf'].includes(request.functionName))
+    expect(hookReads).toHaveLength(10)
     expect(hookReads.every(request => request.blockNumber === fixture.blockNumber)).toBe(true)
     const { configurations } = buildFundRulesetChange({ snapshots: [state.rulesetSnapshot], action: 'pause', mustStartAtOrAfter: 1_800_000_200 })
     expect(configurations[0].metadata.dataHook).toBe(zeroAddress)
   })
 
-  it('withholds editable configuration when the recorded NFT hook has live tiers', async () => {
-    const state = await read(rpcFixture({ omnichain: true, values: { maxTierIdOf: 1n } }))
+  it.each([false, true])('preserves stock NFT shops through FUND closure (direct=%s)', async directShop => {
+    const state = await read(rpcFixture({ omnichain: !directShop, directShop, values: { maxTierIdOf: 1n, payoutLimitsOf: [], surplusAllowancesOf: [] } }))
+    expect(state.rulesetSnapshot.configuration).not.toBeNull()
+    expect(state.rulesetSnapshot.stock721Hook).toEqual({ address: TIER_HOOK, verified: true, hasTiers: true })
+    const { configurations } = buildFundRulesetChange({ snapshots: [state.rulesetSnapshot], action: 'close', mustStartAtOrAfter: 1_800_000_200 })
+    expect(configurations[0].metadata).toMatchObject({ pausePay: true, cashOutTaxRate: 10_000, allowOwnerMinting: false, dataHook: directShop ? TIER_HOOK : zeroAddress, useDataHookForCashOut: false })
+  })
+
+  it('rejects an interface impostor absent from the canonical factory registry', async () => {
+    const fixture = rpcFixture({ directShop: true, values: { deployerOf: DELEGATE } })
+    const state = await read(fixture)
     expect(state.rulesetSnapshot.configuration).toBeNull()
-    expect(state.rulesetSnapshot.omnichainHooks?.tiered721HasTiers).toBe(true)
+    expect(state.rulesetSnapshot.stock721Hook).toBeUndefined()
+    expect(state.issues).toContain('Custom payment or cash-out hooks need the full Juicebox ruleset editor.')
+    expect(fixture.readContract.mock.calls.some(([request]) => request.functionName === 'STORE')).toBe(false)
+  })
+
+  it('does not treat an unavailable hook registry as an unrecognized custom hook', async () => {
+    await expect(read(rpcFixture({ directShop: true, fail: 'deployerOf' }))).rejects.toThrow(/RPC unavailable/)
+  })
+
+  it('withholds editable configuration for NFT cash-out hooks', async () => {
+    const state = await read(rpcFixture({ omnichain: true, values: { tiered721HookOf: [TIER_HOOK, true] } }))
+    expect(state.rulesetSnapshot.configuration).toBeNull()
   })
 
   it.each([
+    { name: 'directory', values: { DIRECTORY: DELEGATE } },
+    { name: 'projects', values: { PROJECTS: DELEGATE } },
     { name: 'store', values: { STORE: DELEGATE } },
     { name: 'project', values: { projectId: 999n } },
     { name: 'owner scope', values: { jbOwner: [zeroAddress, 999n, 0] } },

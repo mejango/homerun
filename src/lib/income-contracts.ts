@@ -213,7 +213,7 @@ export function buildIncomeDeployPlan(input: {
         flags: { noNewTiersWithReserves: true, noNewTiersWithVotes: true, noNewTiersWithOwnerMinting: true, preventOverspending: false },
       },
       salt: input.salt,
-      preventOperatorAdjustingTiers: true, preventOperatorUpdatingMetadata: true,
+      preventOperatorAdjustingTiers: false, preventOperatorUpdatingMetadata: true,
       preventOperatorMinting: true, preventOperatorIncreasingDiscountPercent: true,
     },
     allowedPosts: [],

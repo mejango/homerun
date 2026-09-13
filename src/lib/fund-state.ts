@@ -2,8 +2,6 @@
 import {
   NATIVE_TOKEN,
   USDC_ADDRESSES,
-  jb721TiersHookAbi,
-  jb721TiersHookStoreAbi,
   jbContractAddress,
   jbControllerAbi,
   jbDirectoryAbi,
@@ -39,6 +37,7 @@ import {
   type PublicClient,
 } from 'viem'
 import type { FundRulesetSnapshot } from './fund-contracts'
+import { readVerifiedProject721Hook, UnsupportedProject721HookError } from './fund-hooks'
 
 export type FundAccountingContext = {
   token: Address
@@ -223,29 +222,27 @@ export async function readFundProjectState(
   })
   const linkedChainIds = [...new Set([chainId, ...linkedPeers.map(peer => peer.chainId)])].sort((a, b) => a - b)
   let omnichainHooks: FundRulesetSnapshot['omnichainHooks']
+  let stock721Hook: FundRulesetSnapshot['stock721Hook']
   let supportedHook = !nonzero(metadata.dataHook) && !metadata.useDataHookForPay && !metadata.useDataHookForCashOut
   if (isAddressEqual(metadata.dataHook, omnichain)) {
     const [extraHook, tieredHook] = await Promise.all([
       client.readContract({ address: omnichain, abi: jbOmnichainDeployerAbi, functionName: 'extraDataHookOf', args: [projectId, BigInt(ruleset.id)], ...at }),
       client.readContract({ address: omnichain, abi: jbOmnichainDeployerAbi, functionName: 'tiered721HookOf', args: [projectId, BigInt(ruleset.id)], ...at }),
     ])
-    let tiered721HasTiers = false
     if (nonzero(tieredHook[0])) {
-      const [store, hookProjectId, scope, hookOwner] = await Promise.all([
-        client.readContract({ address: tieredHook[0], abi: jb721TiersHookAbi, functionName: 'STORE', ...at }),
-        client.readContract({ address: tieredHook[0], abi: jb721TiersHookAbi, functionName: 'projectId', ...at }),
-        client.readContract({ address: tieredHook[0], abi: jb721TiersHookAbi, functionName: 'jbOwner', ...at }),
-        client.readContract({ address: tieredHook[0], abi: jb721TiersHookAbi, functionName: 'owner', ...at }),
-      ])
-      if (!isAddressEqual(store, v6Address('JB721TiersHookStore', chain)) || hookProjectId !== projectId ||
-        scope[1] !== projectId || !isAddressEqual(hookOwner, owner)) {
-        throw new Error('The NFT hook is not scoped to this project and its current owner.')
-      }
-      const maxTierId = await client.readContract({ address: store, abi: jb721TiersHookStoreAbi, functionName: 'maxTierIdOf', args: [tieredHook[0]], ...at })
-      tiered721HasTiers = maxTierId !== 0n
+      stock721Hook = await readVerifiedProject721Hook(client, { chainId: chain, projectId, owner, hook: tieredHook[0], blockNumber })
     }
-    omnichainHooks = { ...extraHook, tiered721Hook: tieredHook[0], tiered721UseDataHookForCashOut: tieredHook[1], tiered721HasTiers }
-    supportedHook = !nonzero(extraHook.dataHook) && !extraHook.useDataHookForPay && !extraHook.useDataHookForCashOut && !tieredHook[1] && !tiered721HasTiers
+    omnichainHooks = { ...extraHook, tiered721Hook: tieredHook[0], tiered721UseDataHookForCashOut: tieredHook[1], tiered721HasTiers: stock721Hook?.hasTiers ?? false }
+    supportedHook = !nonzero(extraHook.dataHook) && !extraHook.useDataHookForPay && !extraHook.useDataHookForCashOut && !tieredHook[1]
+  } else if (nonzero(metadata.dataHook) && metadata.useDataHookForPay && !metadata.useDataHookForCashOut) {
+    try {
+      stock721Hook = await readVerifiedProject721Hook(client, { chainId: chain, projectId, owner, hook: metadata.dataHook, blockNumber })
+      supportedHook = true
+    } catch (reason) {
+      // Unrecognized custom hooks remain readable with lifecycle writes disabled.
+      // RPC failures and inconsistent canonical bindings still reject the read.
+      if (!(reason instanceof UnsupportedProject721HookError)) throw reason
+    }
   }
   if (!supportedHook) issues.push('Custom payment or cash-out hooks need the full Juicebox ruleset editor.')
 
@@ -270,10 +267,10 @@ export async function readFundProjectState(
     return { ...context, terminal: canonicalTerminal, primaryTerminal, isPrimary: isAddressEqual(primaryTerminal, canonicalTerminal), balance, surplus, symbol, payoutLimits, surplusAllowances }
   }))
 
-  // With a vanilla core (or its verified empty omnichain wrapper), these are
-  // all effective groups: reserved tokens and one payout group per accepted
-  // token. Unknown custom hooks are excluded above because they may consume
-  // additional groups. splitsOf also resolves ruleset-0 fallback recipients.
+  // Core ruleset groups are reserved tokens and one payout group per accepted
+  // token. Stock721 tier groups are managed by the hook at rulesetId=0 (not the
+  // current ruleset), so retaining the hook preserves them without copying them
+  // into a new ruleset. Unknown hooks can consume other groups and are excluded.
   let configuration: JBRulesetConfig | null = null
   if (supportedController && supportedTerminals && supportedHook && rawContexts.length > 0 && ruleset.id !== 0) {
     const groupIds = [...new Set([RESERVED_TOKEN_SPLIT_GROUP_ID, ...rawContexts.map(context => payoutSplitGroupId(context.token))])]
@@ -317,7 +314,7 @@ export async function readFundProjectState(
     chainId, projectId, blockNumber, controller, currentRulesetId: BigInt(ruleset.id),
     upcomingRulesetId: hasPendingRuleset ? BigInt(queued?.ruleset.id !== ruleset.id ? queued?.ruleset.id ?? upcoming?.ruleset.id ?? 0 : upcoming?.ruleset.id ?? 0) : 0n,
     accountingContexts: accountingContexts.map(({ terminal, token, currency, decimals }) => ({ terminal, token, currency, decimals })),
-    configuration, linkedChainIds, ...(omnichainHooks ? { omnichainHooks } : {}),
+    configuration, linkedChainIds, ...(omnichainHooks ? { omnichainHooks } : {}), ...(stock721Hook ? { stock721Hook } : {}),
   }
   // A reorg during the fan-out invalidates the snapshot instead of combining
   // calls from competing blocks with the same height.

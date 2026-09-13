@@ -8,6 +8,7 @@ import { getFundGlobalClaim, fundGlobalManifestHash, globalIncomeSnapshotParamet
 import { homerunIncomeDeployerAbi, incomeDistributorAbi, INCOME_QUARTER_SECONDS, INCOME_INITIAL_ISSUANCE, INCOME_CUT_PERCENT, registeredIncomeDeployer, registeredIncomeDistributor } from './income-contracts'
 import { registeredStickyContract, stickyDeployerAbi } from './sticky-contracts'
 import { readStickyProjectState, type StickyProjectState } from './sticky-state'
+import { isVerifiedProject721Hook } from './fund-hooks'
 
 export function incomeLaunchBlockers(state: FundProjectState): string[] {
   const blockers: string[] = []
@@ -25,9 +26,12 @@ export function closedFundIncomeBlockers(state: FundProjectState): string[] {
   if (!state.metadata.pausePay || state.metadata.cashOutTaxRate !== 10_000 || state.metadata.allowOwnerMinting || state.pendingReservedTokens !== 0n) blockers.push('Finish the successful raise, including offchain contributions and the owner allocation, then close minting before launching INCOME.')
   const vanillaHook = isAddressEqual(state.metadata.dataHook, zeroAddress) && !state.metadata.useDataHookForPay && !state.metadata.useDataHookForCashOut
   const hooks = state.rulesetSnapshot?.omnichainHooks
+  const stockShop = state.rulesetSnapshot?.stock721Hook
+  const canonicalDirectHook = !state.metadata.useDataHookForCashOut && isVerifiedProject721Hook(stockShop, state.metadata.dataHook)
   const canonicalOmnichainHook = isAddressEqual(state.metadata.dataHook, v6Address('JBOmnichainDeployer', state.chainId)) && hooks &&
-    isAddressEqual(hooks.dataHook, zeroAddress) && !hooks.useDataHookForPay && !hooks.useDataHookForCashOut && !hooks.tiered721UseDataHookForCashOut && !hooks.tiered721HasTiers
-  if ((!vanillaHook && !canonicalOmnichainHook) || state.hasPendingRuleset) blockers.push('The initial INCOME launcher requires a closed FUND with no custom hooks or pending rulesets.')
+    isAddressEqual(hooks.dataHook, zeroAddress) && !hooks.useDataHookForPay && !hooks.useDataHookForCashOut && !hooks.tiered721UseDataHookForCashOut &&
+    (isAddressEqual(hooks.tiered721Hook, zeroAddress) || isVerifiedProject721Hook(stockShop, hooks.tiered721Hook))
+  if ((!vanillaHook && !canonicalDirectHook && !canonicalOmnichainHook) || state.hasPendingRuleset) blockers.push('The initial INCOME launcher requires a closed FUND with no custom hooks or pending rulesets.')
   return blockers
 }
 
@@ -81,7 +85,7 @@ export async function verifyIncomeLaunchWiring(client: PublicClient, chainId: JB
   return deployer
 }
 
-/** New launches require the separate incentive recipient selector; old bindings remain readable. */
+/** New launches require separate roles and an owner-managed shop; old bindings remain readable. */
 export async function assertIncomeLaunchVersion(client: PublicClient, chainId: JBChainId, blockNumber: bigint): Promise<void> {
   const deployer = registeredIncomeDeployer(chainId)
   let version: bigint | undefined
@@ -89,7 +93,7 @@ export async function assertIncomeLaunchVersion(client: PublicClient, chainId: J
     try { version = await client.readContract({ address: deployer, abi: homerunIncomeDeployerAbi, functionName: 'LAUNCH_VERSION', blockNumber }) }
     catch { /* Legacy launchers do not expose a compatible version. */ }
   }
-  if (version !== 2n) throw new Error(`Chain ${chainId}: A verified launcher supporting separate Owner and Operator wallets is required before launching INCOME.`)
+  if (version !== 3n) throw new Error(`Chain ${chainId}: A verified launcher supporting separate Owner and Operator wallets and owner-managed shops is required before launching INCOME.`)
 }
 
 export type InitialIncomeSnapshot = ReturnType<typeof globalIncomeSnapshotParameters>

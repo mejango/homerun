@@ -34,6 +34,16 @@ describe('demo item rules mirror the stock shop', () => {
     expect(validateDemoShopItem(item({ price: '20282409603651670423947251.286015' }), 'USD')).toEqual({})
     expect(validateDemoShopItem(item({ price: '20282409603651670423947251.286016' }), 'USD')).toHaveProperty('price')
   })
+  it.each([-1, 1.5, 256, NaN, Infinity])('rejects invalid shop price decimals %s without throwing', priceDecimals => {
+    expect(validateDemoShopItem(item(), 'USD', priceDecimals)).toHaveProperty('price')
+    expect(demoShopPrice(item(), 'USD', priceDecimals)).toBe('—')
+  })
+  it('accepts integer prices and rejects fractional prices for a shop with zero decimals', () => {
+    expect(validateDemoShopItem(item({ price: '3' }), 'USD', 0)).toEqual({})
+    expect(demoShopPrice(item({ price: '3', discountPct: '50' }), 'USD', 0)).toBe('2 USD')
+    expect(validateDemoShopItem(item({ price: '0.5' }), 'USD', 0)).toHaveProperty('price')
+    expect(demoShopPrice(item({ price: '0.5' }), 'USD', 0)).toBe('—')
+  })
   it('accepts unlimited inventory, boundaries, and zero voting units', () => {
     expect(validateDemoShopItem(item(), 'USD')).toEqual({})
     expect(validateDemoShopItem(item({ supply: '999999998', votingUnits: '4294967295' }), 'USD')).toEqual({})

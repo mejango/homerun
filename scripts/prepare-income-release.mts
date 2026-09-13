@@ -13,11 +13,19 @@ import { concatHex, encodeAbiParameters, getAddress, getCreate2Address, isAddres
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const workspace = resolve(root, '../..')
-const profile = 'homerun-income-global-stock-sticky-v2-candidate'
+export const incomeReleasePolicy = {
+  profile: 'homerun-income-global-stock-sticky-v3-candidate',
+  launchVersion: 3,
+  helperSaltText: 'homerun.income-deployer.global.v3',
+  splitLockedUntil: '0',
+  roles: { controlWallet: 'FUND owner; msg.sender becomes the stock Revnet operator', incentiveRecipient: 'separate nonzero operator argument; grants no project authority' },
+  shop: { currency: 2, decimals: 6, ownerCanAdjustTiers: true, ownerCanUpdateCollectionMetadata: false, ownerCanMint: false, ownerCanIncreaseDiscountPercent: false, newTiersWithReserves: false, newTiersWithVotes: false, newTiersWithOwnerMinting: false },
+} as const
+const profile = incomeReleasePolicy.profile
 const chainIds = [1, 10, 8453, 42161, 84532, 421614, 11155111, 11155420] as const
 const linkedGroups = { mainnet: [1, 10, 8453, 42161], testnet: [84532, 421614, 11155111, 11155420] }
 const deterministicFactory = '0x4e59b44847b379578588920cA78FbF26c0B4956C' as const
-const helperSaltText = 'homerun.income-deployer.global.v2'
+const helperSaltText = incomeReleasePolicy.helperSaltText
 const helperSalt = keccak256(toHex(helperSaltText))
 const distributionType = 'HomerunInitialIncome(uint256 chainId,address deployer,uint256 fundProjectId,bytes32 sourceSetHash,uint256 totalFundSupply,bytes32 salt)'
 const sha256 = (value: string | Uint8Array) => createHash('sha256').update(value).digest('hex')
@@ -42,8 +50,8 @@ const specs: ArtifactSpec[] = [
     ['JBStickyDeployer', ['controller:address', 'terminal:address']],
     ['JBStickyHook', ['directory:address', 'deployer:address']],
     ['JBTokenDistributor', ['directory:address', 'controller:address', 'revLoans:address', 'revOwner:address', 'initialRoundDuration:uint256', 'initialVestingRounds:uint256', 'initialClaimDuration:uint48']],
-    ['JBStickyRewardPockets', ['distributor:address']],
-    ['JBStickyRewardPocket', ['distributor:address', 'stickyToken:address']],
+    ['JBStickyRewardReceiverFactory', ['distributor:address']],
+    ['JBStickyRewardReceiver', ['distributor:address', 'stickyToken:address']],
     ['JBStickyAutoStick', ['deployer:address', 'distributor:address']],
     ['JBStickyToken', ['name:string', 'symbol:string', 'tokens:address', 'projectId:uint256', 'hook:address', 'soulbound:bool']],
     ['JBStickyPriceFeed', ['hook:address', 'terminal:address', 'token:address', 'projectId:uint256', 'underlyingToken:address']],
@@ -161,22 +169,42 @@ function constructorPlan(artifact: Artifact | undefined, values: unknown[], know
   }
 }
 
-export async function prepareIncomeRelease() {
-  const blockers = ['No executed helper/Sticky deployment receipts or per-chain runtime/immutable verification are established by this offline packet.', 'The new helper and claim-vault source must be frozen with its reviewed compiler inputs before a production release.']
-  const helperSource = await readFile(resolve(root, 'src/HomerunIncomeDeployer.sol'), 'utf8')
-  const vaultSource = await readFile(resolve(root, 'src/HomerunInitialIncomeVault.sol'), 'utf8')
+/** Deliberately narrow source checks supplement exact artifact fingerprints, not formal verification. */
+export function assertIncomeReleaseSource(helperSource: string, vaultSource: string) {
   const normalized = helperSource.replace(/\s+/g, ' ')
   const sourceAssertions = [
     'constructor(HomerunIncomeChainConfig[] memory chains)',
+    `uint256 public constant LAUNCH_VERSION = ${incomeReleasePolicy.launchVersion};`,
     'PROTOCOL_CONFIG_HASH = keccak256(abi.encode(chains));',
+    'if (PROJECTS.ownerOf(fundProjectId) != msg.sender) revert Unauthorized();',
+    'config.operator = msg.sender;', 'operator == address(0)', 'beneficiary: payable(operator),',
     'config.scopeCashOutsToLocalBalances = false;',
+    'nft.baseline721HookConfiguration.tiersConfig.currency = 2;',
+    'nft.baseline721HookConfiguration.tiersConfig.decimals = 6;',
+    'nft.baseline721HookConfiguration.flags.noNewTiersWithReserves = true;',
+    'nft.baseline721HookConfiguration.flags.noNewTiersWithVotes = true;',
+    'nft.baseline721HookConfiguration.flags.noNewTiersWithOwnerMinting = true;',
+    'nft.preventOperatorAdjustingTiers = false;',
+    'nft.preventOperatorUpdatingMetadata = true;',
+    'nft.preventOperatorMinting = true;',
+    'nft.preventOperatorIncreasingDiscountPercent = true;',
     'return distributor.REV_OWNER() == address(0) && distributor.REV_LOANS() == address(0);',
     'distributor.ROUND_DURATION() != 7 days', 'distributor.VESTING_ROUNDS() != 4', 'distributor.CLAIM_DURATION() != 3 * 365 days',
     'totalIncome != INITIAL_INCOME_SUPPLY', 'uint256 stageId = block.timestamp;', 'extraMetadata: 4', distributionType,
   ]
-  if (sourceAssertions.some(expected => !normalized.includes(expected)) || !vaultSource.includes(distributionType) || !vaultSource.includes('LOCAL_INITIAL_INCOME_SUPPLY - totalClaimed')) {
+  const splitLocks = [...normalized.matchAll(/\blockedUntil\s*:\s*([^,}]+)/g)]
+  if (sourceAssertions.some(expected => !normalized.includes(expected)) || splitLocks.length !== 2 || splitLocks.some(match => match[1].trim() !== incomeReleasePolicy.splitLockedUntil)
+    || !vaultSource.includes(distributionType) || !vaultSource.includes('LOCAL_INITIAL_INCOME_SUPPLY - totalClaimed')) {
     throw new Error('The source no longer matches the global stock-Sticky release profile. Review the changed semantics before regenerating release evidence.')
   }
+  return sourceAssertions
+}
+
+export async function prepareIncomeRelease() {
+  const blockers = ['No executed helper/Sticky deployment receipts or per-chain runtime/immutable verification are established by this offline packet.', 'The new helper and claim-vault source must be frozen with its reviewed compiler inputs before a production release.']
+  const helperSource = await readFile(resolve(root, 'src/HomerunIncomeDeployer.sol'), 'utf8')
+  const vaultSource = await readFile(resolve(root, 'src/HomerunInitialIncomeVault.sol'), 'utf8')
+  const sourceAssertions = assertIncomeReleaseSource(helperSource, vaultSource)
   const collected = await Promise.all(specs.map(async spec => {
     try { return { name: spec.name, result: await fingerprint(spec) } }
     catch (error) {
@@ -198,7 +226,7 @@ export async function prepareIncomeRelease() {
       constructors: {
         JBStickyDeployer: constructorPlan(byName.get('JBStickyDeployer'), [addresses.JBController, addresses.JBMultiTerminal], 64),
         JBTokenDistributor: constructorPlan(byName.get('JBTokenDistributor'), [addresses.JBDirectory, addresses.JBController, zeroAddress, zeroAddress, 604_800n, 4n, 94_608_000n], 224),
-        JBStickyRewardPockets: constructorPlan(byName.get('JBStickyRewardPockets'), [addresses.JBTokenDistributor], 32),
+        JBStickyRewardReceiverFactory: constructorPlan(byName.get('JBStickyRewardReceiverFactory'), [addresses.JBTokenDistributor], 32),
         JBStickyAutoStick: constructorPlan(byName.get('JBStickyAutoStick'), [addresses.JBStickyDeployer, addresses.JBTokenDistributor], 64),
       },
       helperConstructor: 'sharedHelper.constructor; identical eight-chain array on every network',
@@ -226,20 +254,21 @@ export async function prepareIncomeRelease() {
   const sdkPackage = await readFile(resolve(root, 'node_modules/@bananapus/nana-sdk-core/package.json'))
   const historicalEvidence = await readFile(resolve(root, 'docs/STICKY_REWARDS.md'))
   return {
-    format: 'homerun-income-release-manifest/v2', profile, releaseReady: false, deploymentAuthorized: false,
-    supersedesProfile: 'homerun-income-single-chain-stock-sticky-v1-draft',
+    format: 'homerun-income-release-manifest/v3', profile, releaseReady: false, deploymentAuthorized: false,
+    supersedesProfile: 'homerun-income-global-stock-sticky-v2-candidate',
     capturedAt: new Date().toISOString(), liveRpcCalls: 0, walletCalls: 0,
     helperSourceKeccak256: keccak256(toHex(helperSource)),
     vaultSourceKeccak256: keccak256(toHex(vaultSource)),
     profileChecks: { recursiveConstructorShape: true, sourceAssertions, sourceAssertionsAreFormalVerification: false, metadataHash: { Homerun: 'ipfs', stockSticky: 'none' }, fullInitcodeIncludesConstructor: true },
     semantics: {
+      launchVersion: incomeReleasePolicy.launchVersion, roles: incomeReleasePolicy.roles, shop: incomeReleasePolicy.shop,
       initialIncomeSupply: '500000000000000000000000', allocationScope: 'one global allocation; local and pending-bridge-destination claims preserve chain identity',
       sourceSetHash: 'keccak256 of canonical full global snapshot report', distributionType, distributionTypeHash: keccak256(toHex(distributionType)),
-      rootAuthority: 'operator-attested; membership proofs do not establish historical truth, completeness or sum',
+      rootAuthority: 'FUND-owner-attested; membership proofs do not establish historical truth, completeness or sum',
       localVault: 'immutable local cap; zero cap and zero-income dust roots allowed; exact rational beneficial ownership can yield positive INCOME with zero integer FUND display balance; perpetual fixed-beneficiary claims; no admin/sweep/expiry',
-      snapshotClock: { arbitrumChainIds: [42_161, 421_614], arbitrumPrecompile: '0x0000000000000000000000000000000000000064', arbitrumMethods: ['arbBlockNumber()', 'arbBlockHash(uint256)'], otherChains: 'EVM NUMBER/BLOCKHASH', recentHashWindow: 256, olderHashes: 'explicit operator attestation; independently reconstructed and finalized by the client' },
+      snapshotClock: { arbitrumChainIds: [42_161, 421_614], arbitrumPrecompile: '0x0000000000000000000000000000000000000064', arbitrumMethods: ['arbBlockNumber()', 'arbBlockHash(uint256)'], otherChains: 'EVM NUMBER/BLOCKHASH', recentHashWindow: 256, olderHashes: 'explicit FUND-owner attestation; independently reconstructed and finalized by the client' },
       deployment: 'stock asynchronous cross-chain deployment with local atomic premint; remote accounting is asynchronous, not an all-chain readiness barrier',
-      revnet: { initialIssuance: '10000000000000000000', quarterSeconds: 7_884_000, cuts: 8, cutPercent: 50_000_000, finalStageAfterSeconds: 63_072_000, splitPercent: 8_000, operatorSplitPercent: 875_000_000, fundSplitPercent: 125_000_000, splitLockedUntil: '281474976710655', extraMetadata: 4, scopeCashOutsToLocalBalances: false, commonAbsoluteStartRequired: true, lateCashOutAndLoanDelaySeconds: 604_800 },
+      revnet: { initialIssuance: '10000000000000000000', quarterSeconds: 7_884_000, cuts: 8, cutPercent: 50_000_000, finalStageAfterSeconds: 63_072_000, splitPercent: 8_000, operatorSplitPercent: 875_000_000, fundSplitPercent: 125_000_000, splitLockedUntil: incomeReleasePolicy.splitLockedUntil, extraMetadata: 4, scopeCashOutsToLocalBalances: false, commonAbsoluteStartRequired: true, lateCashOutAndLoanDelaySeconds: 604_800 },
       ongoingRewards: { source: 'chain-local stock Sticky SHARE snapshots', stakeAgeMinimum: 0, ageMultiplier: false, stickyCashOutTaxRate: 0, roundDuration: 604_800, vestingRounds: 4, claimDuration: 94_608_000, revOwner: zeroAddress, revLoans: zeroAddress, startingTimestamp: 'immutable deployment timestamp; must be positive and no later than observation time' },
     },
     sdk: { version: JSON.parse(sdkPackage.toString()).version, packageSha256: sha256(sdkPackage), lockfileSha256: sha256(await readFile(resolve(root, 'package-lock.json'))) },
@@ -261,7 +290,7 @@ export async function prepareIncomeRelease() {
       result: 'The prior read-only check reported eth_getCode = 0x for all 24 chain/address pairs.',
       limitation: 'Historical simulation predictions only, not current predictions or verified deployment addresses. No block hashes were recorded in that note. This script does not repeat or upgrade that evidence.',
     },
-    requiredPostDeploymentEvidence: ['Executed deployment receipts with chain/block/transaction identity, identical shared helper constructor inputs, factory and salt.', 'Full executable-runtime and every immutable-word verification against the exact reviewed artifacts on each chain; template hashes above are not live runtime hashes. Verify shared PROTOCOL_CONFIG_HASH and every usdcOf entry.', 'Stock Sticky per-chain verified.json with the reviewed source revision and observed runtime hashes; simulation.json is never sufficient.', 'For every directed SDK CCIP route, verify registry allowlisting, directory/tokens, singleton runtime, ccipRemoteChainId, ccipRemoteChainSelector, ccipRouter and reciprocal default-peer predictions. A merely approved alternative deployer is not proof of cross-chain compatibility.', 'Explorer/Sourcify source verification for helper, each vault, Sticky suite and distributor using the exact compiler input and metadata settings.', 'Published V6 SDK registry/artifact update for executed chains only, then pin that SDK release in Homerun and re-run onchain wiring/transaction smoke checks.'],
+    requiredPostDeploymentEvidence: ['Executed deployment receipts with chain/block/transaction identity, identical shared helper constructor inputs, factory and salt.', 'Full executable-runtime and every immutable-word verification against the exact reviewed artifacts on each chain; template hashes above are not live runtime hashes. Verify LAUNCH_VERSION = 3, shared PROTOCOL_CONFIG_HASH and every usdcOf entry.', 'Verify distinct Owner control and Operator incentive recipient, zero split locks in every stage, and the Owner-managed stock 721 inventory with the reviewed USD denomination and restricted tier flags.', 'Stock Sticky per-chain verified.json with the reviewed source revision and observed runtime hashes; simulation.json is never sufficient.', 'For every directed SDK CCIP route, verify registry allowlisting, directory/tokens, singleton runtime, ccipRemoteChainId, ccipRemoteChainSelector, ccipRouter and reciprocal default-peer predictions. A merely approved alternative deployer is not proof of cross-chain compatibility.', 'Explorer/Sourcify source verification for helper, each vault, Sticky suite and distributor using the exact compiler input and metadata settings.', 'Published V6 SDK registry/artifact update for executed chains only, then pin that SDK release in Homerun and re-run onchain wiring/transaction smoke checks.'],
     blockers,
   }
 }

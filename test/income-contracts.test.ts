@@ -77,7 +77,7 @@ describe('canonical INCOME deploy plan', () => {
     expect(plan.args[1]).toMatchObject({ baseCurrency: 2, operator: second, scopeCashOutsToLocalBalances: false })
     expect(plan.args[1].stageConfigurations.map(stage => stage.splits[0].beneficiary)).toEqual([first, first])
     expect(plan.args[2]).toEqual([{ token: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', decimals: 6, currency: 3181390099 }])
-    expect(plan.args[4]).toMatchObject({ baseline721HookConfiguration: { tiersConfig: { currency: 2, decimals: 6, tiers: [] } }, preventOperatorMinting: true, preventOperatorAdjustingTiers: true, preventOperatorUpdatingMetadata: true, preventOperatorIncreasingDiscountPercent: true })
+    expect(plan.args[4]).toMatchObject({ baseline721HookConfiguration: { tiersConfig: { currency: 2, decimals: 6, tiers: [] } }, preventOperatorMinting: true, preventOperatorAdjustingTiers: false, preventOperatorUpdatingMetadata: true, preventOperatorIncreasingDiscountPercent: true })
     expect(plan.abi.filter(entry => entry.type === 'function' && entry.name === 'deployFor')).toHaveLength(1)
   })
   it.each([

@@ -135,7 +135,8 @@ test('canonical omnichain wrapper is verified, unwrapped and queued on every pee
     config.metadata.useDataHookForPay = true
     config.metadata.useDataHookForCashOut = true
     return { ...snapshot(config), chainId, controller: v6Address('JBController', chainId), linkedChainIds: [8453, 10],
-      omnichainHooks: { dataHook: zeroAddress, tiered721Hook: beneficiary, useDataHookForPay: false, useDataHookForCashOut: false, tiered721UseDataHookForCashOut: false, tiered721HasTiers: false } }
+      stock721Hook: { address: beneficiary, verified: true, hasTiers: true },
+      omnichainHooks: { dataHook: zeroAddress, tiered721Hook: beneficiary, useDataHookForPay: false, useDataHookForCashOut: false, tiered721UseDataHookForCashOut: false, tiered721HasTiers: true } }
   }
   const snapshots = [make(8453), make(10)]
   const { requests, configurations } = buildFundRulesetChange({ snapshots, action: 'pause', mustStartAtOrAfter: 100 })
@@ -149,7 +150,27 @@ test('canonical omnichain wrapper is verified, unwrapped and queued on every pee
   })
   assert.throws(() => buildFundRulesetChange({ snapshots: [{ ...snapshots[0], omnichainHooks: undefined }, snapshots[1]], action: 'pause', mustStartAtOrAfter: 100 }))
   assert.throws(() => buildFundRulesetChange({ snapshots: [{ ...snapshots[0], omnichainHooks: { ...snapshots[0].omnichainHooks!, dataHook: beneficiary } }, snapshots[1]], action: 'pause', mustStartAtOrAfter: 100 }))
-  assert.throws(() => buildFundRulesetChange({ snapshots: [{ ...snapshots[0], omnichainHooks: { ...snapshots[0].omnichainHooks!, tiered721HasTiers: true } }, snapshots[1]], action: 'pause', mustStartAtOrAfter: 100 }))
+  assert.throws(() => buildFundRulesetChange({ snapshots: [{ ...snapshots[0], stock721Hook: undefined }, snapshots[1]], action: 'pause', mustStartAtOrAfter: 100 }))
+})
+
+test('direct stock shops retain the hook while closing or opening FUND refunds', () => {
+  const config = initialFundRuleset()
+  config.metadata.dataHook = beneficiary
+  config.metadata.useDataHookForPay = true
+  const current: FundRulesetSnapshot = { ...snapshot(config), stock721Hook: { address: beneficiary, verified: true, hasTiers: true } }
+  for (const action of ['close', 'failure-refunds', 'asset-sale-refunds'] as const) {
+    const result = buildFundRulesetChange({ snapshots: [current], action, mustStartAtOrAfter: 100 })
+    assert.equal(result.configurations[0].metadata.dataHook, beneficiary)
+    assert.equal(result.configurations[0].metadata.useDataHookForPay, true)
+    assert.equal(result.configurations[0].metadata.useDataHookForCashOut, false)
+    assert.equal(result.configurations[0].metadata.pausePay, true)
+    assert.equal(result.configurations[0].metadata.allowOwnerMinting, false)
+    assert.equal(result.configurations[0].metadata.cashOutTaxRate, action === 'close' ? 10_000 : 0)
+    assert.equal(decode(result.requests[0]).functionName, 'queueRulesetsOf')
+  }
+  assert.throws(() => buildFundRulesetChange({ snapshots: [{ ...current, stock721Hook: undefined }], action: 'close', mustStartAtOrAfter: 100 }))
+  assert.throws(() => buildFundRulesetChange({ snapshots: [{ ...current, stock721Hook: { ...current.stock721Hook!, address: zeroAddress } }], action: 'close', mustStartAtOrAfter: 100 }))
+  assert.throws(() => buildFundRulesetChange({ snapshots: [{ ...current, configuration: { ...config, metadata: { ...config.metadata, useDataHookForCashOut: true } } }], action: 'close', mustStartAtOrAfter: 100 }))
 })
 
 test('success minting requires confirmed closed rules then can be revoked', () => {

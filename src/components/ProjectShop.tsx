@@ -1,16 +1,24 @@
 'use client'
 
-import type { JBChainId } from '@bananapus/nana-sdk-core'
+import { bytes32ToCidV0, type JBChainId } from '@bananapus/nana-sdk-core'
+import type { Project721Tier } from '@bananapus/nana-sdk-core/v6'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
-import { useId, useState, type KeyboardEvent } from 'react'
+import { useId, useState, type KeyboardEvent, type ReactNode } from 'react'
+import Image from 'next/image'
 import { usePublicClient } from 'wagmi'
 import type { PublicClient } from 'viem'
 import { useWallet } from '@/hooks/useWallet'
 import { explorerAddressUrl, explorerTokenUrl } from '@/lib/chainDisplay'
 import { readProjectShop, readShopCustomers, shopTierAvailability, shopTierName, shopTierPrice, type ProjectShopState } from '@/lib/project-shop'
+import { readShopItemMetadata } from '@/lib/shop-item-metadata'
+import { ProjectShopManagement } from '@/components/ProjectShopManagement'
 
 /** Uses the same canonical shop resolver as Juicebox and Revnet. */
 export function ProjectShop({ chainId, projectId, tokenLabel = 'project' }: { chainId: JBChainId; projectId: bigint; tokenLabel?: string }) {
+  return <ProjectShopContent key={`${chainId}:${projectId}`} chainId={chainId} projectId={projectId} tokenLabel={tokenLabel} />
+}
+
+function ProjectShopContent({ chainId, projectId, tokenLabel }: { chainId: JBChainId; projectId: bigint; tokenLabel: string }) {
   const client = usePublicClient({ chainId }) as PublicClient | undefined
   const [tab, setTab] = useState<'inventory' | 'customers'>('inventory')
   const id = useId()
@@ -25,31 +33,52 @@ export function ProjectShop({ chainId, projectId, tokenLabel = 'project' }: { ch
     setTab(selected)
     document.getElementById(`${id}-${selected}`)?.focus()
   }
-  return <section aria-label={`${tokenLabel} shop`} className="min-w-0">
+  return <ProjectShopManagement chainId={chainId} projectId={projectId} client={client} unavailable={shop.isPending || shop.isError}>{management => <section aria-label={`${tokenLabel} shop`} className="min-w-0">
+    <div className="flex flex-wrap items-start justify-between gap-4">
     <div role="tablist" aria-label="Shop" className="mb-6 flex gap-6 border-b border-[#d7ddcf]">
       {(['inventory', 'customers'] as const).map(value => <button key={value} type="button" role="tab" id={`${id}-${value}`} aria-controls={`${id}-${value}-panel`} aria-selected={tab === value} tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)} onKeyDown={event => onKey(event, value === 'inventory' ? 'customers' : 'inventory')} className={`min-h-11 border-b-2 px-1 py-3 text-sm ${tab === value ? 'border-[#42664d] text-[#2d4035]' : 'border-transparent text-[#687562]'}`}>{value === 'inventory' ? 'Inventory' : 'Customers'}</button>)}
     </div>
+    {management.toolbar}
+    </div>
+    {management.notice}
     {shop.isPending && <p role="status" className="text-sm">Reading the project’s shop…</p>}
     {shop.isError && <div role="alert" className="text-sm"><p>The shop could not be verified. Inventory is unavailable until the reads recover.</p><button type="button" className="btn-secondary mt-4" onClick={() => void shop.refetch()}>Try again</button></div>}
-    {!shop.isPending && !shop.isError && shop.data === null && <div className="rounded-md border border-[#d7ddcf] p-6"><h2 className="mb-3 text-3xl">No shop items yet</h2><p className="text-sm">This {tokenLabel === 'project' ? 'project' : `${tokenLabel} project`} has no NFT shop configured. {tokenLabel === 'FUND' ? 'The initial FUND raise accepts contributions without selling shop items.' : 'Items will appear here when a shop is configured.'}</p></div>}
     <div id={`${id}-inventory-panel`} role="tabpanel" aria-labelledby={`${id}-inventory`} hidden={tab !== 'inventory'}>
-      {shop.data && !shop.isError && <Inventory shop={shop.data} />}
+      {!shop.isPending && !shop.isError && shop.data === null && <div className="rounded-md border border-[#d7ddcf] p-6"><h2 className="mb-3 text-3xl">No items yet</h2><p className="text-sm">Offer stays, experiences, merchandise, or other items alongside this {tokenLabel === 'project' ? 'project' : `${tokenLabel} project`}.</p></div>}
+      {shop.data && !shop.isError && <Inventory shop={shop.data} itemActions={management.itemActions} />}
     </div>
     <div id={`${id}-customers-panel`} role="tabpanel" aria-labelledby={`${id}-customers`} hidden={tab !== 'customers'}>
       {shop.data && !shop.isError && tab === 'customers' && <Customers chainId={chainId} projectId={projectId} shop={shop.data} />}
     </div>
-  </section>
+  </section>}</ProjectShopManagement>
 }
 
-function Inventory({ shop }: { shop: ProjectShopState }) {
+function Inventory({ shop, itemActions }: { shop: ProjectShopState; itemActions: (tier: Project721Tier) => ReactNode }) {
   return <div>
     <div className="mb-6 flex flex-wrap items-start justify-between gap-4"><p className="max-w-lg text-sm">Shop prices and availability come from this project’s contracts. Choose items and complete checkout on Juicebox.</p><a className="btn-secondary" href={shop.checkoutUrl} target="_blank" rel="noreferrer">Open shop on Juicebox ↗</a></div>
     {shop.tiers.length === 0 ? <p className="text-sm">The shop is configured, but it has no items yet.</p> : <ul className="grid list-none gap-4 p-0 sm:grid-cols-2">
-      {shop.tiers.map(tier => <li key={tier.id} className="min-w-0 rounded-md border border-[#d7ddcf] bg-[#fffefa] p-5"><p className="mb-2 text-xs text-[#687562]">Item #{tier.id}{tier.category ? ` | Category ${tier.category}` : ''}</p><h3 className="mb-4 break-words text-2xl">{shopTierName(tier)}</h3><p className="break-words text-lg">{shopTierPrice(tier, shop.pricing)}</p><p className="mt-2 text-sm text-[#687562]">{shopTierAvailability(tier)}</p>{tier.discountPercent > 0 && <p className="mt-2 text-sm">Includes {tier.discountPercent / 2}% discount</p>}</li>)}
+      {shop.tiers.map(tier => <ShopItem key={`${shop.hook}:${tier.id}`} tier={tier} pricing={shop.pricing}>{itemActions(tier)}</ShopItem>)}
     </ul>}
     {shop.truncated && <p className="mt-5 text-sm">Showing the first {shop.tiers.length} items. Open the full shop on Juicebox to browse all inventory.</p>}
     <p className="mt-5 text-xs text-[#687562]">Read at block {shop.blockNumber.toString()}. Checkout verifies the current price and stock.</p>
   </div>
+}
+
+function ShopItem({ tier, pricing, children }: { tier: Project721Tier; pricing: ProjectShopState['pricing']; children: ReactNode }) {
+  const cid = bytes32ToCidV0(tier.encodedIpfsUri)
+  const uri = tier.resolvedUri || (cid ? `ipfs://${cid}` : '')
+  const details = useQuery({ queryKey: ['shop-item-metadata', uri], enabled: !!uri, queryFn: () => readShopItemMetadata(uri), staleTime: Infinity, retry: 1 })
+  const [failedImage, setFailedImage] = useState<string | null>(null)
+  const image = details.data?.image
+  return <li className="min-w-0 rounded-md border border-[#d7ddcf] p-5">
+    {image && image !== failedImage && <Image unoptimized src={image} alt="" width={480} height={320} className="mb-4 aspect-[3/2] w-full rounded object-cover" onError={() => setFailedImage(image)} />}
+    <p className="mb-2 text-xs text-[#687562]">Item #{tier.id}{tier.category ? ` | Category ${tier.category}` : ''}</p>
+    <h3 className="mb-4 break-words text-2xl">{details.data?.name ?? shopTierName(tier)}</h3>
+    {details.data?.description && <p className="mb-4 whitespace-pre-line break-words text-sm">{details.data.description}</p>}
+    <p className="break-words text-lg">{shopTierPrice(tier, pricing)}</p><p className="mt-2 text-sm text-[#687562]">{shopTierAvailability(tier)}</p>
+    {tier.discountPercent > 0 && <p className="mt-2 text-sm">Includes {tier.discountPercent / 2}% discount</p>}
+    {children}
+  </li>
 }
 
 function Customers({ chainId, projectId, shop }: { chainId: JBChainId; projectId: bigint; shop: ProjectShopState }) {

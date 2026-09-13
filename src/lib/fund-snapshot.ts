@@ -5,7 +5,7 @@
  * an onchain proof of historical balances.
  */
 import {
-  jb721TiersHookAbi, jb721TiersHookStoreAbi, jbContractAddress, jbControllerAbi, jbDirectoryAbi, jbOmnichainDeployerAbi,
+  jbContractAddress, jbControllerAbi, jbDirectoryAbi, jbOmnichainDeployerAbi,
   jbProjectsAbi, jbSuckerRegistryAbi, jbTerminalStoreAbi, jbTokensAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
@@ -16,6 +16,7 @@ import {
 } from 'viem'
 import { resolveFundStickyCustody, type FundStickyCustody, type StickyOwnershipHolder } from './fund-snapshot-sticky'
 import { ownershipWeight } from './fund-ownership-weight'
+import { readVerifiedProject721Hook } from './fund-hooks'
 
 export type FundSnapshotHolder = {
   holder: Address
@@ -252,24 +253,22 @@ async function readFundSnapshotCore(client: PublicClient, input: FundSnapshotInp
   if (ruleset.id === 0 || !metadata.pausePay || metadata.allowOwnerMinting || metadata.cashOutTaxRate !== 10_000 || pendingReserved !== 0n) throw new Error('The snapshot requires a closed FUND with minting finished and no pending reserved tokens.')
   let supportedHook = isAddressEqual(metadata.dataHook, zeroAddress) && !metadata.useDataHookForPay && !metadata.useDataHookForCashOut
   const omnichain = v6Address('JBOmnichainDeployer', input.chainId)
-  if (globalComponent && isAddressEqual(metadata.dataHook, omnichain)) {
+  if (isAddressEqual(metadata.dataHook, omnichain)) {
     const [extra, tiered] = await Promise.all([
       client.readContract({ address: omnichain, abi: jbOmnichainDeployerAbi, functionName: 'extraDataHookOf', args: [input.projectId, BigInt(ruleset.id)], ...at }),
       client.readContract({ address: omnichain, abi: jbOmnichainDeployerAbi, functionName: 'tiered721HookOf', args: [input.projectId, BigInt(ruleset.id)], ...at }),
     ])
     supportedHook = isAddressEqual(extra.dataHook, zeroAddress) && !extra.useDataHookForPay && !extra.useDataHookForCashOut && !tiered[1]
     if (supportedHook && !isAddressEqual(tiered[0], zeroAddress)) {
-      const [store, hookProjectId, scope, hookOwner] = await Promise.all([
-        client.readContract({ address: tiered[0], abi: jb721TiersHookAbi, functionName: 'STORE', ...at }),
-        client.readContract({ address: tiered[0], abi: jb721TiersHookAbi, functionName: 'projectId', ...at }),
-        client.readContract({ address: tiered[0], abi: jb721TiersHookAbi, functionName: 'jbOwner', ...at }),
-        client.readContract({ address: tiered[0], abi: jb721TiersHookAbi, functionName: 'owner', ...at }),
-      ])
-      if (!isAddressEqual(store, v6Address('JB721TiersHookStore', input.chainId)) || hookProjectId !== input.projectId || scope[1] !== input.projectId || !isAddressEqual(hookOwner, owner)) throw new Error('The omnichain NFT hook is not scoped to this FUND and owner.')
-      const maximumTier = await client.readContract({ address: store, abi: jb721TiersHookStoreAbi, functionName: 'maxTierIdOf', args: [tiered[0]], ...at })
-      supportedHook = maximumTier === 0n
+      await readVerifiedProject721Hook(client, { chainId: input.chainId, projectId: input.projectId, owner, hook: tiered[0], blockNumber: block.number })
     }
+  } else if (!isAddressEqual(metadata.dataHook, zeroAddress) && metadata.useDataHookForPay && !metadata.useDataHookForCashOut) {
+    await readVerifiedProject721Hook(client, { chainId: input.chainId, projectId: input.projectId, owner, hook: metadata.dataHook, blockNumber: block.number })
+    supportedHook = true
   }
+  // NFT voting units and unused shop pay credits are not FUND balances. A
+  // canonical stock hook never custodies FUND on behalf of its NFT owners;
+  // reconstruct only core credits/ERC20 and resolve actual Sticky custody below.
   if (ruleset.duration !== 0 || ruleset.weightCutPercent !== 0 || !isAddressEqual(ruleset.approvalHook, zeroAddress) || !supportedHook || [upcoming[0], queued[0]].some(next => next.id !== 0 && next.id !== ruleset.id)) throw new Error('The FUND has custom hooks, scheduled rules, or pending rulesets that prevent a final ownership snapshot.')
   if (totalFundSupply < 0n || (!globalComponent && totalFundSupply === 0n) || totalCreditSupply > totalFundSupply) throw new Error('The FUND supply cannot support an ownership snapshot.')
   const tokenAddress = isAddressEqual(token, zeroAddress) ? null : getAddress(token)

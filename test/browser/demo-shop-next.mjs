@@ -13,7 +13,7 @@ try {
     page.setDefaultTimeout(30000)
     page.on('pageerror', error => errors.push(error.message))
     const dialog = page.locator('dialog[open]')
-    const shop = page.getByRole('region', { name: 'Demo shop', exact: true })
+    const shop = page.getByRole('region', { name: 'Demo FUND shop', exact: true })
     const accessible = async label => {
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${label}: page fits`)
       if (await dialog.count()) assert.ok(await dialog.evaluate(el => el.scrollWidth <= innerWidth + 1), `${label}: dialog fits`)
@@ -22,6 +22,7 @@ try {
     }
     await page.goto(`${base}/founderhaus#shop`, { waitUntil: 'domcontentloaded' })
     await shop.getByRole('button', { name: 'Add your first item', exact: true }).click()
+    await expect(dialog.getByLabel('Shop currency', { exact: true })).toHaveCount(0)
     await dialog.getByRole('button', { name: 'Review items', exact: true }).click()
     await expect(dialog.getByLabel('Item name', { exact: true })).toBeFocused()
     await expect(dialog.getByLabel('Price (USD)', { exact: true })).toHaveAttribute('aria-invalid', 'true')

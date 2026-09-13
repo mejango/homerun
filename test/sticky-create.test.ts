@@ -680,7 +680,7 @@ describe("global Sticky prerequisites", () => {
       }),
     ).rejects.toThrow("snapshot chain changed");
   });
-  it("accepts only the verified empty canonical omnichain wrapper", async () => {
+  it.each([false, true])("accepts verified canonical omnichain shops before creating Sticky (hasTiers=%s)", async (hasTiers) => {
     const omni = {
       ...fundState(),
       linkedChainIds: [1, 10],
@@ -691,13 +691,14 @@ describe("global Sticky prerequisites", () => {
         useDataHookForCashOut: true,
       },
       rulesetSnapshot: {
+        stock721Hook: { address: SHARE, verified: true, hasTiers },
         omnichainHooks: {
           dataHook: zeroAddress,
           useDataHookForPay: false,
           useDataHookForCashOut: false,
           tiered721Hook: SHARE,
           tiered721UseDataHookForCashOut: false,
-          tiered721HasTiers: false,
+          tiered721HasTiers: hasTiers,
         },
       },
     } as FundProjectState;
@@ -708,7 +709,6 @@ describe("global Sticky prerequisites", () => {
     for (const patch of [
       { dataHook: SHARE },
       { tiered721UseDataHookForCashOut: true },
-      { tiered721HasTiers: true },
     ]) {
       vi.mocked(readFundProjectState).mockResolvedValue({
         ...omni,
@@ -721,6 +721,29 @@ describe("global Sticky prerequisites", () => {
         prepareStickyCreate(clientFixture().client, input()),
       ).rejects.toThrow("no custom hooks");
     }
+    for (const stock721Hook of [
+      undefined,
+      { address: OWNER, verified: true as const, hasTiers },
+    ]) {
+      vi.mocked(readFundProjectState).mockResolvedValue({
+        ...omni,
+        rulesetSnapshot: { ...omni.rulesetSnapshot, stock721Hook },
+      });
+      await expect(
+        prepareStickyCreate(clientFixture().client, input()),
+      ).rejects.toThrow("no custom hooks");
+    }
+  });
+  it("accepts a stocked direct canonical FUND shop before creating Sticky", async () => {
+    const fund = fundState();
+    vi.mocked(readFundProjectState).mockResolvedValue({
+      ...fund,
+      metadata: { ...fund.metadata, dataHook: SHARE, useDataHookForPay: true, useDataHookForCashOut: false },
+      rulesetSnapshot: { ...fund.rulesetSnapshot, stock721Hook: { address: SHARE, verified: true, hasTiers: true } },
+    });
+    await expect(
+      prepareStickyCreate(clientFixture().client, input()),
+    ).resolves.toBeDefined();
   });
   it("requires this exact FUND in the global allocation and a cut strictly before creation", async () => {
     await expect(

@@ -1,8 +1,10 @@
 # INCOME release evidence
 
-**Status: source and offline release evidence prepared; contract deployments and proposal submission deferred.** This packet describes `homerun-income-global-stock-sticky-v2-candidate`. It replaces the earlier single-chain draft; its constructor, allocation domain, local vault caps and bridge policy are different. No contract has been deployed or signed by this preparation. The app keeps features that require missing verified deployment records unavailable until a later contract release and SDK publication.
+**Status: v3 source prepared; contract deployments and proposal submission remain deferred.** Current source and preparation scripts describe `homerun-income-global-stock-sticky-v3-candidate`. No contract has been deployed or signed by this preparation. The app keeps features that require missing verified deployment records unavailable until a contract release and SDK publication.
 
-**The recorded release packet predates the separate Owner/Operator launch change.** Current source adds `LAUNCH_VERSION() = 2` and a ninth `address operator` argument to `deployIncome`. The source hashes, helper bytecode sizes and test totals recorded below are historical evidence until the packet is regenerated from this revision. The revised helper requires a new verified deployment and SDK registration; changing frontend calldata cannot upgrade an earlier deployment.
+**The checked-in manifest and size/test totals below are historical v2 evidence.** Current source requires `LAUNCH_VERSION() = 3`, preserves the separate `address operator` incentive recipient, and grants stock `ADJUST_721_TIERS` permission to the FUND Owner. New INCOME shops use USD with six decimals and `ipfs://` item URIs; NFT reserves, votes, manual minting, collection metadata edits, and discount increases remain disabled. A closed FUND may retain a populated canonical shop while its initial INCOME ownership snapshot is taken. The revised helper requires a new verified deployment and SDK registration; frontend calldata cannot upgrade an earlier deployment or add omitted permissions to an existing revnet.
+
+The installed SDK has no `HomerunIncomeDeployer`, `JBStickyDeployer`, or `JBTokenDistributor` registry entries on any of the eight networks. A complete unsigned helper rehearsal also needs regenerated stock packets for the current `JBStickyRewardReceiverFactory` suite; the Arbitrum and Arbitrum Sepolia packets are currently absent. Offline preparation reports these gaps and leaves dependency-derived helper addresses unset. Do not reuse old `JBStickyRewardPockets` simulation addresses.
 
 [INCOME_RELEASE_MANIFEST.json](INCOME_RELEASE_MANIFEST.json) records the exact source graph, artifact hashes, locations and hashes of full compiler inputs, constructors, size checks, installed SDK addresses, and remaining blockers. The full build files remain local, ignored artifacts; the manifest does not embed them. [prepare-income-release.mts](../scripts/prepare-income-release.mts) regenerates it using local files only. It has no RPC, wallet, broadcast, registry-write, or address-override option. Predictions and locally compiled templates never establish deployed addresses or live runtime identity.
 
@@ -18,13 +20,13 @@ The complete array is identical on every network and sorted numerically:
 
 The helper selects its local dependencies from that array during construction. `PROTOCOL_CONFIG_HASH = keccak256(abi.encode(chains))` must match on all eight networks. Local immutable values, including USDC, can differ, so **identical CREATE2 addresses do not imply identical deployed runtime hashes**. Verify every chain independently.
 
-The FUND Owner remains the authorized caller and becomes `REVConfig.operator`, the stock Revnet control wallet. The separate Homerun Operator is a nonzero initial INCOME incentive beneficiary, passed after `suckerConfiguration`; canonical `REVOwner` continues to hold the INCOME NFT. The client verifies helper version 2 before freezing a new plan and before preparing unfinished networks. Legacy eight-argument receipt and pending-record recovery preserves exact original calldata and its local-owner incentive recipient; it is not a new-launch compatibility path for an old helper.
+The FUND Owner remains the authorized caller and becomes `REVConfig.operator`, the stock Revnet control wallet. The separate Homerun Operator is a nonzero initial INCOME incentive beneficiary, passed after `suckerConfiguration`; canonical `REVOwner` continues to hold the INCOME NFT. The client verifies helper version 3 before freezing a new plan and before preparing unfinished networks. Legacy receipt and pending-record decoding preserves exact original calldata; it is not a new-launch compatibility path for an old helper. Recovery and binding lookup currently require the saved helper to remain in the registry. If a future registry replaces an already-used helper, retain explicit legacy helper discovery before migration.
 
 Use the canonical deterministic factory `0x4e59b44847b379578588920cA78FbF26c0B4956C` and the prepared release salt:
 
 ```
-keccak256(UTF8("homerun.income-deployer.global.v2"))
-0xc86981997c4d58e74ea847e64cb14d90ecc409f6f9455f143c80a6e61031c086
+keccak256(UTF8("homerun.income-deployer.global.v3"))
+0xaffe53dfe034ede4e338e2db1f4a2f8ecc83e3aae3b5383310bf63e4e2613ad1
 ```
 
 This is a reproducible release constant, not a deployment record. All eight transactions must use the same creation bytecode, complete constructor calldata, factory, and salt. Changing the array or artifact changes the predicted helper address and breaks the standard same-address linked Revnet route. The current packet leaves the helper's encoded constructor, initcode hash, protocol configuration hash and address **null** because the required Sticky/distributor registry inputs are missing. It does not insert old simulation predictions.
@@ -101,7 +103,7 @@ Those prerequisites are currently incomplete, so the helper's eight-network rehe
 | --- | --- |
 | Stock `JBStickyDeployer` | Canonical V6 controller and multi-terminal; creates its hook as its nonce-1 child |
 | Stock `JBTokenDistributor` | Canonical directory/controller, zero REVLoans/REVOwner, `604800`, `4`, `94608000` |
-| Stock `JBStickyRewardPockets` | Actual verified distributor |
+| Stock `JBStickyRewardReceiverFactory` | Actual verified distributor |
 | Stock `JBStickyAutoStick` | Actual verified Sticky deployer and distributor |
 | `HomerunIncomeDeployer` | The same complete ordered eight-chain dependency array on every network |
 | Project SHARE/feed and initial vault | Created by their verified factories/project launch; actual events and immutable bindings identify them |
@@ -112,10 +114,10 @@ Stock's production entrypoint is [`script/Deploy.s.sol:Deploy`](../../JBSticky/s
 
 The earlier September 10 read-only check in [STICKY_REWARDS.md](STICKY_REWARDS.md) found empty code at three old simulation predictions on eight chains. That note lacks block hashes and says nothing about contracts at other addresses. The packet retains it as limited historical evidence and makes **zero additional RPC calls**.
 
-Required release evidence:
+Required evidence for the current v3 release:
 
 1. Executed receipts for the reviewed Sticky and shared helper deployments, with chain, transaction, block hash, constructor calldata, factory and salt. A proposal or simulation is insufficient.
-2. Per-chain source/runtime/immutable verification and factory/hook reciprocity. Verify helper `LAUNCH_VERSION() = 2`, the nine-argument launch selector, `PROTOCOL_CONFIG_HASH`, every `usdcOf` entry, local core/REV/omnichain/Sticky bindings, distributor timing and zero-loan policy. Retain stock's real `verified.json` with the reviewed revision.
+2. Per-chain source/runtime/immutable verification and factory/hook reciprocity. Verify helper `LAUNCH_VERSION() = 3`, the nine-argument launch selector, `PROTOCOL_CONFIG_HASH`, every `usdcOf` entry, local core/REV/omnichain/Sticky bindings, distributor timing and zero-loan policy. Retain stock's real `verified.json` with the reviewed revision.
 3. Every directed SDK CCIP route's allowlisting, directory/tokens, singleton, router, remote selector and chain ID, plus matching reciprocal default peers. The helper accepts an approved compatible route; registry approval alone does not prove two independently selected deployer generations produce matching peers. The packet records the exact SDK route addresses for review.
 4. Initial project relationships: canonical FUND token, managed Sticky backing and SHARE identity, distinct Owner control and reviewed Operator incentive recipient, unlocked INCOME reserved splits, and immutable local vault source/root/manifest/cap with complete funding. Preserve actual project IDs and creation events. Verify that an incentive-only Operator cannot launch on behalf of the Owner or obtain Revnet control, that the FUND success allocation goes to the Owner, and that the Owner can update recipients and allocations in each INCOME stage without a split-lock delay.
 5. Publish executed-chain artifacts through `juice-sdk-v4/packages/core`: update registry types and artifact inputs, use the SDK's generators, publish the package, and pin its release in Homerun. Do not hand-edit only generated output or insert simulation addresses. Re-run runtime wiring checks and testnet transaction/bridge smoke flows against that SDK before enabling the corresponding chains.

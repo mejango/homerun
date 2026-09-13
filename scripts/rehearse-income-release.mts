@@ -20,7 +20,7 @@ import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { jbContractAddress, USDC_ADDRESSES } from '@bananapus/nana-sdk-core'
 import { concatHex, encodeAbiParameters, getAddress, getCreate2Address, isAddressEqual, keccak256, padHex, toHex, toFunctionSelector, zeroAddress, type AbiParameter, type Address, type Hex } from 'viem'
-import { prepareIncomeRelease } from './prepare-income-release.mts'
+import { incomeReleasePolicy, prepareIncomeRelease } from './prepare-income-release.mts'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const stockRoot = resolve(root, '../JBSticky')
@@ -33,9 +33,9 @@ const chainNames = [
   [1, 'ethereum'], [10, 'optimism'], [8453, 'base'], [42161, 'arbitrum'],
   [84532, 'base_sepolia'], [421614, 'arbitrum_sepolia'], [11155111, 'sepolia'], [11155420, 'optimism_sepolia'],
 ] as const
-const stockNames = ['JBStickyDeployer', 'JBTokenDistributor', 'JBStickyRewardPockets', 'JBStickyAutoStick'] as const
-const stockFields = { JBStickyDeployer: 'deployer', JBTokenDistributor: 'distributor', JBStickyRewardPockets: 'pockets', JBStickyAutoStick: 'autoStick' } as const
-const helperSalt = keccak256(toHex('homerun.income-deployer.global.v2'))
+const stockNames = ['JBStickyDeployer', 'JBTokenDistributor', 'JBStickyRewardReceiverFactory', 'JBStickyAutoStick'] as const
+const stockFields = { JBStickyDeployer: 'deployer', JBTokenDistributor: 'distributor', JBStickyRewardReceiverFactory: 'rewardReceiverFactory', JBStickyAutoStick: 'autoStick' } as const
+const helperSalt = keccak256(toHex(incomeReleasePolicy.helperSaltText))
 const immutableNames = ['CONTROLLER', 'DIRECTORY', 'PROJECTS', 'TOKENS', 'REV_DEPLOYER', 'REV_OWNER', 'SUCKER_REGISTRY', 'TOKEN_DISTRIBUTOR', 'USDC', 'STICKY_DEPLOYER', 'OMNICHAIN_DEPLOYER', 'PROTOCOL_CONFIG_HASH', 'FUND_TOKEN_CODE_HASH'].sort()
 const stringify = (value: unknown) => `${JSON.stringify(value, (_key, item) => typeof item === 'bigint' ? item.toString() : item, 2)}\n`
 const sha256 = (value: Uint8Array | string) => createHash('sha256').update(value).digest('hex')
@@ -149,8 +149,8 @@ async function stockEvidence(): Promise<NetworkEvidence[]> {
       assert.equal(packet.fork.nodeInfoConfirmed, true)
       assert(packet.fork.anvilVersion?.includes('Version: 1.8.1') && packet.fork.anvilVersion.includes(forgeCommit), `${name}: regenerate stock evidence using pinned Anvil 1.8.1.`)
     }
-    assert(Number.isSafeInteger(simulation.blockNumber) && Number(simulation.blockNumber) > 0, 'Stock simulation must identify its EVM block height.')
-    assert.equal(simulation.blockNumber, packet.fork.evmBlockNumber ?? packet.fork.forkBlock, 'Stock EVM-height evidence differs from its simulation.')
+    assert(Number.isSafeInteger(simulation.evmBlockNumber) && Number(simulation.evmBlockNumber) > 0, 'Stock simulation must identify its EVM block height.')
+    assert.equal(simulation.evmBlockNumber, packet.fork.evmBlockNumber ?? packet.fork.forkBlock, 'Stock EVM-height evidence differs from its simulation.')
     assert.equal(simulation.timestamp, packet.fork.timestamp)
     assert.equal(simulation.revision, packet.fork.revision)
     sameHex(simulation.create2Factory as string, factory, 'Canonical stock factory')
@@ -279,12 +279,12 @@ async function observeLocalFork(url: string, evidence: NetworkEvidence, helper: 
   assert.equal(Number(BigInt(header.timestamp)), evidence.packet.fork.timestamp, 'Local fork timestamp changed')
   // Arbitrum exposes an L1-origin height to EVM NUMBER, while RPC headers use
   // L2 heights. The stock Forge observation records the EVM parent separately.
-  if (!isArbitrum(evidence.chainId)) sameHex(header.parentHash, evidence.simulation.parentBlockHash as string, 'Local fork parent changed')
+  if (!isArbitrum(evidence.chainId)) sameHex(header.parentHash, evidence.simulation.evmParentBlockHash as string, 'Local fork parent changed')
   const addresses = [factory, ...evidence.packet.calls.map(call => call.predictedAddress), evidence.packet.hookCreatedByDeployerConstructor, helper]
   const codes = await Promise.all(addresses.map(async address => ({ address, code: await rpc(url, 'eth_getCode', [address, header.number]) as Hex })))
   sameHex(keccak256(codes[0].code), factoryCodehash, 'Local canonical factory code')
   // Do not persist nodeInfo: it can contain a private upstream RPC URL.
-  return { localEndpoint: localUrl(url), transport: proxy ? 'read-only-center-proxy' : 'local-anvil', client: version, chainId: evidence.chainId, accounts: proxy ? null : 0, blockNumber: evidence.packet.fork.forkBlock, blockHash: header.hash, parentBlockHash: header.parentHash, evmBlockNumber: evidence.simulation.blockNumber, evmParentBlockHash: evidence.simulation.parentBlockHash, timestamp: evidence.packet.fork.timestamp, nodeInfoConfirmed: !proxy, codes }
+  return { localEndpoint: localUrl(url), transport: proxy ? 'read-only-center-proxy' : 'local-anvil', client: version, chainId: evidence.chainId, accounts: proxy ? null : 0, blockNumber: evidence.packet.fork.forkBlock, blockHash: header.hash, parentBlockHash: header.parentHash, evmBlockNumber: evidence.simulation.evmBlockNumber, evmParentBlockHash: evidence.simulation.evmParentBlockHash, timestamp: evidence.packet.fork.timestamp, nodeInfoConfirmed: !proxy, codes }
 }
 
 function solidityHarness(inputFile: string, resultFile: string, groups: ReturnType<typeof immutableGroups>, expected: Record<string, Hex>, tokens: Address) {
@@ -333,6 +333,7 @@ ${stockNames.map((_, index) => `        _stock(json, ".stock${index}");`).join('
         string memory result = vm.serializeString("result", "kind", "isolated-forge-vm-rehearsal");
         result = vm.serializeBool("result", "liveDeploymentEvidence", false);
         result = vm.serializeBool("result", "broadcast", false);
+        result = vm.serializeUint("result", "launchVersion", ${incomeReleasePolicy.launchVersion});
         result = vm.serializeBool("result", "firstPassCreated", created);
         result = vm.serializeBool("result", "secondPassReused", true);
         result = vm.serializeAddress("result", "helper", helper);
@@ -358,6 +359,7 @@ ${stockNames.map((_, index) => `        _stock(json, ".stock${index}");`).join('
         return true;
     }
     function _verify(address helper, string memory json) private returns (bytes32 codehash, string memory values) {
+        require(_word(helper, abi.encodeWithSignature("LAUNCH_VERSION()")) == bytes32(uint256(${incomeReleasePolicy.launchVersion})), "launch version");
         bytes memory runtime = vm.parseJsonBytes(json, ".helper.runtimeTemplate");
         bytes32 value;
 ${checks}
@@ -430,7 +432,7 @@ async function main() {
     ['USDC', word(registered('USDC', selected.chainId))], ['PROTOCOL_CONFIG_HASH', protocolConfigHash],
   ]) as Record<string, Hex>
   const input = {
-    chainId: selected.chainId, rpcBlockNumber: selected.packet.fork.forkBlock, evmBlockNumber: selected.simulation.blockNumber, timestamp: selected.packet.fork.timestamp, evmParentBlockHash: selected.simulation.parentBlockHash,
+    chainId: selected.chainId, rpcBlockNumber: selected.packet.fork.forkBlock, evmBlockNumber: selected.simulation.evmBlockNumber, timestamp: selected.packet.fork.timestamp, evmParentBlockHash: selected.simulation.evmParentBlockHash,
     ...Object.fromEntries(selected.packet.calls.map((call, index) => [`stock${index}`, { address: call.predictedAddress, payload: call.data, codehash: call.simulatedRuntimeCodehash }])),
     hook: selected.packet.hookCreatedByDeployerConstructor, hookCodehash: selected.simulation.hookCodehash,
     helper: { address: helper, payload, runtimeTemplate: compiled.artifact.deployedBytecode.object },
@@ -442,7 +444,7 @@ async function main() {
   await writeFile(resolve(directory, 'script/Rehearse.s.sol'), harness)
   await writeFile(resolve(directory, 'foundry.toml'), `[profile.default]\nsrc = "script"\nscript = "script"\nsolc = "0.8.28"\nevm_version = "cancun"\noptimizer = true\noptimizer_runs = 200\nvia_ir = true\nbytecode_hash = "none"\nisolate = false\nffi = false\nfs_permissions = [{ access = "read", path = ${JSON.stringify(inputFile)} }, { access = "write", path = ${JSON.stringify(resultFile)} }]\n`)
   const candidate = {
-    format: 'homerun-income-unsigned-rehearsal-candidate/v1', kind: 'unverified-candidate', releaseReady: false, deploymentAuthorized: false, broadcast: false, liveDeploymentEvidence: false, registryEntriesWritten: 0,
+    format: 'homerun-income-unsigned-rehearsal-candidate/v1', kind: 'unverified-candidate', releasePolicy: incomeReleasePolicy, releaseReady: false, deploymentAuthorized: false, broadcast: false, liveDeploymentEvidence: false, registryEntriesWritten: 0,
     dependencyAddressEvidence: 'unsigned stock fork candidates; not live deployments or SDK registry inputs',
     toolchain: { node: process.version, forgeVersion, forgeBinarySha256: sha256(await readFile(forgeBinary)) }, helperArtifact: helperEvidence, helperArtifactSha256: compiled.sha256, harnessSha256: sha256(harness), harnessInputSha256: sha256(inputBytes),
     factory, salt: helperSalt, constructorArguments: chainConfiguration, encodedConstructorArguments: constructorArguments, protocolConfigHash,

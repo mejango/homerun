@@ -121,12 +121,13 @@ interface IHomerun721Hook {
     function jbOwner() external view returns (address, uint88, uint8);
 }
 
-interface IHomerun721Store {
-    function maxTierIdOf(address hook) external view returns (uint256);
-}
-
 interface IHomerun721Deployer {
     function STORE() external view returns (address);
+    function ADDRESS_REGISTRY() external view returns (address);
+}
+
+interface IHomerunAddressRegistry {
+    function deployerOf(address target) external view returns (address);
 }
 
 interface IHomerunCcipDeployer {
@@ -199,7 +200,7 @@ contract HomerunIncomeDeployer is ReentrancyGuard {
         bytes32 merkleRoot
     );
 
-    uint256 public constant LAUNCH_VERSION = 2;
+    uint256 public constant LAUNCH_VERSION = 3;
     uint256 public constant INITIAL_INCOME_SUPPLY = 500_000 ether;
     uint32 public constant QUARTER = 7_884_000;
     bytes32 public constant DISTRIBUTION_TYPEHASH = keccak256(
@@ -492,9 +493,16 @@ contract HomerunIncomeDeployer is ReentrancyGuard {
         REVDeploy721TiersHookConfig memory nft;
         nft.baseline721HookConfiguration.name = config.description.name;
         nft.baseline721HookConfiguration.symbol = config.description.ticker;
+        nft.baseline721HookConfiguration.baseUri = "ipfs://";
+        nft.baseline721HookConfiguration.contractUri = config.description.uri;
         nft.baseline721HookConfiguration.tiersConfig.currency = 2;
         nft.baseline721HookConfiguration.tiersConfig.decimals = 6;
-        nft.preventOperatorAdjustingTiers = true;
+        nft.baseline721HookConfiguration.flags.noNewTiersWithReserves = true;
+        nft.baseline721HookConfiguration.flags.noNewTiersWithVotes = true;
+        nft.baseline721HookConfiguration.flags.noNewTiersWithOwnerMinting = true;
+        // Stock Revnet's operator is the FUND owner. Let that owner manage inventory while keeping
+        // reserve issuance, voting, owner minting, and collection metadata/discount privileges disabled.
+        nft.preventOperatorAdjustingTiers = false;
         nft.preventOperatorUpdatingMetadata = true;
         nft.preventOperatorMinting = true;
         nft.preventOperatorIncreasingDiscountPercent = true;
@@ -521,21 +529,32 @@ contract HomerunIncomeDeployer is ReentrancyGuard {
                 OMNICHAIN_DEPLOYER.extraDataHookOf(projectId, ruleset.id);
             (address tieredHook, bool tieredCashOut) = OMNICHAIN_DEPLOYER.tiered721HookOf(projectId, ruleset.id);
             if (extraHook != address(0) || extraPay || extraCashOut || tieredCashOut) revert UnsupportedFund();
-            if (tieredHook != address(0)) {
-                IHomerun721Hook hook = IHomerun721Hook(tieredHook);
-                (, uint88 ownerProject,) = hook.jbOwner();
-                address store = IHomerun721Deployer(OMNICHAIN_DEPLOYER.HOOK_DEPLOYER()).STORE();
-                if (
-                    hook.STORE() != store || hook.projectId() != projectId || ownerProject != projectId
-                        || hook.owner() != PROJECTS.ownerOf(projectId)
-                        || IHomerun721Store(store).maxTierIdOf(tieredHook) != 0
-                ) revert UnsupportedFund();
-            }
-        } else if (metadata.dataHook != address(0) || metadata.useDataHookForPay || metadata.useDataHookForCashOut) {
+            if (tieredHook != address(0)) _requireFundShop(projectId, tieredHook);
+        } else if (metadata.dataHook != address(0)) {
+            if (metadata.useDataHookForCashOut) revert UnsupportedFund();
+            _requireFundShop(projectId, metadata.dataHook);
+        } else if (metadata.useDataHookForPay || metadata.useDataHookForCashOut) {
             revert UnsupportedFund();
         }
         token = address(TOKENS.tokenOf(projectId));
         if (token.codehash != FUND_TOKEN_CODE_HASH) revert UnsupportedFund();
+    }
+
+    /// @dev A closed FUND can retain its stock shop and issued NFTs. With payments paused, no owner token
+    /// minting, and no hook cash-outs, its inventory cannot change the fixed FUND token snapshot.
+    function _requireFundShop(uint256 projectId, address hookAddress) private view {
+        if (hookAddress.code.length == 0) revert UnsupportedFund();
+        address deployer = OMNICHAIN_DEPLOYER.HOOK_DEPLOYER();
+        IHomerun721Deployer hookDeployer = IHomerun721Deployer(deployer);
+        if (IHomerunAddressRegistry(hookDeployer.ADDRESS_REGISTRY()).deployerOf(hookAddress) != deployer) {
+            revert UnsupportedFund();
+        }
+        IHomerun721Hook hook = IHomerun721Hook(hookAddress);
+        (, uint88 ownerProject,) = hook.jbOwner();
+        if (
+            hook.STORE() != hookDeployer.STORE() || hook.projectId() != projectId || ownerProject != projectId
+                || hook.owner() != PROJECTS.ownerOf(projectId)
+        ) revert UnsupportedFund();
     }
 
     function _configuration(

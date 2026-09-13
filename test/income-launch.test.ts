@@ -79,7 +79,7 @@ function client(overrides: Record<string, unknown> = {}, chainId: JBChainId = 84
     CONTROLLER: v6Address('JBController', chainId), DIRECTORY: v6Address('JBDirectory', chainId), PROJECTS: v6Address('JBProjects', chainId), TOKENS: v6Address('JBTokens', chainId),
     REV_DEPLOYER: v6Address('REVDeployer', chainId), REV_OWNER: v6Address('REVOwner', chainId), SUCKER_REGISTRY: v6Address('JBSuckerRegistry', chainId),
     TOKEN_DISTRIBUTOR: runtime.distributor, STICKY_DEPLOYER: runtime.sticky, OMNICHAIN_DEPLOYER: v6Address('JBOmnichainDeployer', chainId), PROTOCOL_CONFIG_HASH: protocolHash,
-    LAUNCH_VERSION: 2n, USDC: USDC_ADDRESSES[chainId], incomeProjectIdOf: 0n, initialAllocationVaultOf: zeroAddress, creationFee: 15n, stakedTokenOf: zeroAddress, ROUND_DURATION: 604800n, VESTING_ROUNDS: 4n, CLAIM_DURATION: 94608000, REV_LOANS: zeroAddress, STARTING_TIMESTAMP: 1n,
+    LAUNCH_VERSION: 3n, USDC: USDC_ADDRESSES[chainId], incomeProjectIdOf: 0n, initialAllocationVaultOf: zeroAddress, creationFee: 15n, stakedTokenOf: zeroAddress, ROUND_DURATION: 604800n, VESTING_ROUNDS: 4n, CLAIM_DURATION: 94608000, REV_LOANS: zeroAddress, STARTING_TIMESTAMP: 1n,
     currentRulesetOf: [{ id: 80n }, {}], splitsOf: defaultSplits,
   }
   return {
@@ -376,15 +376,15 @@ describe('global atomic INCOME launch preparation', () => {
     const rpc = client(); rpc.getCode.mockResolvedValue('0x')
     await expect(prepareIncomeLaunch(rpc as unknown as PublicClient, input)).rejects.toThrow(/no deployed code/)
   })
-  it.each([1n, 3n, new Error('Function selector was not recognized')])('rejects an incompatible registered launcher version %s before returning a transaction', async version => {
+  it.each([1n, 2n, 4n, new Error('Function selector was not recognized')])('rejects an incompatible registered launcher version %s before returning a transaction', async version => {
     const rpc = client({ LAUNCH_VERSION: version })
-    await expect(prepareIncomeLaunch(rpc as unknown as PublicClient, input)).rejects.toThrow(/verified launcher supporting separate Owner and Operator wallets is required/)
+    await expect(prepareIncomeLaunch(rpc as unknown as PublicClient, input)).rejects.toThrow(/verified launcher supporting separate Owner and Operator wallets and owner-managed shops is required/)
     expect(rpc.readContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'LAUNCH_VERSION', blockNumber: 100n }))
     expect(rpc.readContract.mock.calls.some(([args]) => args.functionName === 'creationFee')).toBe(false)
   })
   it('requires compatible launchers on every peer still waiting to launch', async () => {
     const f = linkedFixture({ remoteOverrides: { LAUNCH_VERSION: 1n } })
-    await expect(prepareIncomeLaunch(f.rpc as unknown as PublicClient, f.input)).rejects.toThrow(/Chain 10: A verified launcher supporting separate Owner and Operator wallets is required/)
+    await expect(prepareIncomeLaunch(f.rpc as unknown as PublicClient, f.input)).rejects.toThrow(/Chain 10: A verified launcher supporting separate Owner and Operator wallets and owner-managed shops is required/)
   })
   it('keeps completed legacy peers usable while requiring the current launcher for a new local launch', async () => {
     const f = launchedPeerFixture()
@@ -405,6 +405,24 @@ describe('global atomic INCOME launch preparation', () => {
   })
   it('reports missing add-ons without substituting simulation addresses', () => {
     expect(incomeLaunchBlockers({ ...runtime.state, chainId: 1, linkedChainIds: [1] }).filter(value => value.includes('verified and registered'))).toHaveLength(3)
+  })
+  it.each([false, true])('allows an authenticated stocked FUND shop at the INCOME transition (omnichain=%s)', omnichain => {
+    const hook = vault
+    const state = {
+      ...runtime.state,
+      metadata: { ...runtime.state.metadata, dataHook: omnichain ? v6Address('JBOmnichainDeployer', 8453) : hook, useDataHookForPay: true },
+      rulesetSnapshot: {
+        stock721Hook: { address: hook, verified: true, hasTiers: true },
+        ...(omnichain ? { omnichainHooks: { dataHook: zeroAddress, useDataHookForPay: false, useDataHookForCashOut: false, tiered721Hook: hook, tiered721UseDataHookForCashOut: false, tiered721HasTiers: true } } : {}),
+      },
+    } as FundProjectState
+    expect(incomeLaunchBlockers(state)).toEqual([])
+    expect(incomeLaunchBlockers({ ...state, rulesetSnapshot: { ...state.rulesetSnapshot, stock721Hook: undefined } } as FundProjectState)).toContain('The initial INCOME launcher requires a closed FUND with no custom hooks or pending rulesets.')
+    expect(incomeLaunchBlockers({ ...state, rulesetSnapshot: { ...state.rulesetSnapshot, stock721Hook: { address: token, verified: true, hasTiers: true } } } as FundProjectState)).toContain('The initial INCOME launcher requires a closed FUND with no custom hooks or pending rulesets.')
+    const cashOutState = omnichain
+      ? { ...state, rulesetSnapshot: { ...state.rulesetSnapshot, omnichainHooks: { ...state.rulesetSnapshot!.omnichainHooks, tiered721UseDataHookForCashOut: true } } }
+      : { ...state, metadata: { ...state.metadata, useDataHookForCashOut: true } }
+    expect(incomeLaunchBlockers(cashOutState as FundProjectState)).toContain('The initial INCOME launcher requires a closed FUND with no custom hooks or pending rulesets.')
   })
   it('reads the canonical paired INCOME/vault binding from the contract', async () => {
     expect(await readIncomeLaunchBinding(client({ incomeProjectIdOf: 8n, initialAllocationVaultOf: vault }) as unknown as PublicClient, 8453, 7n)).toBe(8n)

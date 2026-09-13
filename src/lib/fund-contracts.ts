@@ -15,6 +15,8 @@ import {
 } from '@bananapus/nana-sdk-core/v6'
 import { erc20Abi, getAddress, isAddress, zeroAddress, zeroHash, type Abi, type Address, type Hex } from 'viem'
 
+import { isVerifiedProject721Hook, type VerifiedProject721Hook } from './fund-hooks'
+
 export const FUND_WEIGHT = 10_000n * 10n ** 18n
 export const FUND_INITIAL_CASH_OUT_TAX = 1_000
 export const FUND_CASH_OUTS_DISABLED = 10_000
@@ -178,6 +180,8 @@ export type FundRulesetSnapshot = {
   linkedChainIds: readonly number[]
   /** Same-block accepted treasury contexts, including tokens with no access limits yet. */
   accountingContexts?: readonly { terminal: Address; token: Address; currency: number; decimals: number }[]
+  /** Canonical deployment and current owner/project binding, verified at blockNumber. */
+  stock721Hook?: VerifiedProject721Hook
   /** Same-block extraDataHookOf/tiered721HookOf reads when the metadata hook is the canonical omnichain deployer. */
   omnichainHooks?: {
     dataHook: Address; useDataHookForPay: boolean; useDataHookForCashOut: boolean; tiered721Hook: Address;
@@ -205,11 +209,12 @@ function assertSnapshot(snapshot: FundRulesetSnapshot): JBRulesetConfig {
   if (config.metadata.dataHook.toLowerCase() === v6Address('JBOmnichainDeployer', chainId).toLowerCase()) {
     const hooks = snapshot.omnichainHooks
     if (!hooks || hooks.dataHook.toLowerCase() !== zeroAddress || hooks.useDataHookForPay || hooks.useDataHookForCashOut) throw new Error('Read and verify the omnichain project hooks before changing rules.')
-    if (hooks.tiered721Hook.toLowerCase() !== zeroAddress && (hooks.tiered721UseDataHookForCashOut !== false || hooks.tiered721HasTiers !== false)) throw new Error('This project has active or unread NFT tiers; use the full Juicebox ruleset editor.')
+    if (hooks.tiered721Hook.toLowerCase() !== zeroAddress && (hooks.tiered721UseDataHookForCashOut !== false || !isVerifiedProject721Hook(snapshot.stock721Hook, hooks.tiered721Hook))) throw new Error('Read and verify the stock NFT hook and its cash-out configuration before changing rules.')
     // JBOmnichainDeployer reinjects itself. Passing its own address as the extra
     // hook causes JBDeployer_SelfReferentialHook and must never be queued.
     return { ...config, metadata: { ...config.metadata, dataHook: zeroAddress, useDataHookForPay: false, useDataHookForCashOut: false } }
   }
+  if (config.metadata.useDataHookForPay && !config.metadata.useDataHookForCashOut && isVerifiedProject721Hook(snapshot.stock721Hook, config.metadata.dataHook)) return config
   if (config.metadata.dataHook.toLowerCase() !== zeroAddress || config.metadata.useDataHookForPay || config.metadata.useDataHookForCashOut) throw new Error('This project has a custom data hook; use the full Juicebox ruleset editor.')
   return config
 }
