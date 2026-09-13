@@ -3,6 +3,7 @@ import { formatUnits, isAddress, zeroAddress } from 'viem'
 
 /** Local shop previews share the stock JB721 item limits, without creating a shop. */
 export type DemoShopCurrency = 'USD' | 'ETH'
+export type DemoShopPhase = 'fund' | 'income'
 export type DemoShopSplit = {
   id: string
   kind: 'address' | 'project'
@@ -163,8 +164,9 @@ export function demoShopPrice(item: DemoShopItem, currency: DemoShopCurrency): s
   return `${formatUnits(effectiveTierPrice(price, Number(discount)), decimals)} ${currency}`
 }
 
-export function demoShopStorageKey(projectKey: string): string {
-  return `homerun:demo-shop:v1:${encodeURIComponent(projectKey)}`
+export function demoShopStorageKey(projectKey: string, phase: DemoShopPhase): string {
+  // Existing unscoped drafts stay with FUND; INCOME starts with its own inventory.
+  return `homerun:demo-shop:v1:${phase === 'income' ? 'income:' : ''}${encodeURIComponent(projectKey)}`
 }
 
 function record(value: unknown): value is Record<string, unknown> {

@@ -5,7 +5,7 @@ import { ModalShell } from '@/components/ui/ModalShell'
 import {
   demoShopPrice, demoShopStorageKey, MAX_DEMO_SHOP_MEDIA_BYTES, MAX_DEMO_SHOP_STORAGE_LENGTH,
   newDemoShopItem, parseDemoShopStorage, validateDemoShopItem,
-  type DemoShopCurrency, type DemoShopItem, type DemoShopSplit,
+  type DemoShopCurrency, type DemoShopItem, type DemoShopPhase, type DemoShopSplit,
 } from '@/lib/demo-shop'
 import './demo-project-shop.css'
 
@@ -14,7 +14,13 @@ type Confirmation = { kind: 'remove'; item: DemoShopItem } | { kind: 'reset' }
 const MAX_DEMO_ITEMS = 100
 
 /** Local shop drafts only. Kept separate from verified ProjectShop and all transaction hooks. */
-export function DemoProjectShop({ projectKey = 'founderhaus', resetKey = 0 }: { projectKey?: string; resetKey?: number }) {
+export function DemoProjectShop({ projectKey = 'founderhaus', phase, resetKey = 0 }: { projectKey?: string; phase: DemoShopPhase; resetKey?: number }) {
+  const storageKey = demoShopStorageKey(projectKey, phase)
+  // A different project or phase must not inherit an open editor or confirmation.
+  return <DemoShopDraft key={storageKey} storageKey={storageKey} phase={phase} resetKey={resetKey} />
+}
+
+function DemoShopDraft({ storageKey, phase, resetKey }: { storageKey: string; phase: DemoShopPhase; resetKey: number }) {
   const id = useId()
   const [tab, setTab] = useState<'inventory' | 'customers'>('inventory')
   const [currency, setCurrency] = useState<DemoShopCurrency>('USD')
@@ -25,7 +31,7 @@ export function DemoProjectShop({ projectKey = 'founderhaus', resetKey = 0 }: { 
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null)
   const [notice, setNotice] = useState('')
   const previousReset = useRef(resetKey)
-  const storageKey = demoShopStorageKey(projectKey)
+  const tokenLabel = phase === 'fund' ? 'FUND' : 'INCOME'
 
   useEffect(() => {
     let saved: ReturnType<typeof parseDemoShopStorage> = null
@@ -80,14 +86,14 @@ export function DemoProjectShop({ projectKey = 'founderhaus', resetKey = 0 }: { 
     document.getElementById(`${id}-${next}`)?.focus()
   }
 
-  return <section className="demo-project-shop" aria-label="Demo shop">
+  return <section className="demo-project-shop" aria-label={`Demo ${tokenLabel} shop`}>
     <div className="ds-toolbar">
       <div className="ds-tabs" role="tablist" aria-label="Shop">
         {(['inventory', 'customers'] as const).map(value => <button key={value} type="button" role="tab" id={`${id}-${value}`} aria-controls={`${id}-${value}-panel`} aria-selected={tab === value} tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)} onKeyDown={moveTab}>{value === 'inventory' ? 'Inventory' : 'Customers'}</button>)}
       </div>
       <button type="button" className="ds-button ds-button-primary" disabled={loadedKey !== storageKey || items.length >= MAX_DEMO_ITEMS} onClick={addItems}>Add items for sale</button>
     </div>
-    <p className="ds-demo-note"><span>Demo shop</span> Build and review a shop on this device. Items are previews and cannot be purchased.</p>
+    <p className="ds-demo-note"><span>Demo {tokenLabel} shop</span> Build and review the {phase === 'fund' ? 'Juicebox' : 'Revnet'} phase shop on this device. Items are previews and cannot be purchased.</p>
     {items.length >= MAX_DEMO_ITEMS && <p className="ds-notice">This local demo holds up to {MAX_DEMO_ITEMS} items. Remove an item to add another.</p>}
     {notice && <p className="ds-notice" role="status">{notice}</p>}
     <div role="tabpanel" id={`${id}-inventory-panel`} aria-labelledby={`${id}-inventory`} hidden={tab !== 'inventory'}>

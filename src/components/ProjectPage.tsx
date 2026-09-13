@@ -31,6 +31,7 @@ import { DemoProjectShop } from "./DemoProjectShop";
 import { DemoActivity } from "./DemoActivity";
 import { OperatorProfile } from "./OperatorProfile";
 import { FundingProgress } from "./FundingProgress";
+import { PaymentChainSelect } from "./PaymentChainSelect";
 import { demoShopStorageKey } from "@/lib/demo-shop";
 import {
   BudgetChart,
@@ -1367,7 +1368,7 @@ function PayPreview({
               ? "Cash out"
               : income ? "Pay" : "Fund"}
         </h2>
-        {paymentStage && <label className="payment-chain-label"><span>on</span><select className="payment-chain-select" aria-label={income ? "Pay on" : "Fund on"} value={selectedChain} onChange={event => setSelectedChain(Number(event.target.value))}>{chains.map(chain => <option key={chain.chainId} value={chain.chainId}>{chain.name}</option>)}</select></label>}
+        {paymentStage && <label className="payment-chain-label"><span>on</span><PaymentChainSelect label={income ? "Pay on" : "Fund on"} value={selectedChain} options={chains} onChange={setSelectedChain} /></label>}
       </div>
       {income && <p className="pay-context">Revenue payment, month {projectProjection?.monthsApplied ?? 0} preview</p>}
       <form
@@ -2236,7 +2237,10 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
             onClick={() => {
               try {
                 localStorage.removeItem(
-                  demoShopStorageKey(project?.id ?? "founderhaus"),
+                  demoShopStorageKey(project?.id ?? "founderhaus", "fund"),
+                );
+                localStorage.removeItem(
+                  demoShopStorageKey(project?.id ?? "founderhaus", "income"),
                 );
               } catch {
                 /* The mounted shop still clears its in-memory preview. */
@@ -2504,6 +2508,7 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
             shop={
               <DemoProjectShop
                 projectKey={project?.id ?? "founderhaus"}
+                phase={fundraising ? "fund" : "income"}
                 resetKey={reset}
               />
             }

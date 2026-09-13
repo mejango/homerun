@@ -87,6 +87,11 @@ function evaluate(node, seen = new Set(), environment = new Map()) {
       const separator = node.arguments.length ? evaluate(node.arguments[0], seen, environment) : ','
       return receiver.join(typeof separator === 'string' ? separator : ',')
     }
+    if (method === 'slice' && Array.isArray(receiver)) {
+      const bounds = node.arguments.map(argument => evaluate(argument, seen, environment))
+      if (bounds.length > 2 || bounds.some(bound => !Number.isSafeInteger(bound))) return undefined
+      return receiver.slice(...bounds)
+    }
     if (method === 'map' && Array.isArray(receiver) && node.arguments.length === 1) {
       const callback = node.arguments[0]
       if (!ts.isArrowFunction(callback) || callback.parameters.length !== 1 || !ts.isIdentifier(callback.parameters[0].name)) return undefined

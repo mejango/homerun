@@ -82,18 +82,21 @@ function ProjectSection({ title, children }: { title: string; children: ReactNod
   </section>
 }
 
-function WalletProjects({ account, network }: { account: string; network: Network }) {
+/** Shared account data for discovery and the public account dashboard. */
+export function AccountProjectSections({ account, network, section = 'both' }: { account: string; network: Network; section?: 'projects' | 'holdings' | 'both' }) {
   const [ownedLimit, setOwnedLimit] = useState(PAGE_SIZE)
   const [heldLimit, setHeldLimit] = useState(PAGE_SIZE)
   const owned = useQuery({
     ...INDEX_QUERY,
     queryKey: ['account-projects', 'owned', network, account],
     queryFn: () => getProjectsOwnedBy([account], { network }),
+    enabled: section !== 'holdings',
   })
   const holdings = useQuery({
     ...INDEX_QUERY,
     queryKey: ['account-projects', 'holdings', network, account],
     queryFn: () => getAccountTokenHoldings(account, { network }),
+    enabled: section !== 'projects',
   })
   const heldRows = (holdings.data?.items ?? []).filter(row => validRef(row) && tokenBalance(row.balance) > 0n)
   const refs = heldRows.map(row => ({ chainId: row.chainId, projectId: row.projectId, version: 6 }))
@@ -106,14 +109,14 @@ function WalletProjects({ account, network }: { account: string; network: Networ
   // Index ownership is only discovery. Action permissions are read from contracts on the project page.
   const ownedRows = projectRows(owned.data).filter(project => project.owner?.toLowerCase() === account)
   const byRef = new Map(projectRows(heldProjects.data).map(project => [refKey(project), project]))
-  return <div className="grid min-w-0 gap-7 lg:grid-cols-2">
-    <ProjectSection title="Owned by this account">
+  return <div className={`grid min-w-0 gap-7${section === 'both' ? ' lg:grid-cols-2' : ''}`}>
+    {section !== 'holdings' && <ProjectSection title="Owned by this account">
       <QueryNotice failed={owned.isError} hasData={owned.data !== undefined} loading={owned.isPending} noun="owned projects" refresh={() => void owned.refetch()} />
       {owned.data !== undefined && !ownedRows.length && <p className="text-sm">No owned projects indexed for this account on {network}.</p>}
       {ownedRows.length > 0 && <ul className="m-0 grid list-none gap-3 p-0">{ownedRows.slice(0, ownedLimit).map(project => <ProjectRow key={refKey(project)} project={project} />)}</ul>}
       {ownedRows.length > ownedLimit && <button type="button" className="btn-secondary" onClick={() => setOwnedLimit(value => value + PAGE_SIZE)}>Show more owned projects</button>}
-    </ProjectSection>
-    <ProjectSection title="Token holdings">
+    </ProjectSection>}
+    {section !== 'projects' && <ProjectSection title="Token holdings">
       <QueryNotice failed={holdings.isError} hasData={holdings.data !== undefined} loading={holdings.isPending} noun="token holdings" refresh={() => void holdings.refetch()} />
       {holdings.data !== undefined && !heldRows.length && <p className="text-sm">No token holdings indexed for this account on {network}.</p>}
       {heldRows.length > 0 && <>
@@ -122,7 +125,7 @@ function WalletProjects({ account, network }: { account: string; network: Networ
         {heldRows.length > heldLimit && <button type="button" className="btn-secondary" onClick={() => setHeldLimit(value => value + PAGE_SIZE)}>Show more token holdings</button>}
         {(holdings.data?.totalCount ?? 0) > heldRows.length && <p className="text-sm">Showing {heldRows.length} of {holdings.data?.totalCount} indexed holdings.</p>}
       </>}
-    </ProjectSection>
+    </ProjectSection>}
   </div>
 }
 
@@ -183,7 +186,7 @@ export function AccountProjects({ account, initialNetwork = 'mainnet' }: { accou
         </div>
       </div>
       <p className="text-sm">Indexed Juicebox V6 projects and revnets. New projects, balances, and ownership changes can take time to appear. Project pages verify the current contracts before transactions.</p>
-      {normalizedAccount ? <WalletProjects key={`${network}:${normalizedAccount}`} account={normalizedAccount} network={network} />
+      {normalizedAccount ? <AccountProjectSections key={`${network}:${normalizedAccount}`} account={normalizedAccount} network={network} />
         : suppliedAccount ? <p role="status">This account address is invalid.</p>
           : <div className="grid justify-items-start gap-3"><p>Connect your wallet to find projects you own and tokens you hold.</p><WalletButton /></div>}
       <ProjectSearch key={network} network={network} />

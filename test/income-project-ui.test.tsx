@@ -22,7 +22,7 @@ const runtime = vi.hoisted(() => ({
 }))
 vi.mock('@/components/ProjectParticipants', () => ({ ProjectParticipants: () => <span>Indexed holders</span> }))
 vi.mock('@/components/ProjectPayerAddresses', () => ({ ProjectPayerAddresses: () => <span>Project payer addresses</span> }))
-vi.mock('@/components/ProjectShop', () => ({ ProjectShop: () => <span>Project shop</span> }))
+vi.mock('@/components/ProjectShop', () => ({ ProjectShop: ({ chainId, projectId, tokenLabel }: { chainId: number; projectId: bigint; tokenLabel: string }) => <span data-testid={`shop-${tokenLabel}`} data-chain-id={chainId} data-project-id={projectId.toString()}>Project shop</span> }))
 vi.mock('wagmi', () => ({ usePublicClient: () => ({}) }))
 vi.mock('@/hooks/useReviewedPermit2Signature', () => ({ useReviewedPermit2Signature: () => ({ signPermit2Async: vi.fn() }) }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address, isConnected: true }) }))
@@ -113,6 +113,17 @@ describe('INCOME transaction surfaces', () => {
   async function setInput(input: HTMLInputElement, value: string) {
     await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value); input.dispatchEvent(new Event('input', { bubbles: true })) })
   }
+
+  it.each([undefined, 3n])('uses the INCOME project for the standalone shop with FUND connection %s', async (fundProjectId) => {
+    runtime.discoveredFund = 3n
+    await act(async () => root.render(<IncomeProject chainId={1} projectId={7n} fundProjectId={fundProjectId} />))
+    await tab('Shop')
+    const shop = host.querySelector<HTMLElement>('[data-testid="shop-INCOME"]')
+    expect(shop?.dataset.chainId).toBe('1')
+    expect(shop?.dataset.projectId).toBe('7')
+    expect(host.querySelector('[data-testid="shop-FUND"]')).toBeNull()
+    expect(runtime.send).not.toHaveBeenCalled()
+  })
 
   it('mounts initial claims separately and uses the verified Sticky project ID for ongoing rewards', async () => {
     runtime.sticky = { stickyProjectId: 91n }

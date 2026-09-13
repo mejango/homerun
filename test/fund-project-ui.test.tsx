@@ -20,7 +20,7 @@ vi.mock('@/components/StickyHolder', () => ({ StickyHolder: () => <span>Sticky r
 vi.mock('@/components/IncomeBridgeActions', () => ({ IncomeBridgeActions: () => <span>INCOME bridge</span> }))
 vi.mock('@/components/ProjectParticipants', () => ({ ProjectParticipants: () => <span>Indexed holders</span> }))
 vi.mock('@/components/ProjectPayerAddresses', () => ({ ProjectPayerAddresses: () => <span>Project payer addresses</span> }))
-vi.mock('@/components/ProjectShop', () => ({ ProjectShop: ({ tokenLabel }: { tokenLabel: string }) => <span data-testid={`shop-${tokenLabel}`}>Project shop</span> }))
+vi.mock('@/components/ProjectShop', () => ({ ProjectShop: ({ chainId, projectId, tokenLabel }: { chainId: number; projectId: bigint; tokenLabel: string }) => <span data-testid={`shop-${tokenLabel}`} data-chain-id={chainId} data-project-id={projectId.toString()}>Project shop</span> }))
 vi.mock('wagmi', () => ({ usePublicClient: () => ({ readContract: async () => runtime.delegated }) }))
 vi.mock('@/lib/fund-state', () => ({ readFundProjectState: async () => runtime.query.data }))
 vi.mock('@/hooks/useReviewedPermit2Signature', () => ({ useReviewedPermit2Signature: () => ({ signPermit2Async: vi.fn() }) }))
@@ -109,13 +109,36 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     expect(runtime.send).not.toHaveBeenCalled()
   })
 
-  it.each([undefined, 9n])('shows INCOME shop only for a verified linked project (%s)', async (incomeId) => {
+  it.each([undefined, 9n])('keeps the FUND shop separate from its verified linked INCOME shop (%s)', async (incomeId) => {
     runtime.incomeId = incomeId
     await render()
     await tab('Shop')
-    expect(host.querySelector('[data-testid="shop-FUND"]')).not.toBeNull()
-    expect(host.querySelector('[data-testid="shop-INCOME"]') !== null).toBe(incomeId !== undefined)
+    const fundShop = host.querySelector<HTMLElement>('[data-testid="shop-FUND"]')
+    const incomeShop = host.querySelector<HTMLElement>('[data-testid="shop-INCOME"]')
+    expect(fundShop?.dataset.chainId).toBe('1')
+    expect(fundShop?.dataset.projectId).toBe('7')
+    if (incomeId === undefined) expect(incomeShop).toBeNull()
+    else {
+      expect(incomeShop?.dataset.chainId).toBe('1')
+      expect(incomeShop?.dataset.projectId).toBe(incomeId.toString())
+    }
     expect(host.querySelector('.hpl-metadata')?.textContent).not.toContain('INCOME treasury:')
+    expect(runtime.send).not.toHaveBeenCalled()
+  })
+
+  it('adds the INCOME shop when the launch is discovered without replacing the FUND shop', async () => {
+    await render()
+    await tab('Shop')
+    const fundShop = host.querySelector<HTMLElement>('[data-testid="shop-FUND"]')
+    expect(fundShop?.dataset.projectId).toBe('7')
+    expect(host.querySelector('[data-testid="shop-INCOME"]')).toBeNull()
+    runtime.incomeId = 9n
+    await act(async () => root.render(<FundProject chainId={1} projectId="7" />))
+    expect(host.querySelector('[data-testid="shop-FUND"]')).toBe(fundShop)
+    expect(fundShop?.dataset.projectId).toBe('7')
+    const incomeShop = host.querySelector<HTMLElement>('[data-testid="shop-INCOME"]')
+    expect(incomeShop?.dataset.chainId).toBe('1')
+    expect(incomeShop?.dataset.projectId).toBe('9')
     expect(runtime.send).not.toHaveBeenCalled()
   })
 

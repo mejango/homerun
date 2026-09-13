@@ -9,6 +9,7 @@ import { readFundPayNetworks } from '@/lib/fund-pay-networks'
 import type { FundProjectState } from '@/lib/fund-state'
 import { jbCenterRpcTransport } from '@/lib/jbcenter-rpc'
 import { displayChainName } from '@/lib/chainDisplay'
+import { PaymentChainSelect } from '@/components/PaymentChainSelect'
 
 const clients = new Map<JBChainId, PublicClient>()
 function clientFor(chainId: JBChainId) {
@@ -37,12 +38,10 @@ export function FundPaymentNetworks({ state, children }: {
   const options = available.some(project => project.chainId === active.chainId) ? available : [...available, active]
   const selector = <div className="mb-5">
     <label className="payment-chain-label">Fund on
-      <select aria-label="Fund on" disabled={busy} className="payment-chain-select" value={active.chainId} onChange={event => {
-        const project = available.find(candidate => candidate.chainId === Number(event.target.value))
+      <PaymentChainSelect label="Fund on" disabled={busy} value={active.chainId} options={options.map(project => ({ chainId: project.chainId, name: `${displayChainName(project.chainId)}${project.metadata.pausePay ? ' (payments paused)' : ''}` }))} onChange={chainId => {
+        const project = available.find(candidate => candidate.chainId === chainId)
         if (project) { setPicked(project); setSelected(project.chainId) }
-      }}>
-        {options.map(project => <option key={project.chainId} value={project.chainId}>{displayChainName(project.chainId)}{project.metadata.pausePay ? ' (payments paused)' : ''}</option>)}
-      </select>
+      }} />
     </label>
     {networks.isFetching && <p className="mt-2 text-xs" role="status">Checking available chains…</p>}
     {(networks.isError || !!networks.data?.unavailable) && <p className="mt-2 text-xs">Some linked chains are not available yet. <button type="button" className="underline" onClick={() => void networks.refetch()}>Check again</button></p>}

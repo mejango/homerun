@@ -4,13 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../src/components/ui/ModalShell', () => ({ ModalShell: ({ title, children, footer, onClose }: { title: ReactNode; children: ReactNode; footer: ReactNode; onClose: () => void }) => <div role="dialog"><h2>{title}</h2><button type="button" aria-label="Close" onClick={onClose}>Close</button>{children}{footer}</div> }))
 import { DemoProjectShop } from '../src/components/DemoProjectShop'
-import { demoShopStorageKey, newDemoShopItem } from '../src/lib/demo-shop'
+import { demoShopStorageKey, newDemoShopItem, type DemoShopPhase } from '../src/lib/demo-shop'
 
 let root: Root
 let host: HTMLDivElement
-const key = demoShopStorageKey('test-project')
+const key = demoShopStorageKey('test-project', 'fund')
+const incomeKey = demoShopStorageKey('test-project', 'income')
 function button(label: string): HTMLButtonElement {
-  const result = Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find(element => !element.closest('[hidden]') && (element.getAttribute('aria-label') === label || element.textContent?.trim() === label))
+  const scope = host.querySelector('[role="dialog"]') ?? host
+  const result = Array.from(scope.querySelectorAll<HTMLButtonElement>('button')).find(element => !element.closest('[hidden]') && (element.getAttribute('aria-label') === label || element.textContent?.trim() === label))
   if (!result) throw new Error(`Missing button: ${label}`)
   return result
 }
@@ -28,7 +30,10 @@ async function change(element: HTMLInputElement | HTMLTextAreaElement | HTMLSele
     element.dispatchEvent(new Event(element instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true }))
   })
 }
-async function mount(resetKey = 0, strict = false) { await act(async () => root.render(strict ? <StrictMode><DemoProjectShop projectKey="test-project" resetKey={resetKey} /></StrictMode> : <DemoProjectShop projectKey="test-project" resetKey={resetKey} />)) }
+async function mount(resetKey = 0, strict = false, phase: DemoShopPhase = 'fund', projectKey = 'test-project') {
+  const shop = <DemoProjectShop projectKey={projectKey} phase={phase} resetKey={resetKey} />
+  await act(async () => root.render(strict ? <StrictMode>{shop}</StrictMode> : shop))
+}
 async function review() { await act(async () => host.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))) }
 async function fillBasic(name = 'Community day pass') {
   await change(field('Item name'), name)
@@ -47,6 +52,72 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove() })
 
 describe('demo shop editor', () => {
+  it('keeps legacy FUND items separate from INCOME inventory, currency, edits and clearing', async () => {
+    const fund = JSON.stringify({ version: 1, currency: 'USD', items: [{ ...newDemoShopItem(), name: 'Founding supporter', price: '25' }] })
+    localStorage.setItem('homerun:demo-shop:v1:test-project', fund)
+    await mount()
+    expect(host.querySelector('[aria-label="Demo FUND shop"]')).not.toBeNull()
+    expect(host.querySelector('.ds-item-card')?.textContent).toContain('Founding supporter')
+
+    await mount(0, false, 'income')
+    expect(host.querySelector('[aria-label="Demo INCOME shop"]')).not.toBeNull()
+    expect(host.querySelector('.ds-item-card')).toBeNull()
+    await click('Add your first item')
+    await change(field('Shop currency'), 'ETH')
+    await change(field('Item name'), 'Weekend stay')
+    await change(field('Price (ETH)'), '0.1')
+    await review()
+    await click('Add item to demo shop')
+    const income = localStorage.getItem(incomeKey)
+    expect(JSON.parse(income!)).toMatchObject({ currency: 'ETH', items: [{ name: 'Weekend stay' }] })
+    expect(localStorage.getItem(key)).toBe(fund)
+
+    await mount()
+    expect(host.querySelectorAll('.ds-item-card')).toHaveLength(1)
+    expect(host.querySelector('.ds-item-card')?.textContent).toContain('Founding supporter')
+    expect(host.querySelector('.ds-card-price')?.textContent).toBe('25 USD')
+    await click('Edit Founding supporter')
+    await change(field('Price (USD)'), '30')
+    await review()
+    await click('Save demo changes')
+    expect(localStorage.getItem(incomeKey)).toBe(income)
+
+    await act(async () => root.unmount())
+    root = createRoot(host)
+    await mount(0, false, 'income')
+    expect(host.querySelectorAll('.ds-item-card')).toHaveLength(1)
+    expect(host.querySelector('.ds-item-card')?.textContent).toContain('Weekend stay')
+    expect(host.querySelector('.ds-card-price')?.textContent).toBe('0.1 ETH')
+    await click('Clear demo shop')
+    await click('Clear demo shop')
+    expect(JSON.parse(localStorage.getItem(incomeKey)!).items).toEqual([])
+    await mount()
+    expect(host.querySelector('.ds-card-price')?.textContent).toBe('30 USD')
+  })
+
+  it.each(['edit', 'preview', 'remove', 'reset'] as const)('closes a pending %s when the phase changes', async action => {
+    localStorage.setItem(key, JSON.stringify({ version: 1, currency: 'USD', items: [{ ...newDemoShopItem(), name: 'Day pass', price: '25' }] }))
+    await mount()
+    await click({ edit: 'Edit Day pass', preview: 'Preview Day pass', remove: 'Remove Day pass', reset: 'Clear demo shop' }[action])
+    expect(host.querySelector('[role="dialog"]')).not.toBeNull()
+    await mount(0, false, 'income')
+    expect(host.querySelector('[role="dialog"]')).toBeNull()
+    expect(host.querySelector('.ds-item-card')).toBeNull()
+    expect(localStorage.getItem(incomeKey)).toBeNull()
+    expect(JSON.parse(localStorage.getItem(key)!).items).toHaveLength(1)
+  })
+
+  it('loads another project’s own phase inventory and leaves its saved items intact', async () => {
+    const otherKey = demoShopStorageKey('other-project', 'fund')
+    const other = JSON.stringify({ version: 1, currency: 'USD', items: [{ ...newDemoShopItem(), name: 'Other pass', price: '50' }] })
+    localStorage.setItem(otherKey, other)
+    await mount(0, false, 'fund', 'other-project')
+    expect(host.querySelector('.ds-item-card')?.textContent).toContain('Other pass')
+    await mount()
+    expect(host.querySelector('.ds-item-card')).toBeNull()
+    expect(localStorage.getItem(otherKey)).toBe(other)
+  })
+
   it('requires review before an item becomes inventory, then restores the saved shop', async () => {
     await mount()
     await click('Add your first item')

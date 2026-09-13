@@ -77,8 +77,14 @@ describe('bounded local demo shop persistence', () => {
     const raw = JSON.stringify({ version: 1, currency: 'USD', ignored: true, items: [{ ...savedItem, injected: true, media: { ...savedItem.media, onerror: 'bad()' }, splits: [{ ...split(), ignored: true }] }] })
     expect(parseDemoShopStorage(raw)).toEqual({ currency: 'USD', items: [savedItem] })
     expect(parseDemoShopStorage(serialize([], 'ETH'))).toEqual({ currency: 'ETH', items: [] })
-    expect(demoShopStorageKey('founderhaus')).not.toBe(demoShopStorageKey('other'))
-    expect(demoShopStorageKey('a:b')).toBe('homerun:demo-shop:v1:a%3Ab')
+  })
+  it('scopes inventories by project and phase while retaining legacy drafts only for FUND', () => {
+    expect(demoShopStorageKey('founderhaus', 'fund')).toBe('homerun:demo-shop:v1:founderhaus')
+    expect(new Set(['founderhaus', 'other', 'income:founderhaus'].flatMap(project =>
+      (['fund', 'income'] as const).map(phase => demoShopStorageKey(project, phase)),
+    )).size).toBe(6)
+    expect(demoShopStorageKey('a:b', 'fund')).toBe('homerun:demo-shop:v1:a%3Ab')
+    expect(demoShopStorageKey('a:b', 'income')).toBe('homerun:demo-shop:v1:income:a%3Ab')
   })
   it.each([null, '', '{broken', 'null', '[]', '{"version":2,"currency":"USD","items":[]}', '{"version":1,"currency":"EUR","items":[]}', '{"version":1,"currency":"USD","items":{}}'])('rejects unsupported or malformed storage %s', raw => {
     expect(parseDemoShopStorage(raw)).toBeNull()
