@@ -403,6 +403,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
                 <ul className="create-help create-role-description">
                   <li>The operator is the current entity that runs the show day to day.</li>
                   <li>The operator owns the initial cash reserve and receives revenue split tokens. The owner can replace this recipient.</li>
+                  {!raw.ownerIsOperator && raw.operatorMode === 'create' && <li>The operator is made up of addresses that need to agree on decisions.</li>}
                 </ul>
                 <label className="create-owner-operator"><input type="checkbox" checked={raw.ownerIsOperator === true} onChange={event => update('ownerIsOperator', event.target.checked)} /> Owner is also operator</label>
                 {!raw.ownerIsOperator && multisig('operator')}
