@@ -332,7 +332,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
       </> : <>
         <p className="create-help">{role === 'owner'
           ? 'The owner can administrate the fundraise and reallocate operator revenue splits. The owner is made up of addresses that need to agree on decisions.'
-          : 'Add the wallets that will own this multisig and choose how many must approve a transaction.'}</p>
+          : 'The operator owns the initial cash reserve, and a split of ongoing revenue tokens.'}</p>
         <div id={`create-${signers}`} tabIndex={-1}>
           {owners.map((owner, index) => <div className="create-multisig-owner" key={index}>
             <div className="create-multisig-address create-input"><input id={`create-${signers}-${index}`} aria-label={`${role === 'owner' ? 'Owner' : 'Operator'} multisig signer ${index + 1}`} type="text" value={owner} placeholder="0x…" maxLength={42} autoComplete="off" aria-invalid={!!errors[signers]} aria-describedby={issue ? `${role}-multisig-error` : undefined} onChange={event => update(signers, owners.map((value, i) => i === index ? event.target.value : value))} />
