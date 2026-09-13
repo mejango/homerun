@@ -27,8 +27,7 @@ function cashDirection(event: DemoActivityEvent): 'in' | 'out' | null {
 export function DemoActivity({ projection }: { projection: ReturnType<typeof projectNetwork> | null }) {
   const events = projection ? buildDemoActivity(projection) : [];
   return <section className="demo-activity" aria-label="Scenario activity" data-activity-phase={projection?.phase}>
-    <div className="demo-activity-heading"><h2>Activity</h2><span className="demo-activity-count">{events.length || ''}</span></div>
-    <p className="demo-activity-source">{events.length ? 'Modeled history | Latest first' : 'Demo activity'}</p>
+    <div className="demo-activity-heading"><h2>Activity</h2></div>
     {events.length ? <ol aria-label="Demo activity events">
       {events.map(event => {
         const direction = cashDirection(event);

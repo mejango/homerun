@@ -3,11 +3,13 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { zeroAddress, type Address } from 'viem'
 import type { FundProjectState } from '../src/lib/fund-state'
+import { parseFundProjectMetadata, type FundProjectMetadata } from '../src/lib/fund-project-metadata'
 
 const runtime = vi.hoisted(() => ({
   address: '0x1111111111111111111111111111111111111111' as Address,
   query: {} as Record<string, unknown>,
   incomeId: undefined as bigint | undefined,
+  details: undefined as FundProjectMetadata | undefined,
   mounted: 0,
   unmounted: 0,
   phase: 'pending',
@@ -34,6 +36,7 @@ vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries: runtime.invalidateQueries }),
   useQuery: ({ queryKey }: { queryKey: unknown[] }) => queryKey[0] === 'fund-project'
     ? runtime.query
+    : queryKey[0] === 'fund-project-metadata' ? { data: runtime.details, isError: false }
     : queryKey[0] === 'income-binding' ? { data: runtime.incomeId, isError: false, isFetching: false }
     : queryKey[0] === 'fund-reward-activation' ? { data: runtime.delegated, isError: false, isFetching: false }
     : { data: undefined, isError: false, isFetching: false },
@@ -70,7 +73,7 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     HTMLElement.prototype.scrollIntoView ??= () => {}
     Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) })
     window.history.replaceState(null, '', '/')
-    runtime.incomeId = undefined
+    runtime.incomeId = undefined; runtime.details = undefined
     runtime.mounted = 0; runtime.unmounted = 0
     runtime.phase = 'pending'; runtime.delegated = zeroAddress
     runtime.send.mockReset().mockImplementation(async (_request, options) => { await options?.reverify?.(); return null })
@@ -91,6 +94,35 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     await act(async () => root.render(<FundProject chainId={1} projectId="7" />))
     for (const label of ['Owners', 'Market', 'Settlement', 'Operators', 'Overview']) await tab(label)
   }
+
+  it('shows the current Owner and published Operator wallets independently of account permissions', async () => {
+    runtime.details = parseFundProjectMetadata({
+      name: 'Live house', homerun: { version: 1, kind: 'fund',
+        setup: { ownerWallet: '0x4444444444444444444444444444444444444444', operatorWallet: '0x3333333333333333333333333333333333333333' },
+        owner: { name: 'Asset owners', introduction: 'We own the house.' },
+        operator: { name: 'House team', introduction: 'We host the guests.' },
+      },
+    })
+    runtime.incomeId = 9n
+    await render()
+    const owner = host.querySelector('section[aria-label="Owner introduction"]')!
+    const operator = host.querySelector('section[aria-label="Operator introduction"]')!
+    expect(owner.textContent).toContain('Asset owners')
+    expect(owner.textContent).toContain('We own the house.')
+    expect(owner.querySelector('a')?.getAttribute('href')).toBe(`/account/${runtime.address}`)
+    expect(owner.textContent).not.toContain('0x4444444444444444444444444444444444444444')
+    expect(operator.textContent).toContain('House team')
+    expect(operator.querySelector('a')?.getAttribute('href')).toBe('/account/0x3333333333333333333333333333333333333333')
+    expect(operator.textContent).not.toContain(runtime.address)
+    expect(host.querySelectorAll('section[aria-label="Owner introduction"]')).toHaveLength(1)
+    expect(host.querySelectorAll('section[aria-label="Operator introduction"]')).toHaveLength(1)
+  })
+
+  it('shows the verified Owner even when no public profile is published', async () => {
+    await render()
+    expect(host.querySelector('section[aria-label="Owner introduction"] a')?.textContent).toBe(runtime.address)
+    expect(host.querySelector('section[aria-label="Operator introduction"]')?.textContent).toContain('Address not specified')
+  })
 
   it('shows the project navigation before RPC reads finish and preserves the selected tab', async () => {
     runtime.query = { ...runtime.query, data: undefined, isPending: true }

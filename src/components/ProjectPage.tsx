@@ -86,6 +86,8 @@ const phases: [ProjectPhase, string][] = [
   ["liquidated", "Asset sold"],
 ];
 const stageNames = ["Fundraise", "Income", "Asset sale"];
+// paloma.eth, selected for both roles in the Founder Haus demo.
+const founderHausAccount = "0x7adCBCD0Cc8Ba3b7740Ee7b2939bE319b1f550c6";
 const stagePhases: ProjectPhase[] = ["raising", "earning", "liquidated"];
 const statusLabels: Record<ProjectPhase, string> = {
   raising: "Fundraising",
@@ -1679,6 +1681,7 @@ function DemoOverview({
   phase: ProjectPhase;
   p: Projection | null;
 }) {
+  const profileChainId = project ? plannedNetworks(project.values)[0]?.chainId : undefined;
   const description =
     project?.values.description ||
     (project
@@ -1766,9 +1769,20 @@ function DemoOverview({
         </div>
       </section>
       <OperatorProfile
+        role="Owner"
+        name={project ? project.values.ownerName : "paloma.eth"}
+        introduction={project ? project.values.ownerIntroduction : "The Owner manages the project and its asset, including the purchase, treasury, and eventual sale."}
+        photoUrl={project?.values.ownerPhoto}
+        address={project ? project.values.ownerWallet || null : founderHausAccount}
+        chainId={profileChainId}
+      />
+      <OperatorProfile
         name={project ? project.values.operatorName : "Founder Haus team"}
         introduction={project ? project.values.operatorIntroduction : "We’re a small team of founders and local hosts turning this house into a place to work, gather, and recharge. We handle day-to-day operations, welcome members and guests, and keep the community updated on income and expenses."}
         photoUrl={project?.values.operatorPhoto}
+        address={project ? project.values.operatorWallet || null : founderHausAccount}
+        chainId={profileChainId}
+        addressLabel={project ? "Address" : "paloma.eth"}
       />
       <div className="demo-model-note">
         <p>

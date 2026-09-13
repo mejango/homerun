@@ -8,7 +8,7 @@
 :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-button { display: inline-flex; justify-content: center; align-items: center; gap: 8px; min-height: 44px; border: 1px solid #b9c4b2; border-radius: 5px; padding: 10px 17px; font: 500 14px/1.4 var(--sans, sans-serif); text-align: center; text-decoration: none; cursor: pointer; }
 :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-button-primary { background: #42664d; color: #fffefa; border-color: #42664d; }
 :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-button-primary:hover { background: #34533e; }
-:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-button-secondary { background: #fffefa; color: #42664d; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-button-secondary { background: transparent; color: #42664d; }
 :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-button:disabled, :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-add-row:disabled { opacity: .55; cursor: wait; }
 :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-button:focus-visible, :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-text-button:focus-visible, :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-tabs button:focus-visible, :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-add-row:focus-visible, :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-card-preview:focus-visible, :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-card-actions button:focus-visible, :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-more-button:focus-visible { outline: 2px solid #42664d; outline-offset: 3px; }
 :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-demo-note { margin: 0 0 24px; padding: 12px 14px; border: 1px solid #cbd7db; border-radius: 5px; background: #edf2f4; color: #425e68; font-size: 13px; }
@@ -48,6 +48,7 @@
 :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-currency-field select { width: 110px !important; }
 .demo-shop-editor .ds-currency-field p, dialog.modal-dialog .demo-shop-editor .ds-currency-field p { flex-basis: 100%; color: #667360; font-size: 12px; }
 .demo-shop-editor input:not([type=checkbox]):not([type=file]), dialog.modal-dialog .demo-shop-editor input:not([type=checkbox]):not([type=file]), .demo-shop-editor select, dialog.modal-dialog .demo-shop-editor select, .demo-shop-editor textarea, dialog.modal-dialog .demo-shop-editor textarea { display: block; width: 100%; min-width: 0; min-height: 44px; padding: 10px 12px; border: 1px solid #bfc9b5; border-radius: 5px; background: #fffefa; color: #2d4035; font: 400 14px/1.45 var(--sans, sans-serif); box-shadow: none; }
+.demo-shop-editor .ds-currency-field select, dialog.modal-dialog .demo-shop-editor .ds-currency-field select { background-color: transparent; }
 .demo-shop-editor select, dialog.modal-dialog .demo-shop-editor select {
   appearance: none;
   -webkit-appearance: none;
@@ -67,7 +68,7 @@
 :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-item-basics { display: flex; align-items: flex-start; gap: 20px; }
 :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-media-field { display: flex; align-items: center; flex-direction: column; flex: 0 0 104px; gap: 8px; width: 104px; }
 :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-media-preview { display: block; width: 104px; height: 104px; object-fit: cover; border: 1px solid #d8ddce; border-radius: 6px; }
-:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-media-placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; background: #edf0e4; color: #6b7f62; padding: 10px; text-align: center; overflow: hidden; }
+:is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-media-placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; background: #edf0e4; color: #5e7055; padding: 10px; text-align: center; overflow: hidden; }
 :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-media-placeholder svg { width: 32px; height: 32px; flex-shrink: 0; }
 :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-media-placeholder span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; max-width: 100%; overflow-wrap: anywhere; font-size: 10px; line-height: 1.3; }
 :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-media-placeholder strong { font-size: 11px; line-height: 1.3; }

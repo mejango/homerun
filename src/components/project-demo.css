@@ -105,8 +105,6 @@
 .homerun-project-layout .demo-activity { border-top: 1px solid var(--line); padding-top: 22px; }
 .homerun-project-layout .demo-activity-heading { display: flex; align-items: center; gap: 9px; }
 .homerun-project-layout .demo-activity h2 { margin: 0; font: 500 18px/1.4 var(--sans); letter-spacing: 0; }
-.homerun-project-layout .demo-activity-count { color: var(--muted); font: 400 12px/1 var(--sans); }
-.homerun-project-layout .demo-activity-source { margin-top: 6px; color: var(--muted); font-size: 11px; }
 .homerun-project-layout .demo-activity ol { list-style: none; margin: 14px 0; padding: 0; }
 .homerun-project-layout .demo-activity li { margin: 0; padding: 0; border-bottom: 1px solid var(--line); }
 .homerun-project-layout .demo-activity-event > summary { display: flex; align-items: flex-start; gap: 10px; padding: 14px 0; list-style: none; cursor: pointer; }

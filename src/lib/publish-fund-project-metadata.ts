@@ -23,6 +23,7 @@ export async function publishFundProjectMetadata(
   }
 
   const coverImageUri = await publishPhoto(values.photo, 'cover')
+  const ownerPhotoUri = await publishPhoto(values.ownerPhoto ?? '', 'owner')
   const operatorPhotoUri = await publishPhoto(values.operatorPhoto ?? '', 'operator')
-  return ipfs.pinJson(buildFundProjectMetadata(values, { coverImageUri, operatorPhotoUri }))
+  return ipfs.pinJson(buildFundProjectMetadata(values, { coverImageUri, ownerPhotoUri, operatorPhotoUri }))
 }

@@ -17,6 +17,7 @@ describe('FUND project metadata stays descriptive', () => {
   it('rejects unpublished local or external cover images', () => {
     for (const coverImageUri of ['blob:https://homerun.money/photo', 'data:image/png;base64,picture', 'https://tracker.example/image']) {
       expect(() => buildFundProjectMetadata(CREATE_DEFAULTS as CreateValues, { coverImageUri })).toThrow('IPFS')
+      expect(() => buildFundProjectMetadata(CREATE_DEFAULTS as CreateValues, { ownerPhotoUri: coverImageUri })).toThrow('IPFS')
       expect(() => buildFundProjectMetadata(CREATE_DEFAULTS as CreateValues, { operatorPhotoUri: coverImageUri })).toThrow('IPFS')
     }
   })
@@ -31,7 +32,7 @@ describe('FUND project metadata stays descriptive', () => {
     })
     expect(result.name).toBe('Founder Haus')
     expect(result.plan?.fundHolderSplitPercent).toBe(10)
-    expect(result).not.toHaveProperty('owner')
+    expect(result.owner).toBeNull()
     expect(result).not.toHaveProperty('phase')
     expect(result).not.toHaveProperty('permissions')
   })
@@ -51,7 +52,7 @@ describe('FUND project metadata stays descriptive', () => {
     const parsed = parseFundProjectMetadata(JSON.parse(JSON.stringify(published)))
     expect(parsed.plan).toMatchObject({ ownerWallet, operatorWallet, minimumRevenue: 8_000, minimumRevenueConsequences: values.minimumRevenueConsequences })
     expect(parsed).not.toHaveProperty('permissions')
-    expect(parsed).not.toHaveProperty('owner')
+    expect(parsed.owner).toBeNull()
     expect(published.homerun.incomeProject).toBeNull()
   })
 
@@ -96,6 +97,29 @@ describe('FUND project metadata stays descriptive', () => {
     for (const photoUri of ['javascript:alert(1)', 'https://tracker.example/photo', 'data:image/png;base64,YWJjZA==', 'ipfs://cid/../private']) {
       expect(parseFundProjectMetadata({ homerun: { ...homerun, operator: { name: 'Team', photoUri } } }).operator?.photoUrl).toBeNull()
     }
+  })
+
+  it('keeps Owner and Operator profiles distinct, bounds them, and tolerates older projects', () => {
+    const metadata = buildFundProjectMetadata({
+      ...CREATE_DEFAULTS,
+      ownerName: ' Neighborhood trust ', ownerIntroduction: ' We steward the property. ', ownerPhoto: 'data:image/png;base64,local-only',
+      operatorName: 'Local hosts', operatorIntroduction: 'We welcome guests.',
+    } as CreateValues, { ownerPhotoUri: 'ipfs://bafyowner' })
+    expect(metadata.homerun.setup).not.toHaveProperty('ownerPhoto')
+    expect(JSON.stringify(metadata)).not.toContain('local-only')
+    expect(parseFundProjectMetadata(JSON.parse(JSON.stringify(metadata)))).toMatchObject({
+      owner: { name: 'Neighborhood trust', introduction: 'We steward the property.', photoUrl: 'https://juicebox.center/ipfs/bafyowner' },
+      operator: { name: 'Local hosts', introduction: 'We welcome guests.', photoUrl: null },
+    })
+    const homerun = { version: 1, kind: 'fund', setup: {}, owner: { name: 'a'.repeat(90), introduction: 'b'.repeat(1300), photoUri: 'ipfs://bafyowner/photo.webp' } }
+    expect(parseFundProjectMetadata({ homerun }).owner).toEqual({ name: 'a'.repeat(80), introduction: 'b'.repeat(1200), photoUrl: 'https://juicebox.center/ipfs/bafyowner/photo.webp' })
+    expect(parseFundProjectMetadata({ homerun: { ...homerun, owner: { introduction: 'Ownership story' } } }).owner).toEqual({ name: null, introduction: 'Ownership story', photoUrl: null })
+    for (const photoUri of ['javascript:alert(1)', 'https://tracker.example/photo', 'data:image/png;base64,YWJjZA==', 'ipfs://cid/../private']) {
+      expect(parseFundProjectMetadata({ homerun: { ...homerun, owner: { name: 'Trust', photoUri } } }).owner?.photoUrl).toBeNull()
+    }
+    expect(parseFundProjectMetadata({ homerun: { ...homerun, version: 2 } }).owner).toBeNull()
+    expect(parseFundProjectMetadata({ homerun: { ...homerun, kind: 'income' } }).owner).toBeNull()
+    expect(parseFundProjectMetadata({ homerun: { version: 1, kind: 'fund', setup: {}, operator: { name: 'Original operator' } } }).owner).toBeNull()
   })
 
   it('rejects invalid model values without fabricating zero estimates', () => {

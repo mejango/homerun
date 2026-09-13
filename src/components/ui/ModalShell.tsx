@@ -237,7 +237,7 @@ export function ModalShell({
         {footer ? (
           <div
             data-modal-footer
-            className="shrink-0 border-t border-smoke-200 bg-white px-5 py-4 sm:px-6"
+            className="shrink-0 border-t border-smoke-200 px-5 py-4 sm:px-6"
           >
             {footer}
           </div>

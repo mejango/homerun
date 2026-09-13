@@ -26,6 +26,9 @@ export const CREATE_DEFAULTS = Object.freeze({
   networkEnvironment: 'production',
   revnetOperatorEnabled: true,
   ownerWallet: '',
+  ownerName: '',
+  ownerIntroduction: '',
+  ownerPhoto: '',
   operatorWallet: '',
   operatorName: '',
   operatorIntroduction: '',
@@ -70,6 +73,7 @@ export function normalizeCreateDraft(raw = {}) {
   for (const [key, min, max, label] of [
     ['name', 2, 60, 'Project name'], ['location', 0, 100, 'Location'], ['description', 0, 600, 'Description'], ['revenueDescription', 0, 1000, 'Revenue plan'],
     ['minimumRevenueConsequences', 0, 2000, 'Minimum revenue consequences'],
+    ['ownerName', 0, 80, 'Owner name'], ['ownerIntroduction', 0, 1200, 'Owner introduction'],
     ['operatorName', 0, 80, 'Operator name'], ['operatorIntroduction', 0, 1200, 'Operator introduction'],
   ]) {
     const input = own(source, key) ? source[key] : CREATE_DEFAULTS[key];
@@ -136,7 +140,7 @@ export function normalizeCreateDraft(raw = {}) {
     errors.revnetOperatorEnabled = 'Choose whether to enable limited operator controls.';
   }
 
-  for (const key of ['photo', 'operatorPhoto']) {
+  for (const key of ['photo', 'ownerPhoto', 'operatorPhoto']) {
     const photo = own(source, key) ? source[key] : '';
     values[key] = typeof photo === 'string' ? photo : '';
     if (typeof photo !== 'string' || (photo && !validPhoto(photo))) {
@@ -201,6 +205,7 @@ export function deploymentDraft(raw) {
     networkEnvironment: values.networkEnvironment,
     plannedNetworks: networks,
     owner: {
+      name: values.ownerName, introduction: values.ownerIntroduction, photo: values.ownerPhoto,
       address: values.ownerWallet || null,
       role: 'Owns FUND, operates INCOME, and executes program changes.',
       fundOwnershipPercentAfterPurchase: values.operatorFundPercent,

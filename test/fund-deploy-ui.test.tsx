@@ -148,13 +148,14 @@ describe('Create submission recovery', () => {
 
   it('prepares FUND ownership for the Owner wallet while keeping Operator separate in metadata', async () => {
     localStorage.clear()
-    const values = { name: 'Owned asset', ownerWallet: '0x2222222222222222222222222222222222222222', operatorWallet: '0x3333333333333333333333333333333333333333', networks: ['base'], networkEnvironment: 'production' } as CreateValues
+    const values = { name: 'Owned asset', ownerName: 'Asset trust', ownerIntroduction: 'We steward the asset.', ownerWallet: '0x2222222222222222222222222222222222222222', operatorWallet: '0x3333333333333333333333333333333333333333', networks: ['base'], networkEnvironment: 'production' } as CreateValues
     await act(async () => root.render(<FundDeploy values={values} />))
     const prepare = [...host.querySelectorAll('button')].find(item => item.textContent === 'Create project')!
     await act(async () => prepare.click())
     expect(saved().input.owner).toBe(values.ownerWallet)
     expect(saved().input.sender).toBe(owner)
-    expect(runtime.publish).toHaveBeenCalledWith(expect.objectContaining({ ownerWallet: values.ownerWallet, operatorWallet: values.operatorWallet }))
+    expect(runtime.publish).toHaveBeenCalledWith(expect.objectContaining({ ownerWallet: values.ownerWallet, ownerName: values.ownerName, ownerIntroduction: values.ownerIntroduction, operatorWallet: values.operatorWallet }))
+    expect(saved().input.projectUri).toBe('ipfs://bafkreimetadata')
   })
 
   it('does not assign Owner authority to Operator when Owner is missing', async () => {

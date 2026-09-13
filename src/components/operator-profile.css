@@ -4,6 +4,8 @@
 .operator-profile-body.has-photo { grid-template-columns: 128px minmax(0, 1fr); }
 .operator-profile-photo { width: 128px; height: 128px; border-radius: 8px; object-fit: cover; }
 .operator-profile-copy { min-width: 0; }
+.operator-profile .operator-profile-address { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 0 0 12px; font-size: 14px; line-height: 1.6; color: var(--muted, #647060); }
+.operator-profile-address a { color: var(--ink, #293f34); text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
 .operator-profile .operator-profile-name { margin: 0 0 12px; color: var(--ink, #293f34); font-size: 16px; font-weight: 500; overflow-wrap: anywhere; }
 .operator-profile .operator-profile-introduction { margin: 0; color: var(--muted, #647060); font-size: 14px; line-height: 1.7; white-space: pre-line; overflow-wrap: anywhere; }
 .create-operator-profile { margin: 12px 0 0; padding: 24px 0 0; border: 0; border-top: 1px solid var(--line, #d8dfcc); min-width: 0; }

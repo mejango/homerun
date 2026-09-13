@@ -33,6 +33,9 @@ export interface CreateValues {
   networkEnvironment: 'production' | 'testnet';
   revnetOperatorEnabled: boolean;
   ownerWallet: string;
+  ownerName?: string;
+  ownerIntroduction?: string;
+  ownerPhoto?: string;
   operatorWallet: string;
   operatorName?: string;
   operatorIntroduction?: string;
@@ -54,7 +57,7 @@ export interface CreateFlowProps {
 
 const labels = ['The asset', 'Fundraise', 'Income', 'Review & create'];
 const groups: FieldName[][] = [
-  ['name', 'assetType', 'location', 'description', 'photo', 'ownerWallet', 'operatorWallet', 'operatorName', 'operatorIntroduction', 'operatorPhoto'],
+  ['name', 'assetType', 'location', 'description', 'photo', 'ownerWallet', 'ownerName', 'ownerIntroduction', 'ownerPhoto', 'operatorWallet', 'operatorName', 'operatorIntroduction', 'operatorPhoto'],
   ['purchaseBudget', 'opsReserve', 'operatorFundPercent'],
   ['revenueDescription', 'minimumRevenue', 'minimumRevenueConsequences', 'monthlyRent', 'monthlyCosts', 'rentGrowthPercent', 'costGrowthPercent', 'operatorSplitPercent', 'stickySplitPercent'],
   ['networks', 'networkEnvironment', 'revnetOperatorEnabled'],
@@ -136,10 +139,11 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
   const [errors, setErrors] = useState<Errors>({});
   const [hydrated, setHydrated] = useState(false);
   const [storageNotice, setStorageNotice] = useState('');
-  const [photoBusy, setPhotoBusy] = useState({ photo: false, operatorPhoto: false });
+  const [photoBusy, setPhotoBusy] = useState({ photo: false, ownerPhoto: false, operatorPhoto: false });
   const heading = useRef<HTMLHeadingElement>(null);
-  const photoRequest = useRef({ photo: 0, operatorPhoto: 0 });
+  const photoRequest = useRef({ photo: 0, ownerPhoto: 0, operatorPhoto: 0 });
   const photoInput = useRef<HTMLInputElement>(null);
+  const ownerPhotoInput = useRef<HTMLInputElement>(null);
   const operatorPhotoInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -169,7 +173,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
       }
     } catch { setStorageNotice('Draft saving is unavailable. Keep this tab open while you work.'); }
     setHydrated(true);
-    return () => { requests.photo += 1; requests.operatorPhoto += 1; };
+    return () => { requests.photo += 1; requests.ownerPhoto += 1; requests.operatorPhoto += 1; };
   }, []);
 
   useEffect(() => {
@@ -194,6 +198,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
     catch { return null; }
   }, [raw]);
   const photo = normalized.errors.photo ? '' : normalized.values.photo;
+  const ownerPhoto = normalized.errors.ownerPhoto ? '' : normalized.values.ownerPhoto;
   const operatorPhoto = normalized.errors.operatorPhoto ? '' : normalized.values.operatorPhoto;
 
   function update(name: FieldName, value: RawValues[FieldName]) {
@@ -238,7 +243,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
     if (!result.errors[name]) update(name, number(result.values[name] as number));
   }
 
-  async function choosePhoto(name: 'photo' | 'operatorPhoto', file: File | undefined) {
+  async function choosePhoto(name: 'photo' | 'ownerPhoto' | 'operatorPhoto', file: File | undefined) {
     if (!file) return;
     const request = ++photoRequest.current[name];
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 8 * 1024 * 1024) {
@@ -250,7 +255,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
     try {
       const bitmap = await createImageBitmap(file);
       const canvas = document.createElement('canvas');
-      const scale = Math.min(1, (name === 'operatorPhoto' ? 800 : 1400) / Math.max(bitmap.width, bitmap.height));
+      const scale = Math.min(1, (name === 'photo' ? 1400 : 800) / Math.max(bitmap.width, bitmap.height));
       canvas.width = Math.max(1, Math.round(bitmap.width * scale));
       canvas.height = Math.max(1, Math.round(bitmap.height * scale));
       const context = canvas.getContext('2d');
@@ -266,11 +271,11 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
     } finally { if (request === photoRequest.current[name]) setPhotoBusy(previous => ({ ...previous, [name]: false })); }
   }
 
-  function removePhoto(name: 'photo' | 'operatorPhoto') {
+  function removePhoto(name: 'photo' | 'ownerPhoto' | 'operatorPhoto') {
     photoRequest.current[name] += 1;
     update(name, '');
     setPhotoBusy(previous => ({ ...previous, [name]: false }));
-    const input = name === 'photo' ? photoInput.current : operatorPhotoInput.current;
+    const input = name === 'photo' ? photoInput.current : name === 'ownerPhoto' ? ownerPhotoInput.current : operatorPhotoInput.current;
     if (input) input.value = '';
   }
 
@@ -286,13 +291,15 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
 
   function reset() {
     photoRequest.current.photo += 1;
+    photoRequest.current.ownerPhoto += 1;
     photoRequest.current.operatorPhoto += 1;
-    setPhotoBusy({ photo: false, operatorPhoto: false });
+    setPhotoBusy({ photo: false, ownerPhoto: false, operatorPhoto: false });
     setRaw(initialValues());
     setErrors({});
     setFurthest(0);
     navigate(0);
     if (photoInput.current) photoInput.current.value = '';
+    if (ownerPhotoInput.current) ownerPhotoInput.current.value = '';
     if (operatorPhotoInput.current) operatorPhotoInput.current.value = '';
   }
 
@@ -305,7 +312,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
       <section className="create-editor" aria-label="Design the rules">
         <nav className="create-steps" aria-label="Setup steps">
           {labels.map((label, index) => <button key={label} type="button" data-create-step={index}
-            disabled={locked || index > furthest || photoBusy.photo || photoBusy.operatorPhoto} aria-current={index === step ? 'step' : undefined}
+            disabled={locked || index > furthest || photoBusy.photo || photoBusy.ownerPhoto || photoBusy.operatorPhoto} aria-current={index === step ? 'step' : undefined}
             data-complete={index < step} onClick={() => { if (index <= step || validateStep()) navigate(index); }}><span>{index + 1}</span>{label}</button>)}
         </nav>
         <form id="create-form" noValidate onSubmit={event => { event.preventDefault(); continueStep(); }}>
@@ -331,6 +338,16 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
               </div>
               <fieldset className="create-operator-profile"><legend>Owner</legend>
                 {field('ownerWallet', 'Owner wallet', { placeholder: '0x…', help: 'Owns the FUND Juicebox, receives its success allocation, and controls the INCOME revnet. The Owner is responsible for managing the money raised and can change the Operator and all INCOME splits at any time.' })}
+                <p className="create-help">Introduce the person or organization that owns and manages the project.</p>
+                {field('ownerName', 'Name (optional)', { placeholder: 'Owner name or organization', maxLength: 80 })}
+                {field('ownerIntroduction', 'Introduction (optional)', { rows: 4, maxLength: 1200, placeholder: 'Tell people about the ownership, your responsibilities, and how you will manage the project.' })}
+                <div className="create-field"><label htmlFor="create-ownerPhoto">Owner picture (optional)</label>
+                  <label className="photo-picker" htmlFor="create-ownerPhoto"><span aria-hidden="true">＋</span><span>{photoBusy.ownerPhoto ? 'Preparing picture…' : 'Choose a picture'}<small>JPG, PNG or WebP | up to 8 MB</small></span>
+                    <input id="create-ownerPhoto" ref={ownerPhotoInput} type="file" accept="image/jpeg,image/png,image/webp" aria-describedby={errors.ownerPhoto ? 'ownerPhoto-error' : undefined} onChange={event => { void choosePhoto('ownerPhoto', event.target.files?.[0]); }} />
+                  </label>
+                  {ownerPhoto && <><Image unoptimized src={ownerPhoto} alt="Your owner picture" width={96} height={96} className="create-operator-photo-preview" /><button id="remove-owner-photo" className="quiet-button" type="button" onClick={() => removePhoto('ownerPhoto')}>Remove picture</button></>}
+                  {errors.ownerPhoto && <p className="create-error" id="ownerPhoto-error">{errors.ownerPhoto}</p>}
+                </div>
               </fieldset>
               <fieldset className="create-operator-profile"><legend>Operator</legend>
                 {field('operatorWallet', 'Operator wallet', { placeholder: '0x…', help: 'Receives the INCOME token split. The Owner can replace this recipient; receiving INCOME does not grant program control.' })}
@@ -387,10 +404,10 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
                 <CreateIncomePreview inputs={summary?.networkInputs || null} />
               </section>
               {field('revenueDescription', 'How will it earn revenue? (optional)', { rows: 3, maxLength: 1000, placeholder: 'Describe what customers will pay for.' })}
-              <fieldset className="income-field-group"><legend>Minimum revenue</legend>
+              <div className="income-field-group">
                 {field('minimumRevenue', 'Minimum monthly revenue', { prefix: '$', help: 'The monthly revenue threshold for this plan. Set to 0 for no minimum.' })}
                 {field('minimumRevenueConsequences', 'What happens if revenue falls below the minimum?', { rows: 4, maxLength: 2000, placeholder: 'Describe the review period, actions the Owner will take, and how contributors will be informed.', help: 'Published with the income plan. The Owner must carry out these actions; this field does not trigger automatic contract changes.' })}
-              </fieldset>
+              </div>
               <details className="create-terms"><summary>Starting token terms</summary><p>At purchase, 500,000 initial INCOME is allocated across all FUND holders, including inactive ERC20 balances and unclaimed token credits. Claiming this initial allocation requires no activation, staking or vesting. Revenue starts by issuing 10 INCOME per USDC, shared using the percentages above. Issuance falls 5% each quarter for two years.</p><p>Ongoing FUND rewards use stock Sticky: rewards follow your share balance at each snapshot and unlock in four weekly vesting rounds after you start the reward claim. There is no minimum staking period or stake-age bonus. Staying staked longer earns additional reward rounds. Live use requires a verified deployment. Borrowing or cashing out INCOME does not sell FUND.</p></details>
             </>}
             {step === 3 && <>
@@ -406,6 +423,9 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
                   <p>{normalized.values.minimumRevenue ? `${money(normalized.values.minimumRevenue)} per month` : 'No minimum specified'}</p>
                   {normalized.values.minimumRevenueConsequences && <p className="whitespace-pre-line">{normalized.values.minimumRevenueConsequences}</p>}
                 </section>
+                {(normalized.values.ownerName || normalized.values.ownerIntroduction || ownerPhoto) && <section className="review-block"><div><h3>Owner</h3><button type="button" disabled={locked} onClick={() => navigate(0)}>Edit owner</button></div>
+                  <OperatorProfile role="Owner" name={normalized.values.ownerName} introduction={normalized.values.ownerIntroduction} photoUrl={ownerPhoto} showHeading={false} />
+                </section>}
                 {(normalized.values.operatorName || normalized.values.operatorIntroduction || operatorPhoto) && <section className="review-block"><div><h3>Operator</h3><button type="button" disabled={locked} onClick={() => navigate(0)}>Edit operator</button></div>
                   <OperatorProfile name={normalized.values.operatorName} introduction={normalized.values.operatorIntroduction} photoUrl={operatorPhoto} showHeading={false} />
                 </section>}
@@ -441,7 +461,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
           </section>
           {errors.form && <p id="create-form-error" className="create-error" role="alert">{errors.form}</p>}
           <div className="create-actions">{step > 0 && <button type="button" id="create-back" disabled={locked} className="quiet-button" onClick={() => navigate(step - 1)}>← Back</button>}
-            {step < 3 && <button type="submit" id="create-next" className="create-primary" disabled={photoBusy.photo || photoBusy.operatorPhoto}>Continue <span aria-hidden="true">→</span></button>}
+            {step < 3 && <button type="submit" id="create-next" className="create-primary" disabled={photoBusy.photo || photoBusy.ownerPhoto || photoBusy.operatorPhoto}>Continue <span aria-hidden="true">→</span></button>}
           </div>
         </form>
         <div className="draft-status"><span id="draft-status" role="status">{storageNotice}</span><button type="button" id="start-over" disabled={locked} className="quiet-button" onClick={reset}>Start over</button></div>

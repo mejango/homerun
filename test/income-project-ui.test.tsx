@@ -5,10 +5,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { zeroAddress, type Address, type Hex, type TransactionReceipt } from 'viem'
 import type { IncomeProjectState } from '../src/lib/income-state'
 import type { IncomeReservedSnapshot } from '../src/lib/income-reserved'
+import type { FundProjectState } from '../src/lib/fund-state'
+import { parseFundProjectMetadata, type FundProjectMetadata } from '../src/lib/fund-project-metadata'
 
 const runtime = vi.hoisted(() => ({
   address: '0x1111111111111111111111111111111111111111' as Address,
   query: {} as Record<string, unknown>,
+  fund: undefined as FundProjectState | undefined,
+  details: {} as Record<string, FundProjectMetadata>,
   sticky: null as { stickyProjectId: bigint } | null,
   stickyError: false, stickyMounted: 0, stickyUnmounted: 0,
   discoveredFund: null as bigint | null, discoveryError: false,
@@ -17,7 +21,7 @@ const runtime = vi.hoisted(() => ({
   reserved: undefined as IncomeReservedSnapshot | undefined, reservedError: false,
   reservedReceipt: undefined as { tokenCount: bigint; hookFailures: number; projectFallbacks: number } | undefined,
   receipt: null as TransactionReceipt | null, safeProposalHash: null as Hex | null,
-  readReserved: vi.fn(),
+  readReserved: vi.fn(), queries: vi.fn(),
   invalidateQueries: vi.fn(), send: vi.fn(), readState: vi.fn(), autoIssuance: vi.fn(),
 }))
 vi.mock('@/components/ProjectParticipants', () => ({ ProjectParticipants: () => <span>Indexed holders</span> }))
@@ -39,13 +43,19 @@ vi.mock('@/lib/project-pay-quote', () => ({ prepareProjectPayQuote: async () => 
 vi.mock('@tanstack/react-query', () => ({
   keepPreviousData: (value: unknown) => value,
   useQueryClient: () => ({ invalidateQueries: runtime.invalidateQueries }),
-  useQuery: ({ queryKey }: { queryKey: unknown[] }) => queryKey[0] === 'income-project' ? runtime.query
+  useQuery: (options: { queryKey: unknown[]; enabled?: boolean }) => {
+    runtime.queries(options)
+    const { queryKey } = options
+    return queryKey[0] === 'income-project' ? runtime.query
+    : queryKey[0] === 'fund-project' ? { data: runtime.fund, isError: false }
+    : queryKey[0] === 'fund-project-metadata' ? { data: runtime.details[String(queryKey[1])], isError: false }
     : queryKey[0] === 'income-fund-binding' ? { data: runtime.discoveredFund, isError: runtime.discoveryError, refetch: vi.fn() }
     : queryKey[0] === 'income-sticky-binding' ? { data: runtime.sticky, isError: runtime.stickyError }
     : queryKey[0] === 'project-pay' ? { data: { kind: 'pay', terminal: '0x3333333333333333333333333333333333333333', preview: runtime.payQuote, minimumTokenCount: runtime.payQuote.beneficiaryTokenCount * 99n / 100n, reservedTokenCount: runtime.payQuote.reservedTokenCount, blockNumber: 100n }, isError: false }
     : queryKey[0] === 'income-reserved' ? { data: runtime.reserved, isError: runtime.reservedError, error: new Error('RPC unavailable'), refetch: vi.fn() }
     : queryKey[0] === 'income-reserved-receipt' ? { data: runtime.reservedReceipt, isError: false }
-      : { data: undefined, isError: false, isFetching: false },
+      : { data: undefined, isError: false, isFetching: false }
+  },
 }))
 vi.mock('@/hooks/useSafeTx', () => ({
   txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,
@@ -81,10 +91,10 @@ describe('INCOME transaction surfaces', () => {
     window.history.replaceState(null, '', '/')
     runtime.mounted = 0; runtime.unmounted = 0; runtime.busy = false; runtime.phase = 'idle'; runtime.sticky = null
     runtime.stickyError = false; runtime.stickyMounted = 0; runtime.stickyUnmounted = 0
-    runtime.discoveredFund = null; runtime.discoveryError = false
+    runtime.discoveredFund = null; runtime.discoveryError = false; runtime.fund = undefined; runtime.details = {}
     runtime.address = '0x1111111111111111111111111111111111111111'
     runtime.send.mockReset(); runtime.autoIssuance.mockReset(); runtime.readState.mockReset()
-    runtime.readReserved.mockReset(); runtime.invalidateQueries.mockClear()
+    runtime.readReserved.mockReset(); runtime.invalidateQueries.mockClear(); runtime.queries.mockClear()
     runtime.reserved = undefined; runtime.reservedError = false; runtime.reservedReceipt = undefined
     runtime.receipt = null; runtime.safeProposalHash = null
     runtime.query = { data: state(), isError: false, isPending: false, isFetching: false, isPlaceholderData: false, refetch: vi.fn() }
@@ -113,6 +123,81 @@ describe('INCOME transaction surfaces', () => {
   async function setInput(input: HTMLInputElement, value: string) {
     await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value); input.dispatchEvent(new Event('input', { bubbles: true })) })
   }
+
+  it.each([undefined, 88n])('loads asset profiles from the canonical FUND metadata regardless of URL hint %s', async (fundProjectId) => {
+    runtime.discoveredFund = 3n
+    runtime.fund = { chainId: 1, projectId: 3n, owner: '0x9999999999999999999999999999999999999999', knownOwnerWrapper: true, projectUri: 'fund-uri' } as FundProjectState
+    runtime.details['fund-uri'] = parseFundProjectMetadata({
+      name: 'Linked house', homerun: { version: 1, kind: 'fund',
+        setup: { ownerWallet: '0x8888888888888888888888888888888888888888', operatorWallet: '0x7777777777777777777777777777777777777777' },
+        owner: { name: 'Asset owners', introduction: 'We own this house.' },
+        operator: { name: 'Local team', introduction: 'We operate the house.' },
+      },
+    })
+    await act(async () => root.render(<IncomeProject chainId={1} projectId={7n} fundProjectId={fundProjectId} />))
+    const queries = runtime.queries.mock.calls.map(([query]) => query)
+    expect(queries.some(query => query.queryKey[0] === 'income-fund-binding' && query.queryKey[2] === '7' && query.enabled)).toBe(true)
+    expect(queries.some(query => query.queryKey[0] === 'fund-project' && query.queryKey[2] === '3' && query.enabled)).toBe(true)
+    expect(queries.some(query => query.queryKey[0] === 'fund-project' && query.queryKey[2] === '88' && query.enabled)).toBe(false)
+    const owner = host.querySelector('section[aria-label="Owner introduction"]')!
+    const operator = host.querySelector('section[aria-label="Operator introduction"]')!
+    expect(owner.textContent).toContain('Asset owners')
+    expect(owner.querySelector('a')?.getAttribute('href')).toBe('/account/0x9999999999999999999999999999999999999999')
+    expect(owner.textContent).not.toContain('0x8888888888888888888888888888888888888888')
+    expect(operator.textContent).toContain('Local team')
+    expect(operator.querySelector('a')?.getAttribute('href')).toBe('/account/0x7777777777777777777777777777777777777777')
+    expect(operator.textContent).not.toContain(runtime.address)
+    expect(owner.textContent).not.toContain(state().owner)
+  })
+
+  it.each([false, true])('does not use an unverified FUND hint for public roles when canonical discovery fails or is absent (%s)', async (discoveryError) => {
+    runtime.discoveryError = discoveryError
+    runtime.discoveredFund = discoveryError ? 3n : null
+    runtime.fund = { chainId: 1, projectId: 3n, owner: '0x9999999999999999999999999999999999999999', knownOwnerWrapper: true, projectUri: 'unrelated-fund-uri' } as FundProjectState
+    runtime.details['unrelated-fund-uri'] = parseFundProjectMetadata({ name: 'Unrelated owners', homerun: { version: 1, kind: 'fund', setup: {}, owner: { name: 'Unrelated owners' } } })
+    await act(async () => root.render(<IncomeProject chainId={1} projectId={7n} fundProjectId={3n} />))
+    expect(runtime.queries.mock.calls.some(([query]) => query.queryKey[0] === 'fund-project' && query.enabled)).toBe(false)
+    const owner = host.querySelector('section[aria-label="Owner introduction"]')!
+    expect(owner.textContent).toContain('Address not specified')
+    expect(owner.querySelector('a')).toBeNull()
+    expect(owner.textContent).not.toContain('Unrelated owners')
+    if (discoveryError) expect(host.textContent).toContain('The FUND Owner and Operator details could not be refreshed.')
+  })
+
+  it('does not present revnet governance as an asset Owner when the connected FUND has changed to a revnet', async () => {
+    runtime.discoveredFund = 3n
+    runtime.fund = { chainId: 1, projectId: 3n, owner: state().owner, knownOwnerWrapper: false, projectUri: '' } as FundProjectState
+    await act(async () => root.render(<IncomeProject chainId={1} projectId={7n} fundProjectId={3n} />))
+    const owner = host.querySelector('section[aria-label="Owner introduction"]')!
+    expect(owner.textContent).toContain('Address not specified')
+    expect(owner.querySelector('a')).toBeNull()
+  })
+
+  it('uses published roles when an INCOME URI contains Homerun metadata without a verified FUND', async () => {
+    runtime.query = { ...runtime.query, data: { ...state(), projectUri: 'income-uri' } }
+    runtime.details['income-uri'] = parseFundProjectMetadata({
+      name: 'Published house', homerun: { version: 1, kind: 'fund',
+        setup: { ownerWallet: '0x8888888888888888888888888888888888888888', operatorWallet: '0x7777777777777777777777777777777777777777' },
+        owner: { name: 'Published owners' }, operator: { name: 'Published team' },
+      },
+    })
+    await render()
+    const owner = host.querySelector('section[aria-label="Owner introduction"]')!
+    expect(owner.textContent).toContain('Published Owner wallet')
+    expect(owner.querySelector('a')?.textContent).toBe('0x8888888888888888888888888888888888888888')
+    expect(host.querySelector('section[aria-label="Operator introduction"] a')?.textContent).toBe('0x7777777777777777777777777777777777777777')
+  })
+
+  it('never substitutes revnet governance or the connected wallet for unpublished asset roles', async () => {
+    await render()
+    for (const role of ['Owner', 'Operator']) {
+      const profile = host.querySelector(`section[aria-label="${role} introduction"]`)!
+      expect(profile.textContent).toContain('Address not specified')
+      expect(profile.querySelector('a')).toBeNull()
+      expect(profile.textContent).not.toContain(runtime.address)
+      expect(profile.textContent).not.toContain(state().owner)
+    }
+  })
 
   it.each([undefined, 3n])('uses the INCOME project for the standalone shop with FUND connection %s', async (fundProjectId) => {
     runtime.discoveredFund = 3n

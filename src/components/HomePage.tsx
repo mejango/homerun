@@ -15,8 +15,8 @@ import {
 const DEFAULT_COLORS: BallparkOptions = {
   mode: 'shapes',
   intensity: 100,
-  pace: 2.5,
-  grouping: 11,
+  pace: 1.25,
+  grouping: 21,
 };
 
 type AcidColors = Pick<BallparkOptions, 'intensity' | 'grouping'>;

@@ -13,8 +13,8 @@
 .payment-chain-label { display: inline-flex; align-items: center; gap: 4px; font: 500 14px/1.4 var(--sans, sans-serif); }
 /* Size to the selected label while retaining the native select and its popup. */
 .payment-chain-control { --select-padding-right: 28px; --select-chevron-inset: 6px; position: relative; display: inline-block; min-width: 0; max-width: 100%; }
-.payment-chain-value { display: block; visibility: hidden; min-height: 32px; padding: 2px var(--select-padding-right) 2px 4px; white-space: pre; }
-.payment-chain-select { position: absolute; inset: 0; width: 100%; max-width: 100%; min-width: 0; min-height: 32px; padding: 2px 4px; border: 0; border-radius: 3px; background: transparent; color: inherit; font: inherit; text-decoration: underline; text-underline-offset: 4px; cursor: pointer; }
+.payment-chain-value { display: block; visibility: hidden; min-height: 32px; padding: 2px var(--select-padding-right) 2px 0; white-space: pre; }
+.payment-chain-select { position: absolute; inset: 0; width: 100%; max-width: 100%; min-width: 0; min-height: 32px; padding: 2px 4px 2px 0; border: 0; border-radius: 3px; background: transparent; color: inherit; font: inherit; text-decoration: underline; text-underline-offset: 4px; cursor: pointer; }
 .payment-chain-select:focus-visible { outline: 2px solid #345d3f; outline-offset: 2px; }
 .payment-chain-select:disabled { cursor: wait; opacity: .6; }
 .pay-route { border: 1px solid #b7c5ad; border-radius: 3px; padding: 5px 7px; font-size: 10px; letter-spacing: .07em; color: #31543c; white-space: nowrap; }

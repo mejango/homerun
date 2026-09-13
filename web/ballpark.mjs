@@ -30,7 +30,7 @@ let acidColors = null;
 let colorMode = 'shapes';
 try { const savedMode = localStorage.getItem('homerun:color-mode'); if (['acid', 'shapes'].includes(savedMode)) colorMode = savedMode; } catch {}
 modeSelect.value = colorMode;
-let colorIntensity = 100, colorPace = 2.5, colorGrouping = 11;
+let colorIntensity = 100, colorPace = 1.25, colorGrouping = 21;
 try {
   const saved = localStorage.getItem('homerun:color-intensity');
   if (saved !== null && saved.trim() !== '' && Number.isFinite(Number(saved))) colorIntensity = Math.max(0, Math.min(100, Number(saved)));

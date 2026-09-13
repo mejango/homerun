@@ -131,7 +131,7 @@ dialog.ui-modal-host::backdrop { all: revert-layer; }
   .btn-primary { border: 1px solid transparent; background: #42694e; color: white; }
   .btn-primary:hover:not(:disabled) { background: #33543d; }
   .btn-primary:disabled { background: #a9b9aa; cursor: not-allowed; }
-  .btn-secondary { border: 1px solid #bdc8b4; background: white; color: #293e35; }
+  .btn-secondary { border: 1px solid #bdc8b4; background: transparent; color: #293e35; }
   .btn-secondary:hover:not(:disabled) { border-color: #6c8a73; background: #eef1e7; }
   .btn-secondary:disabled { color: #889382; cursor: not-allowed; }
   .btn-tertiary { border: 1px solid transparent; background: #edf2f4; color: #3f5b66; }

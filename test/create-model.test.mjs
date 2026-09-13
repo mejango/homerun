@@ -209,7 +209,7 @@ test('legacy nonblank operator addresses enable revnet controls unless explicitl
 });
 
 test('photos allow only bounded encoded raster data and reject remote or active content', () => {
-  for (const field of ['photo', 'operatorPhoto']) {
+  for (const field of ['photo', 'ownerPhoto', 'operatorPhoto']) {
     for (const type of ['jpeg', 'png', 'webp']) {
       assert.equal(normalizeCreateDraft(draft({ [field]: `data:image/${type};base64,YWJjZA==` })).valid, true);
     }
@@ -249,6 +249,32 @@ test('optional operator profiles are bounded and survive local save and download
   const legacy = normalizeCreateDraft({ name: 'Existing asset' });
   assert.equal(legacy.valid, true);
   for (const field of ['operatorName', 'operatorIntroduction', 'operatorPhoto']) assert.equal(legacy.values[field], '');
+});
+
+test('optional Owner profile stays distinct from Operator through local save and download', () => {
+  const ownerPhoto = 'data:image/webp;base64,YWJjZA==';
+  const raw = draft({ ownerName: '  Neighborhood trust  ', ownerIntroduction: '  We own the asset for our members.  ', ownerPhoto, operatorName: 'Operations team' });
+  const { valid, values } = normalizeCreateDraft(raw);
+  assert.equal(valid, true);
+  assert.equal(values.ownerName, 'Neighborhood trust');
+  assert.equal(values.ownerIntroduction, 'We own the asset for our members.');
+  const exported = deploymentDraft(values);
+  assert.equal(exported.owner.name, values.ownerName);
+  assert.equal(exported.owner.introduction, values.ownerIntroduction);
+  assert.equal(exported.owner.photo, ownerPhoto);
+  assert.equal(exported.operator.name, 'Operations team');
+  const storage = memoryStorage();
+  const saved = saveCreatedProject(raw, storage);
+  assert.deepEqual(loadCreatedProject(saved.id, storage).values, values);
+  assert.deepEqual(loadCreatedProject(saved.id, storage).deployment.owner, exported.owner);
+  for (const [field, limit] of [['ownerName', 80], ['ownerIntroduction', 1200]]) {
+    assert.equal(normalizeCreateDraft(draft({ [field]: 'x'.repeat(limit) })).valid, true);
+    for (const invalid of ['x'.repeat(limit + 1), null, {}, 12]) {
+      assert.ok(normalizeCreateDraft(draft({ [field]: invalid })).errors[field]);
+    }
+  }
+  const legacy = normalizeCreateDraft({ name: 'Existing asset', operatorName: 'Original operator' });
+  for (const field of ['ownerName', 'ownerIntroduction', 'ownerPhoto']) assert.equal(legacy.values[field], '');
 });
 
 test('summary starts with no prior funding, preserves existing economic assumptions, and covers the acquisition', () => {

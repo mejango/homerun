@@ -34,8 +34,8 @@ try {
   assert.equal(await staticPage.getByRole('link', { name: 'See Founder Haus demo' }).getAttribute('href'), '/founderhaus');
   assert.equal(await staticPage.locator('#color-mode').inputValue(), 'shapes');
   assert.equal(await staticPage.locator('#color-intensity').inputValue(), '100');
-  assert.equal(await staticPage.locator('#color-pace').inputValue(), '2.5');
-  assert.equal(await staticPage.locator('#color-grouping').inputValue(), '11');
+  assert.equal(await staticPage.locator('#color-pace').inputValue(), '1.25');
+  assert.equal(await staticPage.locator('#color-grouping').inputValue(), '21');
   assert.match(await staticPage.locator('meta[property="og:image"]').getAttribute('content'), /homerun-share\.png$/);
   await staticContext.close();
 
@@ -178,7 +178,7 @@ try {
   assert.notEqual(await canvasSignature(page), paused, 'Acid applies a different color formula');
   assert.equal(await page.locator('#color-intensity').inputValue(), '20', 'First Acid selection starts at intensity 20');
   assert.equal(await page.locator('#color-grouping').inputValue(), '20', 'First Acid selection starts at color grouping 20');
-  assert.equal(await page.locator('#color-pace').inputValue(), '2.5', 'Selecting Acid preserves pace');
+  assert.equal(await page.locator('#color-pace').inputValue(), '1.25', 'Selecting Acid preserves pace');
   await page.locator('#color-intensity').fill('35');
   await page.locator('#color-pace').fill('3.5');
   await page.locator('#color-grouping').fill('27');

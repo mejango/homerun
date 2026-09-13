@@ -6,12 +6,14 @@ import { JBCENTER_IPFS_GATEWAY } from './jbcenter-ipfs'
 /** Standard Juicebox display metadata with Homerun's descriptive plan extension. */
 export function buildFundProjectMetadata(
   values: CreateValues,
-  images: { coverImageUri?: string; logoUri?: string; operatorPhotoUri?: string } = {},
+  images: { coverImageUri?: string; logoUri?: string; ownerPhotoUri?: string; operatorPhotoUri?: string } = {},
 ) {
-  for (const uri of [images.coverImageUri, images.logoUri, images.operatorPhotoUri]) {
+  for (const uri of [images.coverImageUri, images.logoUri, images.ownerPhotoUri, images.operatorPhotoUri]) {
     if (uri !== undefined && !fundIpfsUrl(uri)) throw new Error('Publish project images to IPFS before saving metadata.')
   }
-  const { photo: _photo, operatorPhoto: _operatorPhoto, ...setup } = values
+  const { photo: _photo, ownerPhoto: _ownerPhoto, operatorPhoto: _operatorPhoto, ...setup } = values
+  const ownerName = text(values.ownerName, 80)
+  const ownerIntroduction = text(values.ownerIntroduction, 1_200)
   const operatorName = text(values.operatorName, 80)
   const operatorIntroduction = text(values.operatorIntroduction, 1_200)
   const metadata = {
@@ -28,6 +30,11 @@ export function buildFundProjectMetadata(
       version: 1 as const,
       kind: 'fund' as const,
       setup,
+      owner: ownerName || ownerIntroduction || images.ownerPhotoUri ? {
+        name: ownerName ?? undefined,
+        introduction: ownerIntroduction ?? undefined,
+        photoUri: images.ownerPhotoUri,
+      } : undefined,
       operator: operatorName || operatorIntroduction || images.operatorPhotoUri ? {
         name: operatorName ?? undefined,
         introduction: operatorIntroduction ?? undefined,
@@ -39,17 +46,20 @@ export function buildFundProjectMetadata(
   }
 }
 
+export type ProjectProfileMetadata = {
+  name: string | null
+  introduction: string | null
+  photoUrl: string | null
+}
+
 export type FundProjectMetadata = {
   name: string | null
   description: string | null
   location: string | null
   coverUrl: string | null
   logoUrl: string | null
-  operator: {
-    name: string | null
-    introduction: string | null
-    photoUrl: string | null
-  } | null
+  owner: ProjectProfileMetadata | null
+  operator: ProjectProfileMetadata | null
   plan: {
     ownerWallet: Address | null
     operatorWallet: Address | null
@@ -98,19 +108,24 @@ export function parseFundProjectMetadata(value: unknown): FundProjectMetadata {
   if (!metadata) throw new Error('Project metadata is not a JSON object.')
   const homerun = record(metadata.homerun)
   const setup = homerun?.version === 1 && homerun.kind === 'fund' ? record(homerun.setup) : null
-  const profile = setup ? record(homerun?.operator) : null
-  const operator = profile ? {
-    name: text(profile.name, 80),
-    introduction: text(profile.introduction, 1_200),
-    photoUrl: fundIpfsUrl(profile.photoUri),
-  } : null
+  const profile = (role: 'owner' | 'operator'): ProjectProfileMetadata | null => {
+    const data = setup ? record(homerun?.[role]) : null
+    if (!data) return null
+    const parsed = {
+      name: text(data.name, 80),
+      introduction: text(data.introduction, 1_200),
+      photoUrl: fundIpfsUrl(data.photoUri),
+    }
+    return parsed.name || parsed.introduction || parsed.photoUrl ? parsed : null
+  }
   return {
     name: text(metadata.name, 160),
     description: text(metadata.description, 4_000),
     location: setup ? text(setup.location, 200) : null,
     coverUrl: fundIpfsUrl(metadata.coverImageUri) ?? fundIpfsUrl(metadata.logoUri),
     logoUrl: fundIpfsUrl(metadata.logoUri),
-    operator: operator && (operator.name || operator.introduction || operator.photoUrl) ? operator : null,
+    owner: profile('owner'),
+    operator: profile('operator'),
     plan: setup ? {
       ownerWallet: wallet(Object.hasOwn(setup, 'ownerWallet') ? setup.ownerWallet : setup.operatorWallet),
       operatorWallet: wallet(setup.operatorWallet),
