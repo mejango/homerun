@@ -384,6 +384,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
                 {errors.photo && <p className="create-error" id="photo-error">{errors.photo}</p>}
               </div>
               <fieldset className="create-operator-profile"><legend>Owner</legend>
+                <p className="create-help">The owner is the address that owns the asset and process.</p>
                 {multisig('owner')}
                 <p className="create-help">Owns FUND, receives the success allocation, and controls INCOME. The Owner can change the Operator and INCOME splits.</p>
                 <p className="create-help">Introduce the person or organization that owns and manages the project.</p>
@@ -398,6 +399,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
                 </div>
               </fieldset>
               <fieldset className="create-operator-profile"><legend>Operator</legend>
+                <p className="create-help">The operator is the current entity that runs the show day to day.</p>
                 <label className="create-owner-operator"><input type="checkbox" checked={raw.ownerIsOperator === true} onChange={event => update('ownerIsOperator', event.target.checked)} /> Owner is also operator</label>
                 {!raw.ownerIsOperator && multisig('operator')}
                 <p className="create-help">Receives the INCOME token split. The Owner can replace this recipient.</p>
