@@ -32,6 +32,13 @@ export interface CreateValues {
   networks: string[];
   networkEnvironment: 'production' | 'testnet';
   revnetOperatorEnabled: boolean;
+  ownerMode?: 'create' | 'existing';
+  ownerSigners?: string[];
+  ownerThreshold?: number;
+  ownerIsOperator?: boolean;
+  operatorMode?: 'create' | 'existing';
+  operatorSigners?: string[];
+  operatorThreshold?: number;
   ownerWallet: string;
   ownerName?: string;
   ownerIntroduction?: string;
@@ -57,7 +64,7 @@ export interface CreateFlowProps {
 
 const labels = ['The asset', 'Fundraise', 'Income', 'Review & create'];
 const groups: FieldName[][] = [
-  ['name', 'assetType', 'location', 'description', 'photo', 'ownerWallet', 'ownerName', 'ownerIntroduction', 'ownerPhoto', 'operatorWallet', 'operatorName', 'operatorIntroduction', 'operatorPhoto'],
+  ['name', 'assetType', 'location', 'description', 'photo', 'ownerMode', 'ownerSigners', 'ownerThreshold', 'ownerIsOperator', 'operatorMode', 'operatorSigners', 'operatorThreshold', 'ownerWallet', 'ownerName', 'ownerIntroduction', 'ownerPhoto', 'operatorWallet', 'operatorName', 'operatorIntroduction', 'operatorPhoto'],
   ['purchaseBudget', 'opsReserve', 'operatorFundPercent'],
   ['revenueDescription', 'minimumRevenue', 'minimumRevenueConsequences', 'monthlyRent', 'monthlyCosts', 'rentGrowthPercent', 'costGrowthPercent', 'operatorSplitPercent', 'stickySplitPercent'],
   ['networks', 'networkEnvironment', 'revnetOperatorEnabled'],
@@ -155,7 +162,15 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
         for (const key of Object.keys(CREATE_DEFAULTS) as FieldName[]) {
           if (Object.hasOwn(saved.raw, key)) next[key] = saved.raw[key];
         }
-        if (!Object.hasOwn(saved.raw, 'ownerWallet')) next.ownerWallet = typeof saved.raw.operatorWallet === 'string' ? saved.raw.operatorWallet : '';
+        for (const role of ['owner', 'operator'] as const) {
+          if (!Object.hasOwn(saved.raw, `${role}Mode`) && saved.raw[`${role}Wallet`]) next[`${role}Mode`] = 'existing';
+          if (!Array.isArray(next[`${role}Signers`])) next[`${role}Signers`] = ['', '', ''];
+        }
+        if (!Object.hasOwn(saved.raw, 'ownerIsOperator') && saved.raw.operatorWallet) next.ownerIsOperator = String(saved.raw.operatorWallet).toLowerCase() === String(saved.raw.ownerWallet ?? saved.raw.operatorWallet).toLowerCase();
+        if (!Object.hasOwn(saved.raw, 'ownerWallet')) {
+          next.ownerWallet = typeof saved.raw.operatorWallet === 'string' ? saved.raw.operatorWallet : '';
+          if (next.ownerWallet) next.ownerMode = 'existing';
+        }
         if (!Object.hasOwn(saved.raw, 'networks') && typeof saved.raw.network === 'string') next.networks = [saved.raw.network];
         if (!Array.isArray(next.networks)) next.networks = [...CREATE_DEFAULTS.networks];
         if (!['production', 'testnet'].includes(String(next.networkEnvironment))) next.networkEnvironment = 'production';
@@ -306,6 +321,37 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
   const field = (name: FieldName, label: string, props: Partial<FieldProps> = {}) =>
     <Field name={name} label={label} value={raw[name]} error={errors[name] || (step === 3 ? normalized.errors[name] : undefined)} onChange={update} onBlur={formatField} {...props} />;
 
+  const multisig = (role: 'owner' | 'operator') => {
+    const mode = `${role}Mode` as const, signers = `${role}Signers` as const, threshold = `${role}Threshold` as const;
+    const owners = Array.isArray(raw[signers]) ? raw[signers] as readonly string[] : ['', '', ''];
+    const issue = errors[signers] || errors[threshold] || errors[mode];
+    return <div className="create-multisig">
+      {raw[mode] === 'existing' ? <>
+        {field(`${role}Wallet`, `${role === 'owner' ? 'Owner' : 'Operator'} address`, { placeholder: '0x…', maxLength: 42 })}
+        <button type="button" className="quiet-button" onClick={() => update(mode, 'create')}>Create a new multisig</button>
+      </> : <>
+        <p className="create-help">Add the wallets that will own this multisig and choose how many must approve a transaction.</p>
+        <div id={`create-${signers}`} tabIndex={-1}>
+          {owners.map((owner, index) => <div className="create-multisig-owner" key={index}>
+            <label htmlFor={`create-${signers}-${index}`}>Owner {index + 1}</label>
+            <div className="create-multisig-address create-input"><input id={`create-${signers}-${index}`} type="text" value={owner} placeholder="0x…" maxLength={42} autoComplete="off" aria-invalid={!!errors[signers]} aria-describedby={issue ? `${role}-multisig-error` : undefined} onChange={event => update(signers, owners.map((value, i) => i === index ? event.target.value : value))} />
+              {owners.length > 2 && <button type="button" className="quiet-button" aria-label={`Remove ${role} multisig owner ${index + 1}`} onClick={() => { update(signers, owners.filter((_, i) => i !== index)); update(threshold, Math.min(Number(raw[threshold]), owners.length - 1)); }}>Remove</button>}
+            </div>
+          </div>)}
+        </div>
+        {owners.length < 20 && <button type="button" className="quiet-button" onClick={() => update(signers, [...owners, ''])}>+ Add owner</button>}
+        <div className="create-multisig-policy create-field"><label htmlFor={`create-${threshold}`}>Approval policy</label><select id={`create-${threshold}`} value={String(raw[threshold])} onChange={event => update(threshold, Number(event.target.value))} aria-invalid={!!errors[threshold]}>{owners.map((_, index) => <option key={index} value={index + 1}>{index + 1} of {owners.length}</option>)}</select><span>{String(raw[threshold])}/{owners.length} owners must approve</span></div>
+        {issue && <p role="alert" className="create-error" id={`${role}-multisig-error`}>{issue}</p>}
+        <button type="button" className="quiet-button" onClick={() => update(mode, 'existing')}>Already have a multisig?</button>
+      </>}
+    </div>;
+  };
+  const authorityLabel = (role: 'owner' | 'operator'): string => role === 'operator' && normalized.values.ownerIsOperator
+    ? `Same as Owner (${authorityLabel('owner')})`
+    : normalized.values[`${role}Mode`] === 'create'
+      ? `New multisig · ${normalized.values[`${role}Threshold`]}/${normalized.values[`${role}Signers`]?.length} approvals`
+      : normalized.values[`${role}Wallet`] || 'Not specified';
+
   return <>
     <div className="create-intro"><h1>Design the rules</h1></div>
     <div id="create-workspace" className="create-workspace">
@@ -337,7 +383,8 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
                 {errors.photo && <p className="create-error" id="photo-error">{errors.photo}</p>}
               </div>
               <fieldset className="create-operator-profile"><legend>Owner</legend>
-                {field('ownerWallet', 'Owner wallet', { placeholder: '0x…', help: 'Owns the FUND Juicebox, receives its success allocation, and controls the INCOME revnet. The Owner is responsible for managing the money raised and can change the Operator and all INCOME splits at any time.' })}
+                {multisig('owner')}
+                <p className="create-help">Owns FUND, receives the success allocation, and controls INCOME. The Owner can change the Operator and INCOME splits.</p>
                 <p className="create-help">Introduce the person or organization that owns and manages the project.</p>
                 {field('ownerName', 'Name (optional)', { placeholder: 'Owner name or organization', maxLength: 80 })}
                 {field('ownerIntroduction', 'Introduction (optional)', { rows: 4, maxLength: 1200, placeholder: 'Tell people about the ownership, your responsibilities, and how you will manage the project.' })}
@@ -350,7 +397,9 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
                 </div>
               </fieldset>
               <fieldset className="create-operator-profile"><legend>Operator</legend>
-                {field('operatorWallet', 'Operator wallet', { placeholder: '0x…', help: 'Receives the INCOME token split. The Owner can replace this recipient; receiving INCOME does not grant program control.' })}
+                <label className="create-owner-operator"><input type="checkbox" checked={raw.ownerIsOperator === true} onChange={event => update('ownerIsOperator', event.target.checked)} /> Owner is also operator</label>
+                {!raw.ownerIsOperator && multisig('operator')}
+                <p className="create-help">Receives the INCOME token split. The Owner can replace this recipient.</p>
                 <p className="create-help">Introduce the person or team running this project.</p>
                 {field('operatorName', 'Name (optional)', { placeholder: 'Your name or team', maxLength: 80 })}
                 {field('operatorIntroduction', 'Introduction (optional)', { rows: 4, maxLength: 1200, placeholder: 'Tell people about yourself, your experience, and your plans for the project.' })}
@@ -416,8 +465,8 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
                   <p>{String(raw.location || 'Location not specified')}</p>{raw.description && <p>{String(raw.description)}</p>}
                 </section>
                 <section className="review-block"><div><h3>Owner &amp; Operator</h3><button type="button" disabled={locked} onClick={() => navigate(0)}>Edit wallets</button></div>
-                  <dl><div><dt>Owner: program control and FUND allocation</dt><dd className="break-all">{normalized.values.ownerWallet || 'Not specified'}</dd></div>
-                    <div><dt>Operator: INCOME incentives</dt><dd className="break-all">{normalized.values.operatorWallet || 'Not specified'}</dd></div></dl>
+                  <dl><div><dt>Owner: program control and FUND allocation</dt><dd className="break-all">{authorityLabel('owner')}</dd></div>
+                    <div><dt>Operator: INCOME incentives</dt><dd className="break-all">{authorityLabel('operator')}</dd></div></dl>
                 </section>
                 <section className="review-block"><div><h3>Minimum revenue</h3><button type="button" disabled={locked} onClick={() => navigate(2)}>Edit income</button></div>
                   <p>{normalized.values.minimumRevenue ? `${money(normalized.values.minimumRevenue)} per month` : 'No minimum specified'}</p>

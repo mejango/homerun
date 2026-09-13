@@ -5,7 +5,7 @@ import { CREATE_DEFAULTS, normalizeCreateDraft } from '../web/create-model.mjs'
 import type { CreateValues } from '../src/components/CreateFlow'
 import type { JBCenterIpfsClient } from '../src/lib/jbcenter-ipfs'
 
-const draft = (overrides: Partial<CreateValues> = {}) => ({ ...CREATE_DEFAULTS, name: 'Garden Co-op', ...overrides }) as CreateValues
+const draft = (overrides: Partial<CreateValues> = {}) => ({ ...CREATE_DEFAULTS, ownerMode: 'existing', operatorMode: 'existing', ownerIsOperator: false, name: 'Garden Co-op', ...overrides }) as CreateValues
 const image = 'data:image/png;base64,YWJjZA=='
 function pinClient() {
   return {

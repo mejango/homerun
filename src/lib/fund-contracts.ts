@@ -15,6 +15,7 @@ import {
 } from '@bananapus/nana-sdk-core/v6'
 import { erc20Abi, getAddress, isAddress, zeroAddress, zeroHash, type Abi, type Address, type Hex } from 'viem'
 
+import { validateMultisigs, type CreateMultisig } from './create-multisig'
 import { isVerifiedProject721Hook, type VerifiedProject721Hook } from './fund-hooks'
 
 export const FUND_WEIGHT = 10_000n * 10n ** 18n
@@ -84,6 +85,8 @@ function selectedChains(values: readonly number[]): JBChainId[] {
 }
 
 export type FundLaunchInput = {
+  multisigs?: readonly CreateMultisig[]
+  operator?: Address
   owner: Address
   /** Frozen across the launch: omnichain salts are scoped to this sender. */
   sender: Address
@@ -126,6 +129,10 @@ export function buildFundLaunch(input: FundLaunchInput): {
 } {
   const chains = selectedChains(input.chainIds)
   const owner = address(input.owner, 'project owner')
+  validateMultisigs(input.multisigs, owner)
+  if (input.operator !== undefined) address(input.operator, 'operator')
+  const operatorSafe = input.multisigs?.find(plan => plan.role === 'operator')
+  if (operatorSafe && operatorSafe.address.toLowerCase() !== input.operator?.toLowerCase()) throw new Error('The Operator multisig differs from the saved recipient.')
   const sender = address(input.sender, 'sending wallet')
   if (!/^ipfs:\/\/[^\s/?#]+(?:\/[^\s]*)?$/.test(input.projectUri)) throw new Error('Publish the project metadata to IPFS before launching.')
   if (!/^0x[\da-fA-F]{64}$/.test(input.salt) || input.salt === zeroHash) throw new Error('A shared nonzero bytes32 launch salt is required.')

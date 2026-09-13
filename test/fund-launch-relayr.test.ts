@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { encodeFunctionData, type Address, type Hex } from 'viem'
+import { encodeFunctionResult, toHex, encodeFunctionData, type Address, type Hex } from 'viem'
 import { erc2771ForwarderAbi, JBCoreContracts, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import type { RelayrEntry, RelayrPayment, RelayrQuote, RelayrTransactionRecord } from '@/lib/relayr'
 
@@ -16,7 +16,9 @@ const m = vi.hoisted(() => ({
   poll: vi.fn(),
   client: vi.fn(),
   pending: vi.fn(),
+  multisigCheck: vi.fn(),
 }))
+vi.mock('@/lib/create-multisig', async original => ({ ...await original<typeof import('@/lib/create-multisig')>(), checkCreateMultisigs: m.multisigCheck }))
 vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: m.account }) }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {},
   SUPPORTED_CHAINS: [1, 10, 8453, 42161, 11155111, 11155420, 84532, 421614].map(id => ({ id, name: `Chain ${id}` })),
@@ -40,6 +42,7 @@ vi.mock('@/lib/relayr', async importOriginal => ({
 }))
 
 import { relayrPaymentDetails, RELAYR_PAYMENT_ADDRESS, RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_SELECTOR } from '@/lib/relayr'
+import { predictMultisig, MULTICALL3, CREATE_BATCH_ABI, unbundleMultisigLaunch, type CreateMultisig } from '@/lib/create-multisig'
 import { canRelayrLaunch, runRelayrLaunch } from '@/lib/fund-launch-relayr'
 import { FUND_LAUNCH_KEY, canCancelLaunch, cancelUnsubmittedLaunch, loadLaunchSession, saveLaunch as saveLaunchSession, type FundLaunchSession as LaunchSession } from '@/lib/fund-launch-session'
 
@@ -147,6 +150,36 @@ beforeEach(() => {
 })
 
 describe('relayed launch execution and recovery', () => {
+  it('creates a single-chain owner Safe and project in one destination transaction and one payment', async () => {
+    storage.clear()
+    const value = session([1])
+    const policy = { owners: [ACCOUNT, TARGET], threshold: 2, saltNonce: value.input.salt, proxyCreationCode: '0x6000' as Hex }
+    const plan: CreateMultisig = { ...policy, role: 'owner', address: predictMultisig(policy) }
+    value.input = { ...value.input, owner: plan.address, operator: plan.address, multisigs: [plan] }
+    saveLaunchSession(value)
+    clients.get(1)!.call.mockResolvedValue({ data: encodeFunctionResult({ abi: CREATE_BATCH_ABI, functionName: 'aggregate3Value', result: [{ success: true, returnData: toHex(BigInt(plan.address), { size: 32 }) }, { success: true, returnData: '0x' }] }) })
+    expect(canRelayrLaunch(value)).toBe(true)
+    await run(value)
+    expect(m.forward).toHaveBeenCalledTimes(1)
+    expect(m.pay).toHaveBeenCalledTimes(1)
+    expect(entries).toHaveLength(1)
+    expect(entries[0].target).toBe(MULTICALL3)
+    expect(unbundleMultisigLaunch(entries[0], [plan]).target).toBe(jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][1])
+    expect(m.multisigCheck).toHaveBeenCalled()
+    expect(loadLaunchSession()?.statuses[1].phase).toBe('confirmed')
+    const nonceReads = clients.get(1)!.readContract.mock.calls.map(([call]) => call).filter(call => call.functionName === 'nonces')
+    expect(nonceReads.every(call => (call as { address: Address }).address !== MULTICALL3)).toBe(true)
+    await run()
+    expect(m.pay).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops before authorizing or paying when a multisig prerequisite cannot be verified', async () => {
+    m.multisigCheck.mockRejectedValueOnce(new Error('Safe creation code changed'))
+    await expect(run()).rejects.toThrow('Safe creation code changed')
+    expect(m.forward).not.toHaveBeenCalled()
+    expect(m.pay).not.toHaveBeenCalled()
+  })
+
   it('waits for the quote before showing any funding choices or persisting a preferred chain', async () => {
     const makeQuote = m.quote.getMockImplementation()!
     let release!: () => void

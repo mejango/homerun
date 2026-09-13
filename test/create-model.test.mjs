@@ -7,7 +7,7 @@ import {
 import { DEFAULT_NETWORK, projectNetwork } from '../web/network-model.mjs';
 import { NETWORK_FAMILIES, NETWORK_ENVIRONMENTS, plannedNetworks } from '../web/create-networks.mjs';
 
-const draft = overrides => ({ ...CREATE_DEFAULTS, name: 'Neighborhood Solar', ...overrides });
+const draft = overrides => ({ ...CREATE_DEFAULTS, ownerMode: 'existing', operatorMode: 'existing', ownerIsOperator: false, name: 'Neighborhood Solar', ...overrides });
 const wallet = `0x${'a1'.repeat(20)}`;
 const memoryStorage = () => {
   const data = new Map();

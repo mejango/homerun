@@ -1,6 +1,7 @@
 import { erc2771ForwarderAbi, jbControllerAbi, jbProjectsAbi, jbDirectoryAbi, jbMultiTerminalAbi, jbFundAccessLimitsAbi, jbOmnichainDeployerAbi, jbPricesAbi, USDC_ADDRESSES, type JBChainId } from '@bananapus/nana-sdk-core'
 import { BASE_CURRENCY_USD, tokenCurrencyId, v6Address } from '@bananapus/nana-sdk-core/v6'
 import { decodeEventLog, decodeFunctionData, encodeFunctionData, isAddressEqual, parseAbi, type Address, type PublicClient, type TransactionReceipt } from 'viem'
+import { unbundleMultisigLaunch, verifyCreatedMultisigs } from './create-multisig'
 import type { RelayrEntry } from './relayr'
 import { buildFundLaunch, initialFundRuleset, type FundLaunchInput, type FundTransaction } from './fund-contracts'
 
@@ -31,9 +32,11 @@ async function verifyMinedCall(client: PublicClient, request: FundTransaction, i
   const data = encodeFunctionData(request)
   if (forwarded) {
     const forwarder = v6Address('ERC2771Forwarder', request.chainId as JBChainId)
-    if (safe || forwarded.chain !== request.chainId || !isAddressEqual(forwarded.target, forwarder)
-      || !tx.to || !isAddressEqual(tx.to, forwarder) || tx.input !== forwarded.data || tx.value !== BigInt(forwarded.value)) throw new Error('The relayed transaction does not match the signed forwarder execution.')
-    const decoded = decodeFunctionData({ abi: erc2771ForwarderAbi, data: tx.input })
+    if (safe || forwarded.chain !== request.chainId || !tx.to || !isAddressEqual(tx.to, forwarded.target)
+      || tx.input !== forwarded.data || tx.value !== BigInt(forwarded.value)) throw new Error('The relayed transaction does not match the signed forwarder execution or creation batch.')
+    const execution = unbundleMultisigLaunch(forwarded, input.multisigs)
+    if (!isAddressEqual(execution.target, forwarder)) throw new Error('The launch batch targets a different forwarder.')
+    const decoded = decodeFunctionData({ abi: erc2771ForwarderAbi, data: execution.data })
     if (decoded.functionName !== 'execute') throw new Error('Unsupported forwarder execution.')
     const inner = decoded.args[0]
     if (!isAddressEqual(inner.from, input.sender) || !isAddressEqual(inner.to, request.address)
@@ -144,5 +147,6 @@ export async function verifyFundLaunch(client: PublicClient, request: FundTransa
     const extra = await client.readContract({ address: request.address, abi: jbOmnichainDeployerAbi, functionName: 'extraDataHookOf', args: [projectId, rulesetId], ...at })
     if (!isAddressEqual(extra.dataHook, expectedConfig.metadata.dataHook) || extra.useDataHookForPay || extra.useDataHookForCashOut) throw new Error('The linked FUND project has an unexpected extra data hook.')
   }
+  await verifyCreatedMultisigs(client, input.multisigs ?? [], false, receipt.blockNumber)
   return projectId
 }

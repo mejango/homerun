@@ -26,6 +26,8 @@ try {
     furthest = step;
   }
 } catch { storageNotice = 'Draft saving is unavailable. Keep this tab open while you work.'; }
+// This archived prototype remains an address-only local preview.
+raw.ownerMode = 'existing'; raw.operatorMode = 'existing'; raw.ownerIsOperator = false;
 raw.revnetOperatorEnabled = true;
 
 function field(name, label, { prefix = '', suffix = '', placeholder = '', help = '', maxLength, rows, type = 'text' } = {}) {

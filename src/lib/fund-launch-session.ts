@@ -4,6 +4,8 @@ import { buildFundLaunch, type FundLaunchInput } from './fund-contracts'
 
 export const FUND_LAUNCH_KEY = 'homerun:fund-launch:v1'
 export type LaunchStatus = {
+  /** Direct Safe-wallet setup is idempotent, but a pending proposal must be resumed. */
+  multisigSetup?: { hash?: Hex; safe: boolean }
   phase: 'ready' | 'signing' | 'pending' | 'confirmed' | 'reverted' | 'authorized' | 'unresolved' | 'expired'
   error?: string
   hash?: Hex
@@ -53,6 +55,7 @@ export function decodeLaunchSession(raw: string): FundLaunchSession {
       || (status.phase === 'pending' && !status.hash)
       || (status.phase === 'reverted' && !status.hash)
       || (status.phase === 'confirmed' && (!status.hash || !/^[1-9]\d*$/.test(status.projectId ?? '')))) throw new Error('Saved launch progress is incomplete. Verify the submitted transaction before continuing.')
+    if (status.multisigSetup && (typeof status.multisigSetup.safe !== 'boolean' || (status.multisigSetup.hash !== undefined && !/^0x[\da-f]{64}$/i.test(status.multisigSetup.hash)))) throw new Error('Invalid multisig setup transaction.')
     if (status.projectId !== undefined && (typeof status.projectId !== 'string' || !/^[1-9]\d*$/.test(status.projectId) || BigInt(status.projectId) >= 1n << 256n)) throw new Error('Saved project ID is invalid.')
   }
   if (value.transport !== undefined && !['direct', 'relayr'].includes(value.transport)) throw new Error('Invalid launch transport.')

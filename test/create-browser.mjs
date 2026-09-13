@@ -90,6 +90,31 @@ try {
     await a11y('Create asset form');
     await shot('create-asset-desktop.png');
   });
+  await check('Owner and Operator offer multisig policies and an existing-address alternative', async () => {
+    const shared = page.getByRole('checkbox', { name: 'Owner is also operator' });
+    assert.equal(await shared.isChecked(), true);
+    assert.equal(await page.locator('[id^="create-ownerSigners-"]').count(), 3);
+    assert.equal(await input('ownerThreshold').inputValue(), '2');
+    assert.equal(await page.locator('[id^="create-operatorSigners-"]').count(), 0);
+    await next();
+    await currentStep(0);
+    assert.match(await page.locator('#owner-multisig-error').textContent(), /owner addresses/);
+    for (let index = 0; index < 3; index++) await input(`ownerSigners-${index}`).fill(`0x${String(index + 1).repeat(40)}`);
+    await shared.uncheck();
+    assert.equal(await page.locator('[id^="create-operatorSigners-"]').count(), 3);
+    await input('operatorThreshold').selectOption('3');
+    await shared.check();
+    await page.reload();
+    assert.equal(await shared.isChecked(), true);
+    await page.waitForFunction(() => document.querySelector('#create-ownerSigners-0')?.value === `0x${'1'.repeat(40)}`);
+    assert.equal(await input('ownerSigners-0').inputValue(), `0x${'1'.repeat(40)}`);
+    await page.getByRole('button', { name: 'Already have a multisig?', exact: true }).click();
+    await input('ownerWallet').fill(ownerWallet);
+    await shared.uncheck();
+    assert.equal(await input('operatorThreshold').inputValue(), '3');
+    await page.getByRole('button', { name: 'Already have a multisig?', exact: true }).click();
+    await input('operatorWallet').fill(operatorWallet);
+  });
   await check('Blank names receive a default and Back keeps editable asset details', async () => {
     await next();
     await currentStep(1);
@@ -268,7 +293,7 @@ try {
   });
   await check('Owner controls the program while a separate Operator receives incentives', async () => {
     let setup = await downloadSetup();
-    assert.equal(setup.revnetOperator.address, null);
+    assert.equal(setup.revnetOperator.address, ownerWallet);
     await page.locator('[data-create-step="0"]').click();
     const legends = await page.locator('.create-operator-profile legend').allTextContents();
     assert.deepEqual(legends, ['Owner', 'Operator']);
@@ -503,6 +528,7 @@ try {
     await input('name').fill('Another project');
     await page.locator('#start-over').click();
     assert.equal(await input('name').inputValue(), '');
+    for (let index = 0; index < 3; index++) await input(`ownerSigners-${index}`).fill(`0x${String(index + 1).repeat(40)}`);
     await next(); await currentStep(1);
     assert.equal(await input('purchaseBudget').inputValue(), '500,000');
     await next(); await currentStep(2);
@@ -526,6 +552,7 @@ try {
     assert.equal(setup.revnetOperator.address, operatorWallet);
     await page.locator('#start-over').click();
     await currentStep(0);
+    for (let index = 0; index < 3; index++) await input(`ownerSigners-${index}`).fill(`0x${String(index + 1).repeat(40)}`);
     for (let index = 0; index < 3; index++) await next();
     assert.deepEqual(await selectedNetworks(), networkIDs);
     assert.match(await page.locator('#create-review').textContent(), /Operator: INCOME incentives/);

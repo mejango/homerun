@@ -273,3 +273,16 @@
 .fund-launch-recovery > summary { cursor: pointer; color: #647060; }
 .fund-launch-recovery button { margin: 8px 8px 0 0; }
 .fund-launch-recovery > label { display: grid; gap: 8px; margin-top: 12px; }
+
+.create-multisig { clear: both; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
+.create-multisig > .quiet-button { justify-self: start; font-size: .8rem; }
+.create-multisig-owner { margin-bottom: 10px; }
+.create-multisig-owner label, .create-multisig-policy label { display: block; font-size: .82rem; margin-bottom: 5px; }
+.create-multisig-address { display: flex; align-items: center; gap: 8px; }
+.create-multisig-address input { flex: 1; min-width: 0; width: 100%; }
+.create-multisig-policy select { width: auto; margin-right: 10px; }
+.create-multisig-policy span { font-size: .8rem; }
+.create-owner-operator { clear: both; display: flex; gap: 8px; align-items: center; margin-bottom: 16px; }
+.create-owner-operator input { width: auto; }
+
+.create-operator-profile { min-inline-size: 0; }

@@ -25,6 +25,13 @@ export const CREATE_DEFAULTS = Object.freeze({
   networks: Object.freeze(NETWORK_FAMILIES.map(family => family.id)),
   networkEnvironment: 'production',
   revnetOperatorEnabled: true,
+  ownerMode: 'create',
+  ownerSigners: Object.freeze(['', '', '']),
+  ownerThreshold: 2,
+  ownerIsOperator: true,
+  operatorMode: 'create',
+  operatorSigners: Object.freeze(['', '', '']),
+  operatorThreshold: 2,
   ownerWallet: '',
   ownerName: '',
   ownerIntroduction: '',
@@ -134,6 +141,28 @@ export function normalizeCreateDraft(raw = {}) {
       errors[key] = `Use a nonzero ${key === 'ownerWallet' ? 'owner' : 'operator'} address beginning with 0x, or leave it blank for this preview.`;
     }
   }
+  // Drafts created before the multisig editor retain their explicit addresses.
+  values.ownerIsOperator = own(source, 'ownerIsOperator') ? source.ownerIsOperator : false;
+  if (typeof values.ownerIsOperator !== 'boolean') errors.ownerIsOperator = 'Choose whether Owner is also Operator.';
+  for (const role of ['owner', 'operator']) {
+    const mode = `${role}Mode`, signers = `${role}Signers`, threshold = `${role}Threshold`;
+    values[mode] = own(source, mode) ? source[mode] : 'existing';
+    const list = own(source, signers) ? source[signers] : CREATE_DEFAULTS[signers];
+    values[signers] = Array.isArray(list) ? list.map(value => typeof value === 'string' ? value.trim() : '') : [];
+    values[threshold] = parseNumber(own(source, threshold) ? source[threshold] : CREATE_DEFAULTS[threshold]);
+    if (role === 'operator' && values.ownerIsOperator === true) { delete errors.operatorWallet; continue; }
+    if (!['create', 'existing'].includes(values[mode])) errors[mode] = 'Choose a new multisig or an existing address.';
+    if (values[mode] === 'create') {
+      delete errors[`${role}Wallet`];
+      const owners = values[signers];
+      if (!Array.isArray(list) || owners.length < 2 || owners.length > 20 || owners.some(owner => !ADDRESS.test(owner) || /^0x0{39}[01]$/i.test(owner)))
+        errors[signers] = 'Enter 2–20 nonzero owner addresses beginning with 0x.';
+      else if (new Set(owners.map(owner => owner.toLowerCase())).size !== owners.length) errors[signers] = 'Each multisig owner must have a different address.';
+      if (!Number.isInteger(values[threshold]) || values[threshold] < 1 || values[threshold] > owners.length)
+        errors[threshold] = 'Choose how many owners must approve: at least 1 and no more than the number of owners.';
+    }
+  }
+  if (values.ownerIsOperator === true) values.operatorWallet = values.ownerWallet;
   values.revnetOperatorEnabled = own(source, 'revnetOperatorEnabled')
     ? source.revnetOperatorEnabled : !own(source, 'ownerWallet') && own(source, 'operatorWallet') ? Boolean(values.operatorWallet) : CREATE_DEFAULTS.revnetOperatorEnabled;
   if (typeof values.revnetOperatorEnabled !== 'boolean') {
@@ -189,6 +218,9 @@ export function creationSummary(raw) {
 export function deploymentDraft(raw) {
   const { values, networkInputs, raiseGoal, customerSplitPercent, investorFundPercent } = creationSummary(raw);
   const networks = plannedNetworks(values);
+  const ownerAddress = values.ownerMode === 'create' ? null : values.ownerWallet || null;
+  const operatorAddress = values.ownerIsOperator ? ownerAddress : values.operatorMode === 'create' ? null : values.operatorWallet || null;
+  const multisig = role => values[`${role}Mode`] === 'create' ? { multisig: { owners: values[`${role}Signers`], threshold: values[`${role}Threshold`], status: 'planned' } } : {};
   return {
     kind: 'homerun-deployment-preview',
     schemaVersion: 5,
@@ -206,18 +238,18 @@ export function deploymentDraft(raw) {
     plannedNetworks: networks,
     owner: {
       name: values.ownerName, introduction: values.ownerIntroduction, photo: values.ownerPhoto,
-      address: values.ownerWallet || null,
+      address: ownerAddress, ...multisig('owner'),
       role: 'Owns FUND, operates INCOME, and executes program changes.',
       fundOwnershipPercentAfterPurchase: values.operatorFundPercent,
       distribution: 'The Owner may distribute their FUND tokens to the Operator at their discretion.',
     },
     operator: {
       name: values.operatorName, introduction: values.operatorIntroduction, photo: values.operatorPhoto,
-      address: values.operatorWallet || null,
+      address: operatorAddress, ...multisig(values.ownerIsOperator ? 'owner' : 'operator'), ...(values.ownerIsOperator ? { sharedWithOwner: true } : {}),
     },
     revnetOperator: {
       enabled: values.revnetOperatorEnabled,
-      address: values.revnetOperatorEnabled ? values.ownerWallet || null : null,
+      address: values.revnetOperatorEnabled ? ownerAddress : null,
       scope: 'INCOME',
       status: values.revnetOperatorEnabled ? (values.ownerWallet ? 'specified' : 'not-specified') : 'disabled',
       chainIds: networks.map(network => network.chainId),
@@ -225,7 +257,7 @@ export function deploymentDraft(raw) {
       description: 'This preview does not assign operator permissions.',
     },
     funding: {
-      ownerAddress: values.ownerWallet || null,
+      ownerAddress,
       ownershipAssigned: false,
       token: 'FUND',
       currency: 'USDC',
@@ -239,7 +271,7 @@ export function deploymentDraft(raw) {
     },
     income: {
       token: 'INCOME',
-      operatorAddress: values.operatorWallet || null,
+      operatorAddress,
       operatorChangePolicy: 'The Owner may change the Operator at any time by updating the INCOME split recipient. No split is locked; other recipients and allocations can also be changed.',
       revenueDescription: values.revenueDescription,
       minimumRevenue: {

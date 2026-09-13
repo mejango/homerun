@@ -1,5 +1,6 @@
 'use client'
 
+import { bundleMultisigLaunch, unbundleMultisigLaunch, checkCreateMultisigs, multisigReview, multisigDeploymentCalls, SAFE_CREATE_ABI, verifyMultisigLaunchSimulation } from './create-multisig'
 import { isEip7702DelegatedEoaRuntime } from './cross-chain-authority'
 
 
@@ -82,7 +83,7 @@ function launchData(request: FundTransaction): Hex {
 }
 
 export function canRelayrLaunch(session: LaunchSession): boolean {
-  return session.transport === 'relayr' && session.input.chainIds.length > 1 &&
+  return session.transport === 'relayr' && (session.input.chainIds.length > 1 || !!session.input.multisigs?.length) &&
     session.input.chainIds.length <= 4 && relayrSupportsChains(session.input.chainIds)
 }
 
@@ -92,7 +93,8 @@ function forwarderFor(chainId: number): Address {
   return address
 }
 
-function requestOf(signed: SignedLaunch) {
+function requestOf(signed: SignedLaunch, plans: LaunchSession['input']['multisigs']) {
+  signed = { ...signed, entry: unbundleMultisigLaunch(signed.entry, plans) }
   if (!isAddressEqual(signed.entry.target, forwarderFor(signed.chainId)) ||
       signed.entry.chain !== signed.chainId) throw new Error('The saved launch forwarder changed.')
   const decoded = decodeFunctionData({ abi: erc2771ForwarderAbi, data: signed.entry.data })
@@ -126,7 +128,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
 }): Promise<void> {
   assertNoViewAs()
   if (!canRelayrLaunch(session) || isSafeConnection(wagmiConfig)) {
-    throw new Error('Relayed creation requires an ordinary wallet and multiple supported chains from the same network environment.')
+    throw new Error('Relayed creation requires an ordinary wallet and supported chains from the same network environment.')
   }
   if (!session.input.sender || !isAddressEqual(session.input.sender, account)) {
     throw new Error('Connect the wallet that originally signed this launch.')
@@ -203,7 +205,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       }
     }
     const pinnedRequest = (signed: SignedLaunch) => {
-      const request = requestOf(signed)
+      const request = requestOf(signed, current.input.multisigs)
       const expected = requestFor(current, signed.chainId, request.value)
       if (!isAddressEqual(request.from, account) || !isAddressEqual(request.to, expected.address) ||
           request.data !== launchData(expected)) throw new Error('The saved signature does not match this pinned launch.')
@@ -218,7 +220,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
           if (current.statuses[item.chainId]?.phase === 'confirmed') continue
           const client = publicClient(item.chainId as JBChainId)
           const block = await client.getBlock({ blockTag: 'finalized' })
-          const nonce = await client.readContract({ address: item.entry.target, abi: erc2771ForwarderAbi,
+          const nonce = await client.readContract({ address: forwarderFor(item.chainId), abi: erc2771ForwarderAbi,
             functionName: 'nonces', args: [account], blockNumber: block.number })
           const canonical = await client.getBlock({ blockNumber: block.number })
           if (canonical.hash !== block.hash || block.timestamp <= BigInt(item.deadline) || nonce !== BigInt(item.nonce)) return false
@@ -307,7 +309,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
             }
             // A reverted execute leaves the nonce unused. Its old authorization can only compete
             // with a retry of that SAME nonce, never create an additional project after a success.
-            const nonce = await client.readContract({ address: signed.entry.target, abi: erc2771ForwarderAbi,
+            const nonce = await client.readContract({ address: forwarderFor(signed.chainId), abi: erc2771ForwarderAbi,
               functionName: 'nonces', args: [account] })
             if (nonce !== BigInt(signed.nonce)) throw new Error('The launch authorization was consumed elsewhere.')
             status(signed.chainId, { phase: 'reverted', hash: hash, error: 'The destination launch reverted.' })
@@ -323,7 +325,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
           // never succeeded and can no longer do so. Wall-clock expiry alone proves neither.
           try {
             const block = await client.getBlock({ blockTag: 'finalized' })
-            const nonce = await client.readContract({ address: signed.entry.target, abi: erc2771ForwarderAbi,
+            const nonce = await client.readContract({ address: forwarderFor(signed.chainId), abi: erc2771ForwarderAbi,
               functionName: 'nonces', args: [account], blockNumber: block.number })
             const canonical = await client.getBlock({ blockNumber: block.number })
             if (block.hash === canonical.hash && block.timestamp > BigInt(request.deadline) && nonce === BigInt(signed.nonce)) {
@@ -393,8 +395,9 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       requireAccount()
       assertAuthorizationAvailable(remaining)
       for (const signed of journal!.signed) {
-        const request = requestOf(signed)
+        const request = requestOf(signed, current.input.multisigs)
         const client = publicClient(signed.chainId as JBChainId)
+        await checkCreateMultisigs(client, current.input.multisigs)
         const creationFee = await getProjectCreationFee(client, signed.chainId as JBChainId)
         const expected = requestFor(current, signed.chainId, creationFee)
         const data = launchData(expected)
@@ -403,8 +406,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
           throw new LaunchSignaturesNeedRefresh('A creation fee changed. Review fresh launch authorizations before payment.')
         }
         const [trusted, valid, code] = await Promise.all([
-          client.readContract({ address: expected.address, abi: TRUSTED_FORWARDER_ABI, functionName: 'isTrustedForwarder', args: [signed.entry.target] }),
-          client.readContract({ address: signed.entry.target, abi: erc2771ForwarderAbi, functionName: 'verify', args: [request] }),
+          client.readContract({ address: expected.address, abi: TRUSTED_FORWARDER_ABI, functionName: 'isTrustedForwarder', args: [forwarderFor(signed.chainId)] }),
+          client.readContract({ address: forwarderFor(signed.chainId), abi: erc2771ForwarderAbi, functionName: 'verify', args: [request] }),
           client.getCode({ address: account }),
         ])
         if (request.deadline < Math.floor(Date.now() / 1000) + 120) {
@@ -416,9 +419,10 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         // Simulate the exact signed forwarder execution as well as its authorization.
         // This catches stale launch prerequisites and an insufficient signed gas limit
         // before the user funds Relayr. Only native balance is supplied by the override.
-        await client.call({ account, to: signed.entry.target, data: signed.entry.data, value: request.value,
-          gas: request.gas + request.gas / 63n + 100_000n,
+        const simulation = await client.call({ account, to: signed.entry.target, data: signed.entry.data, value: request.value,
+          gas: request.gas + request.gas / 63n + 100_000n + BigInt(current.input.multisigs?.length ?? 0) * 2_000_000n,
           stateOverride: [{ address: account, balance: request.value + 100n * 10n ** 18n }] })
+        await verifyMultisigLaunchSimulation(client, current.input.multisigs, simulation.data)
       }
     }
 
@@ -428,6 +432,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       requireAccount()
       assertAuthorizationAvailable(remaining)
       const client = publicClient(chainId as JBChainId)
+      await checkCreateMultisigs(client, current.input.multisigs)
       const creationFee = await getProjectCreationFee(client, chainId as JBChainId)
       const request = requestFor(current, chainId, creationFee)
       current.input = { ...current.input, creationFees: { ...current.input.creationFees, [chainId]: creationFee } }
@@ -451,16 +456,20 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       const estimate = await client.estimateGas({ account, to: request.address, data, value: request.value,
         stateOverride: [{ address: account, balance: creationFee + 100n * 10n ** 18n }] })
       const prepared = await prepareForwardedTx({ chainId: chainId as JBChainId, target: request.address,
-        data, value: request.value, gas: gasWithHeadroom(estimate), abi: request.abi,
+        data, value: request.value, gas: gasWithHeadroom(estimate + (current.input.multisigs?.length ? 200_000n : 0n)), abi: request.abi,
         functionName: request.functionName, args: request.args, label: `Launch on ${chainName(chainId)}` }, account, nonce)
       authorizations.push({ chainId, nonce, prepared })
     }
     if (authorizations.length) {
       await requireTransactionReview({
         kind: 'authorization', title: 'Create your project',
-        description: 'Review the FUND launch across your selected chains. Next, sign once for each chain in your wallet. Relayr will then return execution quotes for you to choose from.',
+        description: ['Review the FUND launch across your selected chains. Sign once per chain, then choose one Relayr payment to cover creation.', multisigReview(current.input.multisigs)].filter(Boolean).join('\n\n'),
         confirmLabel: 'Continue to wallet',
-        calls: authorizations.flatMap(item => item.prepared.review.calls),
+        calls: authorizations.flatMap(item => [
+          ...multisigDeploymentCalls(current.input.multisigs ?? []).map(call => ({ chainId: item.chainId, to: call.target, data: call.callData, value: call.value,
+            abi: SAFE_CREATE_ABI, functionName: 'createProxyWithNonce', label: 'Create project multisig', contractName: 'Safe Proxy Factory' })),
+          ...item.prepared.review.calls,
+        ]),
         authorization: { type: 'EIP-712 launch authorizations', requests: authorizations.map(item => item.prepared.review.authorization) },
       })
     }
@@ -472,7 +481,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       const entry = await prepared.sign()
       const decoded = decodeFunctionData({ abi: erc2771ForwarderAbi, data: entry.data })
       if (decoded.functionName !== 'execute') throw new Error('Invalid launch authorization.')
-      journal.signed.push({ chainId, entry, nonce: nonce.toString(), deadline: decoded.args[0].deadline })
+      journal.signed.push({ chainId, entry: bundleMultisigLaunch(entry, current.input.multisigs), nonce: nonce.toString(), deadline: decoded.args[0].deadline })
       persist()
       status(chainId, { phase: 'authorized' })
     }
@@ -485,7 +494,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         const retryNonces = { ...journal.retryNonces }
         for (const signed of journal.signed) {
           const nonce = await publicClient(signed.chainId as JBChainId).readContract({
-            address: signed.entry.target, abi: erc2771ForwarderAbi, functionName: 'nonces', args: [account],
+            address: forwarderFor(signed.chainId), abi: erc2771ForwarderAbi, functionName: 'nonces', args: [account],
           })
           if (nonce !== BigInt(signed.nonce)) throw new Error('An earlier launch authorization may have executed. Check its original bundle.')
           retryNonces[signed.chainId] = signed.nonce

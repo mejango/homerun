@@ -14,7 +14,7 @@ type CreatedProject = ComponentProps<typeof DemoProjectPage>['project']
 
 function preview(custom: boolean): CreatedProject {
   return custom ? saveCreatedProject({
-    ...CREATE_DEFAULTS,
+    ...CREATE_DEFAULTS, ownerMode: 'existing', operatorMode: 'existing', ownerIsOperator: false,
     name: 'Community house',
     photo: 'data:image/png;base64,aW1hZ2U=',
   }) : undefined
