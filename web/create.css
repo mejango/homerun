@@ -284,5 +284,7 @@
 .create-multisig-policy span { font-size: .8rem; }
 .create-owner-operator { clear: both; display: flex; gap: 8px; align-items: center; margin-bottom: 16px; }
 .create-owner-operator input { width: auto; }
+.create-role-description { margin: 0 0 24px; padding-left: 18px; list-style: disc; }
+.create-role-description li + li { margin-top: 6px; }
 
 .create-operator-profile { min-inline-size: 0; }

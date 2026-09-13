@@ -330,9 +330,6 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
         {field(`${role}Wallet`, `${role === 'owner' ? 'Owner' : 'Operator'} address`, { placeholder: '0x…', maxLength: 42 })}
         <button type="button" className="quiet-button" onClick={() => update(mode, 'create')}>Create a new multisig</button>
       </> : <>
-        <p className="create-help">{role === 'owner'
-          ? 'The owner can administrate the fundraise and reallocate operator revenue splits. The owner is made up of addresses that need to agree on decisions.'
-          : 'The operator owns the initial cash reserve, and a split of ongoing revenue tokens.'}</p>
         <div id={`create-${signers}`} tabIndex={-1}>
           {owners.map((owner, index) => <div className="create-multisig-owner" key={index}>
             <div className="create-multisig-address create-input"><input id={`create-${signers}-${index}`} aria-label={`${role === 'owner' ? 'Owner' : 'Operator'} multisig signer ${index + 1}`} type="text" value={owner} placeholder="0x…" maxLength={42} autoComplete="off" aria-invalid={!!errors[signers]} aria-describedby={issue ? `${role}-multisig-error` : undefined} onChange={event => update(signers, owners.map((value, i) => i === index ? event.target.value : value))} />
@@ -384,9 +381,13 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
                 {errors.photo && <p className="create-error" id="photo-error">{errors.photo}</p>}
               </div>
               <fieldset className="create-operator-profile"><legend>Owner</legend>
-                <p className="create-help">The owner is the address that owns the asset and process.</p>
+                <ul className="create-help create-role-description">
+                  <li>The owner is the address that owns the asset and process.</li>
+                  <li>The owner can administrate the fundraise and reallocate operator revenue splits.</li>
+                  {raw.ownerMode === 'create' && <li>The owner is made up of addresses that need to agree on decisions.</li>}
+                </ul>
                 {multisig('owner')}
-                <p className="create-help">Owns FUND, receives the success allocation, and controls INCOME. The Owner can change the Operator and INCOME splits.</p>
+                <p className="create-help">Owns FUND, receives the success allocation, and controls INCOME. The Owner can change the Operator and how revenue split tokens are allocated.</p>
                 <p className="create-help">Introduce the person or organization that owns and manages the project.</p>
                 {field('ownerName', 'Name (optional)', { placeholder: 'Owner name or organization', maxLength: 80 })}
                 {field('ownerIntroduction', 'Introduction (optional)', { rows: 4, maxLength: 1200, placeholder: 'Tell people about the ownership, your responsibilities, and how you will manage the project.' })}
@@ -399,10 +400,12 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
                 </div>
               </fieldset>
               <fieldset className="create-operator-profile"><legend>Operator</legend>
-                <p className="create-help">The operator is the current entity that runs the show day to day.</p>
+                <ul className="create-help create-role-description">
+                  <li>The operator is the current entity that runs the show day to day.</li>
+                  <li>The operator owns the initial cash reserve and receives revenue split tokens. The owner can replace this recipient.</li>
+                </ul>
                 <label className="create-owner-operator"><input type="checkbox" checked={raw.ownerIsOperator === true} onChange={event => update('ownerIsOperator', event.target.checked)} /> Owner is also operator</label>
                 {!raw.ownerIsOperator && multisig('operator')}
-                <p className="create-help">Receives the INCOME token split. The Owner can replace this recipient.</p>
                 <p className="create-help">Introduce the person or team running this project.</p>
                 {field('operatorName', 'Name (optional)', { placeholder: 'Your name or team', maxLength: 80 })}
                 {field('operatorIntroduction', 'Introduction (optional)', { rows: 4, maxLength: 1200, placeholder: 'Tell people about yourself, your experience, and your plans for the project.' })}
