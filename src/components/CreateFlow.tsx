@@ -330,11 +330,12 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
         {field(`${role}Wallet`, `${role === 'owner' ? 'Owner' : 'Operator'} address`, { placeholder: '0x…', maxLength: 42 })}
         <button type="button" className="quiet-button" onClick={() => update(mode, 'create')}>Create a new multisig</button>
       </> : <>
-        <p className="create-help">Add the wallets that will own this multisig and choose how many must approve a transaction.</p>
+        <p className="create-help">{role === 'owner'
+          ? 'The owner can administrate the fundraise and reallocate operator revenue splits. The owner is made up of addresses that need to agree on decisions.'
+          : 'Add the wallets that will own this multisig and choose how many must approve a transaction.'}</p>
         <div id={`create-${signers}`} tabIndex={-1}>
           {owners.map((owner, index) => <div className="create-multisig-owner" key={index}>
-            <label htmlFor={`create-${signers}-${index}`}>Owner {index + 1}</label>
-            <div className="create-multisig-address create-input"><input id={`create-${signers}-${index}`} type="text" value={owner} placeholder="0x…" maxLength={42} autoComplete="off" aria-invalid={!!errors[signers]} aria-describedby={issue ? `${role}-multisig-error` : undefined} onChange={event => update(signers, owners.map((value, i) => i === index ? event.target.value : value))} />
+            <div className="create-multisig-address create-input"><input id={`create-${signers}-${index}`} aria-label={`${role === 'owner' ? 'Owner' : 'Operator'} multisig signer ${index + 1}`} type="text" value={owner} placeholder="0x…" maxLength={42} autoComplete="off" aria-invalid={!!errors[signers]} aria-describedby={issue ? `${role}-multisig-error` : undefined} onChange={event => update(signers, owners.map((value, i) => i === index ? event.target.value : value))} />
               {owners.length > 2 && <button type="button" className="quiet-button" aria-label={`Remove ${role} multisig owner ${index + 1}`} onClick={() => { update(signers, owners.filter((_, i) => i !== index)); update(threshold, Math.min(Number(raw[threshold]), owners.length - 1)); }}>Remove</button>}
             </div>
           </div>)}
