@@ -115,6 +115,9 @@
 .create-network-settings { border: 0; padding: 0; margin: 22px 0 28px; min-width: 0; }
 .create-network-settings legend { font-size: 12px; font-weight: 500; margin-bottom: 12px; }
 .create-network-options { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.network-environment-control { --select-padding-right: 28px; --select-chevron-inset: 6px; position: relative; display: inline-block; min-width: 0; max-width: 100%; font: 14px/1.5 var(--sans); }
+.network-environment-value { display: block; visibility: hidden; min-height: 44px; padding: 8px var(--select-padding-right) 8px 0; white-space: pre; }
+.create-network-settings .network-environment-control .network-environments { position: absolute; inset: 0; width: 100%; min-width: 0; padding-right: var(--select-padding-right); background-position: right var(--select-chevron-inset) center; }
 .create-network-settings .network-environments { appearance: none; min-height: 44px; width: auto; max-width: 100%; padding: 8px 34px 8px 0; border: 0; border-radius: 0; color: var(--ink, #293f34); font: 14px/1.5 var(--sans); cursor: pointer; background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='m1 1 5 5 5-5' stroke='%23556659' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 10px center; }
 .network-symbols { display: flex; gap: 8px; }
 .network-symbols button { display: grid; place-items: center; width: 48px; height: 48px; padding: 0; border: 1px solid #bbb; border-radius: 5px; background: #fff; cursor: pointer; }

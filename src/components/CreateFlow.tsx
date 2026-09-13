@@ -435,10 +435,13 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
                 </section>
               </div>
               <fieldset className="create-network-settings" disabled={locked}><legend>Networks</legend>{locked && <p className="input-purpose-note">Creation is in progress. These networks and project settings are fixed for this launch.</p>}<div className="create-network-options">
-                <select id="create-networkEnvironment" className="network-environments" aria-label="Network environment" value={String(raw.networkEnvironment)}
-                  onChange={event => { update('networkEnvironment', event.target.value); update('networks', NETWORK_FAMILIES.map(family => family.id)); }}>
-                  <option value="production">Mainnets</option><option value="testnet">Testnets</option>
-                </select>
+                <span className="network-environment-control">
+                  <span className="network-environment-value" aria-hidden="true">{raw.networkEnvironment === 'testnet' ? 'Testnets' : 'Mainnets'}</span>
+                  <select id="create-networkEnvironment" className="network-environments" aria-label="Network environment" value={String(raw.networkEnvironment)}
+                    onChange={event => { update('networkEnvironment', event.target.value); update('networks', NETWORK_FAMILIES.map(family => family.id)); }}>
+                    <option value="production">Mainnets</option><option value="testnet">Testnets</option>
+                  </select>
+                </span>
                 <div id="create-networks" className="network-symbols" role="group" aria-label="Deployment networks" aria-describedby={normalized.errors.networks ? 'networks-error' : undefined}>
                   {NETWORK_FAMILIES.map(family => {
                     const chain = family[raw.networkEnvironment === 'testnet' ? 'testnet' : 'production'];
