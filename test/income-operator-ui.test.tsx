@@ -12,7 +12,7 @@ const runtime = vi.hoisted(() => ({
   queryError: false, phase: 'idle', busy: false, safeProposalHash: null as Hex | null,
   receipt: null as TransactionReceipt | null,
   verified: undefined as { rulesetId: bigint; recipient: Address } | undefined,
-  verificationEnabled: false, read: vi.fn(), send: vi.fn(), invalidate: vi.fn(),
+  verificationEnabled: false, read: vi.fn(), send: vi.fn(), invalidate: vi.fn(), setQueryData: vi.fn(),
 }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address }) }))
 vi.mock('@/hooks/useSafeTx', () => ({
@@ -20,7 +20,7 @@ vi.mock('@/hooks/useSafeTx', () => ({
   txPhaseLabel: (_: unknown, labels: { idle: string }) => labels.idle,
 }))
 vi.mock('@tanstack/react-query', () => ({
-  useQueryClient: () => ({ invalidateQueries: runtime.invalidate }),
+  useQueryClient: () => ({ invalidateQueries: runtime.invalidate, setQueryData: runtime.setQueryData }),
   useQuery: ({ queryKey, enabled }: { queryKey: unknown[]; enabled?: boolean }) => {
     if (queryKey[0] === 'income-operator') return { data: runtime.snapshot, isError: runtime.queryError, isPending: false, error: new Error('RPC unavailable'), refetch: vi.fn() }
     runtime.verificationEnabled = !!enabled
@@ -52,7 +52,7 @@ describe('Owner changes the INCOME Operator', () => {
     runtime.phase = 'idle'; runtime.busy = false; runtime.safeProposalHash = null; runtime.receipt = null; runtime.verified = undefined
     runtime.read.mockReset(); runtime.read.mockImplementation(async () => runtime.snapshot)
     runtime.send.mockReset(); runtime.send.mockImplementation(async (_request, options: TxSendOptions) => { await options.reverify?.(_request); await options.beforeWrite?.() })
-    runtime.invalidate.mockReset()
+    runtime.invalidate.mockReset(); runtime.setQueryData.mockReset()
     host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   })
   afterEach(async () => { await act(async () => root.unmount()); host.remove() })
@@ -75,6 +75,12 @@ describe('Owner changes the INCOME Operator', () => {
       expect(button().disabled).toBe(true)
       expect(host.textContent).toContain('valid, nonzero wallet address')
     }
+    expect(runtime.send).not.toHaveBeenCalled()
+  })
+  it('does not offer the reserved-token burn address as a replacement Operator', async () => {
+    await render(); await recipient('0x000000000000000000000000000000000000dEaD')
+    expect(button().disabled).toBe(true)
+    expect(host.textContent).toContain('The burn address cannot be used as an Operator wallet')
     expect(runtime.send).not.toHaveBeenCalled()
   })
   it('reviews the current namespace with fresh Owner and complete splits, then rechecks before writing', async () => {
@@ -101,6 +107,7 @@ describe('Owner changes the INCOME Operator', () => {
     expect(runtime.send.mock.calls[1][0].args[1]).toBe(100n)
     expect(runtime.invalidate).toHaveBeenCalledWith({ queryKey: ['income-operator', 1, '7'] })
     expect(runtime.invalidate).toHaveBeenCalledWith({ queryKey: ['income-reserved', 1, '7'] })
+    expect(runtime.invalidate).toHaveBeenCalledWith({ queryKey: ['project-operator-profile', 1, '7'] })
     runtime.snapshot.stages[1].splits[0] = { ...runtime.snapshot.stages[1].splits[0], beneficiary: NEXT }
     await render()
     expect(host.textContent).toContain('All current and upcoming Operator splits on Ethereum pay this wallet')
@@ -114,6 +121,21 @@ describe('Owner changes the INCOME Operator', () => {
     expect(runtime.verificationEnabled).toBe(false)
     expect(runtime.invalidate).not.toHaveBeenCalled()
     expect(button().disabled).toBe(true)
+  })
+  it('waits for verified execution before refreshing the displayed Operator', async () => {
+    await render(); await recipient(NEXT); await submit()
+    runtime.phase = 'success'; runtime.receipt = { transactionHash: `0x${'bb'.repeat(32)}`, blockNumber: 101n } as TransactionReceipt
+    await render()
+    expect(runtime.invalidate).not.toHaveBeenCalled()
+    expect(runtime.setQueryData).not.toHaveBeenCalled()
+    expect(host.textContent).toContain('Verifying the Operator change')
+    runtime.verified = { rulesetId: 90n, recipient: NEXT }
+    await render()
+    expect(runtime.invalidate).toHaveBeenCalledWith({ queryKey: ['project-operator-profile', 1, '7'] })
+    expect(runtime.setQueryData).toHaveBeenCalledWith(['project-admin-confirmed-block', 1, '7'], expect.any(Function))
+    const updater = runtime.setQueryData.mock.calls[0][1] as (previous?: bigint) => bigint
+    expect(updater()).toBe(101n)
+    expect(updater(102n)).toBe(102n)
   })
   it('keeps drafts and pending status visible through failed background reads', async () => {
     await render(); await recipient(NEXT); await submit()

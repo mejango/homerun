@@ -84,6 +84,17 @@ describe('FUND project metadata stays descriptive', () => {
     expect(parseFundProjectMetadata({ homerun: { version: 2, kind: 'fund', setup: {}, operator: { name: 'Unrecognized profile' } } }).operator).toBeNull()
   })
 
+  it('displays explicitly published INCOME profiles while keeping launch linkage out of display authority', () => {
+    const input = { name: 'Haus revenue', homerun: { version: 1, type: 'income', manifestUri: 'ipfs://original', operatorBps: 6000,
+      setup: { location: 'Florianópolis', operatorWallet: '0x0000000000000000000000000000000000000002' },
+      operator: { name: 'New hosts', introduction: 'We now host the guests.', photoUri: 'ipfs://newphoto' } } }
+    expect(parseFundProjectMetadata(input)).toMatchObject({ name: 'Haus revenue', location: 'Florianópolis',
+      operator: { name: 'New hosts', introduction: 'We now host the guests.', photoUrl: 'https://juicebox.center/ipfs/newphoto' },
+      plan: { operatorWallet: '0x0000000000000000000000000000000000000002' } })
+    expect(parseFundProjectMetadata(input)).not.toHaveProperty('permissions')
+    expect(input.homerun.manifestUri).toBe('ipfs://original')
+  })
+
   it('supports absent and partial operator profiles without inventing an identity', () => {
     expect(parseFundProjectMetadata(buildFundProjectMetadata(CREATE_DEFAULTS as CreateValues)).operator).toBeNull()
     const metadata = { homerun: { version: 1, kind: 'fund', setup: {}, operator: { introduction: 'Our story' } } }

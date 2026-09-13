@@ -28,7 +28,11 @@ import { ProjectPayerAddresses } from '@/components/ProjectPayerAddresses'
 import { ProjectShop } from '@/components/ProjectShop'
 import { LiveProjectActions } from '@/components/LiveProjectActions'
 import { ProjectPayment } from '@/components/ProjectPayment'
-import { OperatorProfile } from '@/components/OperatorProfile'
+import { CurrentOperatorProfile, CurrentOwnerProfile } from '@/components/CurrentOperatorProfile'
+import { ProjectMetadataEditor } from '@/components/ProjectMetadataEditor'
+import { ProjectOwnershipEditor } from '@/components/ProjectOwnershipEditor'
+import { ProjectPermissionsEditor } from '@/components/ProjectPermissionsEditor'
+import { ProjectSplitsEditor } from '@/components/ProjectSplitsEditor'
 import { fetchFundProjectMetadata, type FundProjectMetadata } from '@/lib/fund-project-metadata'
 import { parseAmount } from '@/lib/fund-contracts'
 import { readFundProjectState } from '@/lib/fund-state'
@@ -91,6 +95,10 @@ export type IncomeProjectSlots = {
   projectId?: bigint
   fundProjectId?: bigint
   state?: IncomeProjectState
+  writesUnavailable?: boolean
+  bindingUnavailable?: boolean
+  control?: ReactNode
+  permissions?: ReactNode
   treasuryMetric: ReactNode
   supplyMetric: ReactNode
   title: string
@@ -127,6 +135,7 @@ export function IncomeProjectRuntime({ chainId, projectId, fundProjectId, bindin
     queryFn: () => readIncomeFundBinding(client!, { chainId, incomeProjectId: projectId! }), staleTime: 300_000, retry: 1,
   })
   const resolvedFundId = fundProjectId ?? source.data ?? undefined
+  const confirmed = useQuery<bigint>({ queryKey: ['project-admin-confirmed-block', chainId, projectId?.toString()], queryFn: async () => 0n, enabled: false, initialData: 0n })
   const query = useQuery({
     queryKey: ['income-project', chainId, projectId?.toString(), address ?? null, fundProjectId?.toString()],
     enabled: !!client && projectId !== undefined,
@@ -137,7 +146,7 @@ export function IncomeProjectRuntime({ chainId, projectId, fundProjectId, bindin
   const retained = query.data ?? lastState
   const displayState = retained?.chainId === chainId && retained.projectId === projectId ? retained : undefined
   const accountMatches = query.data?.account ? !!address && isAddressEqual(query.data.account, address) : !address
-  const writesUnavailable = bindingUnavailable || query.isError || query.isPlaceholderData || !query.data || !accountMatches
+  const writesUnavailable = bindingUnavailable || query.isError || query.isPlaceholderData || !query.data || !accountMatches || query.data.blockNumber < (confirmed.data ?? 0n)
   const details = useQuery({ queryKey: ['fund-project-metadata', displayState?.projectUri], enabled: !!displayState?.projectUri, queryFn: () => fetchFundProjectMetadata(displayState!.projectUri), staleTime: 300_000, retry: 1 })
   const notice = projectId === undefined ? null : <>
     {query.isPending && <p role="status">Reading the INCOME contracts…</p>}
@@ -146,7 +155,7 @@ export function IncomeProjectRuntime({ chainId, projectId, fundProjectId, bindin
     {fundProjectId === undefined && source.isError && <p className="mb-4 text-sm" role="alert">The original FUND connection could not be discovered. INCOME transactions remain available. <button type="button" className="underline" onClick={() => void source.refetch()}>Retry connection</button></p>}
   </>
   // This component stays in the same tree position while a linked ID/read loads.
-  return <IncomeActions state={displayState} client={client} fundProjectId={resolvedFundId} writesUnavailable={writesUnavailable} notice={notice} title={details.data?.name ?? `Revenue project ${projectId ?? ''}`} description={details.data?.description ?? null} details={details.data} logoUrl={details.data?.logoUrl ?? null} location={details.data?.location ?? null} projectId={projectId} chainId={chainId}>{children}</IncomeActions>
+  return <IncomeActions state={displayState} client={client} fundProjectId={resolvedFundId} writesUnavailable={writesUnavailable} bindingUnavailable={bindingUnavailable} notice={notice} title={details.data?.name ?? `Revenue project ${projectId ?? ''}`} description={details.data?.description ?? null} details={details.data} logoUrl={details.data?.logoUrl ?? null} location={details.data?.location ?? null} projectId={projectId} chainId={chainId}>{children}</IncomeActions>
 }
 
 export function IncomeProject({ chainId, projectId, fundProjectId }: { chainId: JBChainId; projectId: bigint; fundProjectId?: bigint }) {
@@ -160,7 +169,7 @@ export function IncomeProject({ chainId, projectId, fundProjectId }: { chainId: 
     activity={slots.activity}
     overview={<StandaloneIncomeOverview chainId={chainId} slots={slots} />}
     stages={slots.stages}
-    owners={<OwnersTabs accountsYou={slots.accountsYou} accountsAll={slots.accountsAll} market={slots.market} settlement={slots.settlement} splits={slots.splits} loans={slots.loans} />}
+    owners={<OwnersTabs accountsYou={slots.accountsYou} accountsAll={slots.accountsAll} market={slots.market} settlement={slots.settlement} splits={slots.splits} loans={slots.loans} control={slots.control} permissions={slots.permissions} />}
     shop={slots.shop}
     extras={slots.extras}
     operators={<div className="grid gap-7">{slots.operators}<Panel title="INCOME administration"><p>INCOME follows its deployed revnet schedule. Allocations and loan operations are available to their beneficiaries under Owners.</p>{slots.fundProjectId && <a className="mt-4 inline-block underline" href={`/project/${chainId}/${slots.fundProjectId}`}>Open FUND Owner controls →</a>}</Panel></div>}
@@ -185,25 +194,26 @@ function StandaloneIncomeOverview({ chainId, slots }: { chainId: JBChainId; slot
     staleTime: 10_000, refetchInterval: 20_000, retry: 1,
   })
   const currentFund = fund.data?.chainId === chainId && fund.data.projectId === fundProjectId ? fund.data : undefined
+  const confirmedFund = useQuery<bigint>({ queryKey: ['project-admin-confirmed-block', chainId, fundProjectId?.toString()], queryFn: async () => 0n, enabled: false, initialData: 0n })
   const fundDetails = useQuery({
     queryKey: ['fund-project-metadata', currentFund?.projectUri],
     enabled: !!currentFund?.projectUri,
     queryFn: () => fetchFundProjectMetadata(currentFund!.projectUri),
     staleTime: 300_000, retry: 1,
   })
-  const details = fundDetails.data ?? slots.details
+  const details = slots.details?.plan ? slots.details : fundDetails.data ?? slots.details
   const owner = currentFund?.knownOwnerWrapper ? currentFund.owner : null
   return <div className="grid gap-7">
-    <Panel title="About"><p className="whitespace-pre-line">{slots.description ?? details?.description ?? 'Revenue funds this project’s treasury and issues INCOME according to its current onchain rules.'}</p></Panel>
+    <Panel title="About"><p className="whitespace-pre-line">{slots.description ?? details?.description ?? 'Revenue funds this project’s treasury and issues INCOME according to its current onchain rules.'}</p>{client && slots.projectId && <div className="mt-5"><ProjectMetadataEditor chainId={chainId} projectId={slots.projectId} client={client} unavailable={slots.writesUnavailable} inheritedMetadataUri={currentFund?.projectUri} label="Edit INCOME details" /></div>}</Panel>
     {slots.overview}
-    <OperatorProfile chainId={chainId} role="Owner" {...details?.owner} address={owner ?? details?.plan?.ownerWallet ?? null} addressLabel={owner ? 'Owner wallet' : 'Published Owner wallet'} />
-    <OperatorProfile chainId={chainId} {...details?.operator} address={details?.plan?.operatorWallet ?? null} addressLabel="Published Operator wallet" />
+    <CurrentOwnerProfile chainId={chainId} owner={owner ?? undefined} details={details} unavailable={binding.isError || fund.isError || !!currentFund && (!currentFund.knownOwnerWrapper || currentFund.blockNumber < (confirmedFund.data ?? 0n))} />
+    <CurrentOperatorProfile chainId={chainId} incomeProjectId={slots.projectId} fundDetails={details} bindingUnavailable={slots.bindingUnavailable} />
     {(binding.isError || fund.isError || fundDetails.isError) && <p role="status" className="text-sm">The FUND Owner and Operator details could not be refreshed.</p>}
   </div>
 }
 
-function IncomeActions({ state, client, fundProjectId, writesUnavailable, notice, title, description, details, logoUrl, location, projectId, chainId, children }: {
-  state?: IncomeProjectState; client?: PublicClient; fundProjectId?: bigint; writesUnavailable: boolean; notice: ReactNode
+function IncomeActions({ state, client, fundProjectId, writesUnavailable, bindingUnavailable, notice, title, description, details, logoUrl, location, projectId, chainId, children }: {
+  state?: IncomeProjectState; client?: PublicClient; fundProjectId?: bigint; writesUnavailable: boolean; bindingUnavailable: boolean; notice: ReactNode
   title: string; description: string | null; details?: FundProjectMetadata; logoUrl: string | null; location: string | null; projectId?: bigint; chainId: JBChainId
   children: (slots: IncomeProjectSlots) => ReactNode
 }) {
@@ -214,7 +224,9 @@ function IncomeActions({ state, client, fundProjectId, writesUnavailable, notice
   const gate = (content: ReactNode) => <fieldset aria-label="INCOME transactions" disabled={writesUnavailable} className="m-0 grid min-w-0 gap-7 border-0 p-0">{content}</fieldset>
   const currency = ready && primary.length > 0 && <label className="mb-5 grid gap-2 text-sm">INCOME treasury currency<select className="min-h-11 rounded border border-[#bfc9b5] bg-white px-3 pr-9" value={context?.token} onChange={event => setSelectedToken(event.target.value as Address)}>{primary.map(item => <option key={item.token} value={item.token}>{item.symbol}</option>)}</select></label>
   return children({
-    projectId, fundProjectId, state, title, description, details, logoUrl, location, notice,
+    projectId, fundProjectId, state, title, description, details, logoUrl, location, notice, writesUnavailable, bindingUnavailable,
+    control: ready ? <ProjectOwnershipEditor chainId={chainId} projectId={state.projectId} client={client} unavailable={writesUnavailable} /> : <Panel title="INCOME control"><p>Reading project ownership…</p></Panel>,
+    permissions: ready ? <ProjectPermissionsEditor chainId={chainId} projectId={state.projectId} client={client} unavailable={writesUnavailable} /> : <Panel title="INCOME permissions"><p>Reading project permissions…</p></Panel>,
     treasuryMetric: context && <span>INCOME treasury: <DisplayTokenAmount value={context.balance} decimals={context.decimals} /> {context.symbol}</span>,
     supplyMetric: state && <span>INCOME supply: <DisplayTokenAmount value={state.totalSupply} /></span>,
     payment: gate(<>{ready && context ? <IncomePayment state={state} client={client} context={context} /> : <p>{projectId ? 'Loading INCOME payment options…' : 'INCOME has not been launched.'}</p>}</>),
@@ -225,7 +237,7 @@ function IncomeActions({ state, client, fundProjectId, writesUnavailable, notice
     accountsAll: projectId && <ProjectParticipants chainId={chainId} projectId={projectId} tokenLabel="INCOME" />,
     market: gate(ready && context && <>{currency}<IncomeCashOut state={state} client={client} context={context} /></>),
     settlement: gate(ready && <IncomeBridgeActions state={state} />),
-    splits: gate(ready && <><IncomeReservedTokens state={state} client={client} /><IncomeAutoIssue state={state} client={client} /></>),
+    splits: <div className="grid gap-7">{ready && <ProjectSplitsEditor chainId={chainId} projectId={state.projectId} phase="income" client={client} unavailable={writesUnavailable} />}{gate(ready && <><IncomeReservedTokens state={state} client={client} /><IncomeAutoIssue state={state} client={client} /></>)}</div>,
     loans: gate(ready && <>{currency}{context && <IncomeBorrow state={state} client={client} context={context} />}<IncomeRepay state={state} client={client} /><IncomeLoanTools state={state} client={client} /></>),
     shop: projectId && <ProjectShop chainId={chainId} projectId={projectId} tokenLabel="INCOME" />,
     extras: projectId && <ProjectPayerAddresses chainId={chainId} projectId={projectId} tokenLabel="INCOME" />,

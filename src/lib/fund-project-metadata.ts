@@ -107,7 +107,7 @@ export function parseFundProjectMetadata(value: unknown): FundProjectMetadata {
   const metadata = record(value)
   if (!metadata) throw new Error('Project metadata is not a JSON object.')
   const homerun = record(metadata.homerun)
-  const setup = homerun?.version === 1 && homerun.kind === 'fund' ? record(homerun.setup) : null
+  const setup = homerun?.version === 1 && (homerun.kind === 'fund' || homerun.type === 'income') ? record(homerun.setup) : null
   const profile = (role: 'owner' | 'operator'): ProjectProfileMetadata | null => {
     const data = setup ? record(homerun?.[role]) : null
     if (!data) return null

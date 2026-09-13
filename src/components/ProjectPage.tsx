@@ -33,6 +33,8 @@ import { OperatorProfile } from "./OperatorProfile";
 import { FundingProgress } from "./FundingProgress";
 import { PaymentChainSelect } from "./PaymentChainSelect";
 import { demoShopStorageKey } from "@/lib/demo-shop";
+import { demoProjectManagementKey, type DemoProjectManagement } from "@/lib/demo-project-management";
+import { DemoProjectControl, DemoProjectDetailsEditor, DemoProjectPermissions, DemoProjectSplits, useDemoProjectManagement } from "./DemoProjectManagement";
 import {
   BudgetChart,
   CashHistoryChart,
@@ -1673,30 +1675,31 @@ function DemoOwnerTools({
 function DemoOverview({
   name,
   project,
+  management,
+  editDetails,
   phase,
   p,
 }: {
   name: string;
   project?: CreatedProject;
+  management: DemoProjectManagement;
+  editDetails: ReactNode;
   phase: ProjectPhase;
   p: Projection | null;
 }) {
   const profileChainId = project ? plannedNetworks(project.values)[0]?.chainId : undefined;
-  const description =
-    project?.values.description ||
-    (project
-      ? "An asset funded together, with FUND ownership and a separate INCOME revenue project."
-      : "A founders’ clubhouse in Jurerê Internacional, Florianópolis. Workspaces, events, a pool and wellness activities bring people together and give the property a way to earn revenue.");
+  const { details } = management;
   return (
     <div className="demo-overview">
       <section className="demo-section demo-description">
         <h2>About</h2>
-        <p>{description}</p>
+        <p className="whitespace-pre-wrap">{details.description}</p>
+        {editDetails}
       </section>
       <ProjectPhoto
         name={name}
-        photo={project?.values.photo}
-        demo={!project}
+        photo={details.photo}
+        demo={!project && !details.photo}
         assetType={project?.values.assetType}
       />
       <section className="demo-section demo-overview-progress">
@@ -1770,19 +1773,19 @@ function DemoOverview({
       </section>
       <OperatorProfile
         role="Owner"
-        name={project ? project.values.ownerName : "paloma.eth"}
-        introduction={project ? project.values.ownerIntroduction : "The Owner manages the project and its asset, including the purchase, treasury, and eventual sale."}
-        photoUrl={project?.values.ownerPhoto}
-        address={project ? project.values.ownerWallet || null : founderHausAccount}
+        name={details.ownerName}
+        introduction={details.ownerIntroduction}
+        photoUrl={details.ownerPhoto}
+        address={management.ownerAddress || null}
         chainId={profileChainId}
       />
       <OperatorProfile
-        name={project ? project.values.operatorName : "Founder Haus team"}
-        introduction={project ? project.values.operatorIntroduction : "We’re a small team of founders and local hosts turning this house into a place to work, gather, and recharge. We handle day-to-day operations, welcome members and guests, and keep the community updated on income and expenses."}
-        photoUrl={project?.values.operatorPhoto}
-        address={project ? project.values.operatorWallet || null : founderHausAccount}
+        name={details.operatorName}
+        introduction={details.operatorIntroduction}
+        photoUrl={details.operatorPhoto}
+        address={management.operatorAddress || null}
         chainId={profileChainId}
-        addressLabel={project ? "Address" : "paloma.eth"}
+        addressLabel={management.operatorAddress.toLowerCase() === founderHausAccount.toLowerCase() ? "paloma.eth" : "Address"}
       />
       <div className="demo-model-note">
         <p>
@@ -1959,11 +1962,17 @@ function DemoOwners({
   phase,
   error,
   onMonthChange,
+  control,
+  permissions,
+  splitEditor,
 }: {
   p: Projection | null;
   phase: ProjectPhase;
   error: string;
   onMonthChange: (month: number) => void;
+  control: ReactNode;
+  permissions: ReactNode;
+  splitEditor: ReactNode;
 }) {
   const unavailable = (
     <section className="demo-section">
@@ -1973,6 +1982,8 @@ function DemoOwners({
   const income = !!p?.purchaseCompleted;
   return (
     <OwnersTabs
+      control={control}
+      permissions={permissions}
       accountsYou={
         p && !error ? (
           <section className="demo-section demo-account">
@@ -2077,6 +2088,7 @@ function DemoOwners({
             <Allocation p={p} />
             <TokenTerms p={p} />
             <ProjectActionGuide stage={phase} section="splits" />
+            {splitEditor}
           </section>
         ) : (
           unavailable
@@ -2142,6 +2154,29 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
   const [phase, setPhase] = useState<ProjectPhase>("raising");
   const [growth, setGrowth] = useState(false);
   const [reset, setReset] = useState(0);
+  const managementInitial = useMemo<DemoProjectManagement>(() => ({
+    version: 1,
+    details: {
+      name: project?.values.name || "Founder Haus",
+      location: project?.values.location || (project ? "" : "Jurerê Internacional, Florianópolis"),
+      description: project?.values.description || (project
+        ? "An asset funded together, with FUND ownership and a separate INCOME revenue project."
+        : "A founders’ clubhouse in Jurerê Internacional, Florianópolis. Workspaces, events, a pool and wellness activities bring people together and give the property a way to earn revenue."),
+      photo: project?.values.photo || "",
+      ownerName: project ? project.values.ownerName : "paloma.eth",
+      ownerIntroduction: project ? project.values.ownerIntroduction : "The Owner manages the project and its asset, including the purchase, treasury, and eventual sale.",
+      ownerPhoto: project?.values.ownerPhoto || "",
+      operatorName: project ? project.values.operatorName : "Founder Haus team",
+      operatorIntroduction: project ? project.values.operatorIntroduction : "We’re a small team of founders and local hosts turning this house into a place to work, gather, and recharge. We handle day-to-day operations, welcome members and guests, and keep the community updated on income and expenses.",
+      operatorPhoto: project?.values.operatorPhoto || "",
+    },
+    ownerAddress: project ? project.values.ownerWallet || "" : founderHausAccount,
+    operatorAddress: project ? project.values.operatorWallet || "" : founderHausAccount,
+    delegates: [],
+    splits: { fund: [], income: [] },
+  }), [project]);
+  const management = useDemoProjectManagement(project?.id ?? "founderhaus", managementInitial, reset);
+  const managementProps = { state: management.state, ready: management.ready, onSave: management.save };
   const [invalidFields, setInvalidFields] = useState<Record<string, boolean>>(
     {},
   );
@@ -2210,10 +2245,8 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
   const p = derived.projection;
   const overview = derived.property;
   const fundraising = !["earning", "liquidated"].includes(phase);
-  const name = project?.values.name || "Founder Haus";
-  const location =
-    project?.values.location ||
-    (project ? "" : "Jurerê Internacional, Florianópolis");
+  const name = management.state.details.name;
+  const location = management.state.details.location;
   const field = (
     key: keyof NetworkInputs,
     label: string,
@@ -2256,6 +2289,7 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
                 localStorage.removeItem(
                   demoShopStorageKey(project?.id ?? "founderhaus", "income"),
                 );
+                localStorage.removeItem(demoProjectManagementKey(project?.id ?? "founderhaus"));
               } catch {
                 /* The mounted shop still clears its in-memory preview. */
               }
@@ -2277,7 +2311,7 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
             title={name}
             location={location}
             logo={
-              project && !project.values.photo ? (
+              project && !management.state.details.photo ? (
                 <span className="demo-project-initial" aria-hidden="true">
                   {name.slice(0, 1)}
                 </span>
@@ -2285,7 +2319,7 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
                 <div className="demo-project-logo">
                   <Image
                     unoptimized
-                    src={project?.values.photo || photos[0].src}
+                    src={management.state.details.photo || photos[0].src}
                     width={192}
                     height={192}
                     alt=""
@@ -2329,6 +2363,8 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
               <DemoOverview
                 name={name}
                 project={project}
+                management={management.state}
+                editDetails={<div className="mt-5 space-y-3"><DemoProjectDetailsEditor {...managementProps} />{management.error && <p role="alert">{management.error}</p>}</div>}
                 phase={phase}
                 p={overview}
               />
@@ -2517,6 +2553,9 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
                 phase={phase}
                 error={derived.personalError || derived.error}
                 onMonthChange={(value) => change("revenueMonths", value)}
+                control={<DemoProjectControl {...managementProps} />}
+                permissions={<DemoProjectPermissions {...managementProps} />}
+                splitEditor={<DemoProjectSplits {...managementProps} />}
               />
             }
             shop={
@@ -2567,9 +2606,7 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
                   configuration={{
                     project: {
                       name,
-                      location:
-                        project?.values.location ||
-                        "Jurerê Internacional, Florianópolis",
+                      location,
                     },
                     mode: "illustrative-preview",
                     phase,

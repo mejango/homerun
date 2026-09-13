@@ -7,10 +7,14 @@ import type { IncomeProjectState } from '../src/lib/income-state'
 import type { IncomeReservedSnapshot } from '../src/lib/income-reserved'
 import type { FundProjectState } from '../src/lib/fund-state'
 import { parseFundProjectMetadata, type FundProjectMetadata } from '../src/lib/fund-project-metadata'
+import type { CurrentProjectOperator } from '../src/lib/project-operator-profile'
 
 const runtime = vi.hoisted(() => ({
   address: '0x1111111111111111111111111111111111111111' as Address,
   query: {} as Record<string, unknown>,
+  operator: undefined as CurrentProjectOperator | undefined, operatorError: false,
+  confirmedBlock: 0n,
+  fundConfirmedBlock: 0n,
   fund: undefined as FundProjectState | undefined,
   details: {} as Record<string, FundProjectMetadata>,
   sticky: null as { stickyProjectId: bigint } | null,
@@ -27,6 +31,10 @@ const runtime = vi.hoisted(() => ({
 vi.mock('@/components/ProjectParticipants', () => ({ ProjectParticipants: () => <span>Indexed holders</span> }))
 vi.mock('@/components/ProjectPayerAddresses', () => ({ ProjectPayerAddresses: () => <span>Project payer addresses</span> }))
 vi.mock('@/components/ProjectShop', () => ({ ProjectShop: ({ chainId, projectId, tokenLabel }: { chainId: number; projectId: bigint; tokenLabel: string }) => <span data-testid={`shop-${tokenLabel}`} data-chain-id={chainId} data-project-id={projectId.toString()}>Project shop</span> }))
+vi.mock('@/components/ProjectMetadataEditor', () => ({ ProjectMetadataEditor: ({ chainId, projectId, unavailable, inheritedMetadataUri, label }: { chainId: number; projectId: bigint; unavailable?: boolean; inheritedMetadataUri?: string; label?: string }) => <section data-testid="metadata-editor" data-chain-id={chainId} data-project-id={projectId.toString()} data-inherited-uri={inheritedMetadataUri}><button disabled={unavailable}>{label ?? 'Edit project details'}</button></section> }))
+vi.mock('@/components/ProjectOwnershipEditor', () => ({ ProjectOwnershipEditor: ({ chainId, projectId, unavailable }: { chainId: number; projectId: bigint; unavailable?: boolean }) => <section data-testid="ownership-editor" data-chain-id={chainId} data-project-id={projectId.toString()}><button disabled={unavailable}>Edit project control</button></section> }))
+vi.mock('@/components/ProjectPermissionsEditor', () => ({ ProjectPermissionsEditor: ({ chainId, projectId, unavailable }: { chainId: number; projectId: bigint; unavailable?: boolean }) => <section data-testid="permissions-editor" data-chain-id={chainId} data-project-id={projectId.toString()}><button disabled={unavailable}>Edit permissions</button></section> }))
+vi.mock('@/components/ProjectSplitsEditor', () => ({ ProjectSplitsEditor: ({ chainId, projectId, phase, unavailable }: { chainId: number; projectId: bigint; phase: string; unavailable?: boolean }) => <section data-testid="splits-editor" data-chain-id={chainId} data-project-id={projectId.toString()} data-phase={phase}><button disabled={unavailable}>Edit splits</button></section> }))
 vi.mock('wagmi', () => ({ usePublicClient: () => ({}) }))
 vi.mock('@/hooks/useReviewedPermit2Signature', () => ({ useReviewedPermit2Signature: () => ({ signPermit2Async: vi.fn() }) }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address, isConnected: true }) }))
@@ -47,6 +55,8 @@ vi.mock('@tanstack/react-query', () => ({
     runtime.queries(options)
     const { queryKey } = options
     return queryKey[0] === 'income-project' ? runtime.query
+    : queryKey[0] === 'project-operator-profile' ? { data: runtime.operator, isError: runtime.operatorError, isPending: false, refetch: vi.fn() }
+    : queryKey[0] === 'project-admin-confirmed-block' ? { data: queryKey[2] === '7' ? runtime.confirmedBlock : queryKey[2] === runtime.discoveredFund?.toString() ? runtime.fundConfirmedBlock : 0n }
     : queryKey[0] === 'fund-project' ? { data: runtime.fund, isError: false }
     : queryKey[0] === 'fund-project-metadata' ? { data: runtime.details[String(queryKey[1])], isError: false }
     : queryKey[0] === 'income-fund-binding' ? { data: runtime.discoveredFund, isError: runtime.discoveryError, refetch: vi.fn() }
@@ -92,6 +102,7 @@ describe('INCOME transaction surfaces', () => {
     runtime.mounted = 0; runtime.unmounted = 0; runtime.busy = false; runtime.phase = 'idle'; runtime.sticky = null
     runtime.stickyError = false; runtime.stickyMounted = 0; runtime.stickyUnmounted = 0
     runtime.discoveredFund = null; runtime.discoveryError = false; runtime.fund = undefined; runtime.details = {}
+    runtime.operator = undefined; runtime.operatorError = false; runtime.confirmedBlock = 0n; runtime.fundConfirmedBlock = 0n
     runtime.address = '0x1111111111111111111111111111111111111111'
     runtime.send.mockReset(); runtime.autoIssuance.mockReset(); runtime.readState.mockReset()
     runtime.readReserved.mockReset(); runtime.invalidateQueries.mockClear(); runtime.queries.mockClear()
@@ -120,6 +131,9 @@ describe('INCOME transaction surfaces', () => {
     runtime.reserved = snapshot; runtime.readReserved.mockResolvedValue(snapshot)
     return snapshot
   }
+  function currentOperator(address: Address = '0x7777777777777777777777777777777777777777'): CurrentProjectOperator {
+    return { chainId: 1, incomeProjectId: 7n, blockNumber: 100n, blockHash: `0x${'1'.repeat(64)}`, rulesetId: 1n, reservedPercent: 8000, recipients: [{ address, percent: 300_000_000 }] }
+  }
   async function setInput(input: HTMLInputElement, value: string) {
     await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value); input.dispatchEvent(new Event('input', { bubbles: true })) })
   }
@@ -134,6 +148,7 @@ describe('INCOME transaction surfaces', () => {
         operator: { name: 'Local team', introduction: 'We operate the house.' },
       },
     })
+    runtime.operator = currentOperator()
     await act(async () => root.render(<IncomeProject chainId={1} projectId={7n} fundProjectId={fundProjectId} />))
     const queries = runtime.queries.mock.calls.map(([query]) => query)
     expect(queries.some(query => query.queryKey[0] === 'income-fund-binding' && query.queryKey[2] === '7' && query.enabled)).toBe(true)
@@ -141,7 +156,8 @@ describe('INCOME transaction surfaces', () => {
     expect(queries.some(query => query.queryKey[0] === 'fund-project' && query.queryKey[2] === '88' && query.enabled)).toBe(false)
     const owner = host.querySelector('section[aria-label="Owner introduction"]')!
     const operator = host.querySelector('section[aria-label="Operator introduction"]')!
-    expect(owner.textContent).toContain('Asset owners')
+    expect(owner.textContent).not.toContain('Asset owners')
+    expect(owner.textContent).not.toContain('We own this house.')
     expect(owner.querySelector('a')?.getAttribute('href')).toBe('/account/0x9999999999999999999999999999999999999999')
     expect(owner.textContent).not.toContain('0x8888888888888888888888888888888888888888')
     expect(operator.textContent).toContain('Local team')
@@ -157,8 +173,8 @@ describe('INCOME transaction surfaces', () => {
     runtime.details['unrelated-fund-uri'] = parseFundProjectMetadata({ name: 'Unrelated owners', homerun: { version: 1, kind: 'fund', setup: {}, owner: { name: 'Unrelated owners' } } })
     await act(async () => root.render(<IncomeProject chainId={1} projectId={7n} fundProjectId={3n} />))
     expect(runtime.queries.mock.calls.some(([query]) => query.queryKey[0] === 'fund-project' && query.enabled)).toBe(false)
-    const owner = host.querySelector('section[aria-label="Owner introduction"]')!
-    expect(owner.textContent).toContain('Address not specified')
+    const owner = host.querySelector(`section[aria-label="${discoveryError ? 'Current Owner' : 'Owner introduction'}"]`)!
+    expect(owner.textContent).toContain(discoveryError ? 'The current Owner could not be verified.' : 'Address not specified')
     expect(owner.querySelector('a')).toBeNull()
     expect(owner.textContent).not.toContain('Unrelated owners')
     if (discoveryError) expect(host.textContent).toContain('The FUND Owner and Operator details could not be refreshed.')
@@ -168,12 +184,48 @@ describe('INCOME transaction surfaces', () => {
     runtime.discoveredFund = 3n
     runtime.fund = { chainId: 1, projectId: 3n, owner: state().owner, knownOwnerWrapper: false, projectUri: '' } as FundProjectState
     await act(async () => root.render(<IncomeProject chainId={1} projectId={7n} fundProjectId={3n} />))
-    const owner = host.querySelector('section[aria-label="Owner introduction"]')!
-    expect(owner.textContent).toContain('Address not specified')
+    const owner = host.querySelector('section[aria-label="Current Owner"]')!
+    expect(owner.textContent).toContain('The current Owner could not be verified.')
     expect(owner.querySelector('a')).toBeNull()
   })
 
-  it('uses published roles when an INCOME URI contains Homerun metadata without a verified FUND', async () => {
+  it('hides the previous FUND Owner after a verified transfer until the FUND read reaches the confirmed block', async () => {
+    const original = '0x9999999999999999999999999999999999999999'
+    const replacement = '0x6666666666666666666666666666666666666666'
+    runtime.discoveredFund = 3n
+    runtime.fund = { chainId: 1, projectId: 3n, blockNumber: 100n, owner: original, knownOwnerWrapper: true, projectUri: 'fund-uri' } as FundProjectState
+    runtime.details['fund-uri'] = parseFundProjectMetadata({ name: 'House', homerun: { version: 1, kind: 'fund', setup: { ownerWallet: original }, owner: { name: 'Original trust', introduction: 'We hold the asset.' } } })
+    await render()
+    expect(host.querySelector('[aria-label="Owner introduction"]')?.textContent).toContain('Original trust')
+    runtime.fundConfirmedBlock = 101n
+    await act(async () => root.render(<IncomeProject chainId={1} projectId={7n} />))
+    const waiting = host.querySelector('[aria-label="Current Owner"]')!
+    expect(waiting.textContent).toContain('The current Owner could not be verified.')
+    expect(waiting.querySelector('a')).toBeNull()
+    expect(host.querySelector('[aria-label="Owner introduction"]')).toBeNull()
+    expect(host.querySelector('[data-testid="metadata-editor"] button')?.hasAttribute('disabled')).toBe(false)
+    expect(runtime.queries.mock.calls.some(([query]) => query.queryKey[0] === 'project-admin-confirmed-block' && query.queryKey[1] === 1 && query.queryKey[2] === '3' && query.enabled === false)).toBe(true)
+    runtime.fund = { ...runtime.fund!, blockNumber: 101n, owner: replacement }
+    await act(async () => root.render(<IncomeProject chainId={1} projectId={7n} />))
+    const owner = host.querySelector('[aria-label="Owner introduction"]')!
+    expect(owner.querySelector('a')?.textContent).toBe(replacement)
+    expect(owner.textContent).not.toContain('Original trust')
+    expect(owner.textContent).not.toContain('We hold the asset.')
+    expect(runtime.send).not.toHaveBeenCalled()
+  })
+
+  it('keeps the verified FUND Owner visible when only the separate INCOME project is behind its confirmed block', async () => {
+    const original = '0x9999999999999999999999999999999999999999'
+    runtime.discoveredFund = 3n
+    runtime.fund = { chainId: 1, projectId: 3n, blockNumber: 100n, owner: original, knownOwnerWrapper: true, projectUri: '' } as FundProjectState
+    runtime.confirmedBlock = 101n
+    await render()
+    expect(host.querySelector('[aria-label="Owner introduction"] a')?.textContent).toBe(original)
+    expect(host.querySelector('[aria-label="Current Owner"]')).toBeNull()
+    expect(host.querySelector('[data-testid="metadata-editor"] button')?.hasAttribute('disabled')).toBe(true)
+  })
+
+  it('uses the published Owner and verified current Operator when an INCOME URI contains Homerun metadata without a verified FUND', async () => {
     runtime.query = { ...runtime.query, data: { ...state(), projectUri: 'income-uri' } }
     runtime.details['income-uri'] = parseFundProjectMetadata({
       name: 'Published house', homerun: { version: 1, kind: 'fund',
@@ -181,6 +233,7 @@ describe('INCOME transaction surfaces', () => {
         owner: { name: 'Published owners' }, operator: { name: 'Published team' },
       },
     })
+    runtime.operator = currentOperator()
     await render()
     const owner = host.querySelector('section[aria-label="Owner introduction"]')!
     expect(owner.textContent).toContain('Published Owner wallet')
@@ -191,12 +244,92 @@ describe('INCOME transaction surfaces', () => {
   it('never substitutes revnet governance or the connected wallet for unpublished asset roles', async () => {
     await render()
     for (const role of ['Owner', 'Operator']) {
-      const profile = host.querySelector(`section[aria-label="${role} introduction"]`)!
-      expect(profile.textContent).toContain('Address not specified')
+      const profile = host.querySelector(`section[aria-label="${role === 'Owner' ? 'Owner introduction' : 'Current Operator'}"]`)!
+      expect(profile.textContent).toContain(role === 'Owner' ? 'Address not specified' : 'Reading the current Operator')
       expect(profile.querySelector('a')).toBeNull()
       expect(profile.textContent).not.toContain(runtime.address)
       expect(profile.textContent).not.toContain(state().owner)
     }
+  })
+
+  it('places INCOME details in Overview and control, permissions, and INCOME splits in their Owners tabs', async () => {
+    runtime.discoveredFund = 3n
+    runtime.fund = { chainId: 1, projectId: 3n, owner: '0x9999999999999999999999999999999999999999', knownOwnerWrapper: true, projectUri: 'fund-uri' } as FundProjectState
+    await render()
+    const metadata = host.querySelector<HTMLElement>('[data-testid="metadata-editor"]')!
+    expect(metadata.dataset.projectId).toBe('7')
+    expect(metadata.dataset.chainId).toBe('1')
+    expect(metadata.dataset.inheritedUri).toBe('fund-uri')
+    expect(metadata.textContent).toContain('Edit INCOME details')
+    expect(metadata.closest('[hidden]')).toBeNull()
+    await tab('Owners')
+    for (const [label, testId] of [['Control', 'ownership-editor'], ['Permissions', 'permissions-editor'], ['Splits', 'splits-editor']]) {
+      await tab(label)
+      const editor = host.querySelector<HTMLElement>(`[data-testid="${testId}"]`)!
+      expect(editor.dataset.chainId).toBe('1')
+      expect(editor.dataset.projectId).toBe('7')
+      expect(editor.closest('[hidden]')).toBeNull()
+      expect(editor.closest('[role="tabpanel"]')?.id).toContain(`panel-${label.toLowerCase()}`)
+      expect(editor.querySelector('button')?.disabled).toBe(false)
+      expect(metadata.closest('[hidden]')).not.toBeNull()
+    }
+    expect(host.querySelector<HTMLElement>('[data-testid="splits-editor"]')?.dataset.phase).toBe('income')
+    expect(host.querySelectorAll('[data-testid="splits-editor"]')).toHaveLength(1)
+    expect(runtime.send).not.toHaveBeenCalled()
+  })
+
+  it('disables every post-launch editor during failed or stale confirmed reads without replacing the panels', async () => {
+    await render(); await tab('Owners'); await tab('Control'); await tab('Permissions'); await tab('Splits')
+    const editors = ['metadata-editor', 'ownership-editor', 'permissions-editor', 'splits-editor'].map(id => host.querySelector<HTMLElement>(`[data-testid="${id}"]`)!)
+    for (const failed of [true, false]) {
+      runtime.query = { ...runtime.query, isError: failed, error: new Error('RPC offline') }
+      runtime.confirmedBlock = failed ? 0n : 101n
+      await act(async () => root.render(<IncomeProject chainId={1} projectId={7n} />))
+      for (const editor of editors) {
+        expect(document.body.contains(editor)).toBe(true)
+        expect(editor.querySelector('button')?.disabled).toBe(true)
+      }
+    }
+    expect(runtime.send).not.toHaveBeenCalled()
+  })
+
+  it('updates the public Operator after confirmed replacement without assigning the previous profile to the new wallet', async () => {
+    runtime.query = { ...runtime.query, data: { ...state(), projectUri: 'income-uri' } }
+    runtime.details['income-uri'] = parseFundProjectMetadata({ name: 'Current house', homerun: { version: 1, kind: 'fund', setup: { operatorWallet: '0x7777777777777777777777777777777777777777' }, operator: { name: 'Original hosts', introduction: 'We host this house.' } } })
+    runtime.operator = currentOperator()
+    await render()
+    expect(host.querySelector('[aria-label="Operator introduction"]')?.textContent).toContain('Original hosts')
+    runtime.confirmedBlock = 101n
+    await act(async () => root.render(<IncomeProject chainId={1} projectId={7n} />))
+    expect(host.querySelector('[aria-label="Current Operator"]')?.textContent).toContain('Waiting for the confirmed Operator update')
+    expect(host.querySelector('[aria-label="Operator introduction"]')).toBeNull()
+    runtime.operator = { ...currentOperator('0x6666666666666666666666666666666666666666'), blockNumber: 101n }
+    await act(async () => root.render(<IncomeProject chainId={1} projectId={7n} />))
+    const operator = host.querySelector('[aria-label="Operator introduction"]')!
+    expect(operator.querySelector('a')?.textContent).toBe('0x6666666666666666666666666666666666666666')
+    expect(operator.textContent).not.toContain('Original hosts')
+    expect(operator.textContent).not.toContain('We host this house.')
+    runtime.operatorError = true
+    await act(async () => root.render(<IncomeProject chainId={1} projectId={7n} />))
+    const unavailable = host.querySelector('[aria-label="Current Operator"]')!
+    expect(unavailable.textContent).toContain('The current Operator could not be verified')
+    expect(unavailable.querySelector('a')).toBeNull()
+  })
+
+  it('displays an updated INCOME introduction associated with the current wallet ahead of inherited FUND metadata', async () => {
+    const replacement = '0x6666666666666666666666666666666666666666'
+    runtime.discoveredFund = 3n
+    runtime.fund = { chainId: 1, projectId: 3n, owner: '0x9999999999999999999999999999999999999999', knownOwnerWrapper: true, projectUri: 'fund-uri' } as FundProjectState
+    runtime.query = { ...runtime.query, data: { ...state(), projectUri: 'income-uri' } }
+    runtime.details['fund-uri'] = parseFundProjectMetadata({ name: 'Original house', homerun: { version: 1, kind: 'fund', setup: { operatorWallet: '0x7777777777777777777777777777777777777777' }, operator: { name: 'Original hosts' } } })
+    runtime.details['income-uri'] = parseFundProjectMetadata({ name: 'Updated house', homerun: { version: 1, kind: 'fund', setup: { operatorWallet: replacement }, operator: { name: 'New hosts', introduction: 'We now operate the house.' } } })
+    runtime.operator = currentOperator(replacement)
+    await render()
+    const operator = host.querySelector('[aria-label="Operator introduction"]')!
+    expect(operator.textContent).toContain('New hosts')
+    expect(operator.textContent).toContain('We now operate the house.')
+    expect(operator.querySelector('a')?.textContent).toBe(replacement)
+    expect(operator.textContent).not.toContain('Original hosts')
   })
 
   it.each([undefined, 3n])('uses the INCOME project for the standalone shop with FUND connection %s', async (fundProjectId) => {

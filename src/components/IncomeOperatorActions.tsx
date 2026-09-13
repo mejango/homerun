@@ -2,12 +2,13 @@
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
-import { isAddress, isAddressEqual, zeroAddress, type Address, type PublicClient } from 'viem'
+import { isAddress, isAddressEqual, type Address, type PublicClient } from 'viem'
 import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { displayChainName, explorerTxUrl } from '@/lib/chainDisplay'
 import { assertSameIncomeOperatorSnapshot, buildIncomeOperatorTx, readIncomeOperatorSnapshot, verifyIncomeOperatorReceipt, type IncomeOperatorSnapshot } from '@/lib/income-operator'
 import type { IncomeProjectState } from '@/lib/income-state'
+import { isOperatorWallet, OPERATOR_BURN_ADDRESS, PROJECT_OPERATOR_PROFILE_QUERY } from '@/lib/project-operator-profile'
 
 function message(error: unknown) { return error instanceof Error ? error.message : 'The INCOME Operator could not be verified.' }
 
@@ -32,14 +33,16 @@ export function IncomeOperatorActions({ state, client }: { state: IncomeProjectS
     retry: 1, staleTime: Infinity,
   })
   useEffect(() => {
-    if (tx.phase !== 'success' || !tx.receipt || tx.safeProposalHash || refreshed.current === tx.receipt.transactionHash) return
+    if (tx.phase !== 'success' || !tx.receipt || tx.safeProposalHash || !verified.data || refreshed.current === tx.receipt.transactionHash) return
     refreshed.current = tx.receipt.transactionHash
-    for (const prefix of ['income-operator', 'income-project', 'income-reserved', 'income-sticky-binding', 'income-pay', 'income-cash-out', 'income-borrow']) void cache.invalidateQueries({ queryKey: [prefix, state.chainId, state.projectId.toString()] })
+    const confirmedBlock = tx.receipt.blockNumber
+    cache.setQueryData<bigint>(['project-admin-confirmed-block', state.chainId, state.projectId.toString()], previous => previous !== undefined && previous > confirmedBlock ? previous : confirmedBlock)
+    for (const prefix of [PROJECT_OPERATOR_PROFILE_QUERY, 'income-operator', 'income-project', 'income-reserved', 'income-sticky-binding', 'income-pay', 'income-cash-out', 'income-borrow']) void cache.invalidateQueries({ queryKey: [prefix, state.chainId, state.projectId.toString()] })
     for (const prefix of ['sticky-project', 'sticky-rewards']) void cache.invalidateQueries({ queryKey: [prefix, state.chainId] })
-  }, [cache, state.chainId, state.projectId, tx.phase, tx.receipt, tx.safeProposalHash])
+  }, [cache, state.chainId, state.projectId, tx.phase, tx.receipt, tx.safeProposalHash, verified.data])
 
   const snapshot = query.data
-  const validRecipient = isAddress(recipient.trim()) && !isAddressEqual(recipient.trim() as Address, zeroAddress)
+  const validRecipient = isAddress(recipient.trim()) && isOperatorWallet(recipient.trim() as Address)
   const configured = snapshot?.stages.filter(stage => stage.operatorIndex !== null) ?? []
   const remaining = configured.filter(stage => !validRecipient || !isAddressEqual(stage.splits[stage.operatorIndex!].beneficiary, recipient.trim() as Address))
   const nextStage = remaining[0]
@@ -80,7 +83,7 @@ export function IncomeOperatorActions({ state, client }: { state: IncomeProjectS
     {query.isError && <p className="mt-4 text-sm" role="alert">{message(query.error)} <button type="button" className="underline" onClick={() => void query.refetch()}>Retry</button></p>}
     {snapshot && (!snapshot.isOwner || !accountMatches) && <p className="mt-4 text-sm">Connect the current Owner wallet to change the INCOME Operator. Receiving the Operator split does not grant Owner authority.</p>}
     <label className="mt-5 grid gap-2 text-sm">New Operator wallet<input className="min-h-12 w-full rounded border border-[#bfc9b5] bg-white px-3 text-base" value={recipient} onChange={event => setRecipient(event.target.value)} autoComplete="off" spellCheck={false} disabled={busy} placeholder="0x…" /></label>
-    {recipient.trim() && !validRecipient && <p className="mt-2 text-sm text-red-800">Enter a valid, nonzero wallet address.</p>}
+    {recipient.trim() && !validRecipient && <p className="mt-2 text-sm text-red-800">{isAddress(recipient.trim()) && isAddressEqual(recipient.trim() as Address, OPERATOR_BURN_ADDRESS) ? 'The burn address cannot be used as an Operator wallet.' : 'Enter a valid, nonzero wallet address.'}</p>}
     {locked && <p className="mt-4 text-sm" role="alert">This existing Operator split is locked onchain. It cannot be changed before its lock expires. New INCOME launches use unlocked splits.</p>}
     {validRecipient && configured.length > 0 && remaining.length === 0 && !query.isError && <p className="mt-4 text-sm" role="status">All current and upcoming Operator splits on {displayChainName(state.chainId)} pay this wallet.</p>}
     {validRecipient && remaining.length > 1 && <p className="mt-4 text-sm">{remaining.length} stages still need updating. Confirm each stage to keep this Operator when the next stage begins.</p>}

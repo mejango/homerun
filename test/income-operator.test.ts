@@ -3,6 +3,7 @@ import { RESERVED_TOKEN_SPLIT_GROUP_ID, v6Address } from '@bananapus/nana-sdk-co
 import { decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodeFunctionData, getAbiItem, parseAbi, zeroAddress, type AbiEvent, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { IncomeProjectState } from '../src/lib/income-state'
+import { OPERATOR_BURN_ADDRESS } from '../src/lib/project-operator-profile'
 
 const runtime = vi.hoisted(() => ({ readState: vi.fn() }))
 vi.mock('../src/lib/income-state', () => ({ readIncomeProjectState: runtime.readState }))
@@ -83,7 +84,7 @@ describe('INCOME Operator split preparation', () => {
     expect(request).not.toHaveProperty('value')
     expect(reviewed).toEqual(before)
   })
-  it.each(['', 'operator.eth', '0x1234', zeroAddress])('rejects an invalid or zero recipient %s', recipient => {
+  it.each(['', 'operator.eth', '0x1234', zeroAddress, OPERATOR_BURN_ADDRESS])('rejects an invalid, zero, or burn recipient %s', recipient => {
     expect(() => buildIncomeOperatorTx(snapshot(), 90n, recipient)).toThrow()
   })
   it('requires a connected Owner and a real change to a known editable stage', () => {
@@ -133,6 +134,11 @@ describe('INCOME Operator split preparation', () => {
       stage.splits[0] = { ...stage.splits[0], hook: HOOK }
       stage.splits[1] = { ...stage.splits[1], beneficiary: zeroAddress }
     }
+    expect((await readIncomeOperatorSnapshot(f.rpc, { chainId: 1, projectId: 7n, account: OWNER })).stages.every(stage => stage.operatorIndex === null)).toBe(true)
+  })
+  it('does not offer reserved-token burn rows for Operator replacement', async () => {
+    const f = fixture()
+    for (const stage of f.reviewed.stages) stage.splits[1] = { ...stage.splits[1], beneficiary: OPERATOR_BURN_ADDRESS }
     expect((await readIncomeOperatorSnapshot(f.rpc, { chainId: 1, projectId: 7n, account: OWNER })).stages.every(stage => stage.operatorIndex === null)).toBe(true)
   })
   it('rejects invalid percentages before enabling a split edit', async () => {

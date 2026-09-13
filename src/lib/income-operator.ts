@@ -2,6 +2,7 @@ import { jbControllerAbi, jbSplitsAbi, type JBChainId } from '@bananapus/nana-sd
 import { buildSetSplitGroupsTx, RESERVED_TOKEN_SPLIT_GROUP_ID, v6Address } from '@bananapus/nana-sdk-core/v6'
 import { decodeEventLog, decodeFunctionData, encodeFunctionData, getAddress, isAddress, isAddressEqual, parseAbi, zeroAddress, type Address, type ContractFunctionReturnType, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import { readIncomeProjectState } from './income-state'
+import { isOperatorWallet, OPERATOR_BURN_ADDRESS } from './project-operator-profile'
 
 type Splits = ContractFunctionReturnType<typeof jbSplitsAbi, 'view', 'splitsOf'>
 export type IncomeOperatorStage = { rulesetId: bigint; start: bigint; isCurrent: boolean; splits: Splits; operatorIndex: number | null }
@@ -46,7 +47,7 @@ export async function readIncomeOperatorSnapshot(client: PublicClient, input: { 
     const rulesetId = BigInt(ruleset.id)
     const splits = await client.readContract({ address: v6Address('JBSplits', input.chainId), abi: jbSplitsAbi, functionName: 'splitsOf', args: [input.projectId, rulesetId, RESERVED_TOKEN_SPLIT_GROUP_ID], ...at })
     if (splits.some(split => !Number.isInteger(split.percent) || split.percent <= 0) || splits.reduce((sum, split) => sum + split.percent, 0) > 1_000_000_000) throw new Error('The INCOME split percentages are inconsistent.')
-    const direct = splits.flatMap((split, index) => split.projectId === 0n && isAddressEqual(split.hook, zeroAddress) && !isAddressEqual(split.beneficiary, zeroAddress) ? [index] : [])
+    const direct = splits.flatMap((split, index) => split.projectId === 0n && isAddressEqual(split.hook, zeroAddress) && isOperatorWallet(split.beneficiary) ? [index] : [])
     if (direct.length > 1) throw new Error('This INCOME stage has multiple direct recipients. Its Operator cannot be identified safely.')
     return { rulesetId, start: BigInt(ruleset.start), isCurrent: rulesetId === currentRulesetId, splits, operatorIndex: direct[0] ?? null }
   }))
@@ -58,6 +59,7 @@ export async function readIncomeOperatorSnapshot(client: PublicClient, input: { 
 export function buildIncomeOperatorTx(snapshot: IncomeOperatorSnapshot, rulesetId: bigint, recipient: string) {
   if (!snapshot.isOwner || !snapshot.account) throw new Error('Connect the current Owner wallet to change the INCOME Operator.')
   if (!isAddress(recipient) || isAddressEqual(recipient, zeroAddress)) throw new Error('Enter a valid, nonzero Operator wallet address.')
+  if (isAddressEqual(recipient, OPERATOR_BURN_ADDRESS)) throw new Error('The burn address cannot be used as an Operator wallet.')
   const stage = snapshot.stages.find(item => item.rulesetId === rulesetId)
   if (!stage || stage.operatorIndex === null) throw new Error('This INCOME stage has no Operator token split to change.')
   const existing = stage.splits[stage.operatorIndex]
