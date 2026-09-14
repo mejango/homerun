@@ -49,6 +49,13 @@ function directQuote(): DirectPaySwapQuote {
 beforeEach(() => { mocks.direct.mockReset(); mocks.direct.mockResolvedValue(null) })
 
 describe('project payment quote parity', () => {
+  it('keeps the Center profile on its direct terminal even when a router or market quotes more tokens', async () => {
+    const f = fixture(); f.metadata.dataHook = REV_OWNER; f.metadata.useDataHookForPay = true
+    f.options.router = [f.ruleset, 120n, 1n, []]; mocks.direct.mockResolvedValue(directQuote())
+    expect(await prepareProjectPayQuote(f.rpc, { ...input, directTerminalOnly: true })).toMatchObject({ kind: 'pay', terminal: MULTI, minimumTokenCount: 99n })
+    expect(mocks.direct).not.toHaveBeenCalled()
+    expect(f.client.readContract.mock.calls.filter(([request]) => request.functionName === 'previewPayFor')).toHaveLength(1)
+  })
   it('compares both listed terminal previews at one block and applies one protected minimum', async () => {
     const f = fixture()
     const result = await prepareProjectPayQuote(f.rpc, input)

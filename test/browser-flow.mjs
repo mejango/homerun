@@ -147,7 +147,9 @@ async function paymentShare(expected) {
   await expect(page.locator('#pay-result-share')).toHaveText(label);
   const segment = page.locator('.demo-payment-result [data-payment-segment=payer]');
   const length = await segment.evaluate(path => path.getTotalLength());
-  assert.ok(Math.abs(length / (2 * Math.PI * 40) * 100 - expected) < 0.01, 'The rendered arc matches the ownership fraction within browser path-length precision.');
+  // Chrome approximates curved path lengths. Check within one tenth of a viewBox
+  // pixel; the exact displayed ownership percentage is asserted separately above.
+  assert.ok(Math.abs(length - 2 * Math.PI * 40 * expected / 100) < 0.1, 'The rendered arc matches the ownership fraction within browser path-length precision.');
 }
 async function dismiss(id) {
   await page.keyboard.press("Escape");
@@ -769,7 +771,7 @@ try {
   );
   await check('Saved local previews keep prospective payments separate from their displayed raise', async () => {
     const id = '3f1b300a-1e01-4cb4-a0aa-711ec3c9fd50';
-    const entry = { id, createdAt: new Date().toISOString(), values: { ...CREATE_DEFAULTS, name: 'Neighborhood equipment', assetType: 'equipment', operatorWallet: '0x1111111111111111111111111111111111111111' } };
+    const entry = { id, createdAt: new Date().toISOString(), values: { ...CREATE_DEFAULTS, name: 'Neighborhood equipment', assetType: 'equipment', ownerMode: 'existing', ownerWallet: '0x1111111111111111111111111111111111111111', ownerIsOperator: true } };
     await page.evaluate(({ key, value }) => localStorage.setItem(key, JSON.stringify([value])), { key: CREATED_PROJECTS_KEY, value: entry });
     await page.goto(new URL(`/project?id=${id}`, base).href);
     await expect(page.locator('.simulator')).toHaveAttribute('data-ready', 'true', { timeout: 120_000 });

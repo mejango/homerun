@@ -11,6 +11,8 @@ import { quoteDirectPaySwap, type DirectPaySwapQuote } from '@bananapus/nana-sdk
 import { erc20Abi, isAddress, isAddressEqual, zeroAddress, type Address, type PublicClient } from 'viem'
 
 export type ProjectPayQuoteInput = {
+  /** Current Center passkey profile supports exact direct terminal payments only. */
+  directTerminalOnly?: boolean
   chainId: JBChainId
   projectId: bigint
   token: Address
@@ -112,7 +114,7 @@ export async function prepareProjectPayQuote(client: PublicClient, input: Projec
     client.getBlock({ blockNumber }),
   ])
   if (!same(controller, v6Address('JBController', chainId))) throw new Error('The payment controller is not the supported Juicebox V6 controller.')
-  const candidates = [multi, registry].filter((address): address is Address => !!address && terminals.some(listed => same(listed, address)))
+  const candidates = (input.directTerminalOnly ? [multi] : [multi, registry]).filter((address): address is Address => !!address && terminals.some(listed => same(listed, address)))
   if (!candidates.some(address => same(address, terminal))) throw new Error('The selected payment terminal is no longer listed for this project.')
   const [ruleset, metadata] = await snapshot.readContract({ address: controller, abi: jbControllerAbi, functionName: 'currentRulesetOf', args: [projectId] })
   if (BigInt(ruleset.id) === 0n || BigInt(ruleset.start) > block.timestamp) throw new Error('The project’s payment rules have not started.')
@@ -148,7 +150,7 @@ export async function prepareProjectPayQuote(client: PublicClient, input: Projec
   } else if (same(dataHook, concreteHook)) hook = dataHook
 
   let swapQuote: DirectPaySwapQuote | undefined
-  if (hook && uniswapV4Deployment(chainId)?.universalRouter) {
+  if (!input.directTerminalOnly && hook && uniswapV4Deployment(chainId)?.universalRouter) {
     const [contexts, projectToken] = await Promise.all([
       snapshot.readContract({ address: multi, abi: jbMultiTerminalAbi, functionName: 'accountingContextsOf', args: [projectId] }),
       snapshot.readContract({ address: v6Address('JBTokens', chainId), abi: jbTokensAbi, functionName: 'tokenOf', args: [projectId] }),

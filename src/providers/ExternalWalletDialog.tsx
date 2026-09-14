@@ -1,11 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ModalShell } from '@/components/ui/ModalShell'
 import { WalletFallbackMark } from '@/components/BrandMarks'
 import { useWallet } from '@/hooks/useWallet'
 import { useMobileWallet } from '@/hooks/useMobileWallet'
 import { mobileWalletLinks } from '@/lib/walletLinks'
+import { CENTER_WALLET_ENABLED } from './wallet-config'
 
 /** External wallets remain usable when embedded authentication is not configured.
  * The connector, QR pairing, and account state are still the shared Wagmi stack. */
@@ -16,6 +17,9 @@ export function ExternalWalletDialog({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null)
   const [pairingUri, setPairingUri] = useState<string | null>(null)
   const [pairingQr, setPairingQr] = useState<string | null>(null)
+  const connection = useRef<AbortController | null>(null)
+  const close = () => { connection.current?.abort(); onClose() }
+  useEffect(() => () => connection.current?.abort(), [])
 
   useEffect(() => {
     if (isConnected) onClose()
@@ -55,13 +59,25 @@ export function ExternalWalletDialog({ onClose }: { onClose: () => void }) {
     }
   }
 
+  const connectCenter = async () => {
+    if (connection.current && !connection.current.signal.aborted) return
+    const attempt = new AbortController(); connection.current = attempt
+    setPending('juicebox-center'); setError(null)
+    try { await (await import('./center-runtime')).beginCenterConnection(attempt.signal) }
+    catch (cause) { if (!attempt.signal.aborted) { setError(cause instanceof Error ? cause.message : 'Your Juicebox wallet could not connect. Try again.'); setPending(null) } }
+    finally { if (connection.current === attempt) connection.current = null }
+  }
   const framed = typeof window !== 'undefined' && window.self !== window.top
   const available = connectors.filter(connector => connector.id !== 'safe' || framed)
 
   return (
-    <ModalShell title="Connect your wallet" onClose={onClose} maxWidth="max-w-md">
-      <p className="text-sm text-smoke-700">Choose a wallet to review and sign transactions.</p>
+    <ModalShell title="Connect your wallet" onClose={close} maxWidth="max-w-md">
+      <p className="text-sm text-smoke-700">Choose your wallet.</p>
       <div className="mt-4 grid gap-2">
+        {CENTER_WALLET_ENABLED ? <button type="button" onClick={() => void connectCenter()} disabled={pending !== null}
+          aria-busy={pending === 'juicebox-center'} className="btn-primary min-h-11 px-4 py-3 text-left text-sm">
+          {pending === 'juicebox-center' ? 'Opening Juicebox wallet…' : 'Continue with a passkey'}
+        </button> : null}
         {available.map(connector => (
           <button
             type="button"

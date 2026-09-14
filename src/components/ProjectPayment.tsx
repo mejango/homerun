@@ -18,6 +18,13 @@ import { explorerTxUrl } from '@/lib/chainDisplay'
 import { parseAmount } from '@/lib/fund-contracts'
 import { prepareProjectPayQuote, readProjectPayTokenOptions } from '@/lib/project-pay-quote'
 import { swapDeadline } from '@/lib/safe-connector'
+import dynamic from 'next/dynamic'
+
+const CenterProjectPayment = dynamic(() => import('./CenterProjectPayment'))
+export function ProjectPayment(props: Parameters<typeof ExternalProjectPayment>[0]) {
+  const { isCenterWallet } = useWallet()
+  return isCenterWallet ? <CenterProjectPayment {...props} /> : <ExternalProjectPayment {...props} />
+}
 
 type PaymentTx = ReturnType<typeof useSafeTx>
 type PaymentContext = { token: Address; terminal: Address; decimals: number; symbol: string }
@@ -50,7 +57,7 @@ async function paymentReceipt(client: PublicClient, hash: Hex) {
 
 /** FUND and INCOME share the reference clients' pay / direct-AMM execution
  * pipeline. The parent retains project-specific contract identity checks. */
-export function ProjectPayment({ chainId, projectId, tokenLabel, title, context: accountingContext, paused, reservedPercent, rulesetId, verify, chainSelector, onBusyChange }: {
+function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context: accountingContext, paused, reservedPercent, rulesetId, verify, chainSelector, onBusyChange }: {
   chainSelector?: ReactNode; onBusyChange?: (busy: boolean) => void
   chainId: JBChainId; projectId: bigint; tokenLabel: 'FUND' | 'INCOME'; title: string
   context: PaymentContext; paused: boolean; reservedPercent: number; rulesetId: string

@@ -3,9 +3,8 @@
 import type { CreateConnectorFn } from 'wagmi'
 import { lazyConnector, wasRecentConnector } from './lazy-connector'
 
-// Deliberately not imported from para-config: a static import there pulls
-// Para's SDK into the eagerly-loaded providers chunk, which is exactly what
-// lazyParaConnector exists to prevent.
+// Keep external wallet configuration independent of the lazy Center client.
+
 const APP = {
   name: 'Homerun',
   description: "Run your homes' investments and revenues.",

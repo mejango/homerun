@@ -16,7 +16,7 @@ type Listable = { id: string; name: string; icon?: string | undefined; type?: st
  * only a discovered provider carries an icon.
  */
 export function offerableWallets<T extends Listable>(connectors: readonly T[]): T[] {
-  const external = connectors.filter((connector) => connector.id !== 'para');
+  const external = connectors.filter((connector) => !['para', 'juicebox-center'].includes(connector.id));
   const hasDiscoveredInjected = external.some(
     (connector) => connector.id !== 'injected' && (connector.type === 'injected' || !!connector.icon),
   );

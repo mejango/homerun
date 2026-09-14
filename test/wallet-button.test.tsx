@@ -17,7 +17,7 @@ const runtime = vi.hoisted(() => ({
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({
   ...runtime.wallet, disconnect: runtime.disconnect, openSignIn: runtime.openSignIn,
 }) }))
-vi.mock('@/providers/preload-para', () => ({ preloadParaHost: runtime.preload }))
+vi.mock('@/providers/preload-center', () => ({ preloadCenterWallet: runtime.preload }))
 vi.mock('@/providers/Providers', () => ({ IS_DETERMINISTIC_BROWSER: false }))
 vi.mock('wagmi', () => ({ useEnsName: (query: unknown) => {
   runtime.ensQuery(query)
@@ -183,7 +183,7 @@ describe('signed-in account menu', () => {
     expect(trigger()).toBeNull()
   })
 
-  it('preserves direct sign-in and Para preload on pointer, keyboard, and touch', async () => {
+  it('preserves direct sign-in and Center preload on pointer, keyboard, and touch', async () => {
     runtime.wallet = { address: undefined, isConnected: false }
     await render()
     const signIn = host.querySelector('button')!

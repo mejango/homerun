@@ -117,7 +117,7 @@ function friendlyTxError(e: unknown): string {
  * 2. Phases drive the caller's UI; `error` carries a friendly message.
  */
 export function useSafeTx(chainId: number) {
-  const { isConnected, address } = useWallet()
+  const { isConnected, address, isCenterWallet } = useWallet()
   const publicClient = usePublicClient({ chainId })
   const { writeContractAsync } = useWriteContract()
   const { switchChainAsync } = useSwitchChain()
@@ -237,6 +237,11 @@ export function useSafeTx(chainId: number) {
       options?: TxSendOptions,
     ) => {
       if (inFlightRef.current) return null
+      if (isCenterWallet) {
+        setError('This action needs an external wallet. Juicebox wallet payments use their own payment review.')
+        setPhase('error')
+        return null
+      }
       if (getViewAs()) {
         setError(VIEW_AS_WRITE_BLOCKED)
         setPhase('error')
@@ -331,7 +336,7 @@ export function useSafeTx(chainId: number) {
         return null
       }
     },
-    [isConnected, address, publicClient, switchChainAsync, writeContractAsync],
+    [isConnected, address, isCenterWallet, publicClient, switchChainAsync, writeContractAsync],
   )
 
   const reset = useCallback(() => {

@@ -1,14 +1,16 @@
-import { describe, expect, it, vi } from 'vitest'
-
-describe('optional Para configuration', () => {
-  it.each(['', 'placeholder', ' PLACEHOLDER '])('uses external wallets for %j', async key => {
-    vi.resetModules()
-    vi.stubEnv('NEXT_PUBLIC_PARA_API_KEY', key)
-    expect((await import('../src/providers/wallet-config')).PARA_AUTH_ENABLED).toBe(false)
+import { describe, expect, it } from 'vitest'
+import { centerWalletConfiguration } from '@/providers/wallet-config'
+const configured = { enabled: 'true', manifestId: 'reviewed-base-passkey', manifestRevision: '0x' + '11'.repeat(32), maximumNetworkFee: '100000000000000' }
+describe('optional Center configuration', () => {
+  it('requires explicit activation and every reviewed pin', () => {
+    expect(centerWalletConfiguration({})).toBeNull()
+    expect(centerWalletConfiguration(configured)?.issuer).toBe('https://wallet.juicebox.center')
+    for (const change of [{ enabled: 'false' }, { manifestId: '' }, { manifestRevision: '0x' + '00'.repeat(32) }, { maximumNetworkFee: '0' }, { maximumNetworkFee: String(2n ** 256n) }, { issuer: 'ftp://localhost' }, { issuer: 'https://juicebox.center' }])
+      expect(centerWalletConfiguration({ ...configured, ...change })).toBeNull()
   })
-  it('enables Para when a non-placeholder key is configured', async () => {
-    vi.resetModules()
-    vi.stubEnv('NEXT_PUBLIC_PARA_API_KEY', 'configured-app-key')
-    expect((await import('../src/providers/wallet-config')).PARA_AUTH_ENABLED).toBe(true)
+  it('allows configured loopback test origins without trusting callbacks as configuration', () => {
+    expect(centerWalletConfiguration({ ...configured, issuer: 'http://localhost:4200', audience: 'http://localhost:4300' })?.issuer).toBe('http://localhost:4200')
+    for (const issuer of ['http://evil.example', 'https://wallet.juicebox.center/', 'https://wallet.juicebox.center/path', 'https://user:password@wallet.juicebox.center'])
+      expect(centerWalletConfiguration({ ...configured, issuer })).toBeNull()
   })
 })
