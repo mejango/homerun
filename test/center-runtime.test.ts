@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-const runtime = vi.hoisted(() => ({ prepare: vi.fn(), pending: vi.fn(), assign: vi.fn() }))
+const runtime = vi.hoisted(() => ({ prepare: vi.fn(), pending: vi.fn(), assign: vi.fn(), launch: vi.fn() }))
 vi.mock('@juicebox/center-client', () => ({ createCenterWalletClient: () => ({
   prepareConnection: runtime.prepare, payments: () => ({ pendingPayment: runtime.pending }),
 }) }))
@@ -17,9 +17,15 @@ describe('Center handoff continuation', () => {
     runtime.prepare.mockReturnValue(new Promise(complete => { resolve = complete }))
     const { beginCenterConnection, originalCenterPage } = await import('@/providers/center-runtime')
     const controller = new AbortController(), attempt = beginCenterConnection(controller.signal)
-    controller.abort(); resolve({ authorizationUrl: 'https://wallet.juicebox.center/wallet?intent=original' })
+    controller.abort(); resolve({ authorizationUrl: 'https://wallet.juicebox.center/wallet?intent=original', launch: runtime.launch })
     await expect(attempt).rejects.toThrow()
-    expect(runtime.assign).not.toHaveBeenCalled(); expect(originalCenterPage()).toBe('/project/8453/7')
+    expect(runtime.assign).not.toHaveBeenCalled();expect(runtime.launch).not.toHaveBeenCalled(); expect(originalCenterPage()).toBe('/project/8453/7')
+  })
+  it('uses the signed form launch after preserving the original return path',async()=>{
+    runtime.prepare.mockResolvedValue({authorizationUrl:'https://wallet.juicebox.center/wallet?intent=original',launch:runtime.launch})
+    const {beginCenterConnection,originalCenterPage}=await import('@/providers/center-runtime')
+    await beginCenterConnection()
+    expect(originalCenterPage()).toBe('/project/8453/7');expect(runtime.launch).toHaveBeenCalledTimes(1);expect(runtime.assign).not.toHaveBeenCalled()
   })
   it('keeps an existing payment and refuses handoff when its original path cannot be preserved', async () => {
     const { beginCenterConnection } = await import('@/providers/center-runtime')

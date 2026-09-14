@@ -19,6 +19,6 @@ export async function beginCenterConnection(signal?: AbortSignal) {
   // Closing the wallet chooser never causes a delayed redirect. Keep the SDK's
   // original handoff so reopening can resume it with its existing identifiers.
   signal?.throwIfAborted()
-  window.location.assign(prepared.authorizationUrl)
+  prepared.launch()
 }
 export function originalCenterPage() { return centerReturnPath(window.sessionStorage.getItem(returnKey) ?? '/') }

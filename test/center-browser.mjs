@@ -14,7 +14,7 @@ const page = await context.newPage(), errors = []
 page.on('pageerror', error => errors.push(error.name))
 page.setDefaultTimeout(15000)
 const intentId = randomBytes(32).toString('base64url'), code = randomBytes(32).toString('base64url')
-let request, originalExchange, grant, exchanges = 0, held, release
+let request, originalExchange, grant, exchanges = 0, launches = 0, held, release
 const prepared = new Promise(resolve => { held = resolve })
 const continuing = new Promise(resolve => { release = resolve })
 const cors = { 'access-control-allow-origin': base, 'access-control-allow-headers': 'content-type,x-center-wallet-request',
@@ -40,6 +40,16 @@ await context.route(issuer + '/**', async route => {
     callback.searchParams.set('code', code); callback.searchParams.set('state', request.state); callback.searchParams.set('iss', issuer)
     return route.fulfill({ contentType: 'text/html', body: `<h1>Modeled Center approval</h1><a href="${callback.href.replaceAll('&', '&amp;')}">Return to Homerun</a>` })
   }
+  if (url.pathname === '/wallet/launch') {
+    assert.equal(http.method(), 'POST');assert.equal(http.headers().origin, base)
+    assert.equal(http.isNavigationRequest(), true);assert.equal(http.resourceType(), 'document')
+    const form = new URLSearchParams(http.postData())
+    assert.deepEqual([...form.keys()].sort(), ['intentId', 'signature']);assert.equal(form.get('intentId'), intentId)
+    assert.match(form.get('signature'), /^0x[0-9a-f]{130}$/);launches++
+    // Use a new navigation to keep the modeled issuer entirely intercepted;
+    // Playwright routes only the first request in an HTTP redirect chain.
+    return route.fulfill({contentType:'text/html',body:'<script>location.replace('+JSON.stringify(issuer+'/wallet?intent='+intentId)+')</script>'})
+  }
   if (url.pathname === '/wallet/handoff/exchange') {
     assert.equal(http.headers().cookie, undefined)
     assert.equal(page.url(), base + '/center/callback', 'callback secrets are scrubbed before exchange')
@@ -62,7 +72,7 @@ await context.route(issuer + '/**', async route => {
 try {
   const callback = await context.request.get(base + '/center/callback')
   assert.equal(callback.headers()['cache-control'], 'no-store')
-  assert.equal(callback.headers()['referrer-policy'], 'no-referrer')
+  assert.equal(callback.headers()['referrer-policy'], 'strict-origin')
   await page.goto(base + '/founderhaus')
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   await page.getByRole('button', { name: 'Continue with a passkey' }).click()
@@ -80,6 +90,7 @@ try {
   await expect(page).toHaveURL(base + '/founderhaus')
   await expect(page.getByRole('button', { name: /^Signed in as/ })).toBeVisible()
   assert.equal(exchanges, 2)
+  assert.equal(launches, 1)
   await page.reload()
   await expect(page.getByRole('button', { name: /^Signed in as/ })).toBeVisible()
   const account = await page.evaluate(() => JSON.parse(sessionStorage.getItem(Object.keys(sessionStorage).find(key => key.startsWith('center.wallet.connection.v1:')))).grant.accountId)
@@ -93,6 +104,6 @@ try {
   await page.screenshot({ path: 'test-results/center-wallet/homerun.png', fullPage: true })
   await writeFile('test-results/center-wallet/summary.json', JSON.stringify({ passed: true, browser: browser.version(),
     evidence: 'real Next app and packaged SDK; modeled Center responses', delayedRedirectCancelled: true,
-    originalExchangeRecovered: true, callbackScrubbed: true, reloadRestored: true, disconnectCleared: true, exchanges, pageErrors: errors }, null, 2))
+    originalExchangeRecovered: true, callbackScrubbed: true, reloadRestored: true, disconnectCleared: true, signedFormLaunch: true, launches, exchanges, pageErrors: errors }, null, 2))
   console.log('PASS enabled Homerun: chooser cancellation, SDK handoff, callback scrubbing, exact retry, original-page restoration, reload and disconnect')
 } finally { await browser.close() }

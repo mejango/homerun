@@ -14,7 +14,7 @@ const config: NextConfig = {
     { source: '/founderhause/index.html', destination: '/founderhaus', permanent: true },
   ] },
   async headers() { return [
-    { source: '/center/callback', headers: [{ key: 'Cache-Control', value: 'no-store' }, { key: 'Referrer-Policy', value: 'no-referrer' }] },
+    { source: '/center/callback', headers: [{ key: 'Cache-Control', value: 'no-store' }, { key: 'Referrer-Policy', value: 'strict-origin' }] },
     { source: '/:path*', headers: [{ key: 'X-Content-Type-Options', value: 'nosniff' }] },
     // Safe reads this public manifest before opening a custom app in its frame.
     { source: '/manifest.json', headers: [{ key: 'Access-Control-Allow-Origin', value: '*' }] },
