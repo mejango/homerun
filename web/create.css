@@ -279,7 +279,7 @@
 .create-multisig-owner { margin-bottom: 10px; }
 .create-multisig-owner:last-child { margin-bottom: 0; }
 .create-multisig-add { padding-top: 0; }
-.create-help-link { padding: 0; font-size: inherit; line-height: inherit; }
+.create-help-link { padding: 0; font: inherit; color: inherit; text-decoration: underline; }
 .create-multisig-policy label { display: block; font-size: .82rem; margin-bottom: 5px; }
 .create-multisig-address { display: flex; align-items: center; gap: 8px; }
 .create-multisig-address input { flex: 1; min-width: 0; width: 100%; }
