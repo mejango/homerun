@@ -330,6 +330,8 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
         {field(`${role}Wallet`, `${role === 'owner' ? 'Owner' : 'Operator'} address`, { placeholder: '0x…', maxLength: 42 })}
         <button type="button" className="quiet-button" onClick={() => update(mode, 'create')}>Create a new multisig</button>
       </> : <>
+        <p className="create-help">The {role} is made up of addresses that need to agree on decisions.</p>
+        <button type="button" className="quiet-button" onClick={() => update(mode, 'existing')}>Already have a multisig?</button>
         <div id={`create-${signers}`} tabIndex={-1}>
           {owners.map((owner, index) => <div className="create-multisig-owner" key={index}>
             <div className="create-multisig-address create-input"><input id={`create-${signers}-${index}`} aria-label={`${role === 'owner' ? 'Owner' : 'Operator'} multisig signer ${index + 1}`} type="text" value={owner} placeholder="0x…" maxLength={42} autoComplete="off" aria-invalid={!!errors[signers]} aria-describedby={issue ? `${role}-multisig-error` : undefined} onChange={event => update(signers, owners.map((value, i) => i === index ? event.target.value : value))} />
@@ -340,7 +342,6 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
         {owners.length < 20 && <button type="button" className="quiet-button" onClick={() => update(signers, [...owners, ''])}>+ Add owner</button>}
         <div className="create-multisig-policy create-field"><label htmlFor={`create-${threshold}`}>Approval policy</label><select id={`create-${threshold}`} value={String(raw[threshold])} onChange={event => update(threshold, Number(event.target.value))} aria-invalid={!!errors[threshold]}>{owners.map((_, index) => <option key={index} value={index + 1}>{index + 1} of {owners.length}</option>)}</select><span>{String(raw[threshold])}/{owners.length} owners must approve</span></div>
         {issue && <p role="alert" className="create-error" id={`${role}-multisig-error`}>{issue}</p>}
-        <button type="button" className="quiet-button" onClick={() => update(mode, 'existing')}>Already have a multisig?</button>
       </>}
     </div>;
   };
@@ -384,7 +385,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
                 <ul className="create-help create-role-description">
                   <li>The owner is the address that owns the asset and process.</li>
                   <li>The owner can administrate the fundraise and reallocate operator revenue splits.</li>
-                  {raw.ownerMode === 'create' && <li>The owner is made up of addresses that need to agree on decisions.</li>}
+                  <li>The owner can replace the operator at any time.</li>
                 </ul>
                 {multisig('owner')}
                 <p className="create-help">Owns FUND, receives the success allocation, and controls INCOME. The Owner can change the Operator and how revenue split tokens are allocated.</p>
@@ -403,10 +404,9 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
                 <ul className="create-help create-role-description">
                   <li>The operator is the current entity that runs the show day to day.</li>
                   <li>The operator owns the initial cash reserve and receives revenue split tokens. The owner can replace this recipient.</li>
-                  {!raw.ownerIsOperator && raw.operatorMode === 'create' && <li>The operator is made up of addresses that need to agree on decisions.</li>}
                 </ul>
-                <label className="create-owner-operator"><input type="checkbox" checked={raw.ownerIsOperator === true} onChange={event => update('ownerIsOperator', event.target.checked)} /> Owner is also operator</label>
-                {!raw.ownerIsOperator && multisig('operator')}
+                <label className="create-owner-operator"><input type="checkbox" checked={raw.ownerIsOperator === true} onChange={event => update('ownerIsOperator', event.target.checked)} /> Operator same as owner</label>
+                {!raw.ownerIsOperator && <>{multisig('operator')}
                 <p className="create-help">Introduce the person or team running this project.</p>
                 {field('operatorName', 'Name (optional)', { placeholder: 'Your name or team', maxLength: 80 })}
                 {field('operatorIntroduction', 'Introduction (optional)', { rows: 4, maxLength: 1200, placeholder: 'Tell people about yourself, your experience, and your plans for the project.' })}
@@ -416,7 +416,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
                   </label>
                   {operatorPhoto && <><Image unoptimized src={operatorPhoto} alt="Your operator picture" width={96} height={96} className="create-operator-photo-preview" /><button id="remove-operator-photo" className="quiet-button" type="button" onClick={() => removePhoto('operatorPhoto')}>Remove picture</button></>}
                   {errors.operatorPhoto && <p className="create-error" id="operatorPhoto-error">{errors.operatorPhoto}</p>}
-                </div>
+                </div></>}
               </fieldset>
             </>}
             {step === 1 && <>

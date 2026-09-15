@@ -91,7 +91,7 @@ try {
     await shot('create-asset-desktop.png');
   });
   await check('Owner and Operator offer multisig policies and an existing-address alternative', async () => {
-    const shared = page.getByRole('checkbox', { name: 'Owner is also operator' });
+    const shared = page.getByRole('checkbox', { name: 'Operator same as owner' });
     assert.equal(await shared.isChecked(), true);
     assert.equal(await page.locator('[id^="create-ownerSigners-"]').count(), 3);
     assert.equal(await input('ownerThreshold').inputValue(), '2');
@@ -520,8 +520,7 @@ try {
     assert.equal(await input('name').inputValue(), '');
     assert.equal(await input('ownerName').inputValue(), '');
     assert.equal(await input('ownerIntroduction').inputValue(), '');
-    assert.equal(await input('operatorName').inputValue(), '');
-    assert.equal(await input('operatorIntroduction').inputValue(), '');
+    assert.equal(await page.locator('#create-operatorName').count(), 0, 'Operator profile stays hidden while the operator is the owner.');
     assert.equal(await page.locator('.create-operator-photo-preview').count(), 0);
     assert.equal(await page.evaluate(() => localStorage.getItem('homerun:fund-launch:v1')), null);
     assert.equal(await page.evaluate(() => localStorage.getItem('homerun:created-projects:v1')), null);
