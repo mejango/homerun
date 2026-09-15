@@ -330,8 +330,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
         {field(`${role}Wallet`, `${role === 'owner' ? 'Owner' : 'Operator'} address`, { placeholder: '0x…', maxLength: 42 })}
         <button type="button" className="quiet-button" onClick={() => update(mode, 'create')}>Create a new multisig</button>
       </> : <>
-        <p className="create-help">The {role} is made up of addresses that need to agree on decisions.</p>
-        <button type="button" className="quiet-button" onClick={() => update(mode, 'existing')}>Already have a multisig?</button>
+        <p className="create-help">The {role} is made up of addresses that need to agree on decisions. <button type="button" className="quiet-button create-help-link" onClick={() => update(mode, 'existing')}>Already have a multisig?</button></p>
         <div id={`create-${signers}`} tabIndex={-1}>
           {owners.map((owner, index) => <div className="create-multisig-owner" key={index}>
             <div className="create-multisig-address create-input"><input id={`create-${signers}-${index}`} aria-label={`${role === 'owner' ? 'Owner' : 'Operator'} multisig signer ${index + 1}`} type="text" value={owner} placeholder="0x…" maxLength={42} autoComplete="off" aria-invalid={!!errors[signers]} aria-describedby={issue ? `${role}-multisig-error` : undefined} onChange={event => update(signers, owners.map((value, i) => i === index ? event.target.value : value))} />
@@ -339,7 +338,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
             </div>
           </div>)}
         </div>
-        {owners.length < 20 && <button type="button" className="quiet-button" onClick={() => update(signers, [...owners, ''])}>+ Add owner</button>}
+        {owners.length < 20 && <button type="button" className="quiet-button create-multisig-add" onClick={() => update(signers, [...owners, ''])}>+ Add signer</button>}
         <div className="create-multisig-policy create-field"><label htmlFor={`create-${threshold}`}>Approval policy</label><select id={`create-${threshold}`} value={String(raw[threshold])} onChange={event => update(threshold, Number(event.target.value))} aria-invalid={!!errors[threshold]}>{owners.map((_, index) => <option key={index} value={index + 1}>{index + 1} of {owners.length}</option>)}</select><span>{String(raw[threshold])}/{owners.length} owners must approve</span></div>
         {issue && <p role="alert" className="create-error" id={`${role}-multisig-error`}>{issue}</p>}
       </>}
