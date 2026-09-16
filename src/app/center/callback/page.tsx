@@ -4,11 +4,16 @@ import { connect } from '@wagmi/core'
 import { wagmiConfig } from '@/providers/Providers'
 import { capturedCenterCallback } from '@/providers/center-callback'
 
-let completing: Promise<string> | null = null
+let completing: Promise<string | null> | null = null
 let callbackResolved = false
-async function complete() {
+async function complete(): Promise<string | null> {
   const callback = capturedCenterCallback()
   const { centerWalletClient, originalCenterPage } = await import('@/providers/center-runtime')
+  // Opened as a popup: the page that opened this window finishes the sign-in and closes it.
+  if (!callbackResolved && callback && new URL(callback.url).search) {
+    const { deliverCenterCallback } = await import('@bananapus/nana-sdk-connect/core')
+    if (await deliverCenterCallback(callback.url, { window })) { callbackResolved = true; return null }
+  }
   const wallet = centerWalletClient()
   if (!callbackResolved && callback && new URL(callback.url).search) {
     if (new URL(callback.url).searchParams.has('review')) await wallet.payments().completePayment(callback.url)
@@ -24,16 +29,17 @@ async function complete() {
 export default function CenterCallbackPage() {
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
+  const [delivered, setDelivered] = useState(false)
   useEffect(() => {
     let active = true
     completing ??= complete().catch(cause => { completing = null; throw cause })
-    void completing.then(path => { if (active) window.location.replace(path) }, cause => {
+    void completing.then(path => { if (!active) return; if (path === null) setDelivered(true); else window.location.replace(path) }, cause => {
       if (active) setError(cause instanceof Error ? cause.message : 'The wallet connection could not be restored.')
     })
     return () => { active = false }
   }, [attempt])
   return <main className="mx-auto max-w-xl px-6 py-16"><h1 className="text-2xl">Your Juicebox wallet</h1>
-    <p role="status" className="mt-5 break-words">{error ?? 'Restoring your wallet and original page…'}</p>
+    <p role="status" className="mt-5 break-words">{error ?? (delivered ? 'Signed in. You can close this window.' : 'Restoring your wallet and original page…')}</p>
     {error ? <button type="button" className="btn-primary mt-5 px-4 py-3" onClick={() => { setError(null); setAttempt(value => value + 1) }}>Retry</button> : null}
   </main>
 }

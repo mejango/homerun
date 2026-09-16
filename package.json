@@ -28,7 +28,7 @@
     "build:prototype": "node scripts/build.mjs"
   },
   "dependencies": {
-    "@bananapus/nana-sdk-connect": "^0.2.0",
+    "@bananapus/nana-sdk-connect": "^0.3.0",
     "@bananapus/nana-sdk-core": "^2.6.0",
     "@coinbase/wallet-sdk": "4.3.7",
     "@safe-global/safe-apps-provider": "0.18.6",

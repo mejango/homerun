@@ -26,6 +26,8 @@ export function ExternalWalletDialog({ onClose }: { onClose: () => void }) {
       // The option loads the runtime before it asks for the return path, so the save is synchronous.
       wallet: async () => { runtime = await import('./center-runtime'); return runtime.centerWalletClient() },
       beforeLaunch: () => runtime!.saveCenterReturnPath(),
+      // A popup sign-in finished in this page: the grant is saved, so the connector can connect.
+      connected: async () => { await latest.current.connectWith('juicebox-center'); latest.current.onClose() },
     }))
     for (const connector of connectors) {
       if (connector.id === 'safe' && !framed) continue

@@ -12,10 +12,15 @@ exact app origin. Build configuration does not activate that allowlist.
 
 ## Connection and payment behavior
 
-The app saves the original local pathname before preparing a handoff. It removes
-callback query/hash data before SDK completion, preserves the SDK's original
-exchange for retry, and reconnects wagmi only to the completed Base Safe identity.
-Closing the wallet chooser prevents a delayed preparation from redirecting.
+Signing in opens Center in a popup window and the page stays. The callback lands on
+`/center/callback` inside that window, which scrubs its address, hands the callback
+URL to the page that opened it, and closes; the page finishes the exchange and
+connects wagmi. When a browser blocks the popup the SDK falls back to a full-page
+redirect: the app saves the original local pathname before preparing the handoff and
+the callback page completes the exchange itself, then returns to that page. In both
+cases the SDK's original exchange is preserved for retry, and wagmi connects only to
+the completed Base Safe identity. Closing the wallet chooser prevents a delayed
+preparation from launching.
 
 The Center connector supports reads and account discovery. It cannot expose
 generic signing, transaction sending or session-permission methods through the
