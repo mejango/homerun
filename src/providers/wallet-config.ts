@@ -5,7 +5,7 @@ export function centerWalletConfiguration(input: {
 }): HomerunCenterConfig | null {
   if (input.enabled !== 'true') return null
   try {
-    const issuer = input.issuer || 'https://wallet.juicebox.center', audience = input.audience || 'https://juicebox.center'
+    const issuer = input.issuer || 'https://my.juicebox.center', audience = input.audience || 'https://juicebox.center'
     for (const value of [issuer, audience]) {
       const url = new URL(value)
       if (url.origin !== value || url.username || url.password || (url.protocol !== 'https:' &&

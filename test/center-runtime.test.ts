@@ -3,7 +3,7 @@ const runtime = vi.hoisted(() => ({ prepare: vi.fn(), pending: vi.fn(), assign: 
 vi.mock('@juicebox/center-client', () => ({ createCenterWalletClient: () => ({
   prepareConnection: runtime.prepare, payments: () => ({ pendingPayment: runtime.pending }),
 }) }))
-vi.mock('@/providers/wallet-config', () => ({ CENTER_WALLET_CONFIG: { issuer: 'https://wallet.juicebox.center', audience: 'https://juicebox.center' } }))
+vi.mock('@/providers/wallet-config', () => ({ CENTER_WALLET_CONFIG: { issuer: 'https://my.juicebox.center', audience: 'https://juicebox.center' } }))
 beforeEach(() => {
   vi.resetModules(); vi.clearAllMocks(); runtime.pending.mockReturnValue(null)
   const values = new Map<string, string>()
@@ -17,12 +17,12 @@ describe('Center handoff continuation', () => {
     runtime.prepare.mockReturnValue(new Promise(complete => { resolve = complete }))
     const { beginCenterConnection, originalCenterPage } = await import('@/providers/center-runtime')
     const controller = new AbortController(), attempt = beginCenterConnection(controller.signal)
-    controller.abort(); resolve({ authorizationUrl: 'https://wallet.juicebox.center/wallet?intent=original', launch: runtime.launch })
+    controller.abort(); resolve({ authorizationUrl: 'https://my.juicebox.center/wallet?intent=original', launch: runtime.launch })
     await expect(attempt).rejects.toThrow()
     expect(runtime.assign).not.toHaveBeenCalled();expect(runtime.launch).not.toHaveBeenCalled(); expect(originalCenterPage()).toBe('/project/8453/7')
   })
   it('uses the signed form launch after preserving the original return path',async()=>{
-    runtime.prepare.mockResolvedValue({authorizationUrl:'https://wallet.juicebox.center/wallet?intent=original',launch:runtime.launch})
+    runtime.prepare.mockResolvedValue({authorizationUrl:'https://my.juicebox.center/wallet?intent=original',launch:runtime.launch})
     const {beginCenterConnection,originalCenterPage}=await import('@/providers/center-runtime')
     await beginCenterConnection()
     expect(originalCenterPage()).toBe('/project/8453/7');expect(runtime.launch).toHaveBeenCalledTimes(1);expect(runtime.assign).not.toHaveBeenCalled()

@@ -4,13 +4,13 @@ const configured = { enabled: 'true', manifestId: 'reviewed-base-passkey', manif
 describe('optional Center configuration', () => {
   it('requires explicit activation and every reviewed pin', () => {
     expect(centerWalletConfiguration({})).toBeNull()
-    expect(centerWalletConfiguration(configured)?.issuer).toBe('https://wallet.juicebox.center')
+    expect(centerWalletConfiguration(configured)?.issuer).toBe('https://my.juicebox.center')
     for (const change of [{ enabled: 'false' }, { manifestId: '' }, { manifestRevision: '0x' + '00'.repeat(32) }, { maximumNetworkFee: '0' }, { maximumNetworkFee: String(2n ** 256n) }, { issuer: 'ftp://localhost' }, { issuer: 'https://juicebox.center' }])
       expect(centerWalletConfiguration({ ...configured, ...change })).toBeNull()
   })
   it('allows configured loopback test origins without trusting callbacks as configuration', () => {
     expect(centerWalletConfiguration({ ...configured, issuer: 'http://localhost:4200', audience: 'http://localhost:4300' })?.issuer).toBe('http://localhost:4200')
-    for (const issuer of ['http://evil.example', 'https://wallet.juicebox.center/', 'https://wallet.juicebox.center/path', 'https://user:password@wallet.juicebox.center'])
+    for (const issuer of ['http://evil.example', 'https://my.juicebox.center/', 'https://my.juicebox.center/path', 'https://user:password@wallet.juicebox.center'])
       expect(centerWalletConfiguration({ ...configured, issuer })).toBeNull()
   })
 })

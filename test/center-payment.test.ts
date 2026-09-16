@@ -5,7 +5,7 @@ const account = '0x1111111111111111111111111111111111111111', terminal = '0x2222
 function fixture() {
   const data = new Map<string, string>(), events: string[] = []
   const storage = { getItem: (key: string) => data.get(key) ?? null, setItem: (key: string, value: string) => { data.set(key, value) }, removeItem: (key: string) => { data.delete(key) } }
-  const config = { issuer: 'https://wallet.juicebox.center', audience: 'https://juicebox.center', manifest: { id: 'reviewed', revision: hash }, maximumNetworkFee: '100000000000000' }
+  const config = { issuer: 'https://my.juicebox.center', audience: 'https://juicebox.center', manifest: { id: 'reviewed', revision: hash }, maximumNetworkFee: '100000000000000' }
   const intent = { projectId: '7', token, terminal, amount: '1000000', minimumReturnedTokens: '99', returnPath: '/project/8453/7' }
   const plan = { id: 'plan-original', smartAccount: { address: account, chainId: 8453 }, draft: { calls: [{ chainId: 8453, to: terminal, value: '0',
     data: encodeFunctionData({ abi: parseAbi(['function pay(uint256,address,uint256,address,uint256,string,bytes)']), functionName: 'pay', args: [7n, token, 1000000n, account, 100n, '', '0x'] }) }] } }
