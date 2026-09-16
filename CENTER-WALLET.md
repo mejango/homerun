@@ -1,6 +1,6 @@
 # Juicebox Center wallet integration
 
-Homerun's web client uses the pinned `@juicebox/center-client` package for passkey
+Homerun's web client uses `@bananapus/nana-sdk-connect` (the Juicebox SDK's connect package, which pins `@me.jango/center-wallet`, Center's browser client) for passkey
 connections. Para's web SDK and UI dependencies are removed. Existing injected,
 WalletConnect, Coinbase and Safe app connections remain available.
 
@@ -69,5 +69,4 @@ replacement on the configured RP, deployment/fee/settlement readiness, verified
 funding and restore controls, and physical device acceptance. Center retains its
 Para compatibility. Juicebox Money and Revnet Money are outside this change.
 
-Pinned client archive: `vendor/juicebox-center-client-a91c8ac0ead5d3b0.tgz`.
-SHA-256: `a91c8ac0ead5d3b03d63660c6a81936388113f3d824083c20b92d6057fcc2b9c`.
+Client packages: `@bananapus/nana-sdk-connect` and `@me.jango/center-wallet` from npm.

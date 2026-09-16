@@ -1,6 +1,6 @@
 import { decodeFunctionData, isAddress, keccak256, parseAbi, stringToHex, type Address } from 'viem'
 import type { CenterWalletConnection, CenterWalletExpectedPayment, CenterWalletPaymentStatus, CenterWalletStorage,
-  PreparedUserOperation, SmartWalletPlan, createCenterWalletClient } from '@juicebox/center-client'
+  PreparedUserOperation, SmartWalletPlan, createCenterWalletClient } from '@bananapus/nana-sdk-connect/core'
 import type { HomerunCenterConfig } from '@/providers/wallet-config'
 import { centerReturnPath } from '@/providers/center-callback'
 

@@ -77,7 +77,7 @@ try {
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   await page.getByRole('button', { name: 'Continue with a passkey' }).click()
   await prepared
-  await page.getByRole('button', { name: 'Close', exact: true }).click()
+  await page.getByRole('button', { name: 'Cancel connection', exact: true }).click()
   release()
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await page.waitForTimeout(300)

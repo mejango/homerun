@@ -1,110 +1,54 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { ModalShell } from '@/components/ui/ModalShell'
+import { createConnectController, passkeyOption, type ConnectOption } from '@bananapus/nana-sdk-connect/core'
+import { JBConnectModal } from '@bananapus/nana-sdk-connect/react'
 import { WalletFallbackMark } from '@/components/BrandMarks'
 import { useWallet } from '@/hooks/useWallet'
 import { useMobileWallet } from '@/hooks/useMobileWallet'
 import { mobileWalletLinks } from '@/lib/walletLinks'
 import { CENTER_WALLET_ENABLED } from './wallet-config'
 
-/** External wallets remain usable when embedded authentication is not configured.
- * The connector, QR pairing, and account state are still the shared Wagmi stack. */
+/** Two ways in: a passkey account at Juicebox Center, or an external wallet through the
+ * shared wagmi stack. The SDK modal owns the layout; this file only supplies the options. */
 export function ExternalWalletDialog({ onClose }: { onClose: () => void }) {
   const { connectors, connectWith, isConnected } = useWallet()
   const mobileWallet = useMobileWallet()
-  const [pending, setPending] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [pairingUri, setPairingUri] = useState<string | null>(null)
-  const [pairingQr, setPairingQr] = useState<string | null>(null)
-  const connection = useRef<AbortController | null>(null)
-  const close = () => { connection.current?.abort(); onClose() }
-  useEffect(() => () => connection.current?.abort(), [])
+  const latest = useRef({ connectWith, onClose })
+  latest.current = { connectWith, onClose }
+  useEffect(() => { if (isConnected) onClose() }, [isConnected, onClose])
 
-  useEffect(() => {
-    if (isConnected) onClose()
-  }, [isConnected, onClose])
-
-  useEffect(() => {
-    const walletConnect = connectors.find(connector => connector.id === 'walletConnect')
-    if (!walletConnect) return
-    let live = true
-    const onMessage = ({ type, data }: { type: string; data?: unknown }) => {
-      if (type !== 'display_uri' || typeof data !== 'string') return
-      setPairingUri(data)
-      void import('qrcode')
-        .then(qr => qr.toDataURL(data, { margin: 1, width: 320, errorCorrectionLevel: 'M' }))
-        .then(url => { if (live) setPairingQr(url) })
-        .catch(() => { /* The pairing link still works if QR rendering fails. */ })
+  const [controller] = useState(() => {
+    const framed = typeof window !== 'undefined' && window.self !== window.top
+    const options: ConnectOption[] = []
+    let runtime: typeof import('./center-runtime') | undefined
+    if (CENTER_WALLET_ENABLED) options.push(passkeyOption({
+      // The option loads the runtime before it asks for the return path, so the save is synchronous.
+      wallet: async () => { runtime = await import('./center-runtime'); return runtime.centerWalletClient() },
+      beforeLaunch: () => runtime!.saveCenterReturnPath(),
+    }))
+    for (const connector of connectors) {
+      if (connector.id === 'safe' && !framed) continue
+      options.push({
+        id: connector.id, name: connector.name, icon: connector.icon,
+        async connect({ signal, handoff }) {
+          const onMessage = ({ type, data }: { type: string; data?: unknown }) => {
+            if (type === 'display_uri' && typeof data === 'string') handoff(data)
+          }
+          connector.emitter.on('message', onMessage)
+          signal.addEventListener('abort', () => connector.emitter.off('message', onMessage))
+          try { await latest.current.connectWith(connector.id) } finally { connector.emitter.off('message', onMessage) }
+          latest.current.onClose()
+        },
+      })
     }
-    walletConnect.emitter.on('message', onMessage)
-    return () => {
-      live = false
-      walletConnect.emitter.off('message', onMessage)
-    }
-  }, [connectors])
-
-  const connect = async (connectorId: string) => {
-    setPending(connectorId)
-    setError(null)
-    setPairingUri(null)
-    setPairingQr(null)
-    try {
-      await connectWith(connectorId)
-      onClose()
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'The wallet could not connect. Try again.')
-    } finally {
-      setPending(null)
-    }
-  }
-
-  const connectCenter = async () => {
-    if (connection.current && !connection.current.signal.aborted) return
-    const attempt = new AbortController(); connection.current = attempt
-    setPending('juicebox-center'); setError(null)
-    try { await (await import('./center-runtime')).beginCenterConnection(attempt.signal) }
-    catch (cause) { if (!attempt.signal.aborted) { setError(cause instanceof Error ? cause.message : 'Your Juicebox wallet could not connect. Try again.'); setPending(null) } }
-    finally { if (connection.current === attempt) connection.current = null }
-  }
-  const framed = typeof window !== 'undefined' && window.self !== window.top
-  const available = connectors.filter(connector => connector.id !== 'safe' || framed)
+    return createConnectController(options)
+  })
 
   return (
-    <ModalShell title="Connect your wallet" onClose={close} maxWidth="max-w-md">
-      <p className="text-sm text-smoke-700">Choose your wallet.</p>
-      <div className="mt-4 grid gap-2">
-        {CENTER_WALLET_ENABLED ? <button type="button" onClick={() => void connectCenter()} disabled={pending !== null}
-          aria-busy={pending === 'juicebox-center'} className="btn-primary min-h-11 px-4 py-3 text-left text-sm">
-          {pending === 'juicebox-center' ? 'Opening Juicebox wallet…' : 'Continue with a passkey'}
-        </button> : null}
-        {available.map(connector => (
-          <button
-            type="button"
-            key={connector.id}
-            onClick={() => void connect(connector.id)}
-            disabled={pending !== null}
-            aria-busy={pending === connector.id}
-            className="btn-secondary flex min-h-11 items-center gap-3 px-4 py-3 text-left text-sm"
-          >
-            {connector.icon ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={connector.icon} alt="" className="h-5 w-5" />
-            ) : <WalletFallbackMark id={connector.id} className="h-5 w-5" />}
-            <span>{pending === connector.id ? `Connecting to ${connector.name}…` : connector.name}</span>
-          </button>
-        ))}
-      </div>
-      {pairingUri ? (
-        <div className="mt-4 rounded-lg border border-smoke-200 bg-white p-3 text-center">
-          <p className="text-sm">Scan with your wallet app, or open it on this device.</p>
-          {pairingQr ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={pairingQr} alt="WalletConnect pairing QR code" className="mx-auto my-3 w-full max-w-64" />
-          ) : null}
-          <a href={pairingUri} className="text-sm underline">Open wallet</a>
-        </div>
-      ) : null}
+    <JBConnectModal open controller={controller} onClose={onClose} className="homerun-connect"
+      renderIcon={option => <WalletFallbackMark id={option.id} className="h-5 w-5" />}
+      renderHandoff={uri => <PairingCode uri={uri} />}>
       {mobileWallet === 'handoff' ? (
         <div className="mt-5">
           <p className="text-sm text-smoke-700">Or open Homerun in your wallet app.</p>
@@ -115,7 +59,28 @@ export function ExternalWalletDialog({ onClose }: { onClose: () => void }) {
           </div>
         </div>
       ) : null}
-      {error ? <p role="alert" className="mt-4 break-words text-sm text-error-500">{error}</p> : null}
-    </ModalShell>
+    </JBConnectModal>
+  )
+}
+
+function PairingCode({ uri }: { uri: string }) {
+  const [image, setImage] = useState<string | null>(null)
+  useEffect(() => {
+    let live = true
+    void import('qrcode')
+      .then(qr => qr.toDataURL(uri, { margin: 1, width: 320, errorCorrectionLevel: 'M' }))
+      .then(url => { if (live) setImage(url) })
+      .catch(() => { /* The pairing link still works if QR rendering fails. */ })
+    return () => { live = false }
+  }, [uri])
+  return (
+    <div className="rounded-lg border border-smoke-200 bg-white p-3 text-center">
+      <p className="text-sm">Scan with your wallet app, or open it on this device.</p>
+      {image ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={image} alt="WalletConnect pairing QR code" className="mx-auto my-3 w-full max-w-64" />
+      ) : null}
+      <a href={uri} className="text-sm underline">Open wallet</a>
+    </div>
   )
 }

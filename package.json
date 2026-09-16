@@ -28,9 +28,9 @@
     "build:prototype": "node scripts/build.mjs"
   },
   "dependencies": {
+    "@bananapus/nana-sdk-connect": "^0.2.0",
     "@bananapus/nana-sdk-core": "^2.6.0",
     "@coinbase/wallet-sdk": "4.3.7",
-    "@juicebox/center-client": "file:vendor/juicebox-center-client-db424f6b4338057f.tgz",
     "@safe-global/safe-apps-provider": "0.18.6",
     "@safe-global/safe-apps-sdk": "9.1.0",
     "@tanstack/react-query": "5.101.4",
