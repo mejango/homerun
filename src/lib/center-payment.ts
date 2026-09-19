@@ -138,7 +138,7 @@ export function createHomerunPayment(options: { config: HomerunCenterConfig;
   function clear() {
     const saved = read(); if (!saved.value) return
     const current = payments.pendingPayment()
-    if (current && !['paid', 'cancelled', 'reverted'].includes(current.status)) fail('Keep this payment until its outcome is known.')
+    if (current && !['paid', 'cancelled', 'reverted', 'expired'].includes(current.status)) fail('Keep this payment until its outcome is known.')
     const rawHistory = storage.getItem(historyKey)
     if (rawHistory && rawHistory.length > 1_048_576) fail()
     const history = rawHistory ? JSON.parse(rawHistory) as { id: string; digest: string; payment: Journal; status: CenterWalletPaymentStatus | null }[] : []

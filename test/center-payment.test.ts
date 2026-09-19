@@ -19,7 +19,7 @@ function fixture() {
   const payments = { preparePayment: vi.fn(async input => { events.push('review'); return status = { status: 'reviewing', operationId: record.id,
     approvalUrl: config.issuer + '/wallet/payment?review=original', expectedPayment: input.expectedPayment } }),
     pendingPayment: () => status, submitPayment: vi.fn(async () => { events.push('send'); status = { ...status, status: 'pending' }; return status }),
-    refreshPayment: vi.fn(async () => status), clearPayment: vi.fn(() => { if (!['paid', 'cancelled', 'reverted'].includes(status?.status)) throw Error('unresolved'); status = null }) }
+    refreshPayment: vi.fn(async () => status), clearPayment: vi.fn(() => { if (!['paid', 'cancelled', 'reverted', 'expired'].includes(status?.status)) throw Error('unresolved'); status = null }) }
   const connection = { address: account, chainId: 8453, accountId: 'eip155:8453:' + account, client: {
     authorizeRead: async () => ({ claims: { accountId: 'eip155:8453:' + account, signer: token, grantId: 'grant-original' } }),
     smartAccounts: () => ({ bindings: async () => ({ items: [binding] }), binding: async () => binding,
@@ -36,6 +36,10 @@ describe('Homerun original Center payment recovery', () => {
     expect(() => controller.clear()).toThrow()
     expect([...f.data.keys()].some(key => key.endsWith(':history'))).toBe(false)
     f.setStatus('paid'); controller.clear(); expect(controller.pending()).toBeNull()
+  })
+  it('closes a payment that expired before inclusion: nothing was charged and the customer can pay again', async () => {
+    const f = fixture(), controller = f.create(); await controller.prepare(f.intent as never)
+    f.setStatus('expired'); controller.clear(); expect(controller.pending()).toBeNull()
   })
   it('uses the deployed passkey binding without requiring a prior cached execution and reviews an equal or better minimum', async () => {
     const f = fixture(), controller = f.create()

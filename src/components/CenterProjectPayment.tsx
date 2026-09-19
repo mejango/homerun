@@ -20,6 +20,7 @@ const statuses = {
   submitting: 'Checking the original submission…', pending: 'Submitted. Waiting for confirmation…',
   confirming: 'Confirming the payment onchain…', paid: 'Payment confirmed onchain.', reverted: 'The payment reverted onchain.',
   cancelled: 'The payment review was cancelled.', unknown: 'The payment outcome is not confirmed. Check its status before making another payment.',
+  expired: 'The payment expired before it was included onchain. Nothing was charged; you can pay again.',
 }
 export default function CenterProjectPayment({ chainId, projectId, tokenLabel, title, paused, verify, chainSelector, onBusyChange }: {
   chainId: JBChainId; projectId: bigint; tokenLabel: 'FUND' | 'INCOME'; title: string; paused: boolean;
@@ -42,7 +43,7 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
   }, [])
   const matching = pending?.intent.projectId === projectId.toString() && chainId === 8453
   const status = pending?.status?.status
-  const terminal = !!status && ['paid', 'cancelled', 'reverted'].includes(status)
+  const terminal = !!status && ['paid', 'cancelled', 'reverted', 'expired'].includes(status)
   useEffect(() => { onBusyChange?.(busy || !!pending && !terminal); return () => onBusyChange?.(false) }, [busy, pending, terminal, onBusyChange])
   async function run(action: () => Promise<unknown>) {
     if (working.current) return
