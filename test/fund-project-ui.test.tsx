@@ -1,6 +1,7 @@
 import { act, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fixtures/homerun-deployer')).withHomerunDeployer(await importOriginal()))
 import { zeroAddress, type Address } from 'viem'
 import type { FundProjectState } from '../src/lib/fund-state'
 import type { IncomeProjectState } from '../src/lib/income-state'
@@ -388,13 +389,47 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     expect(host.textContent).toContain('Waiting for onchain confirmation')
   })
 
-  it('does not offer vanilla voting activation as the new Sticky reward path', async () => {
+  it('offers only token transfers and burns to holders', async () => {
     runtime.phase = 'idle'
     runtime.query = { ...runtime.query, data: { ...state(), tokenAddress: '0x5555555555555555555555555555555555555555' } }
     await render()
     expect(host.querySelector('option[value="activateRewards"]')).toBeNull()
-    expect(host.textContent).toContain('Claim credits as wallet tokens')
+    expect(host.querySelector('option[value="claimCredits"]')).toBeNull()
+    expect(host.textContent).toContain('Transfer FUND tokens')
     expect(runtime.send).not.toHaveBeenCalled()
+  })
+
+  it('tells a wallet outside the allowlist before any payment review and lets the owner manage the list', async () => {
+    runtime.phase = 'idle'
+    runtime.query = { ...runtime.query, data: { ...state(), allowlist: { hook: '0x4545454545454545454545454545454545454545', open: false, accountAllowed: false } } }
+    await render()
+    expect(host.textContent).toContain('Your wallet is not on this FUND’s allowlist')
+    expect(host.textContent).not.toContain('Pay on Ethereum')
+    await tab('Operators')
+    const section = host.querySelector('[aria-label="Payment allowlist"]')!
+    expect(section.textContent).toContain('Closed: only allowed wallets can receive FUND')
+    const textarea = section.querySelector('textarea')!
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '0x2222222222222222222222222222222222222222\n0x3333333333333333333333333333333333333333'); textarea.dispatchEvent(new Event('input', { bubbles: true })) })
+    await act(async () => [...section.querySelectorAll('button')].find(button => button.textContent === 'Allow')!.click())
+    expect(runtime.send).toHaveBeenCalledTimes(1)
+    const [request] = runtime.send.mock.calls[0]
+    expect(request.functionName).toBe('setAllowed')
+    expect(request.args).toEqual([7n, ['0x2222222222222222222222222222222222222222', '0x3333333333333333333333333333333333333333'], true])
+    await act(async () => [...section.querySelectorAll('button')].find(button => button.textContent === 'Open to everyone')!.click())
+    expect(runtime.send.mock.calls[1][0].functionName).toBe('setOpen')
+    expect(runtime.send.mock.calls[1][0].args).toEqual([7n, true])
+  })
+
+  it('does not gate payments once the owner opens the FUND or the wallet is allowed', async () => {
+    runtime.phase = 'idle'
+    runtime.query = { ...runtime.query, data: { ...state(), allowlist: { hook: '0x4545454545454545454545454545454545454545', open: false, accountAllowed: true } } }
+    await render()
+    expect(host.textContent).not.toContain('not on this FUND’s allowlist')
+    runtime.query = { ...runtime.query, data: { ...state(), allowlist: { hook: '0x4545454545454545454545454545454545454545', open: true, accountAllowed: false } } }
+    await render()
+    expect(host.textContent).not.toContain('not on this FUND’s allowlist')
+    await tab('Operators')
+    expect(host.querySelector('[aria-label="Payment allowlist"]')?.textContent).toContain('Open: anyone can contribute')
   })
 
   it('keeps submitted transaction watchers mounted after a background RPC failure', async () => {

@@ -2,21 +2,19 @@
 import { decodeFunctionData, getAddress, isAddress, isAddressEqual, zeroAddress, zeroHash, type Address, type Hex } from 'viem'
 import { FUND_CHAIN_IDS } from './fund-contracts'
 import { fundGlobalManifestHash, parseFundGlobalManifest, type FundGlobalManifest } from './fund-global-manifest'
-import { homerunIncomeRecoveryAbi } from './income-contracts'
+import { homerunDeployerAbi } from './income-contracts'
 import { exportIncomeLaunchPending, type IncomeLaunchPending } from './income-launch-session'
 
 export const INCOME_GLOBAL_DRAFT_KEY = 'homerun:income-global-launch:drafts:v1'
 export type IncomeGlobalChainDraft = {
-  chainId: number; fundProjectId: string; initialIncomeAmount: string; stickyProjectId?: string
+  chainId: number; fundProjectId: string; initialIncomeAmount: string
   /** Saved evidence must be reverified after every remount/import. */
   execution?: { hash: Hex; record: IncomeLaunchPending }
 }
 export type IncomeGlobalLaunchDraft = {
   version: 1; root: { chainId: number; projectId: string }; helper: Address
   manifestUri: string; manifestHash: Hex; sourceSetHash: Hex; launchSalt: Hex
-  name: string; metadataUri: string; startsAtOrAfter: number; operatorBps: number; fundHolderBps: number
-  /** Explicit incentive recipient. Legacy plans used each chain's submitting FUND owner. */
-  operator?: Address
+  name: string; ticker: string; metadataUri: string; startsAtOrAfter: number; reservedBps: number
   chains: IncomeGlobalChainDraft[]
 }
 type Store = Pick<Storage, 'getItem' | 'setItem'>
@@ -31,26 +29,23 @@ export function parseIncomeGlobalDraft(value: unknown): IncomeGlobalLaunchDraft 
   const raw = object(value), root = object(raw.root)
   if (raw.version !== 1 || !chain(root.chainId) || !uint(root.projectId, true) || typeof raw.helper !== 'string' || !isAddress(raw.helper) || isAddressEqual(raw.helper, zeroAddress)
     || !ipfs(raw.manifestUri) || !hash(raw.manifestHash) || !hash(raw.sourceSetHash) || !hash(raw.launchSalt)
-    || typeof raw.name !== 'string' || !raw.name.trim() || raw.name.length > 160 || !ipfs(raw.metadataUri)
+    || typeof raw.name !== 'string' || !raw.name.trim() || raw.name.length > 160 || typeof raw.ticker !== 'string' || !raw.ticker.trim() || raw.ticker.length > 32 || !ipfs(raw.metadataUri)
     || typeof raw.startsAtOrAfter !== 'number' || !Number.isSafeInteger(raw.startsAtOrAfter) || raw.startsAtOrAfter <= 0 || raw.startsAtOrAfter >= 2 ** 48
-    || typeof raw.operatorBps !== 'number' || typeof raw.fundHolderBps !== 'number' || !Number.isInteger(raw.operatorBps) || !Number.isInteger(raw.fundHolderBps) || raw.operatorBps < 0 || raw.fundHolderBps <= 0 || raw.operatorBps + raw.fundHolderBps > 10_000
-    || (raw.operator !== undefined && (typeof raw.operator !== 'string' || !isAddress(raw.operator) || isAddressEqual(raw.operator, zeroAddress)))
+    || typeof raw.reservedBps !== 'number' || !Number.isInteger(raw.reservedBps) || raw.reservedBps < 0 || raw.reservedBps > 10_000
     || !Array.isArray(raw.chains) || !raw.chains.length || raw.chains.length > FUND_CHAIN_IDS.length) throw invalid()
-  const descriptor: IncomeGlobalLaunchDraft = { version: 1, root: { chainId: root.chainId, projectId: root.projectId }, helper: getAddress(raw.helper), manifestUri: raw.manifestUri, manifestHash: raw.manifestHash.toLowerCase() as Hex, sourceSetHash: raw.sourceSetHash.toLowerCase() as Hex, launchSalt: raw.launchSalt.toLowerCase() as Hex, name: raw.name, metadataUri: raw.metadataUri, startsAtOrAfter: raw.startsAtOrAfter, operatorBps: raw.operatorBps, fundHolderBps: raw.fundHolderBps, chains: [] }
-  if (raw.operator !== undefined) descriptor.operator = getAddress(raw.operator as Address)
+  const descriptor: IncomeGlobalLaunchDraft = { version: 1, root: { chainId: root.chainId, projectId: root.projectId }, helper: getAddress(raw.helper), manifestUri: raw.manifestUri, manifestHash: raw.manifestHash.toLowerCase() as Hex, sourceSetHash: raw.sourceSetHash.toLowerCase() as Hex, launchSalt: raw.launchSalt.toLowerCase() as Hex, name: raw.name, ticker: raw.ticker, metadataUri: raw.metadataUri, startsAtOrAfter: raw.startsAtOrAfter, reservedBps: raw.reservedBps, chains: [] }
   for (const row of raw.chains) {
     const local = object(row)
-    if (!chain(local.chainId) || !uint(local.fundProjectId, true) || !uint(local.initialIncomeAmount) || (descriptor.chains.at(-1)?.chainId ?? 0) >= local.chainId || (local.stickyProjectId !== undefined && (!uint(local.stickyProjectId, true) || local.stickyProjectId === local.fundProjectId))) throw invalid()
-    const next: IncomeGlobalChainDraft = { chainId: local.chainId, fundProjectId: local.fundProjectId, initialIncomeAmount: local.initialIncomeAmount, ...(local.stickyProjectId ? { stickyProjectId: local.stickyProjectId as string } : {}) }
+    if (!chain(local.chainId) || !uint(local.fundProjectId, true) || !uint(local.initialIncomeAmount) || (descriptor.chains.at(-1)?.chainId ?? 0) >= local.chainId) throw invalid()
+    const next: IncomeGlobalChainDraft = { chainId: local.chainId, fundProjectId: local.fundProjectId, initialIncomeAmount: local.initialIncomeAmount }
     if (local.execution !== undefined) {
       const evidence = object(local.execution)
-      if (!hash(evidence.hash) || !next.stickyProjectId) throw invalid()
+      if (!hash(evidence.hash)) throw invalid()
       const record = JSON.parse(exportIncomeLaunchPending(evidence.record as IncomeLaunchPending)) as IncomeLaunchPending
-      const decoded = decodeFunctionData({ abi: homerunIncomeRecoveryAbi, data: record.data })
+      const decoded = decodeFunctionData({ abi: homerunDeployerAbi, data: record.data })
       if (decoded.functionName !== 'deployIncome') throw invalid()
-      const [fundId, snapshot, description, operator, stakers, stickyId, start, , recipient] = decoded.args
-      if (!isAddressEqual(recipient ?? record.holder, descriptor.operator ?? record.holder)) throw invalid()
-      if (record.chainId !== next.chainId || record.projectId !== next.fundProjectId || !isAddressEqual(record.target, descriptor.helper) || fundId.toString() !== next.fundProjectId || snapshot.manifestHash.toLowerCase() !== descriptor.manifestHash || snapshot.manifestUri !== descriptor.manifestUri || snapshot.sourceSetHash.toLowerCase() !== descriptor.sourceSetHash || description.salt.toLowerCase() !== descriptor.launchSalt || description.name !== descriptor.name || description.uri !== descriptor.metadataUri || operator !== descriptor.operatorBps || stakers !== descriptor.fundHolderBps || stickyId.toString() !== next.stickyProjectId || start !== descriptor.startsAtOrAfter) throw invalid()
+      const [fundId, snapshot, description, reservedBps, start] = decoded.args
+      if (record.chainId !== next.chainId || record.projectId !== next.fundProjectId || !isAddressEqual(record.target, descriptor.helper) || fundId.toString() !== next.fundProjectId || snapshot.manifestHash.toLowerCase() !== descriptor.manifestHash || snapshot.manifestUri !== descriptor.manifestUri || snapshot.sourceSetHash.toLowerCase() !== descriptor.sourceSetHash || description.salt.toLowerCase() !== descriptor.launchSalt || description.name !== descriptor.name || description.ticker !== descriptor.ticker || description.uri !== descriptor.metadataUri || reservedBps !== descriptor.reservedBps || start !== descriptor.startsAtOrAfter) throw invalid()
       next.execution = { hash: evidence.hash.toLowerCase() as Hex, record }
     }
     descriptor.chains.push(next)
@@ -86,8 +81,8 @@ export function saveIncomeGlobalDraft(storage: Store, value: IncomeGlobalLaunchD
   if (prior && stable(prior) !== stable(next)) throw new Error('This FUND already has a frozen global INCOME launch. Restore that plan instead of changing its terms.')
   if (prior) next.chains = next.chains.map((local, index) => {
     const old = prior.chains[index]
-    if (old.stickyProjectId && local.stickyProjectId && old.stickyProjectId !== local.stickyProjectId || old.execution && local.execution && JSON.stringify(old.execution) !== JSON.stringify(local.execution)) throw new Error('A different confirmed action is already saved for this chain. Verify the existing record before continuing.')
-    return { ...local, ...(old.stickyProjectId ? { stickyProjectId: old.stickyProjectId } : {}), ...(old.execution ? { execution: old.execution } : {}) }
+    if (old.execution && local.execution && JSON.stringify(old.execution) !== JSON.stringify(local.execution)) throw new Error('A different confirmed action is already saved for this chain. Verify the existing record before continuing.')
+    return { ...local, ...(old.execution ? { execution: old.execution } : {}) }
   })
   const updated = prior ? drafts.map(draft => draft === prior ? next : draft) : [...drafts, next]
   const encoded = JSON.stringify(updated)

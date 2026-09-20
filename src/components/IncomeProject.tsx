@@ -2,7 +2,7 @@
 
 import { NATIVE_TOKEN, type JBChainId } from '@bananapus/nana-sdk-core'
 import {
-  buildBurnTokensTx, buildClaimTokensTx, buildSetPermissionsTx, buildTransferCreditsTx,
+  buildBurnTokensTx, buildSetPermissionsTx,
   getBorrowableAmount, getHookAwareCashOutQuote, hasPermissions, prepareHookAwareCashOut,
   REVLOANS_BURN_PERMISSION_ID,
 } from '@bananapus/nana-sdk-core/v6'
@@ -18,7 +18,6 @@ import { IncomeOperatorActions } from '@/components/IncomeOperatorActions'
 import { ProjectActivity } from '@/components/ProjectActivity'
 import { DisplayTokenAmount } from '@/components/DisplayTokenAmount'
 import { InitialIncomeClaim } from '@/components/InitialIncomeClaim'
-import { StickyHolder } from '@/components/StickyHolder'
 import { useSafeTx, txPhaseLabel, type TxRequest } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { displayChainName, explorerTxUrl } from '@/lib/chainDisplay'
@@ -37,7 +36,6 @@ import { fetchFundProjectMetadata, type FundProjectMetadata } from '@/lib/fund-p
 import { parseAmount } from '@/lib/fund-contracts'
 import { readFundProjectState } from '@/lib/fund-state'
 import { readIncomeFundBinding } from '@/lib/income-fund-binding'
-import { readIncomeStickyBinding } from '@/lib/sticky-state'
 import {
   buildAutoIssueTx, buildIncomeRewardActivation, buildIncomeRewardClaim, buildProtectedIncomeBorrow,
   buildRepayLoanTx, protectedIncomeMinimum, v6Address,
@@ -247,27 +245,12 @@ function IncomeActions({ state, client, fundProjectId, writesUnavailable, bindin
 
 function IncomeHolderRewards({ state, client, fundProjectId }: { state: IncomeProjectState; client: PublicClient; fundProjectId?: bigint }) {
   const fundId = fundProjectId ?? state.rewards?.fundProjectId
-  const identity = `${state.chainId}:${state.projectId}:${fundId ?? ''}`
-  const [lastBinding, setLastBinding] = useState<{ identity: string; stickyProjectId: bigint } | null>(null)
-  const binding = useQuery({
-    queryKey: ['income-sticky-binding', state.chainId, state.projectId.toString(), fundId?.toString()],
-    enabled: fundId !== undefined,
-    queryFn: () => readIncomeStickyBinding(client, { chainId: state.chainId, incomeProjectId: state.projectId, fundProjectId: fundId! }),
-    staleTime: 10_000, refetchInterval: 20_000, retry: 1,
-  })
-  useEffect(() => { if (binding.data) setLastBinding({ identity, stickyProjectId: binding.data.stickyProjectId }) }, [binding.data, identity])
-  const stickyProjectId = binding.data?.stickyProjectId ?? (lastBinding?.identity === identity ? lastBinding.stickyProjectId : undefined)
-  if (fundId && stickyProjectId) return <fieldset aria-label="Verified Sticky connection" disabled={binding.isError || !binding.data} className="m-0 min-w-0 border-0 p-0">
-    {(binding.isError || !binding.data) && <p className="mb-3 text-sm" role="alert">The Sticky connection could not be refreshed. Pending transactions remain visible; new actions wait for verification.</p>}
-    <StickyHolder key={`${identity}:${stickyProjectId}`} chainId={state.chainId} fundProjectId={fundId} incomeProjectId={state.projectId} stickyProjectId={stickyProjectId} />
-  </fieldset>
   // Preserve access to an existing direct-FUND distributor only when its actual
   // split and canonical FUND token have been independently verified.
   if (state.rewards) return <IncomeRewards state={state} client={client} />
   if (!fundId) return null
   return <Panel title="Ongoing FUND rewards">
-    <p>Homerun uses Sticky shares for ongoing reward snapshots. Initial INCOME claims remain separate and require no staking.</p>
-    {binding.isPending ? <p className="mt-3 text-sm" role="status">Verifying the Sticky connection…</p> : binding.isError ? <p className="mt-3 text-sm" role="alert">The Sticky connection could not be verified. {message(binding.error)}</p> : <p className="mt-3 text-sm">No verified Sticky reward connection is available for this project.</p>}
+    <p>The owner holds the reserved share of new INCOME until it is split further. Initial INCOME claims remain separate and require no staking.</p>
   </Panel>
 }
 
@@ -322,35 +305,33 @@ function IncomeCashOut({ state, client, context }: { state: IncomeProjectState; 
 function IncomeTokenActions({ state, client }: { state: IncomeProjectState; client: PublicClient }) {
   const { address } = useWallet()
   const tx = useIncomeTx(state)
-  const [action, setAction] = useState('claim')
+  const [action, setAction] = useState('transferTokens')
   const [input, setInput] = useState('')
   const [recipient, setRecipient] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [preparing, setPreparing] = useState(false)
   const count = amount(input)
-  const transfer = action === 'transferTokens' || action === 'transferCredits'
+  const transfer = action === 'transferTokens'
   const destination = transfer ? isAddress(recipient) && !isAddressEqual(recipient, zeroAddress) ? getAddress(recipient) : null : address
-  const balance = action === 'transferTokens' ? state.erc20Balance : action === 'burn' ? state.totalBalance : state.creditBalance
+  // A revnet has its ERC-20 from launch and never holds credits, so the token balance is the balance.
+  const balance = action === 'burn' ? state.totalBalance : state.erc20Balance
   async function submit() {
     if (!address || !destination || count <= 0n) return
     setPreparing(true); setError(null)
     try {
       let request: TxRequest
       const base = { chainId: state.chainId, projectId: state.projectId, holder: address }
-      if (action === 'claim') request = { ...buildClaimTokensTx({ ...base, tokenCount: count, beneficiary: address }), label: `Claim ${units(count)} INCOME credits as ERC-20 tokens` }
-      else if (action === 'transferCredits') request = { ...buildTransferCreditsTx({ ...base, creditCount: count, recipient: destination }), label: `Transfer ${units(count)} INCOME credits to ${destination}` }
-      else if (action === 'burn') request = { ...buildBurnTokensTx({ ...base, tokenCount: count, memo: 'Voluntary INCOME burn' }), label: `Permanently burn ${units(count)} INCOME without receiving funds` }
+      if (action === 'burn') request = { ...buildBurnTokensTx({ ...base, tokenCount: count, memo: 'Voluntary INCOME burn' }), label: `Permanently burn ${units(count)} INCOME without receiving funds` }
       else { if (!state.tokenAddress) throw new Error('No INCOME ERC-20 is deployed.'); request = { chainId: state.chainId, address: state.tokenAddress, abi: erc20Abi, functionName: 'transfer', args: [destination, count], label: `Transfer ${units(count)} INCOME tokens to ${destination}` } }
       await tx.send(request, { reverify: async () => {
         const latest = await fresh(client, state, address)
-        const available = action === 'transferTokens' ? latest.erc20Balance : action === 'burn' ? latest.totalBalance : latest.creditBalance
+        const available = action === 'burn' ? latest.totalBalance : latest.erc20Balance
         if (count > available) throw new Error('Your INCOME balance changed.')
-        if (action === 'transferCredits' && latest.metadata.pauseCreditTransfers) throw new Error('Credit transfers are paused.')
       } })
     } catch (reason) { setError(message(reason)) } finally { setPreparing(false) }
   }
   return <Panel title="Manage INCOME tokens">
-    <label className="mb-4 grid gap-2 text-sm">Action<select className="min-h-11 rounded border border-[#bfc9b5] bg-white px-3 pr-9" value={action} onChange={event => setAction(event.target.value)}><option value="claim">Claim credits as ERC-20</option><option value="transferTokens">Transfer ERC-20 tokens</option><option value="transferCredits">Transfer credits</option><option value="burn">Burn without receiving funds</option></select></label>
+    <label className="mb-4 grid gap-2 text-sm">Action<select className="min-h-11 rounded border border-[#bfc9b5] bg-white px-3 pr-9" value={action} onChange={event => setAction(event.target.value)}><option value="transferTokens">Transfer INCOME tokens</option><option value="burn">Burn without receiving funds</option></select></label>
     <div className="grid gap-4 sm:grid-cols-2"><Field label="INCOME amount" value={input} onChange={setInput} />{transfer && <Field label="Recipient address" value={recipient} onChange={setRecipient} text />}</div>
     <p className="mt-3 text-sm">Available: {units(balance)} INCOME</p>
     {action === 'burn' && <p className="mt-3 text-sm">Burning permanently reduces your balance. Use cash out to receive treasury funds.</p>}
@@ -494,11 +475,6 @@ function IncomeRewards({ state, client }: { state: IncomeProjectState; client: P
       if (action === 'activate') {
         const fund = await readFundProjectState(client, { chainId: state.chainId, projectId: rewards.fundProjectId, account: address })
         if (!fund.tokenAddress || !isAddressEqual(fund.tokenAddress, rewards.fundToken)) throw new Error('The FUND token identity changed.')
-        if (fund.creditBalance > 0n) {
-          request = { ...buildClaimTokensTx({ chainId: state.chainId, projectId: rewards.fundProjectId, holder: address, tokenCount: fund.creditBalance, beneficiary: address }), label: `Claim ${units(fund.creditBalance)} FUND credits before activating future rewards` }
-          await tx.send(request, { reverify: async () => { const latest = await readFundProjectState(client, { chainId: state.chainId, projectId: rewards.fundProjectId, account: address }); if (latest.creditBalance < fund.creditBalance || latest.tokenAddress !== fund.tokenAddress) throw new Error('Your FUND credits changed. Refresh and try again.') } })
-          return
-        }
         if (fund.erc20Balance <= 0n) throw new Error('This wallet has no FUND ERC-20 tokens to activate.')
         request = { ...buildIncomeRewardActivation(state.chainId, rewards.fundToken, address), label: 'Activate future FUND-holder rewards by self-delegating FUND voting power' }
       } else request = { ...buildIncomeRewardClaim({ chainId: state.chainId, fundToken: rewards.fundToken, incomeToken: state.tokenAddress, holder: address, collect: action === 'collect' }), label: action === 'collect' ? 'Collect vested INCOME rewards to your wallet' : 'Begin vesting eligible historical INCOME rewards' }

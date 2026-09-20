@@ -6,20 +6,18 @@ import type { InitialIncomeAllocationState } from '../src/lib/income-allocation-
 import type { FundGlobalSnapshot } from '../src/lib/fund-global-snapshot'
 
 const runtime = vi.hoisted(() => ({
-  distributor: '0x0000000000000000000000000000000000000100' as Address,
   launcher: '0x0000000000000000000000000000000000000200' as Address,
-  sticky: '0x0000000000000000000000000000000000000300' as Address,
+  allowlist: '0x0000000000000000000000000000000000000400' as Address,
   state: {} as FundProjectState,
   remoteStates: new Map<number, FundProjectState>(),
   allocationManifest: null as FundGlobalManifest | null, allocation: vi.fn(),
 }))
 vi.mock('@bananapus/nana-sdk-core', async importOriginal => {
   const actual = await importOriginal<typeof import('@bananapus/nana-sdk-core')>()
-  return { ...actual, jbContractAddress: { ...actual.jbContractAddress, '6': { ...actual.jbContractAddress['6'], JBTokenDistributor: { 8453: runtime.distributor, 10: runtime.distributor }, HomerunIncomeDeployer: { 8453: runtime.launcher, 10: runtime.launcher }, JBStickyDeployer: { 8453: runtime.sticky, 10: runtime.sticky } } } }
+  return { ...actual, jbContractAddress: { ...actual.jbContractAddress, '6': { ...actual.jbContractAddress['6'], HomerunDeployer: { 8453: runtime.launcher, 10: runtime.launcher }, HomerunAllowlistHook: { 8453: runtime.allowlist, 10: runtime.allowlist } } } }
 })
 vi.mock('../src/lib/fund-state', () => ({ readFundProjectState: vi.fn((_client, { chainId }) => runtime.remoteStates.get(chainId) ?? runtime.state) }))
 vi.mock('../src/lib/income-allocation-state', () => ({ readInitialIncomeAllocation: runtime.allocation }))
-vi.mock('../src/lib/sticky-state', () => ({ readStickyProjectState: vi.fn(async () => ({ projectId: 9n, fundProjectId: 7n, tokenAddress: '0x0000000000000000000000000000000000000044' })) }))
 vi.mock('../src/lib/fund-global-manifest', async importOriginal => {
   const actual = await importOriginal<typeof import('../src/lib/fund-global-manifest')>()
   return { ...actual, verifyFundGlobalManifestHistory: vi.fn(async (_clients, value) => actual.parseFundGlobalManifest(value)) }
@@ -28,7 +26,7 @@ import { MappableAsset, parseSuckerDeployerConfig, USDC_ADDRESSES, type JBChainI
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import { incomeConfigurationHash, incomeConfigurationSalt, incomeLaunchBlockers, prepareIncomeLaunch, readIncomeLaunchBinding } from '../src/lib/income-launch'
 import { buildFundGlobalManifest, fundGlobalManifestHash, globalIncomeSnapshotParameters, verifyFundGlobalManifestHistory } from '../src/lib/fund-global-manifest'
-import { homerunIncomeDeployerAbi, INITIAL_INCOME_SUPPLY } from '../src/lib/income-contracts'
+import { homerunDeployerAbi, INITIAL_INCOME_SUPPLY } from '../src/lib/income-contracts'
 import { readFundProjectState } from '../src/lib/fund-state'
 
 const holder = getAddress('0x0000000000000000000000000000000000000011')
@@ -40,8 +38,7 @@ const salt = `0x${'cc'.repeat(32)}` as Hex
 const protocolHash = `0x${'dd'.repeat(32)}` as Hex
 const startsAtOrAfter = 1_799_999_900
 const defaultSplits = [
-  { percent: 875_000_000, projectId: 0n, beneficiary: holder, preferAddToBalance: false, lockedUntil: 0, hook: zeroAddress },
-  { percent: 125_000_000, projectId: 0n, beneficiary: token, preferAddToBalance: false, lockedUntil: 0, hook: runtime.distributor },
+  { percent: 1_000_000_000, projectId: 0n, beneficiary: holder, preferAddToBalance: false, lockedUntil: 0, hook: zeroAddress },
 ]
 function globalSnapshot(chains: JBChainId[] = [8453], emptyLocal = false): FundGlobalSnapshot {
   const projects = chains.map(chainId => {
@@ -67,7 +64,7 @@ function globalSnapshot(chains: JBChainId[] = [8453], emptyLocal = false): FundG
   }
 }
 const manifest = buildFundGlobalManifest(globalSnapshot(), { helper: runtime.launcher, launchSalt: salt })
-const input = { chainId: 8453 as const, fundProjectId: 7n, account: holder, manifest, manifestUri: 'ipfs://bafysnapshot', stickyProjectId: 9n, name: 'Founder Haus INCOME', projectUri: 'ipfs://bafyincome', salt, operatorBps: 7000, fundHolderBps: 1000, startsAtOrAfter }
+const input = { chainId: 8453 as const, fundProjectId: 7n, account: holder, manifest, manifestUri: 'ipfs://bafysnapshot', name: 'Founder Haus INCOME', ticker: 'RENT', projectUri: 'ipfs://bafyincome', salt, reservedBps: 8000, startsAtOrAfter }
 
 function configurationSalt(snapshot: ReturnType<typeof globalIncomeSnapshotParameters>, launchSalt: Hex) {
   const allocationsHash = keccak256(encodeAbiParameters(parseAbiParameters('(uint32 chainId,uint256 fundProjectId,uint256 snapshotBlockNumber,bytes32 snapshotBlockHash,bytes32 merkleRoot,uint256 leafCount,uint104 incomeAmount)[]'), [snapshot.allocations]))
@@ -78,19 +75,19 @@ function client(overrides: Record<string, unknown> = {}, chainId: JBChainId = 84
   const defaults: Record<string, unknown> = {
     CONTROLLER: v6Address('JBController', chainId), DIRECTORY: v6Address('JBDirectory', chainId), PROJECTS: v6Address('JBProjects', chainId), TOKENS: v6Address('JBTokens', chainId),
     REV_DEPLOYER: v6Address('REVDeployer', chainId), REV_OWNER: v6Address('REVOwner', chainId), SUCKER_REGISTRY: v6Address('JBSuckerRegistry', chainId),
-    TOKEN_DISTRIBUTOR: runtime.distributor, STICKY_DEPLOYER: runtime.sticky, OMNICHAIN_DEPLOYER: v6Address('JBOmnichainDeployer', chainId), PROTOCOL_CONFIG_HASH: protocolHash,
-    LAUNCH_VERSION: 3n, USDC: USDC_ADDRESSES[chainId], incomeProjectIdOf: 0n, initialAllocationVaultOf: zeroAddress, creationFee: 15n, stakedTokenOf: zeroAddress, ROUND_DURATION: 604800n, VESTING_ROUNDS: 4n, CLAIM_DURATION: 94608000, REV_LOANS: zeroAddress, STARTING_TIMESTAMP: 1n,
+    OMNICHAIN_DEPLOYER: v6Address('JBOmnichainDeployer', chainId), TERMINAL: v6Address('JBMultiTerminal', chainId), ROUTER_TERMINAL_REGISTRY: v6Address('JBRouterTerminalRegistry', chainId), ALLOWLIST_HOOK: runtime.allowlist, PROTOCOL_CONFIG_HASH: protocolHash,
+    LAUNCH_VERSION: 4n, USDC: USDC_ADDRESSES[chainId], incomeProjectIdOf: 0n, initialAllocationVaultOf: zeroAddress, creationFee: 15n,
     currentRulesetOf: [{ id: 80n }, {}], splitsOf: defaultSplits,
   }
   return {
     getChainId: vi.fn(async () => chainId as number),
     getBlock: vi.fn(async (args?: { blockNumber?: bigint; blockTag?: string }) => ({ number: args?.blockNumber === 50n ? 50n : 100n, hash: args?.blockNumber === 50n ? snapshotHash : hash, timestamp: 1_800_000_000n })),
     getCode: vi.fn(async (_args?: { address?: Address; blockNumber?: bigint }) => '0x1234'),
-    readContract: vi.fn(async ({ functionName, blockNumber, address, args }: { functionName: string; blockNumber?: bigint; address?: Address; args?: readonly unknown[] }) => {
-      expect(blockNumber).toBe(functionName === 'stakedTokenOf' ? 50n : 100n)
+    readContract: vi.fn(async ({ functionName, blockNumber, args }: { functionName: string; blockNumber?: bigint; args?: readonly unknown[] }) => {
+      expect(blockNumber).toBe(100n)
       if (!(functionName in overrides) && functionName === 'configurationSaltFor') return configurationSalt(args![0] as ReturnType<typeof globalIncomeSnapshotParameters>, args![1] as Hex)
       if (!(functionName in overrides) && functionName === 'usdcOf') return USDC_ADDRESSES[Number(args![0]) as JBChainId]
-      const result = functionName in overrides ? overrides[functionName] : functionName === 'REV_OWNER' && address === runtime.distributor ? zeroAddress : defaults[functionName]
+      const result = functionName in overrides ? overrides[functionName] : defaults[functionName]
       if (result instanceof Error) throw result
       if (result === undefined) throw new Error(`Unexpected read ${functionName}`)
       return result
@@ -149,23 +146,20 @@ describe('global atomic INCOME launch preparation', () => {
     expect(prepared.configurationSalt).toBe(configurationSalt(prepared.snapshot, salt))
     expect(prepared.expectedConfigurationHash).toMatch(/^0x[\da-f]{64}$/)
     expect(prepared.expectedConfigurationHash).not.toBe(zeroHash)
-    expect(prepared.request.args).toEqual([7n, prepared.snapshot, { name: input.name, ticker: 'INCOME', uri: input.projectUri, salt }, 7000, 1000, 9n, startsAtOrAfter, parseSuckerDeployerConfig(8453, [8453], [MappableAsset.USDC], { version: 6, bridge: 'ccip', salt }), holder])
+    expect(prepared.request.args).toEqual([7n, prepared.snapshot, { name: input.name, ticker: 'RENT', uri: input.projectUri, salt }, 8000, startsAtOrAfter, parseSuckerDeployerConfig(8453, [8453], [MappableAsset.USDC], { version: 6, bridge: 'ccip', salt })])
     expect(prepared.request.value).toBe(15n)
-    expect(decodeFunctionData({ abi: homerunIncomeDeployerAbi, data: encodeFunctionData({ abi: homerunIncomeDeployerAbi, functionName: 'deployIncome', args: prepared.request.args as never }) }).args?.[1]).toEqual(prepared.snapshot)
+    expect(decodeFunctionData({ abi: homerunDeployerAbi, data: encodeFunctionData({ abi: homerunDeployerAbi, functionName: 'deployIncome', args: prepared.request.args as never }) }).args?.[1]).toEqual(prepared.snapshot)
   })
   it('keeps historical entitlements when current FUND supply later changes', async () => {
     runtime.state.totalSupply = 90n
     expect((await prepareIncomeLaunch(client() as unknown as PublicClient, input)).snapshot.totalFundSupply).toBe(100n)
   })
-  it('assigns token incentives to the operator while requiring the FUND owner to submit', async () => {
-    const operator = getAddress('0x0000000000000000000000000000000000000999')
-    const prepared = await prepareIncomeLaunch(client() as unknown as PublicClient, { ...input, operator })
-    expect(prepared.request.args[8]).toBe(operator)
+  it('requires the FUND owner to submit and rejects a blank ticker before preparing a transaction', async () => {
+    const other = getAddress('0x0000000000000000000000000000000000000999')
+    const prepared = await prepareIncomeLaunch(client() as unknown as PublicClient, input)
     expect(prepared.fund.owner).toBe(holder)
-    await expect(prepareIncomeLaunch(client() as unknown as PublicClient, { ...input, account: operator, operator })).rejects.toThrow('The FUND owner must launch INCOME.')
-  })
-  it('rejects an invalid incentive recipient before preparing a transaction', async () => {
-    await expect(prepareIncomeLaunch(client() as unknown as PublicClient, { ...input, operator: zeroAddress })).rejects.toThrow(/operator wallet/)
+    await expect(prepareIncomeLaunch(client() as unknown as PublicClient, { ...input, account: other })).rejects.toThrow('The FUND owner must launch INCOME.')
+    await expect(prepareIncomeLaunch(client() as unknown as PublicClient, { ...input, ticker: ' ' })).rejects.toThrow(/ticker/)
   })
   it('accepts a linked FUND and verifies all source chains against one global allocation', async () => {
     const f = linkedFixture()
@@ -177,7 +171,7 @@ describe('global atomic INCOME launch preparation', () => {
     expect(prepared.localAllocation.chainId).toBe(8453)
     expect(prepared.snapshot.allocations.map(row => [row.chainId, row.incomeAmount])).toEqual([[10, INITIAL_INCOME_SUPPLY / 2n], [8453, INITIAL_INCOME_SUPPLY / 2n]])
     expect(prepared.snapshot.allocations.reduce((sum, row) => sum + row.incomeAmount, 0n)).toBe(INITIAL_INCOME_SUPPLY)
-    expect(prepared.request.args[7]).toEqual(parseSuckerDeployerConfig(8453, [10, 8453], [MappableAsset.USDC], { version: 6, bridge: 'ccip', salt }))
+    expect(prepared.request.args[5]).toEqual(parseSuckerDeployerConfig(8453, [10, 8453], [MappableAsset.USDC], { version: 6, bridge: 'ccip', salt }))
     for (const rpc of [f.rpc, f.remote]) {
       expect(rpc.readContract.mock.calls.filter(([args]) => args.functionName === 'usdcOf').map(([args]) => args.args)).toEqual([[10], [8453]])
       expect(rpc.getBlock).toHaveBeenCalledWith({ blockTag: 'finalized' })
@@ -295,18 +289,20 @@ describe('global atomic INCOME launch preparation', () => {
     const snapshot = globalIncomeSnapshotParameters(f.manifest, input.manifestUri)
     const config = { ...input, helper: runtime.launcher, snapshot, configurationSalt: configurationSalt(snapshot, salt) }
     const expectedHash = incomeConfigurationHash(config)
-    expect(incomeConfigurationHash({ ...config, operatorBps: 6000, fundHolderBps: 2000 })).toBe(expectedHash)
+    // The reserved percent is part of the stock identity; only the split rows inside it are free.
+    expect(incomeConfigurationHash({ ...config, reservedBps: 6000 })).not.toBe(expectedHash)
     const remote = client({ incomeProjectIdOf: 18n, initialAllocationVaultOf: vault, hashedEncodedConfigurationOf: expectedHash,
-      splitsOf: [{ ...defaultSplits[0], percent: 750_000_000 }, { ...defaultSplits[1], percent: 250_000_000 }],
+      splitsOf: [{ ...defaultSplits[0], percent: 750_000_000 }, { ...defaultSplits[0], beneficiary: vault, percent: 250_000_000 }],
     }, 10)
     f.input.clients.set(10, remote as unknown as PublicClient)
-    await expect(prepareIncomeLaunch(f.rpc as unknown as PublicClient, f.input)).resolves.toMatchObject({ request: { args: expect.arrayContaining([7000, 1000]) } })
+    await expect(prepareIncomeLaunch(f.rpc as unknown as PublicClient, f.input)).resolves.toMatchObject({ request: { args: expect.arrayContaining([8000]) } })
     expect(remote.readContract.mock.calls.some(([args]) => args.functionName === 'splitsOf')).toBe(false)
   })
-  it('allows the Owner to change a launched peer recipient while another chain uses the original launch recipient', async () => {
+  it('allows the Owner to redirect a launched peer split without changing the frozen plan', async () => {
     const f = launchedPeerFixture()
-    await expect(prepareIncomeLaunch(f.rpc as unknown as PublicClient, { ...f.input, operator: defaultSplits[0].beneficiary })).resolves.toBeDefined()
-    await expect(prepareIncomeLaunch(f.rpc as unknown as PublicClient, { ...f.input, operator: vault })).resolves.toMatchObject({ request: { args: expect.arrayContaining([vault]) } })
+    const redirected = client({ incomeProjectIdOf: 18n, initialAllocationVaultOf: vault, hashedEncodedConfigurationOf: f.expectedHash, splitsOf: [{ ...defaultSplits[0], beneficiary: vault }] }, 10)
+    f.input.clients.set(10, redirected as unknown as PublicClient)
+    await expect(prepareIncomeLaunch(f.rpc as unknown as PublicClient, f.input)).resolves.toBeDefined()
   })
   it('accepts older peers with locked splits without applying that policy to new launches', async () => {
     const f = launchedPeerFixture()
@@ -317,10 +313,10 @@ describe('global atomic INCOME launch preparation', () => {
     await expect(prepareIncomeLaunch(f.rpc as unknown as PublicClient, f.input)).resolves.toBeDefined()
   })
   it.each([
-    [{ ...defaultSplits[0], beneficiary: vault }, defaultSplits[1]],
-    [defaultSplits[0], { ...defaultSplits[1], hook: holder }],
-    [defaultSplits[0], { ...defaultSplits[1], projectId: 12n }],
-    [defaultSplits[0], { ...defaultSplits[1], preferAddToBalance: true }],
+    [{ ...defaultSplits[0], beneficiary: vault }],
+    [{ ...defaultSplits[0], hook: holder }],
+    [{ ...defaultSplits[0], projectId: 12n }],
+    [{ ...defaultSplits[0], preferAddToBalance: true }],
   ])('allows Owner updates to a launched peer’s split routing %#', async (...splitsOf) => {
     const f = linkedFixture()
     const snapshot = globalIncomeSnapshotParameters(f.manifest, input.manifestUri)
@@ -333,23 +329,19 @@ describe('global atomic INCOME launch preparation', () => {
     f.remote.getBlock.mockImplementation(async args => ({ number: args?.blockNumber === 50n ? 50n : 100n, hash: args?.blockNumber === 50n ? salt : hash, timestamp: 1_800_000_000n }))
     await expect(prepareIncomeLaunch(f.rpc as unknown as PublicClient, f.input)).rejects.toThrow(/reorganized/)
   })
-  it('allows a deliberately zero-customer allocation', async () => {
-    const prepared = await prepareIncomeLaunch(client() as unknown as PublicClient, { ...input, operatorBps: 9000 })
-    expect(prepared.request.args.slice(3, 5)).toEqual([9000, 1000])
+  it.each([0, 10_000])('allows a deliberately %s bps reserved allocation', async reservedBps => {
+    const prepared = await prepareIncomeLaunch(client() as unknown as PublicClient, { ...input, reservedBps })
+    expect(prepared.request.args[3]).toBe(reservedBps)
   })
   it.each([
-    { incomeProjectIdOf: 8n }, { initialAllocationVaultOf: vault }, { TOKEN_DISTRIBUTOR: holder }, { REV_DEPLOYER: holder }, { CONTROLLER: holder }, { STICKY_DEPLOYER: holder }, { OMNICHAIN_DEPLOYER: holder }, { PROTOCOL_CONFIG_HASH: zeroHash }, { usdcOf: holder }, { configurationSaltFor: hash }, { ROUND_DURATION: 1n }, { VESTING_ROUNDS: 1n }, { CLAIM_DURATION: 0 }, { REV_LOANS: holder }, { STARTING_TIMESTAMP: 0n }, { STARTING_TIMESTAMP: 1_800_000_001n },
+    { incomeProjectIdOf: 8n }, { initialAllocationVaultOf: vault }, { REV_DEPLOYER: holder }, { CONTROLLER: holder }, { OMNICHAIN_DEPLOYER: holder }, { TERMINAL: holder }, { ROUTER_TERMINAL_REGISTRY: holder }, { ALLOWLIST_HOOK: holder }, { PROTOCOL_CONFIG_HASH: zeroHash }, { usdcOf: holder }, { configurationSaltFor: hash },
   ])('refuses unverified or already bound launch %#', async override => {
     await expect(prepareIncomeLaunch(client(override) as unknown as PublicClient, input)).rejects.toThrow()
   })
-  it('refuses managed Sticky custody predating the initial snapshot', async () => {
-    await expect(prepareIncomeLaunch(client({ stakedTokenOf: token }) as unknown as PublicClient, input)).rejects.toThrow(/before creating the managed Sticky/)
-  })
-  it('accepts a Sticky factory deployed after the finalized FUND snapshot', async () => {
-    const rpc = client(); rpc.getCode.mockImplementation(async args => args?.address === runtime.sticky && args.blockNumber === 50n ? '0x' : '0x1234')
+  it('commits the reconciled manifest hash into the prepared plan', async () => {
+    const rpc = client()
     const prepared = await prepareIncomeLaunch(rpc as unknown as PublicClient, input)
     expect(prepared.manifestHash).toBe(fundGlobalManifestHash(manifest))
-    expect(rpc.readContract.mock.calls.some(([args]) => args.functionName === 'stakedTokenOf')).toBe(false)
   })
   it('requires a finalized imported snapshot', async () => {
     const rpc = client(); rpc.getBlock.mockResolvedValue({ number: 49n, hash, timestamp: 1_800_000_000n })
@@ -369,22 +361,22 @@ describe('global atomic INCOME launch preparation', () => {
     vi.mocked(verifyFundGlobalManifestHistory).mockRejectedValueOnce(new Error('Historical ownership differs'))
     await expect(prepareIncomeLaunch(client() as unknown as PublicClient, input)).rejects.toThrow(/Historical ownership/)
   })
-  it.each([{ manifestUri: 'https://example.com/snapshot' }, { stickyProjectId: 0n }, { operatorBps: 10000 }, { fundHolderBps: 0 }, { startsAtOrAfter: 0 }, { startsAtOrAfter: 1_800_000_001 }, { startsAtOrAfter: 1.5 }])('refuses incomplete launch configuration %#', async patch => {
+  it.each([{ manifestUri: 'https://example.com/snapshot' }, { reservedBps: 10001 }, { reservedBps: -1 }, { reservedBps: 12.5 }, { startsAtOrAfter: 0 }, { startsAtOrAfter: 1_800_000_001 }, { startsAtOrAfter: 1.5 }])('refuses incomplete launch configuration %#', async patch => {
     await expect(prepareIncomeLaunch(client() as unknown as PublicClient, { ...input, ...patch })).rejects.toThrow()
   })
   it('requires already deployed canonical helper code', async () => {
     const rpc = client(); rpc.getCode.mockResolvedValue('0x')
     await expect(prepareIncomeLaunch(rpc as unknown as PublicClient, input)).rejects.toThrow(/no deployed code/)
   })
-  it.each([1n, 2n, 4n, new Error('Function selector was not recognized')])('rejects an incompatible registered launcher version %s before returning a transaction', async version => {
+  it.each([1n, 2n, 3n, new Error('Function selector was not recognized')])('rejects an incompatible registered launcher version %s before returning a transaction', async version => {
     const rpc = client({ LAUNCH_VERSION: version })
-    await expect(prepareIncomeLaunch(rpc as unknown as PublicClient, input)).rejects.toThrow(/verified launcher supporting separate Owner and Operator wallets and owner-managed shops is required/)
+    await expect(prepareIncomeLaunch(rpc as unknown as PublicClient, input)).rejects.toThrow(/verified launcher that launched this FUND and supports separate Owner and Operator wallets is required/)
     expect(rpc.readContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'LAUNCH_VERSION', blockNumber: 100n }))
     expect(rpc.readContract.mock.calls.some(([args]) => args.functionName === 'creationFee')).toBe(false)
   })
   it('requires compatible launchers on every peer still waiting to launch', async () => {
     const f = linkedFixture({ remoteOverrides: { LAUNCH_VERSION: 1n } })
-    await expect(prepareIncomeLaunch(f.rpc as unknown as PublicClient, f.input)).rejects.toThrow(/Chain 10: A verified launcher supporting separate Owner and Operator wallets and owner-managed shops is required/)
+    await expect(prepareIncomeLaunch(f.rpc as unknown as PublicClient, f.input)).rejects.toThrow(/Chain 10: A verified launcher that launched this FUND and supports separate Owner and Operator wallets is required/)
   })
   it('keeps completed legacy peers usable while requiring the current launcher for a new local launch', async () => {
     const f = launchedPeerFixture()
@@ -404,7 +396,7 @@ describe('global atomic INCOME launch preparation', () => {
     expect(incomeLaunchBlockers({ ...runtime.state, ...patch } as FundProjectState).length).toBeGreaterThan(0)
   })
   it('reports missing add-ons without substituting simulation addresses', () => {
-    expect(incomeLaunchBlockers({ ...runtime.state, chainId: 1, linkedChainIds: [1] }).filter(value => value.includes('verified and registered'))).toHaveLength(3)
+    expect(incomeLaunchBlockers({ ...runtime.state, chainId: 1, linkedChainIds: [1] }).filter(value => value.includes('verified and registered'))).toHaveLength(1)
   })
   it.each([false, true])('allows an authenticated stocked FUND shop at the INCOME transition (omnichain=%s)', omnichain => {
     const hook = vault
@@ -455,5 +447,5 @@ it('matches the fixed configuration salt and actual REV hash verified in Solidit
   }
   const configurationSalt = incomeConfigurationSalt(snapshot, bytes(3))
   expect(configurationSalt).toBe('0x5eb066edce4131b5cc292e75da46a3303f7915f03506cc9a543b160f27ffcd9a')
-  expect(incomeConfigurationHash({ snapshot, configurationSalt, startsAtOrAfter: 1_000_001, name: 'Global INCOME vector', helper: '0x1111111111111111111111111111111111111111', operatorBps: 7000, fundHolderBps: 1000 })).toBe('0xeb3e51db9fd832db60a8a71e1ea05270bb8ca57185a7cce3fa8ebfd8888828e6')
+  expect(incomeConfigurationHash({ snapshot, configurationSalt, startsAtOrAfter: 1_000_001, name: 'Global INCOME vector', ticker: 'RENT', helper: '0x1111111111111111111111111111111111111111', reservedBps: 8000 })).toBe('0x41bf0e1e9635c90bd0ebf612705b6db6eec7d7024c7b138d9a2325d389365914')
 })

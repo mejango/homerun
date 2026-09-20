@@ -58,7 +58,7 @@ describe('publishing project, Owner, and Operator metadata', () => {
   it('preserves every supported create field in the pinned JSON, with image references replacing local payloads', async () => {
     const client = pinClient()
     const values = normalizeCreateDraft(draft({
-      name: ' Neighborhood workshop ', assetType: 'business', location: ' Portland ', description: ' A shared workshop. ',
+      name: ' Neighborhood workshop ', location: ' Portland ', description: ' A shared workshop. ',
       ownerWallet: '0x0000000000000000000000000000000000000001', ownerName: ' Trust ', ownerIntroduction: ' We own the building. ',
       operatorWallet: '0x0000000000000000000000000000000000000002', operatorName: ' Makers ', operatorIntroduction: ' We run classes. ',
       revenueDescription: ' Classes and memberships ', minimumRevenue: 5_000, minimumRevenueConsequences: ' Publish a recovery plan. ',

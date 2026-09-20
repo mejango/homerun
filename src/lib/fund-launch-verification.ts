@@ -1,9 +1,10 @@
-import { erc2771ForwarderAbi, jbControllerAbi, jbProjectsAbi, jbDirectoryAbi, jbMultiTerminalAbi, jbFundAccessLimitsAbi, jbOmnichainDeployerAbi, jbPricesAbi, USDC_ADDRESSES, type JBChainId } from '@bananapus/nana-sdk-core'
+import { erc2771ForwarderAbi, jbControllerAbi, jbProjectsAbi, jbDirectoryAbi, jbMultiTerminalAbi, jbFundAccessLimitsAbi, jbOmnichainDeployerAbi, jbPricesAbi, jbTokensAbi, USDC_ADDRESSES, type JBChainId } from '@bananapus/nana-sdk-core'
 import { BASE_CURRENCY_USD, tokenCurrencyId, v6Address } from '@bananapus/nana-sdk-core/v6'
-import { decodeEventLog, decodeFunctionData, encodeFunctionData, isAddressEqual, parseAbi, type Address, type PublicClient, type TransactionReceipt } from 'viem'
+import { decodeEventLog, decodeFunctionData, encodeFunctionData, erc20Abi, isAddressEqual, parseAbi, zeroAddress, type Address, type PublicClient, type TransactionReceipt } from 'viem'
 import { unbundleMultisigLaunch, verifyCreatedMultisigs } from './create-multisig'
 import type { RelayrEntry } from './relayr'
 import { buildFundLaunch, initialFundRuleset, type FundLaunchInput, type FundTransaction } from './fund-contracts'
+import { homerunAllowlistHookAbi, homerunDeployerAbi, registeredAllowlistHook } from './income-contracts'
 
 const safeExecutionAbi = parseAbi([
   'function execTransaction(address to,uint256 value,bytes data,uint8 operation,uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,address gasToken,address refundReceiver,bytes signatures) returns (bool success)',
@@ -13,7 +14,9 @@ const safeExecutionAbi = parseAbi([
 export async function checkLaunchDeployment(client: PublicClient, request: FundTransaction): Promise<void> {
   if (await client.getChainId() !== request.chainId) throw new Error('RPC returned the wrong chain.')
   const id = request.chainId as JBChainId
-  const targets = new Set([request.address, v6Address('JBProjects', id), v6Address('JBController', id), v6Address('JBMultiTerminal', id), v6Address('JBPrices', id), USDC_ADDRESSES[id]])
+  const allowlistHook = registeredAllowlistHook(id)
+  if (!allowlistHook) throw new Error('The Homerun allowlist hook is not registered on this chain.')
+  const targets = new Set([request.address, allowlistHook, v6Address('JBProjects', id), v6Address('JBController', id), v6Address('JBMultiTerminal', id), v6Address('JBRouterTerminalRegistry', id), v6Address('JBOmnichainDeployer', id), v6Address('JBPrices', id), USDC_ADDRESSES[id]])
   await Promise.all([...targets].map(async target => {
     const code = await client.getCode({ address: target })
     if (!code || code === '0x') throw new Error(`Juicebox V6 is not deployed at ${target} on this chain.`)
@@ -89,33 +92,47 @@ export async function verifyFundLaunch(client: PublicClient, request: FundTransa
   const chainId = request.chainId as JBChainId
   const controller = v6Address('JBController', chainId)
   const projects = v6Address('JBProjects', chainId)
-  const linked = input.chainIds.length > 1
-  const launchEvent = linked ? 'LaunchRulesets' : 'LaunchProject'
-  const launched: { projectId: bigint; rulesetId: bigint }[] = []
+  const omnichain = v6Address('JBOmnichainDeployer', chainId)
+  const allowlistHook = registeredAllowlistHook(chainId)
+  if (!allowlistHook) throw new Error('The Homerun allowlist hook is not registered on this chain.')
+  // HomerunDeployer says which project it launched for whom; the stock deployers below prove the rest.
+  const launchedFunds = receipt.logs.flatMap(log => {
+    if (!isAddressEqual(log.address, request.address)) return []
+    try {
+      const { args } = decodeEventLog({ abi: homerunDeployerAbi, eventName: 'FundLaunched', data: log.data, topics: log.topics })
+      return isAddressEqual(args.owner, input.owner) && isAddressEqual(args.caller, input.sender) ? [args.projectId] : []
+    } catch { return [] }
+  })
+  if (launchedFunds.length !== 1) throw new Error('The receipt does not contain exactly one matching FUND launch. Check its execution before continuing.')
+  const projectId = launchedFunds[0]
+  const launched: bigint[] = []
   for (const log of receipt.logs) {
     if (!isAddressEqual(log.address, controller)) continue
     try {
-      const decoded = decodeEventLog({ abi: jbControllerAbi, eventName: launchEvent, data: log.data, topics: log.topics })
-      const expectedCaller = linked ? request.address : input.sender
-      if (decoded.args.projectUri === input.projectUri && isAddressEqual(decoded.args.caller, expectedCaller)) launched.push({ projectId: decoded.args.projectId, rulesetId: decoded.args.rulesetId })
+      const decoded = decodeEventLog({ abi: jbControllerAbi, eventName: 'LaunchRulesets', data: log.data, topics: log.topics })
+      if (decoded.args.projectId === projectId && decoded.args.projectUri === input.projectUri && isAddressEqual(decoded.args.caller, omnichain)) launched.push(decoded.args.rulesetId)
     } catch { /* Other controller events are irrelevant. */ }
   }
-  if (launched.length !== 1) throw new Error('The receipt does not contain exactly one matching FUND launch. Check its execution before continuing.')
-  const { projectId, rulesetId } = launched[0]
+  if (launched.length !== 1) throw new Error('The receipt does not prove the FUND rules were launched through the omnichain deployer.')
+  const rulesetId = launched[0]
   const created = receipt.logs.filter(log => {
     if (!isAddressEqual(log.address, projects)) return false
     try {
       const { args } = decodeEventLog({ abi: jbProjectsAbi, eventName: 'Create', data: log.data, topics: log.topics })
-      return args.projectId === projectId && isAddressEqual(args.caller, request.address) && isAddressEqual(args.owner, linked ? request.address : input.owner)
+      return args.projectId === projectId && isAddressEqual(args.caller, omnichain) && isAddressEqual(args.owner, omnichain)
     } catch { return false }
   })
   if (created.length !== 1) throw new Error('This receipt does not prove creation of the matching project NFT.')
   const at = { blockNumber: receipt.blockNumber }
   const usdc = USDC_ADDRESSES[chainId]
   const terminal = v6Address('JBMultiTerminal', chainId)
+  const router = v6Address('JBRouterTerminalRegistry', chainId)
   const access = v6Address('JBFundAccessLimits', chainId)
-  const [owner, configured, latest, actualController, contexts, payouts, allowances, uri] = await Promise.all([
+  const [owner, isFund, token, terminals, configured, latest, actualController, contexts, payouts, allowances, uri] = await Promise.all([
     client.readContract({ address: projects, abi: jbProjectsAbi, functionName: 'ownerOf', args: [projectId], ...at }),
+    client.readContract({ address: request.address, abi: homerunDeployerAbi, functionName: 'isFund', args: [projectId], ...at }),
+    client.readContract({ address: v6Address('JBTokens', chainId), abi: jbTokensAbi, functionName: 'tokenOf', args: [projectId], ...at }),
+    client.readContract({ address: v6Address('JBDirectory', chainId), abi: jbDirectoryAbi, functionName: 'terminalsOf', args: [projectId], ...at }),
     // Verify the exact launch ruleset even when its start is in the future.
     client.readContract({ address: controller, abi: jbControllerAbi, functionName: 'getRulesetOf', args: [projectId, rulesetId], ...at }),
     client.readContract({ address: controller, abi: jbControllerAbi, functionName: 'latestQueuedRulesetOf', args: [projectId], ...at }),
@@ -126,6 +143,14 @@ export async function verifyFundLaunch(client: PublicClient, request: FundTransa
     client.readContract({ address: controller, abi: jbControllerAbi, functionName: 'uriOf', args: [projectId], ...at }),
   ])
   if (!isAddressEqual(owner, input.owner)) throw new Error('The new FUND project owner differs from the reviewed owner.')
+  if (!isFund) throw new Error('HomerunDeployer does not record this project as a FUND.')
+  if (isAddressEqual(token as Address, zeroAddress)) throw new Error('The FUND ERC-20 was not deployed with the project.')
+  const [tokenName, tokenSymbol] = await Promise.all([
+    client.readContract({ address: token as Address, abi: erc20Abi, functionName: 'name', ...at }),
+    client.readContract({ address: token as Address, abi: erc20Abi, functionName: 'symbol', ...at }),
+  ])
+  if (tokenName !== input.tokenName.trim() || tokenSymbol !== input.ticker.trim()) throw new Error('The FUND token name or ticker differs from the reviewed launch.')
+  if (terminals.length !== 2 || !isAddressEqual(terminals[0], terminal) || !isAddressEqual(terminals[1], router)) throw new Error('The FUND terminals differ from the reviewed configuration.')
   if (!isAddressEqual(actualController as Address, controller) || uri !== input.projectUri) throw new Error('The new project controller or metadata differs from the reviewed deployment.')
   const expectedConfig = initialFundRuleset(input.mustStartAtOrAfter)
   const [ruleset, metadata] = configured
@@ -133,7 +158,8 @@ export async function verifyFundLaunch(client: PublicClient, request: FundTransa
   // An explicit first-stage timestamp is preserved, including a past shared
   // timestamp in a linked deployment. See JBRulesets.sol:147 and :812.
   const expectedStart = input.mustStartAtOrAfter === 0 ? block.timestamp : BigInt(input.mustStartAtOrAfter)
-  const expectedMetadata = linked ? { ...expectedConfig.metadata, dataHook: request.address, useDataHookForPay: true, useDataHookForCashOut: true } : expectedConfig.metadata
+  // Every FUND launches through the omnichain deployer, which installs itself as the data hook.
+  const expectedMetadata = { ...expectedConfig.metadata, dataHook: omnichain, useDataHookForPay: true, useDataHookForCashOut: true }
   const metadataMatches = (Object.keys(expectedMetadata) as (keyof typeof expectedMetadata)[]).every(key => {
     const actual = metadata[key]
     const value = expectedMetadata[key]
@@ -143,10 +169,12 @@ export async function verifyFundLaunch(client: PublicClient, request: FundTransa
     || ruleset.weight !== expectedConfig.weight || ruleset.duration !== 0 || ruleset.weightCutPercent !== 0
     || !isAddressEqual(ruleset.approvalHook, expectedConfig.approvalHook) || !metadataMatches) throw new Error('The initial FUND rules differ from the reviewed configuration.')
   if (contexts.length !== 1 || !isAddressEqual(contexts[0].token, usdc) || contexts[0].decimals !== 6 || contexts[0].currency !== tokenCurrencyId(usdc) || payouts.length || allowances.length) throw new Error('The new FUND treasury or withdrawal limits differ from the reviewed configuration.')
-  if (linked) {
-    const extra = await client.readContract({ address: request.address, abi: jbOmnichainDeployerAbi, functionName: 'extraDataHookOf', args: [projectId, rulesetId], ...at })
-    if (!isAddressEqual(extra.dataHook, expectedConfig.metadata.dataHook) || extra.useDataHookForPay || extra.useDataHookForCashOut) throw new Error('The linked FUND project has an unexpected extra data hook.')
-  }
+  const [extra, allowlistOpen] = await Promise.all([
+    client.readContract({ address: omnichain, abi: jbOmnichainDeployerAbi, functionName: 'extraDataHookOf', args: [projectId, rulesetId], ...at }),
+    client.readContract({ address: allowlistHook, abi: homerunAllowlistHookAbi, functionName: 'isOpen', args: [projectId], ...at }),
+  ])
+  if (!isAddressEqual(extra.dataHook, allowlistHook) || !extra.useDataHookForPay || extra.useDataHookForCashOut) throw new Error('The FUND project is missing its payment allowlist hook.')
+  if (allowlistOpen) throw new Error('A new FUND must start with a closed allowlist.')
   await verifyCreatedMultisigs(client, input.multisigs ?? [], false, receipt.blockNumber)
   return projectId
 }

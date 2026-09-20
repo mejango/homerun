@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fixtures/homerun-deployer')).withHomerunDeployer(await importOriginal()))
+
 import { decodeFunctionData, encodeFunctionData, getAddress, keccak256, zeroAddress, type Hex, type PublicClient } from 'viem'
 import { CREATE_DEFAULTS, normalizeCreateDraft, deploymentDraft } from '../web/create-model.mjs'
 import { buildFundLaunch } from '@/lib/fund-contracts'
@@ -35,7 +37,7 @@ describe('create multisig policies', () => {
   it('exports policies and round-trips them without bigint conversion or owner drift', () => {
     const values = normalizeCreateDraft(fresh()).values
     expect(deploymentDraft(values).owner.multisig).toMatchObject({ owners, threshold: 2 })
-    const input = { owner: plan.address, sender: owners[0], operator: plan.address, chainIds: [1], projectUri: 'ipfs://bafymetadata', salt, mustStartAtOrAfter: 0, creationFees: { 1: 0n }, multisigs: [plan] }
+    const input = { owner: plan.address, sender: owners[0], operator: plan.address, chainIds: [1], projectUri: 'ipfs://bafymetadata', tokenName: 'House FUND', ticker: 'HOUSE', salt, mustStartAtOrAfter: 0, creationFees: { 1: 0n }, multisigs: [plan] }
     const session: FundLaunchSession = { version: 1, transport: 'relayr', name: '2026n', input, statuses: { 1: { phase: 'ready' } } }
     expect(decodeLaunchSession(encodeLaunchSession(session))).toEqual(session)
     expect(() => buildFundLaunch({ ...input, owner: owners[1] })).toThrow('multisig address')

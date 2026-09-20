@@ -17,6 +17,7 @@ import {
 import { resolveFundStickyCustody, type FundStickyCustody, type StickyOwnershipHolder } from './fund-snapshot-sticky'
 import { ownershipWeight } from './fund-ownership-weight'
 import { readVerifiedProject721Hook } from './fund-hooks'
+import { registeredAllowlistHook } from './income-contracts'
 
 export type FundSnapshotHolder = {
   holder: Address
@@ -258,7 +259,12 @@ async function readFundSnapshotCore(client: PublicClient, input: FundSnapshotInp
       client.readContract({ address: omnichain, abi: jbOmnichainDeployerAbi, functionName: 'extraDataHookOf', args: [input.projectId, BigInt(ruleset.id)], ...at }),
       client.readContract({ address: omnichain, abi: jbOmnichainDeployerAbi, functionName: 'tiered721HookOf', args: [input.projectId, BigInt(ruleset.id)], ...at }),
     ])
-    supportedHook = isAddressEqual(extra.dataHook, zeroAddress) && !extra.useDataHookForPay && !extra.useDataHookForCashOut && !tiered[1]
+    // The deployer installs the shared allowlist hook as the extra pay hook; it never handles cash outs.
+    const allowlistHook = registeredAllowlistHook(input.chainId)
+    const extraHookSupported = isAddressEqual(extra.dataHook, zeroAddress)
+      ? !extra.useDataHookForPay
+      : !!allowlistHook && isAddressEqual(extra.dataHook, allowlistHook)
+    supportedHook = extraHookSupported && !extra.useDataHookForCashOut && !tiered[1]
     if (supportedHook && !isAddressEqual(tiered[0], zeroAddress)) {
       await readVerifiedProject721Hook(client, { chainId: input.chainId, projectId: input.projectId, owner, hook: tiered[0], blockNumber: block.number })
     }

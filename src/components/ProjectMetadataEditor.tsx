@@ -19,7 +19,7 @@ import {
 
 const message = (error: unknown) => error instanceof Error ? error.message : 'Project details could not be updated.'
 type Editing = { snapshot: ProjectMetadataEditState; document: ProjectMetadataDocument; draft: ProjectMetadataDraft }
-const basicFields: MetadataField[] = ['name', 'description', 'location', 'assetType']
+const basicFields: MetadataField[] = ['name', 'description', 'location']
 const planFields: MetadataField[] = ['revenueDescription', 'monthlyRent', 'monthlyCosts', 'minimumRevenue', 'minimumRevenueConsequences', 'rentGrowthPercent', 'costGrowthPercent']
 const multiline = new Set<MetadataField>(['description', 'revenueDescription', 'minimumRevenueConsequences', 'ownerIntroduction', 'operatorIntroduction'])
 const numeric = new Set<MetadataField>(['monthlyRent', 'monthlyCosts', 'minimumRevenue', 'rentGrowthPercent', 'costGrowthPercent'])

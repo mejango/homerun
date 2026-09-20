@@ -771,7 +771,7 @@ try {
   );
   await check('Saved local previews keep prospective payments separate from their displayed raise', async () => {
     const id = '3f1b300a-1e01-4cb4-a0aa-711ec3c9fd50';
-    const entry = { id, createdAt: new Date().toISOString(), values: { ...CREATE_DEFAULTS, name: 'Neighborhood equipment', assetType: 'equipment', ownerMode: 'existing', ownerWallet: '0x1111111111111111111111111111111111111111', ownerIsOperator: true } };
+    const entry = { id, createdAt: new Date().toISOString(), values: { ...CREATE_DEFAULTS, name: 'Neighborhood equipment', ownerMode: 'existing', ownerWallet: '0x1111111111111111111111111111111111111111', ownerIsOperator: true } };
     await page.evaluate(({ key, value }) => localStorage.setItem(key, JSON.stringify([value])), { key: CREATED_PROJECTS_KEY, value: entry });
     await page.goto(new URL(`/project?id=${id}`, base).href);
     await expect(page.locator('.simulator')).toHaveAttribute('data-ready', 'true', { timeout: 120_000 });

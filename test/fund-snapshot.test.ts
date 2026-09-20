@@ -4,6 +4,9 @@ import { v6Address, type JBRuleset } from '@bananapus/nana-sdk-core/v6'
 import { getAddress, zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
 import { initialFundRuleset } from '../src/lib/fund-contracts'
 import { readFundOwnershipSnapshot, readFundOwnershipForGlobalSnapshot, type FundSnapshotInput } from '../src/lib/fund-snapshot'
+import { HOMERUN_ALLOWLIST_HOOK } from './fixtures/homerun-deployer'
+
+vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fixtures/homerun-deployer')).withHomerunDeployer(await importOriginal()))
 
 const CHAIN_ID = 1
 const PROJECT_ID = 7n
@@ -549,7 +552,12 @@ describe('local components of a global snapshot', () => {
     await expect(read(standalone)).rejects.toThrow('supply')
   })
 
-  it.each([false, true])('verifies the canonical omnichain wrapper without allowing an extra custom hook (custom=%s)', async custom => {
+  it.each([
+    ['none', { dataHook: zeroAddress, useDataHookForPay: false, useDataHookForCashOut: false }, true],
+    ['allowlist', { dataHook: HOMERUN_ALLOWLIST_HOOK, useDataHookForPay: true, useDataHookForCashOut: false }, true],
+    ['allowlist on cash outs', { dataHook: HOMERUN_ALLOWLIST_HOOK, useDataHookForPay: true, useDataHookForCashOut: true }, false],
+    ['custom', { dataHook: OWNER, useDataHookForPay: false, useDataHookForCashOut: false }, false],
+  ] as const)('verifies the canonical omnichain wrapper and allows only the Homerun allowlist as its extra hook (%s)', async (_, extra, supported) => {
     const omnichain = v6Address('JBOmnichainDeployer', CHAIN_ID)
     const rpc = fixture({ metadata: { dataHook: omnichain, useDataHookForPay: true, useDataHookForCashOut: true }, values: { allSuckersOf: [SUCKER] } })
     const original = rpc.readContract.getMockImplementation()!
@@ -557,12 +565,12 @@ describe('local components of a global snapshot', () => {
       if (request.address === omnichain) {
         expect(request.args).toEqual([PROJECT_ID, 71n])
         expect(request.blockNumber).toBe(SNAPSHOT_BLOCK)
-        if (request.functionName === 'extraDataHookOf') return { dataHook: custom ? OWNER : zeroAddress, useDataHookForPay: false, useDataHookForCashOut: false }
+        if (request.functionName === 'extraDataHookOf') return extra
         if (request.functionName === 'tiered721HookOf') return [zeroAddress, false]
       }
       return original(request)
     })
-    if (custom) await expect(component(rpc)).rejects.toThrow('custom hooks')
+    if (!supported) await expect(component(rpc)).rejects.toThrow('custom hooks')
     else expect((await component(rpc)).totalFundSupply).toBe(95n)
     await expect(read(rpc)).rejects.toThrow('historical bridges')
   })

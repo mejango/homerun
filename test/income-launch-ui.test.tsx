@@ -18,8 +18,7 @@ vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.accou
 vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({ phase: 'idle', busy: false, safeProposalHash: null, error: null, send: runtime.send }), txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle }))
 vi.mock('@tanstack/react-query', () => { const cache = { invalidateQueries: runtime.invalidate }; return { keepPreviousData: (data: unknown) => data, useQuery: ({ queryKey }: {queryKey: [string, number, string]}) => ({ data: queryKey[0] === 'income-launch-fund' ? runtime.funds.get(queryKey[1]) : runtime.bindings.get(queryKey[1]) ?? null, isError: queryKey[0] === 'income-binding' && runtime.bindingError, isPending: false }), useQueryClient: () => cache } })
 vi.mock('@/components/IncomeProject', () => ({ IncomeProject: ({ chainId, projectId }: {chainId: number; projectId: bigint}) => <div>Existing INCOME {chainId}/{projectId.toString()}</div> }))
-vi.mock('@/components/StickyCreate', () => ({ StickyCreate: ({ state, onCreated }: {state: FundProjectState; onCreated: (id: bigint) => void}) => <div data-sticky={state.chainId}><button type="button" onClick={() => onCreated(90n)}>Confirm Sticky {state.chainId}</button></div> }))
-vi.mock('@/lib/income-contracts', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/income-contracts')>(), registeredIncomeDeployer: () => runtime.helper }))
+vi.mock('@/lib/income-contracts', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/income-contracts')>(), registeredHomerunDeployer: () => runtime.helper }))
 vi.mock('@/lib/income-launch', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/income-launch')>(), assertIncomeLaunchVersion: runtime.version, incomeLaunchBlockers: () => runtime.blockers, prepareIncomeLaunch: runtime.prepare, readIncomeLaunchBinding: runtime.readBinding }))
 vi.mock('@/lib/fund-global-snapshot', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/fund-global-snapshot')>(), readFundGlobalSnapshot: runtime.snapshot }))
 vi.mock('@/lib/fund-global-manifest', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/fund-global-manifest')>(), verifyFundGlobalManifestHistory: runtime.history }))
@@ -31,7 +30,7 @@ vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 
 import { IncomeLaunch, type PlannedIncomeAllocation } from '../src/components/IncomeLaunch'
 import { fundGlobalManifestHash, serializeFundGlobalManifest } from '../src/lib/fund-global-manifest'
-import { homerunIncomeDeployerAbi } from '../src/lib/income-contracts'
+import { homerunDeployerAbi } from '../src/lib/income-contracts'
 import { beginIncomeLaunchSubmission, incomeLaunchSessionKey, readIncomeLaunchPending, type IncomeLaunchPending } from '../src/lib/income-launch-session'
 import { readIncomeGlobalDraft, saveIncomeGlobalDraft, serializeIncomeGlobalDraft } from '../src/lib/income-global-launch-draft'
 import { displayChainName } from '../src/lib/chainDisplay'
@@ -43,7 +42,7 @@ function pending() { return readIncomeLaunchPending(localStorage, KEY) }
 function draft() { return readIncomeGlobalDraft(localStorage, 8453, 7n)! }
 function eventReceipt(chainId: number) {
   const local = runtime.manifest!.allocations.find(entry => entry.chainId === chainId)!
-  return { transactionHash: hashFor(chainId), blockNumber: 201n, logs: [{ address: HELPER, topics: encodeEventTopics({ abi: homerunIncomeDeployerAbi, eventName: 'IncomeDeployed', args: { fundProjectId: BigInt(local.fundProjectId), incomeProjectId: 10n, operator: OWNER } }), data: encodeAbiParameters([{ type: 'address' }, { type: 'address' }, { type: 'address' }, { type: 'bytes32' }], [TOKEN, VAULT, TOKEN, local.merkleRoot]) }] }
+  return { transactionHash: hashFor(chainId), blockNumber: 201n, logs: [{ address: HELPER, topics: encodeEventTopics({ abi: homerunDeployerAbi, eventName: 'IncomeDeployed', args: { fundProjectId: BigInt(local.fundProjectId), incomeProjectId: 10n, owner: OWNER } }), data: encodeAbiParameters([{ type: 'address' }, { type: 'address' }, { type: 'bytes32' }], [TOKEN, VAULT, local.merkleRoot]) }] }
 }
 function allocation(chainId: number) {
   const manifest = runtime.manifest!, local = manifest.allocations.find(entry => entry.chainId === chainId)!
@@ -67,21 +66,21 @@ describe('global INCOME launch flow', () => {
     host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   })
   afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals() })
-  async function render(launchUnavailable = false, plannedAllocation?: PlannedIncomeAllocation) { await act(async () => root.render(<IncomeLaunch state={runtime.funds.get(8453)!} client={runtime.clients.get(8453)!} launchUnavailable={launchUnavailable} plannedAllocation={{ operatorPercent: null, fundStakerPercent: null, operatorWallet: OWNER, ...plannedAllocation }} />)) }
+  async function render(launchUnavailable = false, plannedAllocation?: PlannedIncomeAllocation) { await act(async () => root.render(<IncomeLaunch state={runtime.funds.get(8453)!} client={runtime.clients.get(8453)!} launchUnavailable={launchUnavailable} plannedAllocation={{ reservedPercent: null, ...plannedAllocation }} />)) }
   function section(chainId = 8453) { const node = host.querySelector(`[aria-label="${displayChainName(chainId)} INCOME launch"]`); if (!node) throw new Error(`Missing chain ${chainId}: ${host.textContent}`); return node }
   function button(text: string, scope: ParentNode = host) { const result = [...scope.querySelectorAll('button')].find(item => item.textContent === text); if (!result) throw new Error(`Missing button: ${text}: ${host.textContent}`); return result }
   async function click(text: string, scope: ParentNode = host) { await act(async () => { button(text, scope).click(); await Promise.allSettled(runtime.pinMedia.mock.results.filter(result => result.type === 'return').map(result => result.value)) }) }
   async function frozen() { await render(); await click('Create global ownership snapshot'); await click('Publish snapshot'); await click('Save shared launch plan') }
-  async function ready(chainId = 8453) { await frozen(); await click(`Confirm Sticky ${chainId}`); await click(`Prepare ${displayChainName(chainId)} INCOME`); await act(async () => (section(chainId).querySelector('input[type="checkbox"]') as HTMLInputElement).click()) }
+  async function ready(chainId = 8453) { await frozen(); await click(`Prepare ${displayChainName(chainId)} INCOME`); await act(async () => (section(chainId).querySelector('input[type="checkbox"]') as HTMLInputElement).click()) }
   function savedPending(chainId = 8453) { const index = CHAIN_IDS.indexOf(chainId as typeof CHAIN_IDS[number]); return beginIncomeLaunchSubmission(localStorage, incomeLaunchSessionKey(chainId, FUND_IDS[index]), launchPlan(launchInput(draft(), chainId as 8453, runtime.manifest!)).request, FUND_IDS[index], OWNER, false, 200n) }
   async function setInput(field: HTMLInputElement, value: string) { await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, value); field.dispatchEvent(new Event('input', { bubbles: true })) }) }
   async function hashInput(value: string, chainId = 8453) { await setInput(section(chainId).querySelector('input[placeholder="0x…"]') as HTMLInputElement, value) }
   async function upload(field: Element, json: string) { Object.defineProperty(field, 'files', { configurable: true, value: [{ size: json.length, text: async () => json }] }); await act(async () => field.dispatchEvent(new Event('change', { bubbles: true }))) }
   function restorePlan() { saveIncomeGlobalDraft(localStorage, globalDraft()) }
-  function allocationInputs() {
+  function reservedInput() {
     const fields = [...host.querySelectorAll<HTMLInputElement>('input[inputmode="decimal"]')]
-    expect(fields).toHaveLength(2)
-    return fields
+    expect(fields).toHaveLength(1)
+    return fields[0]
   }
 
   it('publishes exact global manifest bytes once and keeps all four networks, including zero allocation', async () => {
@@ -92,190 +91,134 @@ describe('global INCOME launch flow', () => {
     const file = runtime.pinMedia.mock.calls[0][0] as File, contents = await readFile(file)
     expect(file.type).toBe('application/json'); expect(serializeFundGlobalManifest(JSON.parse(contents))).toBe(contents)
     expect(host.textContent).toContain('4 networks'); expect(host.textContent).toContain('Arbitrum: 0 INCOME')
-    expect(host.querySelector('[data-sticky]')).toBeNull(); expect(runtime.pinJson).not.toHaveBeenCalled()
+    expect(runtime.pinJson).not.toHaveBeenCalled()
     await click('Save shared launch plan')
-    expect(host.querySelectorAll('[data-sticky]').length).toBe(4); expect(section(42161).textContent).toContain('still needs Sticky and INCOME')
+    expect(section(42161).textContent).toContain('still needs INCOME')
     expect(runtime.pinMedia).toHaveBeenCalledOnce(); expect(draft().startsAtOrAfter).toBe(1001)
   })
 
   it('keeps the ownership file downloadable after a failed publication', async () => {
     runtime.pinMedia.mockRejectedValueOnce(new Error('Pin unavailable')); await render(); await click('Create global ownership snapshot'); await click('Publish snapshot')
-    expect(host.textContent).toContain('Pin unavailable'); expect(button('Download snapshot').disabled).toBe(false); expect(host.querySelector('[data-sticky]')).toBeNull()
+    expect(host.textContent).toContain('Pin unavailable'); expect(button('Download snapshot').disabled).toBe(false)
   })
 
-  it('freezes one start, name, metadata, snapshot, and percentages before Sticky setup', async () => {
+  it('freezes one start, name, ticker, metadata, snapshot, and reserved percent before any network launches', async () => {
     await frozen(); const shared = draft()
     expect(host.querySelector('input[inputmode="decimal"]')).toBeNull()
-    for (const chainId of [8453, 42161]) { await click(`Confirm Sticky ${chainId}`); await click(`Prepare ${displayChainName(chainId)} INCOME`) }
-    for (const [, input] of runtime.prepare.mock.calls) expect(input).toEqual(expect.objectContaining({ name: shared.name, projectUri: shared.metadataUri, manifestUri: shared.manifestUri, salt: shared.launchSalt, startsAtOrAfter: shared.startsAtOrAfter, operatorBps: 7000, fundHolderBps: 1000, clients: expect.any(Map) }))
+    for (const chainId of [8453, 42161]) { await click(`Prepare ${displayChainName(chainId)} INCOME`) }
+    for (const [, input] of runtime.prepare.mock.calls) expect(input).toEqual(expect.objectContaining({ name: shared.name, ticker: shared.ticker, projectUri: shared.metadataUri, manifestUri: shared.manifestUri, salt: shared.launchSalt, startsAtOrAfter: shared.startsAtOrAfter, reservedBps: 8000, clients: expect.any(Map) }))
     expect(runtime.pinJson).toHaveBeenCalledOnce(); expect(host.textContent).toContain('0 of 4 networks confirmed')
   })
 
-  it('prefills editable allocation terms from FUND metadata and freezes those reviewed percentages', async () => {
-    await render(false, { operatorPercent: 50, fundStakerPercent: 15 })
+  it('prefills the reserved percent from FUND metadata and freezes the reviewed name, ticker and percent', async () => {
+    await render(false, { reservedPercent: 65 })
     await click('Create global ownership snapshot'); await click('Publish snapshot')
-    expect(allocationInputs().map(field => field.value)).toEqual(['50', '15'])
-    expect(allocationInputs().every(field => !field.disabled && !field.readOnly)).toBe(true)
+    expect(reservedInput().value).toBe('65')
+    expect(!reservedInput().disabled && !reservedInput().readOnly).toBe(true)
+    await setInput(host.querySelector('input[value="INCOME"]') as HTMLInputElement, 'rent')
     await click('Save shared launch plan')
-    expect(draft()).toMatchObject({ operatorBps: 5000, fundHolderBps: 1500 })
-    expect(runtime.pinJson).toHaveBeenCalledWith(expect.objectContaining({ homerun: expect.objectContaining({ operatorBps: 5000, fundHolderBps: 1500 }) }))
-    await click('Confirm Sticky 8453'); await click('Prepare Base INCOME')
-    expect(runtime.prepare).toHaveBeenCalledWith(runtime.clients.get(8453), expect.objectContaining({ operatorBps: 5000, fundHolderBps: 1500 }))
-    expect(host.textContent).toContain('50% operators, 15% stakers, 35% customers')
+    expect(draft()).toMatchObject({ reservedBps: 6500, ticker: 'RENT', name: 'Homerun INCOME' })
+    expect(runtime.pinJson).toHaveBeenCalledWith(expect.objectContaining({ tokens: { name: 'Homerun INCOME', symbol: 'RENT' }, homerun: expect.objectContaining({ reservedBps: 6500 }) }))
+    await click('Prepare Base INCOME')
+    expect(runtime.prepare).toHaveBeenCalledWith(runtime.clients.get(8453), expect.objectContaining({ reservedBps: 6500, ticker: 'RENT' }))
+    expect(host.textContent).toContain('Homerun INCOME (RENT)')
+    expect(host.textContent).toContain('65% reserved for the owner’s split, 35% to payers')
   })
 
-  it('freezes a separate incentive wallet without changing the FUND owner who launches INCOME', async () => {
-    const operatorWallet = '0x3333333333333333333333333333333333333333' as const
-    await render(false, { operatorPercent: 50, fundStakerPercent: 15, operatorWallet })
-    await click('Create global ownership snapshot'); await click('Publish snapshot'); await click('Save shared launch plan')
-    expect(draft()).toMatchObject({ operator: operatorWallet })
-    await click('Confirm Sticky 8453'); await click('Prepare Base INCOME')
-    expect(runtime.prepare).toHaveBeenCalledWith(runtime.clients.get(8453), expect.objectContaining({ account: OWNER, operator: operatorWallet }))
-    runtime.account = operatorWallet
-    await render(false, { operatorPercent: 50, fundStakerPercent: 15, operatorWallet })
-    expect(button('Prepare Base INCOME').matches(':disabled')).toBe(true)
-  })
-
-  it('requires an explicit incentive wallet and never silently substitutes the owner', async () => {
-    await render(false, { operatorPercent: 70, fundStakerPercent: 10, operatorWallet: null })
-    await click('Create global ownership snapshot'); await click('Publish snapshot'); await click('Save shared launch plan')
+  it('rejects a blank ticker before freezing the plan', async () => {
+    await render(); await click('Create global ownership snapshot'); await click('Publish snapshot')
+    await setInput(host.querySelector('input[value="INCOME"]') as HTMLInputElement, ' ')
+    await click('Save shared launch plan')
     expect(readIncomeGlobalDraft(localStorage, 8453, 7n)).toBeNull()
-    expect(host.textContent).toContain('Enter the operator wallet')
+    expect(host.textContent).toContain('Enter the INCOME token name and ticker')
     expect(runtime.pinJson).not.toHaveBeenCalled()
   })
 
-  it('checks compatible launchers on every network before freezing the plan or creating Sticky', async () => {
+  it('checks compatible launchers on every network before freezing the plan', async () => {
     runtime.version.mockImplementation(async (_client, chainId) => { if (chainId === 10) throw new Error('A verified INCOME launcher supporting separate owner and operator wallets is required.') })
     await render(); await click('Create global ownership snapshot'); await click('Publish snapshot'); await click('Save shared launch plan')
     expect(runtime.version.mock.calls.map(([, chainId]) => chainId).sort((left, right) => left - right)).toEqual([...CHAIN_IDS])
     expect(readIncomeGlobalDraft(localStorage, 8453, 7n)).toBeNull()
     expect(host.textContent).toContain('supporting separate owner and operator')
-    expect(host.querySelector('[data-sticky]')).toBeNull()
     expect(runtime.pinJson).not.toHaveBeenCalled(); expect(runtime.prepare).not.toHaveBeenCalled(); expect(runtime.send).not.toHaveBeenCalled()
   })
 
   it('seeds late metadata while the displayed shared terms are still untouched', async () => {
     await render(); await click('Create global ownership snapshot'); await click('Publish snapshot')
-    expect(allocationInputs().map(field => field.value)).toEqual(['70', '10'])
-    await render(false, { operatorPercent: 50, fundStakerPercent: 15 })
-    expect(allocationInputs().map(field => field.value)).toEqual(['50', '15'])
+    expect(reservedInput().value).toBe('80')
+    await render(false, { reservedPercent: 65 })
+    expect(reservedInput().value).toBe('65')
     await click('Save shared launch plan')
-    expect(draft()).toMatchObject({ operatorBps: 5000, fundHolderBps: 1500 })
+    expect(draft()).toMatchObject({ reservedBps: 6500 })
   })
 
-  it.each([0, 1])('preserves both allocation fields after the operator edits field %s', async fieldIndex => {
-    await render(false, { operatorPercent: 50, fundStakerPercent: 15 })
+  it('preserves an edited reserved percent when different metadata arrives', async () => {
+    await render(false, { reservedPercent: 65 })
     await click('Create global ownership snapshot'); await click('Publish snapshot')
-    await setInput(allocationInputs()[fieldIndex], fieldIndex === 0 ? '60' : '20')
-    await render(false, { operatorPercent: 40, fundStakerPercent: 30 })
-    expect(allocationInputs().map(field => field.value)).toEqual(fieldIndex === 0 ? ['60', '15'] : ['50', '20'])
+    await setInput(reservedInput(), '60')
+    await render(false, { reservedPercent: 40 })
+    expect(reservedInput().value).toBe('60')
     await click('Save shared launch plan')
-    expect(draft()).toMatchObject(fieldIndex === 0 ? { operatorBps: 6000, fundHolderBps: 1500 } : { operatorBps: 5000, fundHolderBps: 2000 })
+    expect(draft()).toMatchObject({ reservedBps: 6000 })
   })
 
   it('keeps already frozen default percentages when different metadata arrives', async () => {
     await frozen()
     const saved = serializeIncomeGlobalDraft(draft())
-    await render(false, { operatorPercent: 50, fundStakerPercent: 15 })
+    await render(false, { reservedPercent: 65 })
     expect(serializeIncomeGlobalDraft(draft())).toBe(saved)
     expect(host.querySelector('input[inputmode="decimal"]')).toBeNull()
-    expect(host.textContent).toContain('70% operators, 10% stakers, 20% customers')
-    await click('Confirm Sticky 8453'); await click('Prepare Base INCOME')
-    expect(runtime.prepare).toHaveBeenCalledWith(runtime.clients.get(8453), expect.objectContaining({ operatorBps: 7000, fundHolderBps: 1000 }))
+    expect(host.textContent).toContain('80% reserved for the owner’s split, 20% to payers')
+    await click('Prepare Base INCOME')
+    expect(runtime.prepare).toHaveBeenCalledWith(runtime.clients.get(8453), expect.objectContaining({ reservedBps: 8000 }))
   })
 
   it('restores frozen percentages before considering different metadata defaults', async () => {
     restorePlan()
     const saved = serializeIncomeGlobalDraft(draft())
-    await render(false, { operatorPercent: 50, fundStakerPercent: 15 })
+    await render(false, { reservedPercent: 65 })
     expect(serializeIncomeGlobalDraft(draft())).toBe(saved)
     expect(host.querySelector('input[inputmode="decimal"]')).toBeNull()
-    expect(host.textContent).toContain('70% operators, 10% stakers, 20% customers')
-    await click('Confirm Sticky 8453'); await click('Prepare Base INCOME')
-    expect(runtime.prepare).toHaveBeenCalledWith(runtime.clients.get(8453), expect.objectContaining({ operatorBps: 7000, fundHolderBps: 1000 }))
+    expect(host.textContent).toContain('80% reserved for the owner’s split, 20% to payers')
+    await click('Prepare Base INCOME')
+    expect(runtime.prepare).toHaveBeenCalledWith(runtime.clients.get(8453), expect.objectContaining({ reservedBps: 8000 }))
     expect(runtime.pinJson).not.toHaveBeenCalled()
   })
 
   it('keeps reviewed terms stable when metadata arrives during asynchronous freeze verification', async () => {
-    await render(false, { operatorPercent: 50, fundStakerPercent: 15 })
+    await render(false, { reservedPercent: 65 })
     await click('Create global ownership snapshot'); await click('Publish snapshot')
     let finish!: (manifest: FundGlobalManifest) => void
     runtime.history.mockImplementationOnce(() => new Promise<FundGlobalManifest>(resolve => { finish = resolve }))
     await act(async () => { button('Save shared launch plan').click(); await Promise.resolve() })
-    await render(false, { operatorPercent: 40, fundStakerPercent: 30 })
-    expect(allocationInputs().map(field => field.value)).toEqual(['50', '15'])
+    await render(false, { reservedPercent: 40 })
+    expect(reservedInput().value).toBe('65')
     expect(readIncomeGlobalDraft(localStorage, 8453, 7n)).toBeNull()
     await act(async () => finish(runtime.manifest!))
-    expect(draft()).toMatchObject({ operatorBps: 5000, fundHolderBps: 1500 })
-    expect(runtime.pinJson).toHaveBeenCalledWith(expect.objectContaining({ homerun: expect.objectContaining({ operatorBps: 5000, fundHolderBps: 1500 }) }))
+    expect(draft()).toMatchObject({ reservedBps: 6500 })
+    expect(runtime.pinJson).toHaveBeenCalledWith(expect.objectContaining({ homerun: expect.objectContaining({ reservedBps: 6500 }) }))
   })
 
-  it.each([
-    { operatorPercent: -1, fundStakerPercent: 15 },
-    { operatorPercent: 101, fundStakerPercent: 0 },
-    { operatorPercent: 50, fundStakerPercent: -1 },
-    { operatorPercent: 0, fundStakerPercent: 101 },
-    { operatorPercent: Number.NaN, fundStakerPercent: 15 },
-    { operatorPercent: 50, fundStakerPercent: Number.NaN },
-    { operatorPercent: Number.POSITIVE_INFINITY, fundStakerPercent: 15 },
-    { operatorPercent: 50, fundStakerPercent: Number.NEGATIVE_INFINITY },
-    { operatorPercent: 90, fundStakerPercent: 15 },
-    { operatorPercent: 50.001, fundStakerPercent: 15 },
-    { operatorPercent: 50, fundStakerPercent: 15.001 },
-    { operatorPercent: null, fundStakerPercent: 95 },
-  ])('ignores invalid planned percentages without partially changing valid defaults: %o', async plannedAllocation => {
-    await render(false, plannedAllocation); await click('Create global ownership snapshot'); await click('Publish snapshot')
-    expect(allocationInputs().map(field => field.value)).toEqual(['70', '10'])
+  it.each([-1, 101, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 50.001])('ignores an invalid planned reserved percent %s and keeps the default', async reservedPercent => {
+    await render(false, { reservedPercent }); await click('Create global ownership snapshot'); await click('Publish snapshot')
+    expect(reservedInput().value).toBe('80')
     await click('Save shared launch plan')
-    expect(draft()).toMatchObject({ operatorBps: 7000, fundHolderBps: 1000 })
+    expect(draft()).toMatchObject({ reservedBps: 8000 })
   })
 
-  it('uses existing defaults when both planned percentages are absent', async () => {
-    await render(false, { operatorPercent: null, fundStakerPercent: null })
+  it('uses the default when no reserved percent is planned', async () => {
+    await render(false, { reservedPercent: null })
     await click('Create global ownership snapshot'); await click('Publish snapshot')
-    expect(allocationInputs().map(field => field.value)).toEqual(['70', '10'])
+    expect(reservedInput().value).toBe('80')
   })
 
-  it.each([
-    { planned: { operatorPercent: null, fundStakerPercent: 15 }, expected: ['70', '15'] },
-    { planned: { operatorPercent: 50, fundStakerPercent: null }, expected: ['50', '10'] },
-  ])('uses defaults only for missing planned fields: %o', async ({ planned, expected }) => {
-    await render(false, planned); await click('Create global ownership snapshot'); await click('Publish snapshot')
-    expect(allocationInputs().map(field => field.value)).toEqual(expected)
-  })
-
-  it('displays a planned zero staker share but blocks freezing it until explicitly corrected', async () => {
-    await render(false, { operatorPercent: 50, fundStakerPercent: 0 })
+  it('accepts a planned zero reserved percent, sending every new INCOME to payers', async () => {
+    await render(false, { reservedPercent: 0 })
     await click('Create global ownership snapshot'); await click('Publish snapshot')
-    expect(allocationInputs().map(field => field.value)).toEqual(['50', '0'])
+    expect(reservedInput().value).toBe('0')
     await click('Save shared launch plan')
-    expect(host.textContent).toContain('Include a positive staker share')
-    expect(readIncomeGlobalDraft(localStorage, 8453, 7n)).toBeNull()
-    expect(runtime.pinJson).not.toHaveBeenCalled(); expect(runtime.prepare).not.toHaveBeenCalled()
-    await render(false, { operatorPercent: 70, fundStakerPercent: 10 })
-    expect(allocationInputs().map(field => field.value)).toEqual(['50', '0'])
-    await setInput(allocationInputs()[1], '15'); await click('Save shared launch plan')
-    expect(draft()).toMatchObject({ operatorBps: 5000, fundHolderBps: 1500 })
-  })
-
-  it('requires explicit operator attestation before the mandatory transaction review', async () => {
-    await frozen(); await click('Confirm Sticky 8453'); await click('Prepare Base INCOME')
-    expect(button('Review Base deployment').disabled).toBe(true); await click('Review Base deployment'); expect(runtime.send).not.toHaveBeenCalled()
-    expect(host.textContent).toContain('does not prove historical completeness')
-  })
-
-  it('cancelling review records no submission and explains independent local activation', async () => {
-    await ready(); await click('Review Base deployment')
-    expect(runtime.send).toHaveBeenCalledOnce(); expect(pending()).toBeNull()
-    expect(runtime.send.mock.calls[0][1].reviewNotice).toContain('no all-networks-ready barrier')
-  })
-
-  it('persists the exact unknown attempt before writing and restores it across remounts', async () => {
-    runtime.send.mockImplementation(async (_request, callbacks: Callbacks) => { await callbacks.reverify(); await callbacks.beforeWrite(); expect(pending()?.phase).toBe('unknown'); return null })
-    await ready(); await click('Review Base deployment'); const record = pending()!
-    expect(record.value).toBe('1'); expect(record.data).toMatch(/^0x/)
-    await act(async () => root.unmount()); root = createRoot(host); await render()
-    expect(pending()?.sessionId).toBe(record.sessionId); expect(runtime.send).toHaveBeenCalledOnce(); expect(host.textContent).toContain('0 of 4 networks confirmed')
+    expect(draft()).toMatchObject({ reservedBps: 0 })
+    expect(host.textContent).toContain('0% reserved for the owner’s split, 100% to payers')
   })
 
   it('clears an unknown submission only after explicit wallet rejection', async () => {
@@ -298,9 +241,10 @@ describe('global INCOME launch flow', () => {
     expect(runtime.send).not.toHaveBeenCalled(); expect(host.textContent).toContain('Web Locks')
   })
 
-  it('keeps Sticky recovery mounted across wallet changes and binding read failures', async () => {
+  it('keeps every network section mounted across wallet changes and binding read failures', async () => {
     await ready(); runtime.account = undefined; runtime.bindingError = true; await render()
-    expect(host.querySelectorAll('[data-sticky]').length).toBe(4); expect(button('Review Base deployment').closest('fieldset')?.disabled).toBe(true)
+    for (const chainId of CHAIN_IDS) section(chainId)
+    expect(button('Review Base deployment').closest('fieldset')?.disabled).toBe(true)
   })
 
   it('counts only the network whose receipt, binding, and local vault have all verified', async () => {
@@ -332,15 +276,14 @@ describe('global INCOME launch flow', () => {
 
   it('restores a frozen descriptor from any chain and fetches its committed manifest', async () => {
     await render(); await upload([...host.querySelectorAll('input[type="file"]')].at(-1)!, serializeIncomeGlobalDraft(globalDraft()))
-    expect(runtime.fetch).toHaveBeenCalled(); expect(host.querySelectorAll('[data-sticky]').length).toBe(4); expect(host.textContent).toContain('0 of 4 networks confirmed')
+    expect(runtime.fetch).toHaveBeenCalled(); expect(host.textContent).toContain('0 of 4 networks confirmed')
     expect(runtime.pinMedia).not.toHaveBeenCalled(); expect(runtime.pinJson).not.toHaveBeenCalled()
   })
 
   it('accepts the downloaded manifest when IPFS restoration is unavailable', async () => {
     restorePlan(); runtime.fetch.mockRejectedValue(new Error('IPFS unavailable')); await render()
-    expect(host.querySelector('[data-sticky]')).toBeNull()
     await upload(host.querySelector('input[type="file"]')!, serializeFundGlobalManifest(globalManifest()))
-    expect(host.querySelectorAll('[data-sticky]').length).toBe(4); expect(runtime.history).not.toHaveBeenCalled()
+    for (const chainId of CHAIN_IDS) section(chainId); expect(runtime.history).not.toHaveBeenCalled()
   })
 
   it('never treats a Safe proposal as a confirmed local deployment', async () => {
@@ -362,7 +305,7 @@ describe('global INCOME launch flow', () => {
 
   it('reverifies restored completed receipts rather than trusting the saved completion count', async () => {
     restorePlan(); let shared = draft()
-    for (const chainId of CHAIN_IDS) { const record = savedPending(chainId); shared = { ...shared, chains: shared.chains.map(row => row.chainId === chainId ? { ...row, stickyProjectId: '90', execution: { hash: hashFor(chainId), record } } : row) } }
+    for (const chainId of CHAIN_IDS) { const record = savedPending(chainId); shared = { ...shared, chains: shared.chains.map(row => row.chainId === chainId ? { ...row, execution: { hash: hashFor(chainId), record } } : row) } }
     saveIncomeGlobalDraft(localStorage, shared)
     runtime.verify.mockImplementation(async (client: PublicClient) => { if (await client.getChainId() === 10) throw new Error('RPC unavailable'); return 'confirmed' })
     await render()
@@ -371,14 +314,14 @@ describe('global INCOME launch flow', () => {
 
   it('confirms all four local vaults, including the empty allocation, before declaring completion', async () => {
     restorePlan(); let shared = draft()
-    for (const chainId of CHAIN_IDS) { const record = savedPending(chainId); shared = { ...shared, chains: shared.chains.map(row => row.chainId === chainId ? { ...row, stickyProjectId: '90', execution: { hash: hashFor(chainId), record } } : row) } }
+    for (const chainId of CHAIN_IDS) { const record = savedPending(chainId); shared = { ...shared, chains: shared.chains.map(row => row.chainId === chainId ? { ...row, execution: { hash: hashFor(chainId), record } } : row) } }
     saveIncomeGlobalDraft(localStorage, shared); await render()
     expect(host.textContent).toContain('4 of 4 networks confirmed'); expect(host.textContent).toContain('Every network’s deployment and local initial allocation is confirmed')
   })
 
-  it('keeps an empty remote chain visible when it still needs its canonical FUND token', async () => {
-    runtime.funds.set(42161, { ...fundState(42161), tokenAddress: null }); await frozen()
-    expect(section(42161).querySelector('a')?.getAttribute('href')).toBe('/project/42161/8'); expect(host.querySelectorAll('[data-sticky]').length).toBe(4)
+  it('keeps an empty remote chain visible in the shared plan', async () => {
+    await frozen()
+    expect(section(42161).textContent).toContain('0 initial INCOME allocated here')
   })
 
   it('requires registered contracts and preserves operations for an existing local INCOME', async () => {
@@ -389,7 +332,7 @@ describe('global INCOME launch flow', () => {
 
   it('keeps verified INCOME operations available when a saved manifest cannot load', async () => {
     restorePlan(); runtime.bindings.set(8453, 10n); runtime.fetch.mockRejectedValue(new Error('IPFS unavailable')); await render(true)
-    expect(host.textContent).toContain('Existing INCOME 8453/10'); expect(host.querySelector('[data-sticky]')).toBeNull()
+    expect(host.textContent).toContain('Existing INCOME 8453/10')
     runtime.bindings.clear(); runtime.bindingError = true; await render(true)
     expect(host.textContent).toContain('Existing INCOME 8453/10'); expect(runtime.send).not.toHaveBeenCalled()
   })

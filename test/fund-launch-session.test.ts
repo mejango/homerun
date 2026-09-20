@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fixtures/homerun-deployer')).withHomerunDeployer(await importOriginal()))
+
 import { zeroAddress, zeroHash, type Hex } from 'viem'
 import { FUND_LAUNCH_KEY, archiveLaunch, decodeLaunchSession, encodeLaunchSession, refreshLaunchCreationFee, saveLaunch, sameSender, updateLaunchStatus, type FundLaunchSession } from '../src/lib/fund-launch-session'
 
@@ -7,7 +9,7 @@ const salt = `0x${'12'.repeat(32)}` as Hex
 const hash = `0x${'ab'.repeat(32)}` as Hex
 const otherHash = `0x${'cd'.repeat(32)}` as Hex
 function session(): FundLaunchSession {
-  return { version: 1, name: '2026n', input: { owner, sender: owner, chainIds: [8453, 10], projectUri: 'ipfs://bafkreimetadata', salt, mustStartAtOrAfter: 1_800_000_000, creationFees: { 8453: 9_007_199_254_740_993n, 10: 2n } }, statuses: { 8453: { phase: 'ready' }, 10: { phase: 'ready' } } }
+  return { version: 1, name: '2026n', input: { owner, sender: owner, chainIds: [8453, 10], projectUri: 'ipfs://bafkreimetadata', tokenName: 'House FUND', ticker: 'HOUSE', salt, mustStartAtOrAfter: 1_800_000_000, creationFees: { 8453: 9_007_199_254_740_993n, 10: 2n } }, statuses: { 8453: { phase: 'ready' }, 10: { phase: 'ready' } } }
 }
 beforeEach(() => localStorage.clear())
 

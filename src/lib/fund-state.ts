@@ -37,6 +37,7 @@ import {
   type PublicClient,
 } from 'viem'
 import type { FundRulesetSnapshot } from './fund-contracts'
+import { homerunAllowlistHookAbi, registeredAllowlistHook } from './income-contracts'
 import { readVerifiedProject721Hook, UnsupportedProject721HookError } from './fund-hooks'
 
 export type FundAccountingContext = {
@@ -110,7 +111,16 @@ export type FundProjectState = {
   /** Only self is known locally. Never assume matching project IDs across chains. */
   linkedProjects: readonly { chainId: number; projectId: bigint }[]
   rulesetSnapshot: FundRulesetSnapshot
+  /** Present when the FUND's extra pay hook is the registered Homerun allowlist. */
+  allowlist: FundAllowlistState | null
   issues: readonly string[]
+}
+
+export type FundAllowlistState = {
+  hook: Address
+  open: boolean
+  /** Whether `account` may receive FUND from a payment right now; null without a connected account. */
+  accountAllowed: boolean | null
 }
 
 const PERMISSIONS = {
@@ -223,6 +233,7 @@ export async function readFundProjectState(
   const linkedChainIds = [...new Set([chainId, ...linkedPeers.map(peer => peer.chainId)])].sort((a, b) => a - b)
   let omnichainHooks: FundRulesetSnapshot['omnichainHooks']
   let stock721Hook: FundRulesetSnapshot['stock721Hook']
+  let allowlist: FundAllowlistState | null = null
   let supportedHook = !nonzero(metadata.dataHook) && !metadata.useDataHookForPay && !metadata.useDataHookForCashOut
   if (isAddressEqual(metadata.dataHook, omnichain)) {
     const [extraHook, tieredHook] = await Promise.all([
@@ -233,7 +244,16 @@ export async function readFundProjectState(
       stock721Hook = await readVerifiedProject721Hook(client, { chainId: chain, projectId, owner, hook: tieredHook[0], blockNumber })
     }
     omnichainHooks = { ...extraHook, tiered721Hook: tieredHook[0], tiered721UseDataHookForCashOut: tieredHook[1], tiered721HasTiers: stock721Hook?.hasTiers ?? false }
-    supportedHook = !nonzero(extraHook.dataHook) && !extraHook.useDataHookForPay && !extraHook.useDataHookForCashOut && !tieredHook[1]
+    const allowlistHook = registeredAllowlistHook(chain)
+    const hasAllowlist = !!allowlistHook && isAddressEqual(extraHook.dataHook, allowlistHook) && extraHook.useDataHookForPay && !extraHook.useDataHookForCashOut
+    if (hasAllowlist) {
+      const [open, accountAllowed] = await Promise.all([
+        client.readContract({ address: allowlistHook, abi: homerunAllowlistHookAbi, functionName: 'isOpen', args: [projectId], ...at }),
+        account ? client.readContract({ address: allowlistHook, abi: homerunAllowlistHookAbi, functionName: 'canPay', args: [projectId, account], ...at }) : Promise.resolve(null),
+      ])
+      allowlist = { hook: allowlistHook, open, accountAllowed }
+    }
+    supportedHook = (!nonzero(extraHook.dataHook) && !extraHook.useDataHookForPay || hasAllowlist) && !extraHook.useDataHookForCashOut && !tieredHook[1]
   } else if (nonzero(metadata.dataHook) && metadata.useDataHookForPay && !metadata.useDataHookForCashOut) {
     try {
       stock721Hook = await readVerifiedProject721Hook(client, { chainId: chain, projectId, owner, hook: metadata.dataHook, blockNumber })
@@ -327,7 +347,7 @@ export async function readFundProjectState(
     projectUri, tokenAddress, tokenSymbol, tokenDecimals, totalSupply, totalCreditSupply,
     pendingReservedTokens, totalSupplyWithReservedTokens, creditBalance, erc20Balance, totalBalance,
     accountingContexts, permissions, linkedPeers, linkedChainIds,
-    linkedProjects: [{ chainId, projectId }], rulesetSnapshot, issues,
+    linkedProjects: [{ chainId, projectId }], rulesetSnapshot, allowlist, issues,
   }
 }
 

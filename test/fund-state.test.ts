@@ -10,6 +10,9 @@ import {
 } from '@bananapus/nana-sdk-core/v6'
 import { padHex, zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
 import { buildFundRulesetChange, initialFundRuleset } from '../src/lib/fund-contracts'
+import { HOMERUN_ALLOWLIST_HOOK } from './fixtures/homerun-deployer'
+
+vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fixtures/homerun-deployer')).withHomerunDeployer(await importOriginal()))
 import { assertFundStateForWrite, readFundProjectState, readLinkedFundProjects } from '../src/lib/fund-state'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as const
@@ -46,6 +49,8 @@ type FixtureOptions = {
   values?: Record<string, unknown>
   allowedPermissions?: number[]
   omnichain?: boolean
+  /** Model the registered allowlist hook as the omnichain extra pay hook. */
+  allowlist?: { open: boolean; accountAllowed: boolean }
   directShop?: boolean
   bridge?: { address: Address; peer: Address; peerChainId: number; projectId?: bigint }
 }
@@ -110,7 +115,11 @@ function rpcFixture(options: FixtureOptions = {}) {
   add(token, 'decimals', 18)
   add(token, 'balanceOf', 20n)
   if (options.omnichain) {
-    add(metadata.dataHook, 'extraDataHookOf', { dataHook: zeroAddress, useDataHookForPay: false, useDataHookForCashOut: false }, [projectId, 71n])
+    add(metadata.dataHook, 'extraDataHookOf', options.allowlist ? { dataHook: HOMERUN_ALLOWLIST_HOOK, useDataHookForPay: true, useDataHookForCashOut: false } : { dataHook: zeroAddress, useDataHookForPay: false, useDataHookForCashOut: false }, [projectId, 71n])
+    if (options.allowlist) {
+      add(HOMERUN_ALLOWLIST_HOOK, 'isOpen', options.allowlist.open, [projectId])
+      add(HOMERUN_ALLOWLIST_HOOK, 'canPay', options.allowlist.accountAllowed)
+    }
     add(metadata.dataHook, 'tiered721HookOf', [TIER_HOOK, false], [projectId, 71n])
   }
   if (options.omnichain || options.directShop) {
@@ -334,6 +343,24 @@ describe('readFundProjectState', () => {
     expect(hookReads.every(request => request.blockNumber === fixture.blockNumber)).toBe(true)
     const { configurations } = buildFundRulesetChange({ snapshots: [state.rulesetSnapshot], action: 'pause', mustStartAtOrAfter: 1_800_000_200 })
     expect(configurations[0].metadata.dataHook).toBe(zeroAddress)
+  })
+
+  it('reads the owner-managed allowlist and carries the hook through rule changes', async () => {
+    const closed = await read(rpcFixture({ omnichain: true, allowlist: { open: false, accountAllowed: false }, values: { payoutLimitsOf: [], surplusAllowancesOf: [] } }))
+    expect(closed.allowlist).toEqual({ hook: HOMERUN_ALLOWLIST_HOOK, open: false, accountAllowed: false })
+    expect(closed.issues).toEqual([])
+    const { configurations } = buildFundRulesetChange({ snapshots: [closed.rulesetSnapshot], action: 'pause', mustStartAtOrAfter: 1_800_000_200 })
+    expect(configurations[0].metadata.dataHook).toBe(HOMERUN_ALLOWLIST_HOOK)
+    expect(configurations[0].metadata.useDataHookForPay).toBe(true)
+    expect(configurations[0].metadata.useDataHookForCashOut).toBe(false)
+    const open = await read(rpcFixture({ omnichain: true, allowlist: { open: true, accountAllowed: true }, values: { payoutLimitsOf: [], surplusAllowancesOf: [] } }))
+    expect(open.allowlist).toEqual({ hook: HOMERUN_ALLOWLIST_HOOK, open: true, accountAllowed: true })
+    const anonymousFixture = rpcFixture({ omnichain: true, allowlist: { open: false, accountAllowed: false }, values: { payoutLimitsOf: [], surplusAllowancesOf: [] } })
+    const anonymous = await readFundProjectState(anonymousFixture.client, { chainId: anonymousFixture.chainId, projectId: anonymousFixture.projectId })
+    expect(anonymous.allowlist?.accountAllowed).toBeNull()
+    expect(anonymousFixture.readContract.mock.calls.some(([request]) => request.functionName === 'canPay')).toBe(false)
+    const plain = await read(rpcFixture({ omnichain: true, values: { payoutLimitsOf: [], surplusAllowancesOf: [] } }))
+    expect(plain.allowlist).toBeNull()
   })
 
   it.each([false, true])('preserves stock NFT shops through FUND closure (direct=%s)', async directShop => {

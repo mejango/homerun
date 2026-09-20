@@ -2,20 +2,23 @@
  * Canonical FUND ownership-history integration proof on the local Base fork.
  * Requires Anvil at the literal http://127.0.0.1:8567, chain 8453. No live writes,
  * existing project mutations, private keys, USDC, or external deployments.
+ * HomerunAllowlistHook and HomerunDeployer are deployed from `out/` onto the
+ * fork first (run `forge build`), since neither is live on any network yet.
  * Run: node --import tsx scripts/verify-fund-snapshot-fork.mts
  */
 import assert from 'node:assert/strict'
-import { createPublicClient, createWalletClient, encodeFunctionData, erc20Abi, http, isAddressEqual, parseEther, toHex, zeroAddress, type Address, type Chain, type Hex } from 'viem'
+import { createPublicClient, createWalletClient, encodeFunctionData, erc20Abi, http, isAddressEqual, parseEther, toHex, type Address, type Chain, type Hex } from 'viem'
 import { base } from 'viem/chains'
-import { jbControllerAbi, jbProjectsAbi } from '@bananapus/nana-sdk-core'
+import { jbProjectsAbi } from '@bananapus/nana-sdk-core'
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
-import { buildFundClaimCredits, buildFundDeployErc20, buildFundLaunch, buildFundMint, buildFundRulesetChange, type FundRulesetAction, type FundTransaction } from '../src/lib/fund-contracts.ts'
+import { buildFundLaunch, buildFundMint, buildFundRulesetChange, type FundRulesetAction, type FundTransaction } from '../src/lib/fund-contracts.ts'
 import { readFundProjectState } from '../src/lib/fund-state.ts'
 import { checkLaunchDeployment, verifyFundLaunch } from '../src/lib/fund-launch-verification.ts'
 import { readFundOwnershipSnapshot } from '../src/lib/fund-snapshot.ts'
 import { buildFundSnapshotManifest, fundSnapshotManifestHash, parseFundSnapshotManifest, serializeFundSnapshotManifest, verifyFundSnapshotHistory } from '../src/lib/fund-snapshot-manifest.ts'
 import { INITIAL_INCOME_SUPPLY } from '../src/lib/income-contracts.ts'
 import { simulateStateChangingTransaction } from '../src/lib/transaction-simulation.ts'
+import { deployHomerunOnFork } from './deploy-homerun-fork.mts'
 
 const URL = 'http://127.0.0.1:8567'
 const CHAIN_ID = 8453
@@ -27,8 +30,6 @@ const alice: Address = '0x00000000000000000000000000000000736e6102'
 const bob: Address = '0x00000000000000000000000000000000736e6103'
 const carol: Address = '0x00000000000000000000000000000000736e6104'
 const dave: Address = '0x00000000000000000000000000000000736e6105'
-// Domain separation only: this script does not deploy, approve, or call a helper.
-const helper: Address = '0x00000000000000000000000000000000736e6106'
 const salt = `0x${'73'.repeat(32)}` as Hex
 let transactions = 0
 
@@ -89,71 +90,64 @@ async function main() {
       await mutate('anvil_setBalance', [account, toHex(parseEther('20'))])
       await mutate('anvil_impersonateAccount', [account])
     }
+    const helper = (await deployHomerunOnFork(client, { chain: base as Chain, chainId: CHAIN_ID, url: URL, deployer: owner })).deployer
     const fee = await client.readContract({ address: v6Address('JBProjects', CHAIN_ID), abi: jbProjectsAbi, functionName: 'creationFee' })
     const input = {
       owner, sender: owner, chainIds: [CHAIN_ID], projectUri: 'ipfs://QmbFMke1KXqnYyBBWxB74N4c5SBnJMVAiMNRcGu6x1AwQH',
+      tokenName: 'Snapshot fork verification FUND', ticker: 'FUND',
       salt, mustStartAtOrAfter: 0, creationFees: { [CHAIN_ID]: fee },
     }
     const request = buildFundLaunch(input).requests[0]
     await checkLaunchDeployment(client, request)
     const creation = await send('Create a new FUND project', owner, request)
     const projectId = await verifyFundLaunch(client, request, input, creation, false)
+    const tokenAddress = (await state(projectId)).tokenAddress
+    assert(tokenAddress, 'The deployer issues the FUND ERC-20 at launch.')
     await rules(projectId, 'close')
     await rules(projectId, 'enable-success-minting')
     for (const beneficiary of [alice, bob]) {
-      await send('Mint 500 FUND credits for a successful offchain contribution', owner, buildFundMint({
+      await send('Mint 500 FUND for a successful offchain contribution', owner, buildFundMint({
         snapshot: (await state(projectId)).rulesetSnapshot, beneficiary, tokenCount: parseEther('500'), kind: 'offchain-contribution',
       }))
     }
     await rules(projectId, 'finish-success-minting')
-    // Core permits this balance; the application's user-facing transfer builder
-    // rejects zero. Snapshot completeness still must preserve the entitlement.
-    await send('Transfer one credit wei to zero via the canonical controller', bob, {
-      chainId: CHAIN_ID, address: v6Address('JBController', CHAIN_ID), abi: jbControllerAbi,
-      functionName: 'transferCreditsFrom', args: [bob, projectId, zeroAddress, 1n],
+    await send('Transfer 50 FUND ERC20 to a new holder', alice, {
+      chainId: CHAIN_ID, address: tokenAddress, abi: erc20Abi, functionName: 'transfer', args: [carol, parseEther('50')],
     })
-    await send('Deploy canonical FUND ERC20', owner, buildFundDeployErc20({ chainId: CHAIN_ID, projectId, projectName: 'Snapshot fork verification', salt }))
-    const tokenAddress = (await state(projectId)).tokenAddress
-    assert(tokenAddress)
-    for (const beneficiary of [alice, carol]) {
-      await send('Claim 50 credits as FUND ERC20', alice, buildFundClaimCredits({ chainId: CHAIN_ID, projectId, holder: alice, tokenCount: parseEther('50'), beneficiary, tokenAddress }))
-    }
     const lastReceipt = await send('Transfer 25 FUND ERC20 to another holder', alice, {
       chainId: CHAIN_ID, address: tokenAddress, abi: erc20Abi, functionName: 'transfer', args: [dave, parseEther('25')],
     })
     const inputSnapshot = { chainId: CHAIN_ID, projectId, snapshotBlockNumber: lastReceipt.blockNumber, creationBlockNumber: creation.blockNumber, logBlockWindow: 8n } as const
     const snapshot = await readFundOwnershipSnapshot(client, inputSnapshot)
-    assert.equal(snapshot.holders.length, 5)
+    assert.equal(snapshot.holders.length, 4)
     assert.equal(snapshot.totalFundSupply, parseEther('1000'))
-    assert.equal(snapshot.totalCreditSupply, parseEther('900'))
-    assert.equal(snapshot.totalErc20Supply, parseEther('100'))
-    for (const [account, credits, erc20] of [
-      [zeroAddress, 1n, 0n], [alice, parseEther('400'), parseEther('25')],
-      [bob, parseEther('500') - 1n, 0n], [carol, 0n, parseEther('50')], [dave, 0n, parseEther('25')],
+    assert.equal(snapshot.totalCreditSupply, 0n, 'A deployer-launched FUND never holds credits.')
+    assert.equal(snapshot.totalErc20Supply, parseEther('1000'))
+    for (const [account, erc20] of [
+      [alice, parseEther('425')], [bob, parseEther('500')], [carol, parseEther('50')], [dave, parseEther('25')],
     ] as const) {
       const entry = snapshot.holders.find(row => isAddressEqual(row.holder, account))
       assert(entry, `Missing historical holder ${account}`)
-      assert.equal(entry.creditBalance, credits)
+      assert.equal(entry.creditBalance, 0n)
       assert.equal(entry.erc20Balance, erc20)
-      assert.equal(entry.balance, credits + erc20)
+      assert.equal(entry.balance, erc20)
     }
     assert.equal(snapshot.evidence.eventCounts.Mint, 2)
-    assert.equal(snapshot.evidence.eventCounts.ClaimTokens, 2)
-    assert.equal(snapshot.evidence.eventCounts.TransferCredits, 1)
-    assert.equal(snapshot.evidence.eventCounts.Transfer, 3)
+    assert.equal(snapshot.evidence.eventCounts.ClaimTokens ?? 0, 0)
+    assert.equal(snapshot.evidence.eventCounts.TransferCredits ?? 0, 0)
+    assert.equal(snapshot.evidence.eventCounts.Transfer, 4)
     const manifest = buildFundSnapshotManifest(snapshot, { destinationChainId: CHAIN_ID, helper, launchSalt: salt })
     const parsed = parseFundSnapshotManifest(JSON.parse(serializeFundSnapshotManifest(manifest)))
     const expectedHash = fundSnapshotManifestHash(manifest)
     assert.equal(fundSnapshotManifestHash(parsed), expectedHash)
     assert.equal(parsed.holders.reduce((sum, row) => sum + BigInt(row.incomeAmount), 0n), INITIAL_INCOME_SUPPLY)
-    assert.equal(parsed.holders.find(row => isAddressEqual(row.beneficiary, zeroAddress))?.claimable, false)
     const verified = await verifyFundSnapshotHistory(client, parsed, { logBlockWindow: 8n })
     assert.equal(fundSnapshotManifestHash(verified), expectedHash)
 
     await send('Move tokens after the chosen snapshot', carol, { chainId: CHAIN_ID, address: tokenAddress, abi: erc20Abi, functionName: 'transfer', args: [dave, parseEther('5')] })
     const historicalAgain = await verifyFundSnapshotHistory(client, parsed, { logBlockWindow: 8n })
     assert.equal(fundSnapshotManifestHash(historicalAgain), expectedHash, 'Later transfers must not change a pinned historical ownership manifest.')
-    console.log(JSON.stringify({ result: 'passed', chainId: CHAIN_ID, forkBlock: initialBlock.number?.toString(), projectId: projectId.toString(), snapshotBlock: snapshot.blockNumber.toString(), holderCount: snapshot.holders.length, totalFund: '1000', totalCredits: '900', totalErc20: '100', manifestHash: expectedHash, root: manifest.merkleRoot, transactions, eventCounts: snapshot.evidence.eventCounts, historicalSnapshotUnchangedAfterTransfer: true }, null, 2))
+    console.log(JSON.stringify({ result: 'passed', chainId: CHAIN_ID, forkBlock: initialBlock.number?.toString(), projectId: projectId.toString(), snapshotBlock: snapshot.blockNumber.toString(), holderCount: snapshot.holders.length, totalFund: '1000', totalCredits: '0', totalErc20: '1000', manifestHash: expectedHash, root: manifest.merkleRoot, transactions, eventCounts: snapshot.evidence.eventCounts, historicalSnapshotUnchangedAfterTransfer: true }, null, 2))
   } finally {
     assert.equal(await mutate('evm_revert', [initial]), true)
     console.log('Restored initial local Base fork state. No live transactions were sent.')

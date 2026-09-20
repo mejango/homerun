@@ -47,8 +47,6 @@ import {JBBuybackHookRegistry} from "@bananapus/buyback-hook-v6/src/JBBuybackHoo
 import {CTPublisher} from "@croptop/core-v6/src/CTPublisher.sol";
 import {REVDeployer} from "@rev-net/core-v6/src/REVDeployer.sol";
 import {REVOwner} from "@rev-net/core-v6/src/REVOwner.sol";
-import {IREVLoans} from "@rev-net/core-v6/src/interfaces/IREVLoans.sol";
-import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 import {REVLoans} from "@rev-net/core-v6/src/REVLoans.sol";
 import {REVConfig} from "@rev-net/core-v6/src/structs/REVConfig.sol";
 import {REVStageConfig} from "@rev-net/core-v6/src/structs/REVStageConfig.sol";
@@ -56,22 +54,17 @@ import {REVAutoIssuance} from "@rev-net/core-v6/src/structs/REVAutoIssuance.sol"
 import {REVDeploy721TiersHookConfig} from "@rev-net/core-v6/src/structs/REVDeploy721TiersHookConfig.sol";
 import {REVCroptopAllowedPost} from "@rev-net/core-v6/src/structs/REVCroptopAllowedPost.sol";
 import {REVDescription} from "@rev-net/core-v6/src/structs/REVDescription.sol";
-import {JBTokenDistributor} from "@bananapus/distributor-v6/src/JBTokenDistributor.sol";
-import {JBStickyDeployer} from "@bananapus/sticky-v6/src/JBStickyDeployer.sol";
-import {JBStickyToken} from "@bananapus/sticky-v6/src/JBStickyToken.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
-import {
-    HomerunIncomeDeployer,
-    HomerunIncomeChainConfig,
-    HomerunInitialIncomeAllocation,
-    HomerunInitialIncomeSnapshot
-} from "../src/HomerunIncomeDeployer.sol";
+import {JBRouterTerminalRegistry} from "@bananapus/router-terminal-v6/src/JBRouterTerminalRegistry.sol";
+import {HomerunAllowlistHook} from "../src/HomerunAllowlistHook.sol";
+import {HomerunDeployer} from "../src/HomerunDeployer.sol";
+import {HomerunChainConfig} from "../src/structs/HomerunChainConfig.sol";
+import {HomerunInitialIncomeAllocation} from "../src/structs/HomerunInitialIncomeAllocation.sol";
+import {HomerunInitialIncomeSnapshot} from "../src/structs/HomerunInitialIncomeSnapshot.sol";
 import {HomerunInitialIncomeVault} from "../src/HomerunInitialIncomeVault.sol";
 
 /// @notice Actual local Juicebox/Revnet deployment and reserved-token routing, with no mocked protocol calls.
 /// @dev Uses the canonical registry's supported no-AMM fallback and a real fixed USD/USDC matching price feed.
-contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
+contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
     address private constant OPERATOR = address(0x100);
     address private constant ALICE = address(0x200);
     address private constant BOB = address(0x300);
@@ -79,14 +72,11 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
     address private constant FORWARDER = address(0x500);
     address private constant OWNER = address(0x700);
     address private constant NEXT_OPERATOR = address(0x800);
-    address private constant FINAL_OPERATOR = address(0x900);
     bytes32 private constant LAUNCH_SALT = bytes32(uint256(2));
     uint48 private constant STARTS_AT = 1_000_001;
     uint256 private _fundId;
     uint256 private _feeProjectId;
     uint256 private _beforeCcipSnapshot;
-    bool private _useOmnichainFund;
-    uint256 private _stickyId;
     REVDeployer private _revDeployer;
     REVOwner private _revOwner;
     REVLoans private _loans;
@@ -94,11 +84,10 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
     JBOmnichainDeployer private _omnichain;
     JBCCIPSuckerDeployer private _ccipToEthereum;
     JBCCIPSuckerDeployer private _ccipToOptimism;
-    JBTokenDistributor private _distributor;
-    HomerunIncomeDeployer private _helper;
+    JBRouterTerminalRegistry private _router;
+    HomerunAllowlistHook private _allowlist;
+    HomerunDeployer private _helper;
     JBERC20 private _fundToken;
-    JBStickyDeployer private _sticky;
-    JBStickyToken private _share;
     HomerunInitialIncomeVault private _vault;
 
     struct SnapshotFixture {
@@ -129,10 +118,12 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
             trustedForwarder: FORWARDER
         });
         _revOwner = new REVOwner(buyback, jbDirectory(), feeProjectId, _suckers, _loans, FORWARDER, address(this));
+        _router = new JBRouterTerminalRegistry(jbPermissions(), jbProjects(), permit2(), multisig(), FORWARDER);
+        _allowlist = new HomerunAllowlistHook(jbProjects(), FORWARDER);
         _revDeployer = new REVDeployer(
             jbController(),
             jbMultiTerminal(),
-            IJBTerminal(address(0)),
+            IJBTerminal(address(_router)),
             _suckers,
             feeProjectId,
             _hookDeployer(),
@@ -143,37 +134,19 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
             address(_revOwner)
         );
         _revOwner.setDeployer(_revDeployer);
-        _distributor = new JBTokenDistributor(
-            jbDirectory(), jbController(), IREVLoans(address(0)), IREVOwner(address(0)), 7 days, 4, uint48(3 * 365 days)
-        );
-        _sticky = new JBStickyDeployer(jbController(), jbMultiTerminal());
         _omnichain = JBOmnichainDeployer(
             deployCode(
                 "JBOmnichainDeployer.sol:JBOmnichainDeployer",
                 abi.encode(_suckers, _hookDeployer(), jbPermissions(), jbController(), FORWARDER)
             )
         );
-        _helper = new HomerunIncomeDeployer(_chainConfigs());
+        _helper = new HomerunDeployer(_chainConfigs());
         JBMatchingPriceFeed matchingFeed = new JBMatchingPriceFeed();
         vm.prank(multisig());
         jbPrices().addPriceFeedFor(0, 2, uint32(uint160(address(usdcToken()))), matchingFeed);
         _createAndCloseFund();
-        _createSticky();
         _beforeCcipSnapshot = vm.snapshotState();
         _ccipToOptimism = _ccipDeployer(10, feeProjectId);
-    }
-
-    function _createSticky() private {
-        _stickyId = _sticky.deployStickyFor(
-            IERC20Metadata(address(_fundToken)),
-            "House reward share",
-            "SHARE",
-            "ipfs://share",
-            0,
-            new address[](0),
-            false
-        );
-        _share = JBStickyToken(address(jbTokens().tokenOf(_stickyId)));
     }
 
     function _ccipDeployer(uint32 remoteChainId, uint256 feeProjectId) private returns (JBCCIPSuckerDeployer deployer) {
@@ -188,17 +161,17 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
         _suckers.allowSuckerDeployer(address(deployer));
     }
 
-    function _chainConfigs() private view returns (HomerunIncomeChainConfig[] memory chains) {
-        chains = new HomerunIncomeChainConfig[](2);
+    function _chainConfigs() private view returns (HomerunChainConfig[] memory chains) {
+        chains = new HomerunChainConfig[](2);
         for (uint256 i; i < chains.length; ++i) {
-            chains[i] = HomerunIncomeChainConfig({
+            chains[i] = HomerunChainConfig({
                 chainId: i == 0 ? 1 : 10,
                 controller: address(jbController()),
                 revDeployer: address(_revDeployer),
-                tokenDistributor: address(_distributor),
                 usdc: address(usdcToken()),
-                stickyDeployer: address(_sticky),
-                omnichainDeployer: address(_omnichain)
+                omnichainDeployer: address(_omnichain),
+                routerTerminalRegistry: address(_router),
+                allowlistHook: address(_allowlist)
             });
         }
     }
@@ -219,48 +192,51 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
     }
 
     function _createAndCloseFund() private {
+        uint256 fee = jbProjects().creationFee();
+        vm.deal(OPERATOR, OPERATOR.balance + fee);
+        vm.startPrank(OPERATOR);
+        address fundToken;
+        (_fundId, fundToken) = _helper.launchFundFor{value: fee}(
+            OPERATOR, "ipfs://fund", "House FUND", "HOUSE", 0, bytes32(0), new address[](0)
+        );
+        _fundToken = JBERC20(fundToken);
+        assertEq(address(jbTokens().tokenOf(_fundId)), fundToken);
+        assertEq(_fundToken.name(), "House FUND");
+        assertEq(_fundToken.symbol(), "HOUSE");
+        assertEq(jbProjects().ownerOf(_fundId), OPERATOR);
+        IJBTerminal[] memory terminals = jbDirectory().terminalsOf(_fundId);
+        assertEq(terminals.length, 2);
+        assertEq(address(terminals[1]), address(_router));
+        // The owner closes the campaign the way Homerun's rule changes do: through the omnichain deployer.
+        uint8[] memory permissionIds = new uint8[](1);
+        permissionIds[0] = JBPermissionIds.QUEUE_RULESETS;
+        jbPermissions()
+            .setPermissionsFor(
+                OPERATOR,
+                JBPermissionsData({
+                operator: address(_omnichain), projectId: uint64(_fundId), permissionIds: permissionIds
+            })
+            );
+        (, JBRulesetMetadata memory metadata) = jbController().currentRulesetOf(_fundId);
         JBRulesetConfig[] memory rulesets = new JBRulesetConfig[](1);
-        rulesets[0].weight = 1 ether;
-        rulesets[0].metadata.baseCurrency = 2;
-        rulesets[0].metadata.allowOwnerMinting = true;
+        rulesets[0].weight = _helper.FUND_WEIGHT();
+        rulesets[0].metadata = metadata;
+        // Rule changes re-carry the allowlist as the extra hook; the omnichain deployer reinjects itself.
+        rulesets[0].metadata.dataHook = address(_allowlist);
+        rulesets[0].metadata.useDataHookForPay = true;
+        rulesets[0].metadata.useDataHookForCashOut = false;
         rulesets[0].metadata.pausePay = true;
         rulesets[0].metadata.cashOutTaxRate = 10_000;
-        JBTerminalConfig[] memory terminals = new JBTerminalConfig[](1);
-        terminals[0].terminal = jbMultiTerminal();
-        terminals[0].accountingContextsToAccept = new JBAccountingContext[](1);
-        terminals[0].accountingContextsToAccept[0] = JBAccountingContext({
-            token: address(usdcToken()), decimals: 6, currency: uint32(uint160(address(usdcToken())))
-        });
-        if (_useOmnichainFund) {
-            JBSuckerDeploymentConfig memory noSuckers;
-            (_fundId,,) = _omnichain.launchProjectFor(OPERATOR, "ipfs://fund", rulesets, terminals, "", noSuckers);
-        } else {
-            _fundId = jbController().launchProjectFor(OPERATOR, "ipfs://fund", rulesets, terminals, "");
-        }
-        vm.startPrank(OPERATOR);
+        rulesets[0].metadata.allowOwnerMinting = true;
+        vm.warp(vm.getBlockTimestamp() + 1);
+        _omnichain.queueRulesetsOf(_fundId, rulesets, "campaign closed");
+        vm.warp(vm.getBlockTimestamp() + 1);
         jbController().mintTokensOf(_fundId, 100 ether, OPERATOR, "operator share after purchase", false);
         jbController().mintTokensOf(_fundId, 300 ether, ALICE, "offchain contribution after purchase", false);
         jbController().mintTokensOf(_fundId, 100 ether, BOB, "offchain contribution after purchase", false);
-        _fundToken = JBERC20(address(jbController().deployERC20For(_fundId, "Fund", "FUND", bytes32(_fundId))));
         rulesets[0].metadata.allowOwnerMinting = false;
-        if (_useOmnichainFund) {
-            uint8[] memory permissionIds = new uint8[](1);
-            permissionIds[0] = JBPermissionIds.QUEUE_RULESETS;
-            jbPermissions()
-                .setPermissionsFor(
-                    OPERATOR,
-                    JBPermissionsData({
-                        operator: address(_omnichain), projectId: uint64(_fundId), permissionIds: permissionIds
-                    })
-                );
-            vm.warp(vm.getBlockTimestamp() + 1);
-            _omnichain.queueRulesetsOf(_fundId, rulesets, "success allocations complete");
-        } else {
-            jbController().queueRulesetsOf(_fundId, rulesets, "success allocations complete");
-        }
+        _omnichain.queueRulesetsOf(_fundId, rulesets, "success allocations complete");
         vm.stopPrank();
-        vm.prank(ALICE);
-        jbController().claimTokensFor(ALICE, _fundId, 50 ether, ALICE);
         vm.warp(block.timestamp + 1);
         vm.roll(block.number + 1);
     }
@@ -272,18 +248,16 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
         holders[2] = BOB;
     }
 
-    function _deploy(uint16 operatorBps) private returns (uint256 incomeId) {
-        return _deploySnapshot(operatorBps, _snapshot(_holders()));
+    function _deploy(uint16 reservedBps) private returns (uint256 incomeId) {
+        return _deploySnapshot(reservedBps, _snapshot(_holders()));
     }
 
-    function _deploySnapshot(uint16 operatorBps, SnapshotFixture memory fixture) private returns (uint256 incomeId) {
+    function _deploySnapshot(uint16 reservedBps, SnapshotFixture memory fixture) private returns (uint256 incomeId) {
         REVDescription memory description =
-            REVDescription({name: "House income", ticker: "INCOME", uri: "ipfs://income", salt: LAUNCH_SALT});
+            REVDescription({name: "House income", ticker: "RENT", uri: "ipfs://income", salt: LAUNCH_SALT});
         REVSuckerDeploymentConfig memory suckers = _suckerConfig(fixture.snapshot);
         vm.prank(OPERATOR);
-        incomeId = _helper.deployIncome(
-            _fundId, fixture.snapshot, description, operatorBps, 1000, _stickyId, STARTS_AT, suckers, OPERATOR
-        );
+        incomeId = _helper.deployIncome(_fundId, fixture.snapshot, description, reservedBps, STARTS_AT, suckers);
         _vault = HomerunInitialIncomeVault(_helper.initialAllocationVaultOf(_fundId));
     }
 
@@ -479,27 +453,6 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
         );
     }
 
-    function _activateFundRewards() private {
-        address[] memory holders = _holders();
-        for (uint256 i; i < holders.length; ++i) {
-            address holder = holders[i];
-            uint256 credit = jbTokens().creditBalanceOf(holder, _fundId);
-            vm.startPrank(holder);
-            if (credit != 0) jbController().claimTokensFor(holder, _fundId, credit, holder);
-            uint256 balance = _fundToken.balanceOf(holder);
-            _fundToken.approve(address(jbMultiTerminal()), balance);
-            assertEq(
-                jbMultiTerminal().pay(_stickyId, address(_fundToken), balance, holder, balance, "activate", ""), balance
-            );
-            vm.stopPrank();
-            assertEq(_share.balanceOf(holder), balance);
-            assertEq(_share.delegates(holder), holder);
-            assertEq(_fundToken.balanceOf(holder), 0);
-        }
-        vm.roll(block.number + 1);
-        assertEq(_share.getPastTotalActiveVotes(block.number - 1), 500 ether);
-    }
-
     function _payAndDistribute(uint256 incomeId) private returns (uint256 customerTokens) {
         usdcToken().mint(CUSTOMER, 100e6);
         vm.startPrank(CUSTOMER);
@@ -511,7 +464,7 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
 
     function testRealDeploymentAtomicallyMintsAllInitialIncome() public {
         SnapshotFixture memory fixture = _snapshot(_holders());
-        uint256 incomeId = _deploySnapshot(7000, fixture);
+        uint256 incomeId = _deploySnapshot(8000, fixture);
         address vaultAddress = _helper.initialAllocationVaultOf(_fundId);
         HomerunInitialIncomeVault vault = HomerunInitialIncomeVault(vaultAddress);
         assertEq(_helper.incomeProjectIdOf(_fundId), incomeId);
@@ -525,8 +478,9 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
         assertEq(vault.DISTRIBUTION_ID(), _helper.distributionIdFor(_fundId, fixture.snapshot, LAUNCH_SALT));
         assertEq(vault.MERKLE_ROOT(), fixture.snapshot.allocations[0].merkleRoot);
         assertEq(jbTokens().totalSupplyOf(_fundId), 500 ether);
-        assertEq(jbTokens().creditBalanceOf(ALICE, _fundId), 250 ether);
-        assertEq(_fundToken.balanceOf(ALICE), 50 ether);
+        // The FUND token exists from launch, so success mints are ERC-20 balances, never credits.
+        assertEq(jbTokens().creditBalanceOf(ALICE, _fundId), 0);
+        assertEq(_fundToken.balanceOf(ALICE), 300 ether);
         (JBRuleset memory ruleset, JBRulesetMetadata memory metadata) = jbController().currentRulesetOf(incomeId);
         assertEq(metadata.dataHook, address(_revOwner));
         assertEq(metadata.reservedPercent, 8000);
@@ -544,47 +498,45 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
         assertEq(jbTokens().totalSupplyOf(incomeId), 500_000 ether);
     }
 
-    function testRealInitialClaimsStayWithSnapshotHoldersAfterFundMovesAndCreditsAreClaimed() public {
+    function testRealInitialClaimsStayWithSnapshotHoldersAfterFundMoves() public {
         SnapshotFixture memory fixture = _snapshot(_holders());
-        uint256 incomeId = _deploySnapshot(7000, fixture);
-        vm.startPrank(ALICE);
-        jbController().claimTokensFor(ALICE, _fundId, 250 ether, ALICE);
+        uint256 incomeId = _deploySnapshot(8000, fixture);
+        vm.prank(ALICE);
         _fundToken.transfer(CUSTOMER, 300 ether);
-        vm.stopPrank();
         assertEq(jbTokens().totalBalanceOf(ALICE, _fundId), 0);
         vm.prank(CUSTOMER);
         _claim(fixture, 1);
         assertEq(jbTokens().totalBalanceOf(ALICE, incomeId), 300_000 ether);
         assertEq(jbTokens().totalBalanceOf(CUSTOMER, incomeId), 0);
         assertEq(_fundToken.getTotalActiveVotes(), 0);
-        vm.expectRevert(HomerunInitialIncomeVault.AlreadyClaimed.selector);
+        vm.expectPartialRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_AlreadyClaimed.selector);
         _claim(fixture, 1);
         assertEq(jbTokens().totalSupplyOf(incomeId), 500_000 ether);
     }
 
-    function testRealDistinctOwnerControlsIncomeWhileOperatorReceivesIncentives() public {
+    function testRealDistinctOwnerControlsIncomeAndHoldsTheReservedSplit() public {
         vm.prank(OPERATOR);
         jbProjects().transferFrom(OPERATOR, OWNER, _fundId);
         SnapshotFixture memory fixture = _snapshot(_holders());
         REVDescription memory description =
-            REVDescription({name: "House income", ticker: "INCOME", uri: "ipfs://income", salt: LAUNCH_SALT});
+            REVDescription({name: "House income", ticker: "RENT", uri: "ipfs://income", salt: LAUNCH_SALT});
         REVSuckerDeploymentConfig memory suckers = _suckerConfig(fixture.snapshot);
 
-        vm.expectRevert(HomerunIncomeDeployer.Unauthorized.selector);
+        vm.expectPartialRevert(HomerunDeployer.HomerunDeployer_Unauthorized.selector);
         vm.prank(OPERATOR);
-        _helper.deployIncome(
-            _fundId, fixture.snapshot, description, 7000, 1000, _stickyId, STARTS_AT, suckers, OPERATOR
-        );
+        _helper.deployIncome(_fundId, fixture.snapshot, description, 8000, STARTS_AT, suckers);
 
         vm.prank(OWNER);
-        uint256 incomeId = _helper.deployIncome(
-            _fundId, fixture.snapshot, description, 7000, 1000, _stickyId, STARTS_AT, suckers, OPERATOR
-        );
+        uint256 incomeId = _helper.deployIncome(_fundId, fixture.snapshot, description, 8000, STARTS_AT, suckers);
         assertEq(jbProjects().ownerOf(_fundId), OWNER);
         assertEq(jbProjects().ownerOf(incomeId), address(_revOwner));
         assertTrue(_revOwner.isOperatorOf(incomeId, OWNER));
         assertFalse(_revOwner.isOperatorOf(incomeId, OPERATOR));
         assertFalse(_revOwner.isOperatorOf(incomeId, address(_helper)));
+        assertEq(JBERC20(address(jbTokens().tokenOf(incomeId))).symbol(), "RENT");
+        IJBTerminal[] memory terminals = jbDirectory().terminalsOf(incomeId);
+        assertEq(terminals.length, 2);
+        assertEq(address(terminals[1]), address(_router));
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -601,27 +553,25 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
         jbController().setUriOf(incomeId, "ipfs://owner-update");
         assertEq(jbController().uriOf(incomeId), "ipfs://owner-update");
 
-        (JBRuleset memory current,) = jbController().currentRulesetOf(incomeId);
+        (JBRuleset memory current, JBRulesetMetadata memory metadata) = jbController().currentRulesetOf(incomeId);
         (JBRuleset memory last,,) = jbController().latestQueuedRulesetOf(incomeId);
-        uint256[2] memory stageIds = [uint256(current.id), uint256(last.id)];
-        assertTrue(stageIds[0] != stageIds[1]);
-        for (uint256 i; i < stageIds.length; ++i) {
-            JBSplit[] memory splits = jbSplits().splitsOf(incomeId, stageIds[i], JBSplitGroupIds.RESERVED_TOKENS);
-            assertEq(splits.length, 2);
-            assertEq(splits[0].beneficiary, OPERATOR);
-            assertEq(splits[0].lockedUntil, 0);
-            assertEq(splits[1].lockedUntil, 0);
-            assertEq(splits[1].beneficiary, address(_share));
-            assertEq(address(splits[1].hook), address(_distributor));
-        }
+        assertEq(current.id, last.id, "one stage, no frozen second stage");
+        assertEq(current.weightCutPercent, _helper.INCOME_CUT_PERCENT());
+        assertEq(current.duration, _helper.QUARTER());
+        assertEq(metadata.cashOutTaxRate, _helper.INCOME_CASH_OUT_TAX_RATE());
+        assertEq(metadata.reservedPercent, 8000);
+        JBSplit[] memory splits = jbSplits().splitsOf(incomeId, current.id, JBSplitGroupIds.RESERVED_TOKENS);
+        assertEq(splits.length, 1);
+        assertEq(splits[0].beneficiary, OWNER);
+        assertEq(splits[0].percent, 1_000_000_000);
+        assertEq(splits[0].lockedUntil, 0);
+        assertEq(address(splits[0].hook), address(0));
 
-        _activateFundRewards();
         assertEq(_payAndDistribute(incomeId), 200 ether);
         IJBToken income = jbTokens().tokenOf(incomeId);
-        assertEq(income.balanceOf(OPERATOR), 700 ether);
-        assertEq(income.balanceOf(OWNER), 0);
+        assertEq(income.balanceOf(OWNER), 800 ether);
+        assertEq(income.balanceOf(OPERATOR), 0);
         assertEq(income.balanceOf(CUSTOMER), 200 ether);
-        assertEq(income.balanceOf(address(_distributor)), 100 ether);
         assertEq(jbController().pendingReservedTokenBalanceOf(incomeId), 0);
     }
 
@@ -722,65 +672,37 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
         assertEq(hook.STORE().maxTierIdOf(address(hook)), 1);
     }
 
-    function testRealPaymentRoutesSeventyTenTwentyToOperatorDistributorAndCustomer() public {
-        uint256 incomeId = _deploy(7000);
-        _activateFundRewards();
+    function testRealPaymentRoutesTheReservedShareToTheOwnerAndTheRestToTheCustomer() public {
+        uint256 incomeId = _deploy(8000);
         assertEq(_payAndDistribute(incomeId), 200 ether);
         IJBToken income = jbTokens().tokenOf(incomeId);
         assertEq(income.balanceOf(CUSTOMER), 200 ether);
-        assertEq(income.balanceOf(OPERATOR), 700 ether);
-        assertEq(income.balanceOf(address(_distributor)), 100 ether);
-        assertEq(_distributor.balanceOf(address(_share), IERC20(address(income))), 100 ether);
-        assertEq(_distributor.balanceOf(address(_fundToken), IERC20(address(income))), 0);
+        assertEq(income.balanceOf(OPERATOR), 800 ether);
         assertEq(jbTokens().totalSupplyOf(incomeId), 501_000 ether);
         assertEq(jbController().pendingReservedTokenBalanceOf(incomeId), 0);
         assertEq(jbTerminalStore().balanceOf(address(jbMultiTerminal()), incomeId, address(usdcToken())), 100e6);
     }
 
     function testRealOneHundredPercentReservedIssuanceAcceptsZeroCustomerTokens() public {
-        uint256 incomeId = _deploy(9000);
-        _activateFundRewards();
+        uint256 incomeId = _deploy(10_000);
         assertEq(_payAndDistribute(incomeId), 0);
         IJBToken income = jbTokens().tokenOf(incomeId);
         assertEq(income.balanceOf(CUSTOMER), 0);
-        assertEq(income.balanceOf(OPERATOR), 900 ether);
-        assertEq(income.balanceOf(address(_distributor)), 100 ether);
-        assertEq(_distributor.balanceOf(address(_share), IERC20(address(income))), 100 ether);
+        assertEq(income.balanceOf(OPERATOR), 1000 ether);
         assertEq(jbTokens().totalSupplyOf(incomeId), 501_000 ether);
     }
 
-    function testRealActivatedShareHolderCollectsOngoingRewardsWithoutTouchingInitialAllocation() public {
-        SnapshotFixture memory fixture = _snapshot(_holders());
-        uint256 incomeId = _deploySnapshot(7000, fixture);
-        _activateFundRewards();
-        _payAndDistribute(incomeId);
-        IERC20 income = IERC20(address(jbTokens().tokenOf(incomeId)));
-        uint256[] memory tokenIds = new uint256[](1);
-        tokenIds[0] = uint256(uint160(ALICE));
-        IERC20[] memory rewards = new IERC20[](1);
-        rewards[0] = income;
-        vm.warp(_distributor.roundStartTimestamp(_distributor.currentRound() + 1));
-        vm.prank(ALICE);
-        _distributor.beginVesting(address(_share), tokenIds, rewards);
-        uint256 vestingStart = vm.getBlockTimestamp();
-        vm.warp(vestingStart + _distributor.ROUND_DURATION());
-        vm.prank(ALICE);
-        _distributor.collectVestedRewards(address(_share), tokenIds, rewards, ALICE);
-        assertEq(income.balanceOf(ALICE), 15 ether, "one of four weekly vesting rounds");
-        vm.warp(vestingStart + _distributor.ROUND_DURATION() * _distributor.VESTING_ROUNDS());
-        vm.prank(ALICE);
-        _distributor.collectVestedRewards(address(_share), tokenIds, rewards, ALICE);
-        assertEq(income.balanceOf(ALICE), 60 ether);
-        assertEq(income.balanceOf(address(_distributor)), 40 ether);
-        assertEq(income.balanceOf(address(_vault)), 500_000 ether);
-        _claim(fixture, 1);
-        assertEq(income.balanceOf(ALICE), 300_060 ether);
-        assertEq(jbTokens().totalBalanceOf(ALICE, _fundId), 0);
-        assertEq(_share.balanceOf(ALICE), 300 ether);
-        assertEq(jbTokens().totalSupplyOf(incomeId), 501_000 ether);
+    function testRealZeroReservedIssuanceGivesEverythingToTheCustomer() public {
+        uint256 incomeId = _deploy(0);
+        usdcToken().mint(CUSTOMER, 100e6);
+        vm.startPrank(CUSTOMER);
+        usdcToken().approve(address(jbMultiTerminal()), 100e6);
+        assertEq(jbMultiTerminal().pay(incomeId, address(usdcToken()), 100e6, CUSTOMER, 0, "revenue", ""), 1000 ether);
+        vm.stopPrank();
+        assertEq(jbController().pendingReservedTokenBalanceOf(incomeId), 0);
+        assertEq(jbTokens().tokenOf(incomeId).balanceOf(OPERATOR), 0);
     }
 
-    /// @notice Holder count does not enter launch calldata or the launch's onchain work.
     function testRealTinyFundFragmentationAllowsBoundedLaunchAndEveryClaim() public {
         address attacker = address(0x600);
         vm.prank(ALICE);
@@ -801,7 +723,7 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
         assertEq(_fundToken.balanceOf(fragmentedHolders[203]), 1);
         SnapshotFixture memory fixture = _snapshot(fragmentedHolders);
         uint256 launchGasBefore = gasleft();
-        uint256 incomeId = _deploySnapshot(7000, fixture);
+        uint256 incomeId = _deploySnapshot(8000, fixture);
         uint256 launchGasUsed = launchGasBefore - gasleft();
         emit log_named_uint("Atomic launch gas with 204 snapshot holders", launchGasUsed);
         assertLt(launchGasUsed, 4_000_000, "launch excludes holder enumeration and claim execution");
@@ -824,12 +746,10 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
         jbProjects().transferFrom(OPERATOR, OWNER, _fundId);
         SnapshotFixture memory fixture = _snapshot(_holders());
         REVDescription memory description =
-            REVDescription({name: "House income", ticker: "INCOME", uri: "ipfs://income", salt: LAUNCH_SALT});
+            REVDescription({name: "House income", ticker: "RENT", uri: "ipfs://income", salt: LAUNCH_SALT});
         REVSuckerDeploymentConfig memory suckers = _suckerConfig(fixture.snapshot);
         vm.prank(OWNER);
-        incomeId = _helper.deployIncome(
-            _fundId, fixture.snapshot, description, 7000, 1000, _stickyId, STARTS_AT, suckers, OPERATOR
-        );
+        incomeId = _helper.deployIncome(_fundId, fixture.snapshot, description, 8000, STARTS_AT, suckers);
         _vault = HomerunInitialIncomeVault(_helper.initialAllocationVaultOf(_fundId));
     }
 
@@ -848,18 +768,14 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
         });
     }
 
-    function testRealOwnerCanRotateCurrentAndFinalStageOperatorsWithoutMovingExistingTokens() public {
+    function testRealOwnerCanRedirectTheReservedSplitWithoutMovingExistingTokens() public {
         uint256 incomeId = _deployWithDistinctOwner();
         (JBRuleset memory current,) = jbController().currentRulesetOf(incomeId);
-        (JBRuleset memory last,,) = jbController().latestQueuedRulesetOf(incomeId);
-        assertTrue(current.id != last.id);
-        _activateFundRewards();
         _payAndDistribute(incomeId);
         IJBToken income = jbTokens().tokenOf(incomeId);
-        assertEq(income.balanceOf(OPERATOR), 700 ether);
+        assertEq(income.balanceOf(OWNER), 800 ether);
 
         JBSplitGroup[] memory groups = _reservedSplitGroups(incomeId, current.id);
-        bytes32 stickySplitHash = keccak256(abi.encode(groups[0].splits[1]));
         groups[0].splits[0].beneficiary = payable(NEXT_OPERATOR);
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -876,89 +792,12 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
         jbController().setSplitGroupsOf(incomeId, current.id, groups);
         groups = _reservedSplitGroups(incomeId, current.id);
         assertEq(groups[0].splits[0].beneficiary, NEXT_OPERATOR);
-        assertEq(groups[0].splits[0].percent, 875_000_000);
-        assertEq(keccak256(abi.encode(groups[0].splits[1])), stickySplitHash);
-        groups = _reservedSplitGroups(incomeId, last.id);
-        assertEq(groups[0].splits[0].beneficiary, OPERATOR, "current-stage change does not update final stage");
+        assertEq(groups[0].splits[0].percent, 1_000_000_000);
 
         _payAndDistribute(incomeId);
-        assertEq(income.balanceOf(OPERATOR), 700 ether, "old operator keeps earned tokens without new incentives");
-        assertEq(income.balanceOf(NEXT_OPERATOR), 700 ether);
-        assertEq(income.balanceOf(address(_distributor)), 200 ether);
-
-        groups[0].splits[0].beneficiary = payable(FINAL_OPERATOR);
-        vm.prank(OWNER);
-        jbController().setSplitGroupsOf(incomeId, last.id, groups);
-        groups = _reservedSplitGroups(incomeId, last.id);
-        assertEq(groups[0].splits[0].beneficiary, FINAL_OPERATOR);
-        assertEq(groups[0].splits[0].percent, 875_000_000);
-        assertEq(keccak256(abi.encode(groups[0].splits[1])), stickySplitHash);
-        groups = _reservedSplitGroups(incomeId, current.id);
-        assertEq(groups[0].splits[0].beneficiary, NEXT_OPERATOR, "final-stage change does not update current stage");
-
-        vm.warp(last.start);
-        (JBRuleset memory finalRuleset,) = jbController().currentRulesetOf(incomeId);
-        assertEq(finalRuleset.id, last.id);
-        uint256 totalSupplyBefore = jbTokens().totalSupplyOf(incomeId);
-        uint256 customerTokens = _payAndDistribute(incomeId);
-        uint256 issuedTokens = jbTokens().totalSupplyOf(incomeId) - totalSupplyBefore;
-        uint256 reservedTokens = issuedTokens - customerTokens;
-        assertGt(reservedTokens, 0);
-        assertEq(income.balanceOf(FINAL_OPERATOR), reservedTokens * 875_000_000 / 1_000_000_000);
-        assertEq(income.balanceOf(address(_distributor)) - 200 ether, reservedTokens * 125_000_000 / 1_000_000_000);
-        assertEq(income.balanceOf(OPERATOR), 700 ether);
-        assertEq(income.balanceOf(NEXT_OPERATOR), 700 ether);
-        assertEq(income.balanceOf(OWNER), 0);
+        assertEq(income.balanceOf(OWNER), 800 ether, "the owner keeps earned tokens without new incentives");
+        assertEq(income.balanceOf(NEXT_OPERATOR), 800 ether);
         assertTrue(_revOwner.isOperatorOf(incomeId, OWNER));
-        assertFalse(_revOwner.isOperatorOf(incomeId, OPERATOR));
-        assertFalse(_revOwner.isOperatorOf(incomeId, NEXT_OPERATOR));
-        assertFalse(_revOwner.isOperatorOf(incomeId, FINAL_OPERATOR));
-    }
-
-    function testRealOwnerCanChangeStickyAllocationAndRoutingInBothStages() public {
-        uint256 incomeId = _deployWithDistinctOwner();
-        (JBRuleset memory current,) = jbController().currentRulesetOf(incomeId);
-        (JBRuleset memory last,,) = jbController().latestQueuedRulesetOf(incomeId);
-        uint256[2] memory stageIds = [uint256(current.id), uint256(last.id)];
-        assertTrue(stageIds[0] != stageIds[1]);
-        for (uint256 i; i < stageIds.length; ++i) {
-            JBSplitGroup[] memory groups = _reservedSplitGroups(incomeId, stageIds[i]);
-            assertEq(groups[0].splits.length, 2);
-            assertEq(groups[0].splits[0].lockedUntil, 0);
-            assertEq(groups[0].splits[1].lockedUntil, 0);
-            assertEq(groups[0].splits[1].percent, 125_000_000);
-            assertEq(groups[0].splits[1].beneficiary, address(_share));
-            assertEq(address(groups[0].splits[1].hook), address(_distributor));
-            groups[0].splits[0].percent = 800_000_000;
-            groups[0].splits[1].percent = 200_000_000;
-            groups[0].splits[1].beneficiary = payable(NEXT_OPERATOR);
-            groups[0].splits[1].hook = groups[0].splits[0].hook;
-            vm.expectRevert(
-                abi.encodeWithSelector(
-                    JBPermissioned.JBPermissioned_Unauthorized.selector,
-                    address(_revOwner),
-                    OPERATOR,
-                    incomeId,
-                    JBPermissionIds.SET_SPLIT_GROUPS
-                )
-            );
-            vm.prank(OPERATOR);
-            jbController().setSplitGroupsOf(incomeId, stageIds[i], groups);
-            vm.prank(OWNER);
-            jbController().setSplitGroupsOf(incomeId, stageIds[i], groups);
-            assertEq(keccak256(abi.encode(_reservedSplitGroups(incomeId, stageIds[i]))), keccak256(abi.encode(groups)));
-        }
-
-        _activateFundRewards();
-        assertEq(_payAndDistribute(incomeId), 200 ether);
-        IJBToken income = jbTokens().tokenOf(incomeId);
-        assertEq(income.balanceOf(OPERATOR), 640 ether);
-        assertEq(income.balanceOf(NEXT_OPERATOR), 160 ether);
-        assertEq(income.balanceOf(CUSTOMER), 200 ether);
-        assertEq(income.balanceOf(address(_distributor)), 0);
-        assertEq(income.balanceOf(OWNER), 0);
-        assertTrue(_revOwner.isOperatorOf(incomeId, OWNER));
-        assertFalse(_revOwner.isOperatorOf(incomeId, OPERATOR));
         assertFalse(_revOwner.isOperatorOf(incomeId, NEXT_OPERATOR));
     }
 
@@ -992,7 +831,7 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
 
     function testRealGlobalAllocationMintsHalfPerChainWithMatchingDelayedRevnetAndCcipIdentity() public {
         SnapshotFixture[2] memory fixtures = _globalSnapshots(false);
-        uint256 originIncomeId = _deploySnapshot(7000, fixtures[0]);
+        uint256 originIncomeId = _deploySnapshot(8000, fixtures[0]);
         _assertLocalAllocation(originIncomeId, 250_000 ether);
         bytes32 originHash = _revDeployer.hashedEncodedConfigurationOf(originIncomeId);
         address originIncomeToken = address(jbTokens().tokenOf(originIncomeId));
@@ -1004,7 +843,7 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
         assertEq(jbTokens().totalBalanceOf(ALICE, originIncomeId), 150_000 ether);
 
         _switchToIsolatedOptimism(fixtures[1].snapshot, STARTS_AT + 3 days);
-        uint256 remoteIncomeId = _deploySnapshot(7000, fixtures[1]);
+        uint256 remoteIncomeId = _deploySnapshot(8000, fixtures[1]);
         _assertLocalAllocation(remoteIncomeId, 250_000 ether);
         assertEq(_revDeployer.hashedEncodedConfigurationOf(remoteIncomeId), originHash);
         assertEq(address(jbTokens().tokenOf(remoteIncomeId)), originIncomeToken);
@@ -1019,7 +858,7 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
 
     function testRealZeroLocalAllocationLeavesAllFiveHundredThousandForRemoteChain() public {
         SnapshotFixture[2] memory fixtures = _globalSnapshots(true);
-        uint256 originIncomeId = _deploySnapshot(7000, fixtures[0]);
+        uint256 originIncomeId = _deploySnapshot(8000, fixtures[0]);
         _assertLocalAllocation(originIncomeId, 0);
         assertEq(_vault.LEAF_COUNT(), 0);
         assertEq(_vault.MERKLE_ROOT(), bytes32(0));
@@ -1028,7 +867,7 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
         address originSucker = _assertCcipRoute(originIncomeId, 10);
 
         _switchToIsolatedOptimism(fixtures[1].snapshot, STARTS_AT + 1 days);
-        uint256 remoteIncomeId = _deploySnapshot(7000, fixtures[1]);
+        uint256 remoteIncomeId = _deploySnapshot(8000, fixtures[1]);
         _assertLocalAllocation(remoteIncomeId, 500_000 ether);
         assertEq(_revDeployer.hashedEncodedConfigurationOf(remoteIncomeId), originHash);
         assertEq(_assertCcipRoute(remoteIncomeId, 1), originSucker);
@@ -1039,53 +878,103 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
         assertEq(jbTokens().totalBalanceOf(ALICE, remoteIncomeId), 300_000 ether);
     }
 
-    function testRealLaunchAfterEightQuartersConsumesFirstStagePremintAndPreservesIdentity() public {
+    function testRealLaunchAfterEightQuartersKeepsDecayingAndPreservesIdentity() public {
         SnapshotFixture[2] memory fixtures = _globalSnapshots(false);
-        uint256 originIncomeId = _deploySnapshot(7000, fixtures[0]);
+        uint256 originIncomeId = _deploySnapshot(8000, fixtures[0]);
         bytes32 originHash = _revDeployer.hashedEncodedConfigurationOf(originIncomeId);
         address originSucker = _assertCcipRoute(originIncomeId, 10);
         uint256 lateTimestamp = uint256(STARTS_AT) + uint256(_helper.QUARTER()) * 8 + 1 days;
         _switchToIsolatedOptimism(fixtures[1].snapshot, lateTimestamp);
-        uint256 remoteIncomeId = _deploySnapshot(7000, fixtures[1]);
+        uint256 remoteIncomeId = _deploySnapshot(8000, fixtures[1]);
         _assertLocalAllocation(remoteIncomeId, 250_000 ether);
         assertEq(_revDeployer.hashedEncodedConfigurationOf(remoteIncomeId), originHash);
         assertEq(_assertCcipRoute(remoteIncomeId, 1), originSucker);
         (JBRuleset memory current,) = jbController().currentRulesetOf(remoteIncomeId);
-        (JBRuleset memory first,) = jbController().getRulesetOf(remoteIncomeId, lateTimestamp);
-        assertEq(first.id, lateTimestamp);
-        assertEq(current.id, lateTimestamp + 1, "the live ruleset is already the fixed-issuance second stage");
-        assertEq(current.weightCutPercent, 0);
-        assertEq(_revOwner.amountToAutoIssue(remoteIncomeId, first.id, address(_helper)), 0);
+        assertEq(current.id, lateTimestamp, "the single stage is live and still cutting");
+        assertEq(current.weightCutPercent, _helper.INCOME_CUT_PERCENT());
+        assertEq(current.cycleNumber, 9, "eight quarters have elapsed since the shared start");
+        uint256 expectedWeight = 10 ether;
+        for (uint256 i; i < 8; ++i) {
+            expectedWeight = expectedWeight * 98 / 100;
+        }
+        assertEq(current.weight, expectedWeight, "issuance keeps cutting 2% per quarter, never freezes");
+        assertEq(_revOwner.amountToAutoIssue(remoteIncomeId, current.id, address(_helper)), 0);
         _claim(fixtures[1], 1);
         assertEq(jbTokens().totalBalanceOf(ALICE, remoteIncomeId), 150_000 ether);
     }
 
     function testRealCanonicalOmnichainFundHookCanLaunchIncomeAfterClosing() public {
-        _useOmnichainFund = true;
-        _createAndCloseFund();
-        _createSticky();
         (JBRuleset memory current, JBRulesetMetadata memory metadata) = jbController().currentRulesetOf(_fundId);
         assertEq(metadata.dataHook, address(_omnichain));
         assertTrue(metadata.pausePay);
         assertFalse(metadata.allowOwnerMinting);
         JBDeployerHookConfig memory extra = _omnichain.extraDataHookOf(_fundId, current.id);
-        assertEq(address(extra.dataHook), address(0));
-        assertFalse(extra.useDataHookForPay);
+        assertEq(address(extra.dataHook), address(_allowlist), "a closed FUND keeps its allowlist hook");
+        assertTrue(extra.useDataHookForPay);
         assertFalse(extra.useDataHookForCashOut);
-        uint256 incomeId = _deploy(7000);
+        uint256 incomeId = _deploy(8000);
         _assertLocalAllocation(incomeId, 500_000 ether);
         assertEq(_helper.incomeProjectIdOf(_fundId), incomeId);
     }
 
+    function testRealFundPaymentsAreGatedByTheOwnerManagedAllowlist() public {
+        uint256 fee = jbProjects().creationFee();
+        vm.deal(OWNER, fee);
+        vm.prank(OWNER);
+        (uint256 fundId,) = _helper.launchFundFor{value: fee}(
+            OWNER, "ipfs://open-fund", "Open FUND", "OPEN", 0, bytes32(0), new address[](0)
+        );
+        (JBRuleset memory current,) = jbController().currentRulesetOf(fundId);
+        JBDeployerHookConfig memory extra = _omnichain.extraDataHookOf(fundId, current.id);
+        assertEq(address(extra.dataHook), address(_allowlist));
+        assertTrue(extra.useDataHookForPay);
+        assertFalse(extra.useDataHookForCashOut);
+
+        usdcToken().mint(CUSTOMER, 300e6);
+        vm.startPrank(CUSTOMER);
+        usdcToken().approve(address(jbMultiTerminal()), 300e6);
+        // A new FUND is closed to everyone, including its owner, until the owner allows or opens it.
+        vm.expectRevert(
+            abi.encodeWithSelector(HomerunAllowlistHook.HomerunAllowlistHook_NotAllowed.selector, fundId, CUSTOMER)
+        );
+        jbMultiTerminal().pay(fundId, address(usdcToken()), 100e6, CUSTOMER, 0, "", "");
+        vm.stopPrank();
+
+        address[] memory accounts = new address[](1);
+        accounts[0] = CUSTOMER;
+        vm.expectPartialRevert(HomerunAllowlistHook.HomerunAllowlistHook_Unauthorized.selector);
+        vm.prank(OPERATOR);
+        _allowlist.setAllowed(fundId, accounts, true);
+        vm.prank(OWNER);
+        _allowlist.setAllowed(fundId, accounts, true);
+        vm.prank(CUSTOMER);
+        assertEq(jbMultiTerminal().pay(fundId, address(usdcToken()), 100e6, CUSTOMER, 0, "", ""), 1_000_000 ether);
+        // The beneficiary is what is gated, not the payer.
+        vm.prank(CUSTOMER);
+        vm.expectRevert(
+            abi.encodeWithSelector(HomerunAllowlistHook.HomerunAllowlistHook_NotAllowed.selector, fundId, BOB)
+        );
+        jbMultiTerminal().pay(fundId, address(usdcToken()), 100e6, BOB, 0, "", "");
+        vm.prank(OWNER);
+        _allowlist.setOpen(fundId, true);
+        vm.prank(CUSTOMER);
+        assertEq(jbMultiTerminal().pay(fundId, address(usdcToken()), 100e6, BOB, 0, "", ""), 1_000_000 ether);
+        assertEq(jbTokens().totalBalanceOf(BOB, fundId), 1_000_000 ether);
+        // Cash outs are never gated.
+        vm.prank(OWNER);
+        _allowlist.setOpen(fundId, false);
+        vm.prank(BOB);
+        assertGt(
+            jbMultiTerminal().cashOutTokensOf(BOB, fundId, 1000 ether, address(usdcToken()), 0, payable(BOB), ""), 0
+        );
+    }
+
     function testRealStockedOmnichainFundShopCanLaunchSeparateIncomeShop() public {
-        _useOmnichainFund = true;
-        _createAndCloseFund();
-        _createSticky();
         (JBRuleset memory current,) = jbController().currentRulesetOf(_fundId);
         (IJB721TiersHook fundHook,) = _omnichain.tiered721HookOf(_fundId, current.id);
         vm.prank(OPERATOR);
         fundHook.adjustTiers(_shopItems(), new uint256[](0));
-        uint256 incomeId = _deploy(7000);
+        uint256 incomeId = _deploy(8000);
         IJB721TiersHook incomeHook = _revOwner.tiered721HookOf(incomeId);
         assertTrue(address(incomeHook) != address(fundHook));
         assertEq(fundHook.STORE().maxTierIdOf(address(fundHook)), 1);
@@ -1117,9 +1006,9 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
         vm.roll(block.number + 1);
     }
 
-    function testRealStockedSingleChainFundShopCanLaunchSeparateIncomeShop() public {
+    function testRealDirectlyQueuedFundShopCanLaunchSeparateIncomeShop() public {
         IJB721TiersHook fundHook = _attachFundShop(JB721TiersHookDeployer(address(_omnichain.HOOK_DEPLOYER())), false);
-        uint256 incomeId = _deploy(7000);
+        uint256 incomeId = _deploy(8000);
         IJB721TiersHook incomeHook = _revOwner.tiered721HookOf(incomeId);
         assertTrue(address(incomeHook) != address(fundHook));
         assertEq(fundHook.STORE().maxTierIdOf(address(fundHook)), 1);
@@ -1147,7 +1036,8 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
         metadata.ownerMustSendPayouts = previous.ownerMustSendPayouts;
         metadata.holdFees = previous.holdFees;
         metadata.scopeCashOutsToLocalBalances = previous.scopeCashOutsToLocalBalances;
-        metadata.useDataHookForCashOut = previous.useDataHookForCashOut;
+        // The omnichain data hook's cash-out flag belongs to that hook, not to a directly attached shop.
+        metadata.useDataHookForCashOut = false;
         metadata.metadata = previous.metadata;
     }
 
@@ -1234,6 +1124,7 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
         assertEq(address(configured.approvalHook), address(previous.approvalHook));
         previousMetadata.dataHook = address(hook);
         previousMetadata.useDataHookForPay = true;
+        previousMetadata.useDataHookForCashOut = false;
         assertEq(abi.encode(configuredMetadata), abi.encode(previousMetadata));
         assertEq(
             abi.encode(jbSplits().splitsOf(_fundId, rulesetId, JBSplitGroupIds.RESERVED_TOKENS)),
@@ -1248,7 +1139,7 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
 
         vm.warp(block.timestamp + 1);
         vm.roll(block.number + 1);
-        uint256 incomeId = _deploy(7000);
+        uint256 incomeId = _deploy(8000);
         IJB721TiersHook incomeHook = _revOwner.tiered721HookOf(incomeId);
         assertTrue(address(incomeHook) != address(hook));
         assertEq(incomeHook.STORE().maxTierIdOf(address(incomeHook)), 0);
@@ -1257,15 +1148,15 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
     function testRealNoncanonicalFundShopCannotEnterIncomeSnapshot() public {
         _attachFundShop(_hookDeployer(), false);
         SnapshotFixture memory fixture = _snapshot(_holders());
-        vm.expectRevert(HomerunIncomeDeployer.UnsupportedFund.selector);
-        _deploySnapshot(7000, fixture);
+        vm.expectPartialRevert(HomerunDeployer.HomerunDeployer_UnsupportedFund.selector);
+        _deploySnapshot(8000, fixture);
     }
 
     function testRealFundShopWithNftCashOutsCannotEnterIncomeSnapshot() public {
         _attachFundShop(JB721TiersHookDeployer(address(_omnichain.HOOK_DEPLOYER())), true);
         SnapshotFixture memory fixture = _snapshot(_holders());
-        vm.expectRevert(HomerunIncomeDeployer.UnsupportedFund.selector);
-        _deploySnapshot(7000, fixture);
+        vm.expectPartialRevert(HomerunDeployer.HomerunDeployer_UnsupportedFund.selector);
+        _deploySnapshot(8000, fixture);
     }
 
     /// @notice Golden vector independently encoded with Viem, including a zero-valued global issuance row.
@@ -1288,11 +1179,11 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
         assertEq(configurationSalt, 0x5eb066edce4131b5cc292e75da46a3303f7915f03506cc9a543b160f27ffcd9a);
 
         REVConfig memory config;
-        config.description = REVDescription("Global INCOME vector", "INCOME", "ipfs://vector", configurationSalt);
+        config.description = REVDescription("Global INCOME vector", "RENT", "ipfs://vector", configurationSalt);
         config.baseCurrency = 2;
         config.operator = OPERATOR;
         config.scopeCashOutsToLocalBalances = false;
-        config.stageConfigurations = new REVStageConfig[](2);
+        config.stageConfigurations = new REVStageConfig[](1);
         JBSplit[] memory splits = new JBSplit[](1);
         splits[0].percent = 1_000_000_000;
         splits[0].beneficiary = payable(OPERATOR);
@@ -1306,21 +1197,19 @@ contract HomerunIncomeDeployerIntegrationTest is TestBaseWorkflow {
             );
         }
         config.stageConfigurations[0] =
-            REVStageConfig(1_000_001, issuances, 8000, splits, 10 ether, 7_884_000, 50_000_000, 0, 4);
-        config.stageConfigurations[1] =
-            REVStageConfig(1_000_001 + 7_884_000 * 8, new REVAutoIssuance[](0), 8000, splits, 1, 0, 0, 0, 4);
+            REVStageConfig(1_000_001, issuances, 8000, splits, 10 ether, 7_884_000, 20_000_000, 1000, 4);
         JBAccountingContext[] memory contexts = new JBAccountingContext[](1);
         contexts[0] = JBAccountingContext(address(usdcToken()), 6, uint32(uint160(address(usdcToken()))));
         REVSuckerDeploymentConfig memory suckers;
         REVDeploy721TiersHookConfig memory nft;
         nft.baseline721HookConfiguration.name = config.description.name;
-        nft.baseline721HookConfiguration.symbol = "INCOME";
+        nft.baseline721HookConfiguration.symbol = "RENT";
         nft.baseline721HookConfiguration.tiersConfig.currency = 2;
         nft.baseline721HookConfiguration.tiersConfig.decimals = 6;
         (uint256 incomeId,) = _revDeployer.deployFor(0, config, contexts, suckers, nft, new REVCroptopAllowedPost[](0));
         assertEq(
             _revDeployer.hashedEncodedConfigurationOf(incomeId),
-            0xeb3e51db9fd832db60a8a71e1ea05270bb8ca57185a7cce3fa8ebfd8888828e6
+            0x41bf0e1e9635c90bd0ebf612705b6db6eec7d7024c7b138d9a2325d389365914
         );
     }
 }

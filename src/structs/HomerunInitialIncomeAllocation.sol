@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+/// @custom:member chainId The ID of the chain whose FUND holders this allocation belongs to.
+/// @custom:member fundProjectId The ID of the FUND project on that chain.
+/// @custom:member snapshotBlockNumber The finalized block the FUND balances were read at, in that chain's own
+/// height (L2 height on Arbitrum).
+/// @custom:member snapshotBlockHash The hash of that block.
+/// @custom:member merkleRoot The root of the leaves paying that chain's holders. Zero when there are no leaves.
+/// @custom:member leafCount The number of leaves under the root.
+/// @custom:member incomeAmount The INCOME minted into that chain's claim vault, as a fixed point number with 18
+/// decimals.
+struct HomerunInitialIncomeAllocation {
+    uint32 chainId;
+    uint256 fundProjectId;
+    uint256 snapshotBlockNumber;
+    bytes32 snapshotBlockHash;
+    bytes32 merkleRoot;
+    uint256 leafCount;
+    uint104 incomeAmount;
+}

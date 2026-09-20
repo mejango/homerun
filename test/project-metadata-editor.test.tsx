@@ -69,7 +69,7 @@ function fundMetadata() {
     homerun: {
       version: 1, kind: 'fund',
       setup: {
-        location: 'Austin', assetType: 'business', ownerWallet: OWNER, operatorWallet: OPERATOR,
+        location: 'Austin', ownerWallet: OWNER, operatorWallet: OPERATOR,
         ownerName: 'Garden trust', ownerIntroduction: 'We own the land.',
         operatorName: 'Gardeners', operatorIntroduction: 'We grow together.',
         monthlyRent: 4000, monthlyCosts: 1000, minimumRevenue: 2000,

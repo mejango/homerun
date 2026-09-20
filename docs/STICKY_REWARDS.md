@@ -1,5 +1,7 @@
 # Stock Sticky rewards
 
+**Status (September 19, 2026): deferred.** Stock Sticky is not deployed and `HomerunDeployer` v4 no longer wires it or the token distributor. INCOME launches with its whole reserved split held by the Owner; connecting Sticky later is a split change, not a helper change. The policy below is what that connection is expected to look like.
+
 Chosen policy, September 10, 2026: use stock `JBSticky` and `JBTokenDistributor` for ongoing INCOME rewards. Holders stake FUND for Sticky SHARE tokens. A funded round allocates INCOME proportionally to SHARE balances at its recorded snapshot, with four weekly vesting rounds. There is no minimum staking period or age multiplier. Streaks and deposit timestamps are informational.
 
 ## Initial allocation and ongoing rewards
@@ -13,13 +15,13 @@ Chosen policy, September 10, 2026: use stock `JBSticky` and `JBTokenDistributor`
 
 Freeze and publish the initial ownership manifest **before creating the managed Sticky projects**. The global reader reconciles live credits/ERC20 and unsettled bridge entitlements across the complete historical FUND graph. Existing canonical Sticky pools are recursively traced to their SHARE holders, using exact rational ownership through the final INCOME allocation. Shared-terminal balances are reduced only by pool backing owned by those shares; orphaned backing and unrelated donations retain their actual terminal identity. Whole FUND-atom projections are display values, and a zero projection can still receive INCOME for an exact fractional position. The complete pool evidence is committed in the manifest. Arbitrary wrappers require separate beneficial-owner reconciliation. More than one historical FUND project on the same chain is explicitly rejected by the current composition.
 
-The initial vault uses a bounded Merkle proof for each claim and pays only the leaf's fixed beneficiary on its recorded chain. Its root is operator-attested: the contract does not itself prove historical ownership, manifest completeness or leaf sums. Independently reconcile the manifest, including credits and bridge rights, before approval. The ordered per-chain allocations total exactly 500,000 INCOME globally. Each chain atomically mints and funds its local vault at launch, including a zero-cap vault for an empty chain; later claims only transfer already-issued tokens. Other chains finish independently under stock Revnet's asynchronous deployment and supply messaging. See [`HomerunInitialIncomeVault.sol`](../src/HomerunInitialIncomeVault.sol), [`HomerunIncomeDeployer.sol`](../src/HomerunIncomeDeployer.sol) and [`income-launch.ts`](../src/lib/income-launch.ts).
+The initial vault uses a bounded Merkle proof for each claim and pays only the leaf's fixed beneficiary on its recorded chain. Its root is operator-attested: the contract does not itself prove historical ownership, manifest completeness or leaf sums. Independently reconcile the manifest, including credits and bridge rights, before approval. The ordered per-chain allocations total exactly 500,000 INCOME globally. Each chain atomically mints and funds its local vault at launch, including a zero-cap vault for an empty chain; later claims only transfer already-issued tokens. Other chains finish independently under stock Revnet's asynchronous deployment and supply messaging. See [`HomerunInitialIncomeVault.sol`](../src/HomerunInitialIncomeVault.sol), [`HomerunDeployer.sol`](../src/HomerunDeployer.sol) and [`income-launch.ts`](../src/lib/income-launch.ts).
 
 ## Snapshot and vesting behavior
 
 Sticky tokens self-delegate automatically and prohibit changing delegates. Their historical active-vote total equals historical SHARE supply. Ongoing rewards therefore use the SHARE token as their stake source, not vanilla FUND or its credits. Claim FUND credits as ERC-20 tokens before staking.
 
-The INCOME reserved split must set **`hook = JBTokenDistributor` and `beneficiary = Sticky SHARE token`**. The current launch helper locks that routing in every stage. Sending tokens directly to the distributor does not register a reward round.
+When connected, the INCOME reserved split row for rewards must set **`hook = JBTokenDistributor` and `beneficiary = Sticky SHARE token`**; the Owner adds that row through the stock controller, since the v4 helper routes the whole reserved split to the Owner at launch. Sending tokens directly to the distributor does not register a reward round.
 
 Each chain has its own Sticky project and reward pool. INCOME distributed on that chain uses that chain's SHARE snapshots. Stock Sticky does not aggregate staking weights or redistribute a revenue round across chains.
 
@@ -43,7 +45,7 @@ Unmaterialized allocations expire three times 365 days after the funded round en
 
 SHARE represents a proportional position in Sticky's FUND backing, not a guaranteed one-for-one redemption. Deposits use the current backing price. Donations and retained exit tax can increase backing per existing share without increasing those shares' reward weight.
 
-Stock Sticky accepts a permanent cash-out tax and a permanent soulbound/transferable choice at launch. Homerun's current INCOME helper requires **zero Sticky cash-out tax**; using stock Sticky does not introduce another exit tax. Read and disclose the actual share transfer mode. Zero tax gives proportional reclaim before any applicable terminal fees and rounding. Use the live terminal quote with the actual payer/holder, an exact approval and a reviewed positive minimum. Do not calculate exits from a fixed exchange rate.
+Stock Sticky accepts a permanent cash-out tax and a permanent soulbound/transferable choice at launch. Homerun intends **zero Sticky cash-out tax** so using stock Sticky does not introduce another exit tax; the v4 helper no longer checks this, so it becomes a launch-time review item for the Sticky project. Read and disclose the actual share transfer mode. Zero tax gives proportional reclaim before any applicable terminal fees and rounding. Use the live terminal quote with the actual payer/holder, an exact approval and a reviewed positive minimum. Do not calculate exits from a fixed exchange rate.
 
 There is no staking time lock. The stock supply floor rejects a burn that leaves positive global SHARE supply below `1e12` atoms; emptying the supply is permitted, subject to the usual quote and execution checks. Streak/tranche displays do not change reward weights, vesting or historical rights.
 

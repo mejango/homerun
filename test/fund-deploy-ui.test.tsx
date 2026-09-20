@@ -1,6 +1,8 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fixtures/homerun-deployer')).withHomerunDeployer(await importOriginal()))
+
 import type { Hex } from 'viem'
 import type { CreateValues } from '../src/components/CreateFlow'
 import { FUND_LAUNCH_KEY, decodeLaunchSession, saveLaunch, updateLaunchStatus, type FundLaunchSession } from '../src/lib/fund-launch-session'
@@ -36,7 +38,7 @@ describe('Create submission recovery', () => {
     runtime.send.mockReset()
     runtime.readContract.mockResolvedValue(0n); runtime.getBlock.mockResolvedValue({ timestamp: 1000n }); runtime.publish.mockResolvedValue({ cid: 'bafkreimetadata' }); runtime.checkDeployment.mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: async (_name: string, _options: unknown, callback: (lock: object) => Promise<void>) => callback({}) } })
-    saveLaunch({ version: 1, name: 'Test asset', input: { owner, sender: owner, chainIds: [8453], projectUri: 'ipfs://bafkreimetadata', salt, mustStartAtOrAfter: 0, creationFees: { 8453: 0n } }, statuses: { 8453: { phase: 'ready' } } })
+    saveLaunch({ version: 1, name: 'Test asset', input: { owner, sender: owner, chainIds: [8453], projectUri: 'ipfs://bafkreimetadata', tokenName: 'House FUND', ticker: 'HOUSE', salt, mustStartAtOrAfter: 0, creationFees: { 8453: 0n } }, statuses: { 8453: { phase: 'ready' } } })
     host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   })
   afterEach(async () => { await act(async () => root.unmount()); host.remove() })
@@ -81,7 +83,7 @@ describe('Create submission recovery', () => {
 
   it('drops an unsigned four-chain plan when the user selects only Base', async () => {
     localStorage.removeItem(FUND_LAUNCH_KEY)
-    saveLaunch({ version: 1, name: 'Test asset', transport: 'relayr', input: { owner, sender: owner, chainIds: [1, 10, 8453, 42161], projectUri: 'ipfs://bafkreimetadata', salt, mustStartAtOrAfter: 1000, creationFees: { 1: 0n, 10: 0n, 8453: 0n, 42161: 0n } }, statuses: Object.fromEntries([1, 10, 8453, 42161].map(id => [id, { phase: 'ready' }])) })
+    saveLaunch({ version: 1, name: 'Test asset', transport: 'relayr', input: { owner, sender: owner, chainIds: [1, 10, 8453, 42161], projectUri: 'ipfs://bafkreimetadata', tokenName: 'House FUND', ticker: 'HOUSE', salt, mustStartAtOrAfter: 1000, creationFees: { 1: 0n, 10: 0n, 8453: 0n, 42161: 0n } }, statuses: Object.fromEntries([1, 10, 8453, 42161].map(id => [id, { phase: 'ready' }])) })
     await act(async () => root.render(<FundDeploy values={{ networkEnvironment: 'production', networks: ['base'] } as CreateValues} />))
     expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()
     expect(host.textContent).not.toContain('Continue creation')
@@ -148,7 +150,7 @@ describe('Create submission recovery', () => {
 
   it('prepares FUND ownership for the Owner wallet while keeping Operator separate in metadata', async () => {
     localStorage.clear()
-    const values = { name: 'Owned asset', ownerName: 'Asset trust', ownerIntroduction: 'We steward the asset.', ownerWallet: '0x2222222222222222222222222222222222222222', operatorWallet: '0x3333333333333333333333333333333333333333', networks: ['base'], networkEnvironment: 'production' } as CreateValues
+    const values = { name: 'Owned asset', fundTokenName: 'Owned asset FUND', fundTicker: 'OWNED', ownerName: 'Asset trust', ownerIntroduction: 'We steward the asset.', ownerWallet: '0x2222222222222222222222222222222222222222', operatorWallet: '0x3333333333333333333333333333333333333333', networks: ['base'], networkEnvironment: 'production' } as CreateValues
     await act(async () => root.render(<FundDeploy values={values} />))
     const prepare = [...host.querySelectorAll('button')].find(item => item.textContent === 'Create project')!
     await act(async () => prepare.click())
@@ -160,7 +162,7 @@ describe('Create submission recovery', () => {
 
   it('does not assign Owner authority to Operator when Owner is missing', async () => {
     localStorage.clear()
-    await act(async () => root.render(<FundDeploy values={{ name: 'Missing owner', ownerWallet: '', operatorWallet: owner, networks: ['base'], networkEnvironment: 'production' } as CreateValues} />))
+    await act(async () => root.render(<FundDeploy values={{ name: 'Missing owner', fundTokenName: 'Missing owner FUND', fundTicker: 'MISSING', ownerWallet: '', operatorWallet: owner, networks: ['base'], networkEnvironment: 'production' } as CreateValues} />))
     const prepare = [...host.querySelectorAll('button')].find(item => item.textContent === 'Create project')!
     await act(async () => prepare.click())
     expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()

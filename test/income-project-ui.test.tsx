@@ -17,8 +17,6 @@ const runtime = vi.hoisted(() => ({
   fundConfirmedBlock: 0n,
   fund: undefined as FundProjectState | undefined,
   details: {} as Record<string, FundProjectMetadata>,
-  sticky: null as { stickyProjectId: bigint } | null,
-  stickyError: false, stickyMounted: 0, stickyUnmounted: 0,
   discoveredFund: null as bigint | null, discoveryError: false,
   payQuote: { beneficiaryTokenCount: 0n, reservedTokenCount: 0n },
   mounted: 0, unmounted: 0, busy: false, phase: 'idle',
@@ -39,10 +37,13 @@ vi.mock('wagmi', () => ({ usePublicClient: () => ({}) }))
 vi.mock('@/hooks/useReviewedPermit2Signature', () => ({ useReviewedPermit2Signature: () => ({ signPermit2Async: vi.fn() }) }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address, isConnected: true }) }))
 vi.mock('@/components/InitialIncomeClaim', () => ({ InitialIncomeClaim: ({ fundProjectId, incomeProjectId }: { fundProjectId: bigint; incomeProjectId: bigint }) => <div>Initial claim FUND {fundProjectId.toString()} INCOME {incomeProjectId.toString()}</div> }))
-vi.mock('@/components/StickyHolder', () => ({ StickyHolder: ({ stickyProjectId }: { stickyProjectId: bigint }) => {
-  useEffect(() => { runtime.stickyMounted++; return () => { runtime.stickyUnmounted++ } }, [])
-  return <div>Verified Sticky {stickyProjectId.toString()}<button type="button">Sticky action</button></div>
-} }))
+vi.mock('@/hooks/useSafeTx', () => ({
+  txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,
+  useSafeTx: () => {
+    useEffect(() => { runtime.mounted += 1; return () => { runtime.unmounted += 1 } }, [])
+    return { phase: runtime.phase, busy: runtime.busy, error: null, hash: runtime.busy ? `0x${'a'.repeat(64)}` : null, safeProposalHash: runtime.safeProposalHash, receipt: runtime.receipt, send: runtime.send, reset: vi.fn() }
+  },
+}))
 vi.mock('@/components/IncomeBridgeActions', () => ({ IncomeBridgeActions: () => <span>INCOME bridge</span> }))
 vi.mock('@/components/IncomeLoanTools', () => ({ IncomeLoanTools: () => <span>Additional loan operations</span> }))
 vi.mock('@/lib/income-state', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/income-state')>(), readIncomeProjectState: runtime.readState, readIncomeAutoIssuance: runtime.autoIssuance }))
@@ -60,18 +61,10 @@ vi.mock('@tanstack/react-query', () => ({
     : queryKey[0] === 'fund-project' ? { data: runtime.fund, isError: false }
     : queryKey[0] === 'fund-project-metadata' ? { data: runtime.details[String(queryKey[1])], isError: false }
     : queryKey[0] === 'income-fund-binding' ? { data: runtime.discoveredFund, isError: runtime.discoveryError, refetch: vi.fn() }
-    : queryKey[0] === 'income-sticky-binding' ? { data: runtime.sticky, isError: runtime.stickyError }
     : queryKey[0] === 'project-pay' ? { data: { kind: 'pay', terminal: '0x3333333333333333333333333333333333333333', preview: runtime.payQuote, minimumTokenCount: runtime.payQuote.beneficiaryTokenCount * 99n / 100n, reservedTokenCount: runtime.payQuote.reservedTokenCount, blockNumber: 100n }, isError: false }
     : queryKey[0] === 'income-reserved' ? { data: runtime.reserved, isError: runtime.reservedError, error: new Error('RPC unavailable'), refetch: vi.fn() }
     : queryKey[0] === 'income-reserved-receipt' ? { data: runtime.reservedReceipt, isError: false }
       : { data: undefined, isError: false, isFetching: false }
-  },
-}))
-vi.mock('@/hooks/useSafeTx', () => ({
-  txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,
-  useSafeTx: () => {
-    useEffect(() => { runtime.mounted += 1; return () => { runtime.unmounted += 1 } }, [])
-    return { phase: runtime.phase, busy: runtime.busy, error: null, hash: runtime.busy ? `0x${'a'.repeat(64)}` : null, safeProposalHash: runtime.safeProposalHash, receipt: runtime.receipt, send: runtime.send, reset: vi.fn() }
   },
 }))
 
@@ -99,8 +92,7 @@ describe('INCOME transaction surfaces', () => {
     HTMLElement.prototype.scrollIntoView ??= () => {}
     Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) })
     window.history.replaceState(null, '', '/')
-    runtime.mounted = 0; runtime.unmounted = 0; runtime.busy = false; runtime.phase = 'idle'; runtime.sticky = null
-    runtime.stickyError = false; runtime.stickyMounted = 0; runtime.stickyUnmounted = 0
+    runtime.mounted = 0; runtime.unmounted = 0; runtime.busy = false; runtime.phase = 'idle'
     runtime.discoveredFund = null; runtime.discoveryError = false; runtime.fund = undefined; runtime.details = {}
     runtime.operator = undefined; runtime.operatorError = false; runtime.confirmedBlock = 0n; runtime.fundConfirmedBlock = 0n
     runtime.address = '0x1111111111111111111111111111111111111111'
@@ -343,32 +335,22 @@ describe('INCOME transaction surfaces', () => {
     expect(runtime.send).not.toHaveBeenCalled()
   })
 
-  it('mounts initial claims separately and uses the verified Sticky project ID for ongoing rewards', async () => {
-    runtime.sticky = { stickyProjectId: 91n }
+  it('mounts initial claims separately and explains the owner-held reserved split', async () => {
     await act(async () => root.render(<IncomeProject chainId={1} projectId={7n} fundProjectId={3n} />)); await visitActions()
     expect(host.textContent).toContain('Initial claim FUND 3 INCOME 7')
     expect(host.querySelector('.hpl-metadata')?.textContent).toContain('INCOME supply: 100')
     expect(host.querySelector('.hpl-metadata')?.textContent).toContain('INCOME treasury: <0.000001 ETH')
-    expect(host.textContent).toContain('Verified Sticky 91')
+    expect(host.textContent).toContain('The owner holds the reserved share of new INCOME')
     expect(host.textContent).not.toContain('self-delegate')
-  })
-
-  it('does not offer a Sticky write target when the connection is unverified', async () => {
-    await act(async () => root.render(<IncomeProject chainId={1} projectId={7n} fundProjectId={3n} />)); await visitActions()
-    expect(host.textContent).toContain('Initial claim FUND 3 INCOME 7')
-    expect(host.textContent).toContain('No verified Sticky reward connection')
-    expect(host.textContent).not.toContain('Verified Sticky')
     expect(runtime.send).not.toHaveBeenCalled()
   })
 
   it('discovers holder operations from a canonical standalone INCOME link without a FUND query parameter', async () => {
-    runtime.discoveredFund = 3n; runtime.sticky = { stickyProjectId: 91n }
+    runtime.discoveredFund = 3n
     await render()
     expect(host.textContent).toContain('Initial claim FUND 3 INCOME 7')
-    expect(host.textContent).toContain('Verified Sticky 91')
     runtime.discoveryError = true
     await render()
-    expect(runtime.stickyUnmounted).toBe(0)
     expect(host.textContent).toContain('Initial claim FUND 3 INCOME 7')
   })
 
@@ -379,29 +361,6 @@ describe('INCOME transaction surfaces', () => {
     expect(host.textContent).not.toContain('Initial claim FUND')
     expect(host.querySelector('fieldset[aria-label="INCOME transactions"]')?.hasAttribute('disabled')).toBe(false)
     expect(section('Pay the project')).toBeDefined()
-  })
-
-  it('retains Sticky receipt watchers through failed binding reads while disabling stale actions', async () => {
-    const renderWithFund = async (fundProjectId = 3n) => { await act(async () => root.render(<IncomeProject chainId={1} projectId={7n} fundProjectId={fundProjectId} />)); await visitActions() }
-    runtime.sticky = { stickyProjectId: 91n }
-    await renderWithFund()
-    expect(runtime.stickyMounted).toBe(1)
-    for (const loseCachedBinding of [false, true]) {
-      runtime.stickyError = true
-      if (loseCachedBinding) runtime.sticky = null
-      await renderWithFund()
-      expect(host.textContent).toContain('Verified Sticky 91')
-      expect(host.querySelector('fieldset[aria-label="Verified Sticky connection"]')?.hasAttribute('disabled')).toBe(true)
-      expect(runtime.stickyUnmounted).toBe(0)
-    }
-    runtime.stickyError = false; runtime.sticky = { stickyProjectId: 91n }
-    await renderWithFund()
-    expect(runtime.stickyMounted).toBe(1)
-    expect(host.querySelector('fieldset[aria-label="Verified Sticky connection"]')?.hasAttribute('disabled')).toBe(false)
-    runtime.sticky = null
-    await renderWithFund(4n)
-    expect(host.textContent).not.toContain('Verified Sticky 91')
-    expect(runtime.stickyUnmounted).toBe(1)
   })
 
   it('keeps submitted receipt watchers mounted when a background read fails', async () => {

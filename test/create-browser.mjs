@@ -86,9 +86,16 @@ try {
     assert.equal(await page.locator('label[for="create-name"]').textContent(), 'Title');
     assert.equal(await page.locator('.draft-preview .create-eyebrow').count(), 0);
     assert.equal(await page.locator('#create-raiseDays').count(), 0);
-    assert.equal(await page.locator('[data-create-step="1"]').isDisabled(), true);
+    assert.equal(await page.locator('[data-create-step="2"]').isDisabled(), true);
     await a11y('Create asset form');
     await shot('create-asset-desktop.png');
+  });
+  await check('Blank names receive a default before the Management step', async () => {
+    await next();
+    await currentStep(1);
+    assert.equal(await page.locator('#draft-name').textContent(), 'Untitled');
+    await page.waitForFunction(() => document.activeElement?.id === 'step-title-1');
+    assert.equal(await page.locator('#step-title-1').evaluate(node => node === document.activeElement), true);
   });
   await check('Owner and Operator offer multisig policies and an existing-address alternative', async () => {
     const shared = page.getByRole('checkbox', { name: 'Operator same as owner' });
@@ -97,7 +104,7 @@ try {
     assert.equal(await input('ownerThreshold').inputValue(), '2');
     assert.equal(await page.locator('[id^="create-operatorSigners-"]').count(), 0);
     await next();
-    await currentStep(0);
+    await currentStep(1);
     assert.match(await page.locator('#owner-multisig-error').textContent(), /owner addresses/);
     for (let index = 0; index < 3; index++) await input(`ownerSigners-${index}`).fill(`0x${String(index + 1).repeat(40)}`);
     await shared.uncheck();
@@ -115,33 +122,33 @@ try {
     await page.getByRole('button', { name: 'Already have a multisig?', exact: true }).click();
     await input('operatorWallet').fill(operatorWallet);
   });
-  await check('Blank names receive a default and Back keeps editable asset details', async () => {
+  await check('Back keeps editable asset details', async () => {
     await next();
+    await currentStep(2);
+    await page.locator('#create-back').click();
     await currentStep(1);
-    assert.equal(await page.locator('#draft-name').textContent(), 'Untitled');
-    await page.waitForFunction(() => document.activeElement?.id === 'step-title-1');
-    assert.equal(await page.locator('#step-title-1').evaluate(node => node === document.activeElement), true);
     await page.locator('#create-back').click();
     await currentStep(0);
     await input('name').fill('Neighborhood Workshop');
-    await input('assetType').selectOption('equipment');
     await input('location').fill('Florianópolis');
     await input('description').fill('Shared tools that earn revenue through community use.');
     assert.equal(await page.locator('#draft-name').textContent(), 'Neighborhood Workshop');
     await next();
     await currentStep(1);
-    await page.waitForFunction(() => document.activeElement?.id === 'step-title-1');
-    assert.equal(await page.locator('#step-title-1').evaluate(node => node === document.activeElement), true);
+    await next();
+    await currentStep(2);
+    await page.waitForFunction(() => document.activeElement?.id === 'step-title-2');
+    assert.equal(await page.locator('#step-title-2').evaluate(node => node === document.activeElement), true);
   });
   await check('Funding validates amounts and operator ownership', async () => {
     await input('purchaseBudget').fill('');
     await next();
-    await currentStep(2);
+    await currentStep(3);
     await page.locator('#create-back').click();
     assert.equal(await input('purchaseBudget').inputValue(), '500,000');
     await input('purchaseBudget').fill('0');
     await next();
-    await currentStep(1);
+    await currentStep(2);
     assert.equal(await input('purchaseBudget').getAttribute('aria-invalid'), 'true');
     await input('purchaseBudget').fill('1000.001');
     await next();
@@ -156,14 +163,14 @@ try {
     await a11y('Valid funding form');
     await shot('create-fundraise-desktop.png');
     await next();
-    await currentStep(2);
+    await currentStep(3);
   });
   await check('Back navigation and reload retain draft values and current step', async () => {
     await page.locator('#create-back').click();
-    await currentStep(1);
+    await currentStep(2);
     assert.equal(await input('purchaseBudget').inputValue(), '1,000');
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await currentStep(1);
+    await currentStep(2);
     assert.equal(await input('purchaseBudget').inputValue(), '1,000');
     assert.equal(await page.locator('#draft-name').textContent(), 'Neighborhood Workshop');
     await next();
@@ -171,31 +178,31 @@ try {
   await check('Revenue plans are optional and entered text survives blur, navigation, and reload', async () => {
     assert.equal(await input('revenueDescription').inputValue(), '');
     await next();
-    await currentStep(3);
+    await currentStep(4);
     assert.equal(await page.locator('#create-review .revenue-description').count(), 0);
     await page.locator('#create-back').click();
-    await currentStep(2);
+    await currentStep(3);
     await input('revenueDescription').fill(revenuePlan);
     await input('monthlyRent').click();
     assert.equal(await input('revenueDescription').inputValue(), revenuePlan);
     assert.equal(await input('revenueDescription').getAttribute('inputmode'), null);
     await page.locator('#create-back').click();
-    await currentStep(1);
+    await currentStep(2);
     await next();
     assert.equal(await input('revenueDescription').inputValue(), revenuePlan);
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await currentStep(2);
+    await currentStep(3);
     assert.equal(await input('revenueDescription').inputValue(), revenuePlan);
   });
   await check('INCOME allocations prevent over-allocation and show the customer remainder', async () => {
     assert.equal(await page.locator('label[for="create-stickySplitPercent"]').textContent(), 'To FUND stakers');
-    assert.match(await page.locator('[data-step-panel="2"] .create-note').textContent(), /Customers receive the remaining new tokens/);
+    assert.match(await page.locator('[data-step-panel="3"] .create-note').textContent(), /Customers receive the remaining new tokens/);
     await input('monthlyRent').fill('200');
     await input('monthlyCosts').fill('50');
     await input('operatorSplitPercent').fill('90');
     await input('stickySplitPercent').fill('15');
     await next();
-    await currentStep(2);
+    await currentStep(3);
     assert.equal(await input('operatorSplitPercent').getAttribute('aria-invalid'), 'true');
     await a11y('Invalid INCOME allocation');
     await input('operatorSplitPercent').fill('70');
@@ -205,10 +212,10 @@ try {
     await a11y('Valid INCOME allocation');
     await shot('create-income-desktop.png');
     await next();
-    await currentStep(3);
+    await currentStep(4);
   });
   await check('Allocation labels follow proportional segments and small shares remain readable', async () => {
-    await page.locator('[data-create-step="2"]').click();
+    await page.locator('[data-create-step="3"]').click();
     await input('operatorSplitPercent').fill('75');
     await input('stickySplitPercent').fill('15');
     const aligned = await page.locator('#create-income-split').evaluate(root => {
@@ -271,7 +278,7 @@ try {
     await network('arbitrum').click();
     assert.deepEqual(await selectedNetworks(), ['ethereum', 'base']);
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await currentStep(3);
+    await currentStep(4);
     assert.equal(await environment().inputValue(), 'testnet');
     assert.deepEqual(await selectedNetworks(), ['ethereum', 'base']);
     const setup = await downloadSetup();
@@ -279,7 +286,7 @@ try {
     assert.deepEqual(setup.plannedNetworks.map(chain => chain.chainId), [11155111, 84532]);
     await network('ethereum').click();
     await network('base').click();
-    await currentStep(3);
+    await currentStep(4);
     assert.equal(await input('networks').getAttribute('aria-describedby'), 'networks-error');
     assert.match(await page.locator('#networks-error').textContent(), /at least one/);
     assert.equal(await page.locator('#create-success').count(), 0);
@@ -294,19 +301,20 @@ try {
   await check('Owner controls the program while a separate Operator receives incentives', async () => {
     let setup = await downloadSetup();
     assert.equal(setup.revnetOperator.address, ownerWallet);
-    await page.locator('[data-create-step="0"]').click();
+    await page.locator('[data-create-step="1"]').click();
+    await currentStep(1);
     const legends = await page.locator('.create-operator-profile legend').allTextContents();
     assert.deepEqual(legends, ['Owner', 'Operator']);
     await input('ownerWallet').fill('not-a-wallet');
     await next();
-    await currentStep(0);
+    await currentStep(1);
     assert.equal(await input('ownerWallet').getAttribute('aria-invalid'), 'true');
     await input('ownerWallet').fill(ownerWallet);
     await input('operatorWallet').fill('0x0000000000000000000000000000000000000000');
     await next();
     assert.equal(await input('operatorWallet').getAttribute('aria-invalid'), 'true');
     await input('operatorWallet').fill(operatorWallet);
-    await next(); await next(); await next(); await currentStep(3);
+    await next(); await next(); await next(); await currentStep(4);
     setup = await downloadSetup();
     assert.equal(setup.funding.ownerAddress, ownerWallet);
     assert.equal(setup.revnetOperator.address, ownerWallet);
@@ -320,7 +328,7 @@ try {
     assert.equal(setup.execution.enabled, false);
     assert.equal(setup.asset.name, 'Neighborhood Workshop');
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await currentStep(3);
+    await currentStep(4);
     assert.match(await page.locator('#create-review').textContent(), new RegExp(ownerWallet));
     assert.match(await page.locator('#create-review').textContent(), new RegExp(operatorWallet));
     assert.deepEqual(await selectedNetworks(), ['ethereum', 'base']);
@@ -328,7 +336,7 @@ try {
     await shot('create-review-desktop.png');
   });
   await check('Minimum monthly revenue and consequences persist in review and export', async () => {
-    await page.locator('[data-create-step="2"]').click();
+    await page.locator('[data-create-step="3"]').click();
     const consequences = 'After three missed months, the Owner publishes a recovery plan.\nInform all contributors.';
     await input('minimumRevenue').fill('2,000.50');
     await input('minimumRevenueConsequences').fill(consequences);
@@ -342,7 +350,7 @@ try {
     assert.match(setup.income.minimumRevenue.enforcement, /no automatic contract changes/);
     assert.match(await page.locator('#create-review').textContent(), /2,000.50 per month/);
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await currentStep(3);
+    await currentStep(4);
     setup = await downloadSetup();
     assert.equal(setup.income.minimumRevenue.consequences, consequences);
   });
@@ -366,30 +374,30 @@ try {
     const before = await page.evaluate(() => JSON.parse(localStorage.getItem('homerun:create-draft:v1')));
     await page.getByRole('link', { name: 'Homerun home', exact: true }).click();
     await page.locator('.create-homerun').click();
-    await currentStep(3);
+    await currentStep(4);
     assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('homerun:create-draft:v1')).raw.operatorWallet), operatorWallet);
     assert.deepEqual(await selectedNetworks(), ['ethereum', 'base']);
     const after = await page.evaluate(() => JSON.parse(localStorage.getItem('homerun:create-draft:v1')));
     assert.deepEqual(after.raw, before.raw);
   });
   await check('Modeling panels and FUND pie retain clear field purpose and ownership labels', async () => {
-    await page.locator('[data-create-step="1"]').click();
+    await page.locator('[data-create-step="2"]').click();
     assert.equal(await page.locator('.fundraise-modeling .create-input').count(), 2);
     assert.equal(await page.getByRole('img', { name: 'Owner 20%, contributors 80%.' }).count(), 1);
     assert.equal(await page.locator('#fund-operator-percent').textContent(), '20%');
     assert.equal(await page.locator('#fund-contributor-percent').textContent(), '80%');
-    await page.locator('[data-create-step="2"]').click();
+    await page.locator('[data-create-step="3"]').click();
     assert.equal(await page.locator('.modeling-inputs .create-input').count(), 4);
     await input('income-months').fill('24');
     assert.equal(await page.locator('#create-income-month-label').textContent(), 'Month 24');
     assert.notEqual(await page.locator('[data-income-total]').textContent(), '500,000');
     await input('operatorSplitPercent').fill('100');
-    await page.locator('[data-create-step="3"]').click();
-    await currentStep(2);
+    await page.locator('[data-create-step="4"]').click();
+    await currentStep(3);
     assert.equal(await input('operatorSplitPercent').getAttribute('aria-invalid'), 'true');
     await input('operatorSplitPercent').fill('70');
-    await page.locator('[data-create-step="3"]').click();
-    await currentStep(3);
+    await page.locator('[data-create-step="4"]').click();
+    await currentStep(4);
     assert.equal(await page.getByText('Income plan', { exact: true }).count(), 0);
   });
   await check('AI handoff separates initial INCOME claims from ongoing Sticky rewards', async () => {
@@ -415,7 +423,7 @@ try {
   await check('All setup stages remain usable on narrow screens', async () => {
     for (const width of [390, 320]) {
       await page.setViewportSize({ width, height: 844 });
-      for (let step = 0; step < 4; step++) {
+      for (let step = 0; step < 5; step++) {
         await page.locator(`[data-create-step="${step}"]`).click();
         await currentStep(step);
         await noOverflow();
@@ -436,10 +444,10 @@ try {
     assert.equal(await page.locator('#draft-photo').evaluate(img => img.complete && img.naturalWidth > 0), true);
     await page.locator('#remove-photo').click();
     assert.equal(await page.locator('#draft-photo').count(), 0);
-    for (let index = 0; index < 3; index++) await next();
+    for (let index = 0; index < 4; index++) await next();
   });
   await check('Operator introductions and compressed pictures survive review, download, and reload', async () => {
-    await page.locator('[data-create-step="0"]').click();
+    await page.locator('[data-create-step="1"]').click();
     const introduction = 'We run a neighborhood workshop.\nOur <team> looks after the tools & welcomes new members.';
     await input('operatorName').fill('Workshop team');
     await input('operatorIntroduction').fill(introduction);
@@ -448,7 +456,7 @@ try {
     assert.equal(await page.locator('.create-operator-photo-preview').evaluate(img => img.complete && img.naturalWidth > 0 && img.naturalWidth <= 800 && img.naturalHeight <= 800), true);
     assert.equal(await page.locator('#draft-photo').count(), 0, 'Operator picture does not replace the asset cover.');
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await currentStep(0);
+    await currentStep(1);
     assert.equal(await input('operatorName').inputValue(), 'Workshop team');
     assert.equal(await input('operatorIntroduction').inputValue(), introduction);
     await page.locator('.create-operator-photo-preview').waitFor({ state: 'visible' });
@@ -469,7 +477,7 @@ try {
     await page.setViewportSize({ width: 1440, height: 1000 });
   });
   await check('Unsupported operator pictures are rejected without replacing the saved picture', async () => {
-    await page.locator('[data-create-step="0"]').click();
+    await page.locator('[data-create-step="1"]').click();
     const previous = await page.locator('.create-operator-photo-preview').getAttribute('src');
     await input('operatorPhoto').setInputFiles({ name: 'operator.svg', mimeType: 'image/svg+xml', buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>') });
     assert.match(await page.locator('#operatorPhoto-error').textContent(), /JPG, PNG or WebP/);
@@ -479,7 +487,7 @@ try {
     assert.equal(await page.locator('.create-operator-photo-preview').count(), 0);
     assert.equal(await page.locator('#operatorPhoto-error').count(), 0);
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await currentStep(0);
+    await currentStep(1);
     assert.equal(await page.locator('.create-operator-photo-preview').count(), 0);
     assert.equal(await input('operatorName').inputValue(), 'Workshop team');
   });
@@ -491,7 +499,7 @@ try {
     await page.locator('.create-operator-photo-preview').waitFor({ state: 'visible' });
     assert.equal(await page.locator('.create-operator-photo-preview').evaluate(img => img.complete && img.naturalWidth > 0 && img.naturalWidth <= 800 && img.naturalHeight <= 800), true);
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await currentStep(0);
+    await currentStep(1);
     assert.equal(await input('ownerName').inputValue(), 'Workshop trust');
     assert.equal(await input('ownerIntroduction').inputValue(), introduction);
     assert.equal(await input('operatorName').inputValue(), 'Workshop team');
@@ -518,31 +526,34 @@ try {
     await page.locator('#start-over').click();
     await currentStep(0);
     assert.equal(await input('name').inputValue(), '');
+    await next(); await currentStep(1);
     assert.equal(await input('ownerName').inputValue(), '');
     assert.equal(await input('ownerIntroduction').inputValue(), '');
     assert.equal(await page.locator('#create-operatorName').count(), 0, 'Operator profile stays hidden while the operator is the owner.');
     assert.equal(await page.locator('.create-operator-photo-preview').count(), 0);
     assert.equal(await page.evaluate(() => localStorage.getItem('homerun:fund-launch:v1')), null);
     assert.equal(await page.evaluate(() => localStorage.getItem('homerun:created-projects:v1')), null);
+    await page.locator('#create-back').click(); await currentStep(0);
     await input('name').fill('Another project');
     await page.locator('#start-over').click();
     assert.equal(await input('name').inputValue(), '');
-    for (let index = 0; index < 3; index++) await input(`ownerSigners-${index}`).fill(`0x${String(index + 1).repeat(40)}`);
     await next(); await currentStep(1);
-    assert.equal(await input('purchaseBudget').inputValue(), '500,000');
+    for (let index = 0; index < 3; index++) await input(`ownerSigners-${index}`).fill(`0x${String(index + 1).repeat(40)}`);
     await next(); await currentStep(2);
+    assert.equal(await input('purchaseBudget').inputValue(), '500,000');
+    await next(); await currentStep(3);
     assert.equal(await input('operatorSplitPercent').inputValue(), '70');
     assert.equal(await input('stickySplitPercent').inputValue(), '10');
-    await next(); await currentStep(3);
+    await next(); await currentStep(4);
     assert.deepEqual(await selectedNetworks(), networkIDs);
     assert.equal(await environment().inputValue(), 'production');
   });
   await check('Legacy draft network and operator preferences migrate and reset to new defaults', async () => {
     await page.evaluate(wallet => localStorage.setItem('homerun:create-draft:v1', JSON.stringify({
-      raw: { name: 'Legacy preview', network: 'base', operatorWallet: wallet }, step: 3,
+      raw: { name: 'Legacy preview', network: 'base', operatorWallet: wallet }, step: 4,
     })), operatorWallet);
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await currentStep(3);
+    await currentStep(4);
     assert.deepEqual(await selectedNetworks(), ['base']);
     assert.equal(await environment().inputValue(), 'production');
     assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('homerun:create-draft:v1')).raw.operatorWallet), operatorWallet);
@@ -551,6 +562,7 @@ try {
     assert.equal(setup.revnetOperator.address, operatorWallet);
     await page.locator('#start-over').click();
     await currentStep(0);
+    await next(); await currentStep(1);
     for (let index = 0; index < 3; index++) await input(`ownerSigners-${index}`).fill(`0x${String(index + 1).repeat(40)}`);
     for (let index = 0; index < 3; index++) await next();
     assert.deepEqual(await selectedNetworks(), networkIDs);
@@ -561,10 +573,10 @@ try {
     for (const [operators, holders, version, expected] of [[75, 15, null, [70, 10]], [81, 6, null, [70, 10]], [68, 13, 2, [70, 10]], [70, 20, null, [70, 20]], [75, 15, 2, [75, 15]], [68, 13, 3, [68, 13]]]) {
       await page.evaluate(({ operators, holders, version }) => localStorage.setItem('homerun:create-draft:v1', JSON.stringify({
         raw: { name: 'Saved example', operatorSplitPercent: String(operators), stickySplitPercent: String(holders) },
-        step: 2, incomeDefaultsVersion: version,
+        step: 3, incomeDefaultsVersion: version,
       })), { operators, holders, version });
       await page.reload({ waitUntil: 'domcontentloaded' });
-      await currentStep(2);
+      await currentStep(3);
       assert.equal(await input('operatorSplitPercent').inputValue(), String(expected[0]));
       assert.equal(await input('stickySplitPercent').inputValue(), String(expected[1]));
       await input('operatorSplitPercent').fill('75');

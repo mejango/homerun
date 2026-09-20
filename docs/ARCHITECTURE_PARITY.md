@@ -61,7 +61,6 @@ An all-chain launch is multiple independent transactions. Freeze shared salt, ow
 - SDK deployment fixtures, indexer schema/operation validation, fresh permission/read models, exact calldata builders, and contract-specific postconditions must be verified for every newly wired action. Merely installing matching packages does not establish equal reliability.
 - Pending transaction recovery, replaced transactions, RPC failure, wallet rejection/account changes, Safe asynchronous execution, multichain partial completion, and post-receipt indexer lag require transaction and browser coverage.
 - The copied core-write tests cover review order, mutation/cancellation, account checks, simulation gating, Safe proposal handling, reverted receipts, and gas headroom. They do not by themselves prove Homerun lifecycle policy, onchain deployment configuration, or production service availability.
-- The legacy standalone `src/Rooftop.sol` prototype is not the contract backend for this integration.
 
 The same stack is a baseline. Each live lifecycle operation still needs a concrete tested builder, a current permission check, exact review, simulation, recoverable submission, verified receipt, and refreshed onchain state before the UI claims that transition is complete.
 

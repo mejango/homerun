@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict'
-import { test } from 'vitest'
+import { test, vi } from 'vitest'
 import { decodeFunctionData, encodeFunctionData, zeroAddress, zeroHash, type Hex } from 'viem'
-import { NATIVE_TOKEN, USDC_ADDRESSES } from '@bananapus/nana-sdk-core'
-import { tokenCurrencyId, v6Address, type JBRulesetConfig } from '@bananapus/nana-sdk-core/v6'
+import { CCIP_SUCKER_DEPLOYER_ADDRESSES, NATIVE_TOKEN, USDC_ADDRESSES } from '@bananapus/nana-sdk-core'
+import { v6Address } from '@bananapus/nana-sdk-core/v6'
+import { HOMERUN_ALLOWLIST_HOOK, HOMERUN_DEPLOYER } from './fixtures/homerun-deployer'
+
+vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fixtures/homerun-deployer')).withHomerunDeployer(await importOriginal()))
 import {
   buildFundLaunch, initialFundRuleset, parseAmount, parsePercent,
   buildFundRulesetChange, ownerMintAmount, offchainFundAmount, buildFundMint,
   buildFundReturn, buildFundPay, buildFundApproval, buildFundCashOut,
-  buildFundClaimCredits, buildFundDeployErc20, buildFundTransferCredits,
+  buildFundAllowlistChange, buildFundAllowlistOpen,
   FUND_WEIGHT, type FundLaunchInput, type FundRulesetSnapshot, type FundTransaction,
 } from '../src/lib/fund-contracts'
 
@@ -15,7 +18,7 @@ const owner = '0x1111111111111111111111111111111111111111' as const
 const beneficiary = '0x2222222222222222222222222222222222222222' as const
 const salt = `0x${'12'.repeat(32)}` as Hex
 const input: FundLaunchInput = {
-  owner, sender: owner, chainIds: [8453], projectUri: 'ipfs://bafkreihomerunmetadata',
+  owner, sender: owner, chainIds: [8453], projectUri: 'ipfs://bafkreihomerunmetadata', tokenName: 'House FUND', ticker: 'HOUSE',
   salt, mustStartAtOrAfter: 1_800_000_000, creationFees: { 8453: 1_234n, 10: 2_345n },
 }
 function snapshot(configuration = initialFundRuleset()): FundRulesetSnapshot {
@@ -38,46 +41,43 @@ test('decimal parsing is exact, never rounds excess precision or accepts scienti
   assert.throws(() => parseAmount((1n << 256n).toString(), 0))
 })
 
-test('single-chain launch encodes only vanilla FUND with current creation fee and zero owner withdrawals', () => {
+test('single-chain launch asks HomerunDeployer for a FUND with no salt, no peers and the current creation fee', () => {
   const { requests: [request], review } = buildFundLaunch(input)
-  assert.equal(request.address, v6Address('JBController', 8453))
+  assert.equal(request.address, HOMERUN_DEPLOYER)
   assert.equal(request.value, 1234n)
   assert.equal(review.incomeDeployed, false)
   assert.equal(review.ownerMinting, false)
   assert.equal(review.ownerCanQueueRulesets, true)
-  assert.equal(review.tokensInitially, 'Juicebox credits')
-  const args = decode(request).args as readonly unknown[]
-  assert.equal(args[0], owner)
-  const rulesets = args[2] as JBRulesetConfig[]
-  assert.equal(rulesets.length, 1)
-  assert.equal(rulesets[0].weight, FUND_WEIGHT)
-  assert.equal(rulesets[0].metadata.cashOutTaxRate, 1000)
-  assert.equal(rulesets[0].metadata.baseCurrency, 2)
-  assert.equal(rulesets[0].metadata.allowOwnerMinting, false)
-  assert.equal(rulesets[0].metadata.dataHook, zeroAddress)
-  assert.deepEqual(rulesets[0].fundAccessLimitGroups, [])
-  assert.deepEqual(rulesets[0].splitGroups, [])
-  const terminals = args[3] as { accountingContextsToAccept: { token: string; decimals: number; currency: number }[] }[]
-  assert.equal(terminals[0].accountingContextsToAccept[0].token.toLowerCase(), USDC_ADDRESSES[8453].toLowerCase())
-  assert.equal(terminals[0].accountingContextsToAccept[0].decimals, 6)
-  assert.equal(terminals[0].accountingContextsToAccept[0].currency, tokenCurrencyId(USDC_ADDRESSES[8453]))
+  assert.equal(review.tokensInitially, 'ERC-20')
+  const decoded = decode(request)
+  assert.equal(decoded.functionName, 'launchFundFor')
+  assert.deepEqual(decoded.args, [owner, input.projectUri, 'House FUND', 'HOUSE', 1_800_000_000, zeroHash, []])
 })
 
-test('linked launches use omnichain deployer, paired USDC bridges, shared rules and per-chain fees', () => {
-  const { requests, review } = buildFundLaunch({ ...input, chainIds: [8453, 10] })
+test('linked launches share the salt and name each peer CCIP deployer in ascending remote chain order', () => {
+  const { requests, review } = buildFundLaunch({ ...input, chainIds: [42161, 8453, 10], creationFees: { ...input.creationFees, 42161: 3n } })
   assert.equal(review.linked, true)
-  assert.equal(requests.length, 2)
-  assert.equal(requests[0].address, v6Address('JBOmnichainDeployer', 8453))
-  assert.equal(requests[1].address, v6Address('JBOmnichainDeployer', 10))
-  assert.equal(requests[1].value, 2345n)
-  const [first, second] = requests.map(request => decode(request).args as readonly unknown[])
-  assert.deepEqual(first[2], second[2])
-  for (const args of [first, second]) {
-    const bridges = args[5] as { salt: string; deployerConfigurations: { mappings: unknown[] }[] }
-    assert.equal(bridges.salt, salt)
-    assert.ok(bridges.deployerConfigurations.length > 0)
-    assert.ok(bridges.deployerConfigurations.every(bridge => bridge.mappings.length > 0))
+  assert.deepEqual(requests.map(request => request.chainId), [42161, 8453, 10])
+  assert.ok(requests.every(request => request.address === HOMERUN_DEPLOYER))
+  assert.equal(requests[2].value, 2345n)
+  const ccip = CCIP_SUCKER_DEPLOYER_ADDRESSES[6]
+  for (const request of requests) {
+    const args = decode(request).args as readonly unknown[]
+    assert.equal(args[5], salt)
+    const peers = [10, 8453, 42161].filter(id => id !== request.chainId)
+    assert.deepEqual((args[6] as string[]).map(value => value.toLowerCase()), peers.map(id => ccip[request.chainId as 10][id as 10]!.toLowerCase()))
   }
+})
+
+test('the fixed rules the contract hardcodes stay available for verification and rule changes', () => {
+  const ruleset = initialFundRuleset()
+  assert.equal(ruleset.weight, FUND_WEIGHT)
+  assert.equal(ruleset.metadata.cashOutTaxRate, 1000)
+  assert.equal(ruleset.metadata.baseCurrency, 2)
+  assert.equal(ruleset.metadata.allowOwnerMinting, false)
+  assert.equal(ruleset.metadata.dataHook, zeroAddress)
+  assert.deepEqual(ruleset.fundAccessLimitGroups, [])
+  assert.deepEqual(ruleset.splitGroups, [])
 })
 
 test('launch rejects missing fees, unsupported/mixed chains, missing pins and nondeterministic linked starts', () => {
@@ -128,6 +128,21 @@ test('unknown/incomplete, pending, timed and custom-hook configurations are reje
   for (const value of variants) assert.throws(() => buildFundRulesetChange({ snapshots: [value], action: 'pause', mustStartAtOrAfter: 10 }))
 })
 
+test('allowlist changes target the registered hook with unique checksummed addresses', () => {
+  const change = buildFundAllowlistChange({ chainId: 8453, projectId: 7n, accounts: [beneficiary.toLowerCase(), owner], allowed: true })
+  assert.equal(change.address, HOMERUN_ALLOWLIST_HOOK)
+  assert.equal(decode(change).functionName, 'setAllowed')
+  assert.deepEqual(change.args, [7n, [beneficiary, owner], true])
+  assert.deepEqual(buildFundAllowlistChange({ chainId: 8453, projectId: 7n, accounts: [owner], allowed: false }).args, [7n, [owner], false])
+  for (const accounts of [[], [owner, owner.toLowerCase()], ['0x123'], Array.from({ length: 201 }, (_, i) => `0x${(i + 1).toString(16).padStart(40, '0')}`)]) {
+    assert.throws(() => buildFundAllowlistChange({ chainId: 8453, projectId: 7n, accounts, allowed: true }))
+  }
+  const open = buildFundAllowlistOpen({ chainId: 8453, projectId: 7n, open: true })
+  assert.equal(open.address, HOMERUN_ALLOWLIST_HOOK)
+  assert.deepEqual([decode(open).functionName, open.args], ['setOpen', [7n, true]])
+  assert.throws(() => buildFundAllowlistOpen({ chainId: 999, projectId: 7n, open: true }))
+})
+
 test('canonical omnichain wrapper is verified, unwrapped and queued on every peer', () => {
   const make = (chainId: 8453 | 10): FundRulesetSnapshot => {
     const config = initialFundRuleset()
@@ -151,6 +166,13 @@ test('canonical omnichain wrapper is verified, unwrapped and queued on every pee
   assert.throws(() => buildFundRulesetChange({ snapshots: [{ ...snapshots[0], omnichainHooks: undefined }, snapshots[1]], action: 'pause', mustStartAtOrAfter: 100 }))
   assert.throws(() => buildFundRulesetChange({ snapshots: [{ ...snapshots[0], omnichainHooks: { ...snapshots[0].omnichainHooks!, dataHook: beneficiary } }, snapshots[1]], action: 'pause', mustStartAtOrAfter: 100 }))
   assert.throws(() => buildFundRulesetChange({ snapshots: [{ ...snapshots[0], stock721Hook: undefined }, snapshots[1]], action: 'pause', mustStartAtOrAfter: 100 }))
+  // The registered allowlist hook is the one extra hook a rule change keeps; a cash-out flag on it is foreign.
+  const gated = snapshots.map(entry => ({ ...entry, omnichainHooks: { ...entry.omnichainHooks!, dataHook: HOMERUN_ALLOWLIST_HOOK, useDataHookForPay: true } }))
+  const kept = buildFundRulesetChange({ snapshots: gated, action: 'pause', mustStartAtOrAfter: 100 }).configurations[0].metadata
+  assert.equal(kept.dataHook, HOMERUN_ALLOWLIST_HOOK)
+  assert.equal(kept.useDataHookForPay, true)
+  assert.equal(kept.useDataHookForCashOut, false)
+  assert.throws(() => buildFundRulesetChange({ snapshots: gated.map(entry => ({ ...entry, omnichainHooks: { ...entry.omnichainHooks!, useDataHookForCashOut: true } })), action: 'pause', mustStartAtOrAfter: 100 }))
 })
 
 test('direct stock shops retain the hook while closing or opening FUND refunds', () => {
@@ -211,17 +233,11 @@ test('returns and sale deposits use addToBalance, with exact token approvals and
   assert.equal(buildFundReturn({ ...native, amount: 100n, reason: 'asset-sale', shouldReturnHeldFees: false }).value, 100n)
 })
 
-test('holder calls encode minimum protection, claims require deployed ERC20 and transfers need no staking', () => {
+test('holder calls encode minimum protection', () => {
   const pay = buildFundPay({ ...terminal, amount: 1_000_000n, minReturnedTokens: 9900n * 10n ** 18n, beneficiary })
   assert.equal(decode(pay).functionName, 'pay')
   assert.throws(() => buildFundPay({ ...terminal, amount: 1n, minReturnedTokens: 0n, beneficiary }))
   const cashout = buildFundCashOut({ ...terminal, holder: owner, tokenCount: 100n, minTokensReclaimed: 9n, beneficiary })
   assert.equal(decode(cashout).functionName, 'cashOutTokensOf')
   assert.equal(cashout.args[4], 9n)
-  assert.throws(() => buildFundClaimCredits({ chainId: 8453, projectId: 7n, holder: owner, tokenCount: 1n, beneficiary, tokenAddress: zeroAddress }))
-  assert.equal(decode(buildFundClaimCredits({ chainId: 8453, projectId: 7n, holder: owner, tokenCount: 1n, beneficiary, tokenAddress: beneficiary })).functionName, 'claimTokensFor')
-  assert.equal(decode(buildFundTransferCredits({ chainId: 8453, projectId: 7n, holder: owner, recipient: beneficiary, creditCount: 1n })).functionName, 'transferCreditsFrom')
-  const deploy = buildFundDeployErc20({ chainId: 8453, projectId: 7n, projectName: 'Founder Haus', salt })
-  assert.equal(decode(deploy).functionName, 'deployERC20For')
-  assert.deepEqual(deploy.args, [7n, 'Founder Haus FUND', 'FUND', salt])
 })

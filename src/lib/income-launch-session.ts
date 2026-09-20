@@ -2,7 +2,7 @@
 import { MappableAsset, parseSuckerDeployerConfig, type JBChainId } from '@bananapus/nana-sdk-core'
 import { decodeFunctionData, encodeFunctionData, getAddress, isAddress, isAddressEqual, zeroAddress, zeroHash, type Address, type Hex, type PublicClient } from 'viem'
 import { FUND_CHAIN_IDS, type FundTransaction } from './fund-contracts'
-import { homerunIncomeRecoveryAbi, INITIAL_INCOME_SUPPLY, INCOME_QUARTER_SECONDS, registeredIncomeDeployer } from './income-contracts'
+import { homerunDeployerAbi, INITIAL_INCOME_SUPPLY, registeredHomerunDeployer } from './income-contracts'
 import { verifyStickyExecution, type StickyPending, type StickyStorage } from './sticky-session'
 
 export type IncomeLaunchPending = StickyPending & {
@@ -43,12 +43,12 @@ function validateKey(key: string): void {
 
 /** Decode and re-encode the complete canonical call, rejecting selectors, trailing data and foreign targets. */
 function validateCall(record: IncomeLaunchPending): void {
-  const registered = registeredIncomeDeployer(record.chainId as JBChainId)
+  const registered = registeredHomerunDeployer(record.chainId as JBChainId)
   if (!registered || !isAddressEqual(registered, record.target)) throw new Error('The saved INCOME launcher is not the currently registered deployment. Keep the record and verify its execution before another launch.')
   try {
-    const decoded = decodeFunctionData({ abi: homerunIncomeRecoveryAbi, data: record.data })
+    const decoded = decodeFunctionData({ abi: homerunDeployerAbi, data: record.data })
     if (decoded.functionName !== 'deployIncome') throw invalid()
-    const [fundProjectId, snapshot, description, operatorBps, fundHoldersBps, stickyProjectId, startsAtOrAfter, , operator] = decoded.args
+    const [fundProjectId, snapshot, description, reservedBps, startsAtOrAfter] = decoded.args
     const local = snapshot.allocations.find(entry => entry.chainId === record.chainId)
     let previousChain = 0
     let totalIncome = 0n
@@ -69,21 +69,18 @@ function validateCall(record: IncomeLaunchPending): void {
       || totalIncome !== INITIAL_INCOME_SUPPLY || !positive(totalLeaves)
       || snapshot.allocations.some(entry => isMainnet(entry.chainId) !== isMainnet(record.chainId))
       || !nonzeroHash(snapshot.manifestHash) || !ipfs(snapshot.manifestUri)
-      || !description.name.trim() || description.name.length > 160 || description.ticker !== 'INCOME'
+      || !description.name.trim() || description.name.length > 160 || !description.ticker.trim() || description.ticker.length > 32
       || !ipfs(description.uri) || !nonzeroHash(description.salt)
-      || fundHoldersBps <= 0 || operatorBps + fundHoldersBps > 10_000
-      || (operator !== undefined && !validAddress(operator))
-      || !positive(stickyProjectId) || stickyProjectId === fundProjectId
-      || startsAtOrAfter <= 0 || startsAtOrAfter + INCOME_QUARTER_SECONDS * 8 >= 2 ** 48
-      || encodeFunctionData({ abi: homerunIncomeRecoveryAbi, functionName: 'deployIncome', args: decoded.args }).toLowerCase() !== record.data.toLowerCase()) throw invalid()
+      || reservedBps > 10_000
+      || startsAtOrAfter <= 0 || startsAtOrAfter >= 2 ** 48
+      || encodeFunctionData({ abi: homerunDeployerAbi, functionName: 'deployIncome', args: decoded.args }).toLowerCase() !== record.data.toLowerCase()) throw invalid()
     // Recovery accepts only the reviewed stock USDC/CCIP topology. Imported JSON cannot replace peers or tokens.
     const sdkSuckers = parseSuckerDeployerConfig(record.chainId as JBChainId, snapshot.allocations.map(entry => entry.chainId as JBChainId), [MappableAsset.USDC], { version: 6, bridge: 'ccip', salt: description.salt })
     const suckers = { ...sdkSuckers, deployerConfigurations: sdkSuckers.deployerConfigurations.map(entry => {
       if (!('peer' in entry)) throw invalid()
       return { ...entry, peer: entry.peer }
     }) }
-    const canonicalArgs = [fundProjectId, snapshot, description, operatorBps, fundHoldersBps, stickyProjectId, startsAtOrAfter, suckers] as const
-    if (encodeFunctionData({ abi: homerunIncomeRecoveryAbi, functionName: 'deployIncome', args: operator === undefined ? canonicalArgs : [...canonicalArgs, operator] }).toLowerCase() !== record.data.toLowerCase()) throw invalid()
+    if (encodeFunctionData({ abi: homerunDeployerAbi, functionName: 'deployIncome', args: [fundProjectId, snapshot, description, reservedBps, startsAtOrAfter, suckers] }).toLowerCase() !== record.data.toLowerCase()) throw invalid()
   } catch { throw invalid() }
 }
 

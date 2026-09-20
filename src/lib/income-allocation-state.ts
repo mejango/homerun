@@ -1,8 +1,8 @@
 /** Verified immutable initial-allocation state. Current FUND ownership does not change snapshot entitlements. */
-import { jbContractAddress, USDC_ADDRESSES, type JBChainId } from '@bananapus/nana-sdk-core'
+import { USDC_ADDRESSES, type JBChainId } from '@bananapus/nana-sdk-core'
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
-import { erc20Abi, getAddress, isAddress, isAddressEqual, parseAbi, zeroAddress, zeroHash, type Address, type Hex, type PublicClient } from 'viem'
-import { homerunIncomeDeployerAbi as allocationLauncherViewAbi, INITIAL_INCOME_SUPPLY, registeredIncomeDeployer, registeredIncomeDistributor } from './income-contracts'
+import { erc20Abi, getAddress, isAddressEqual, parseAbi, zeroAddress, zeroHash, type Address, type Hex, type PublicClient } from 'viem'
+import { homerunDeployerAbi as allocationLauncherViewAbi, INITIAL_INCOME_SUPPLY, registeredAllowlistHook, registeredHomerunDeployer } from './income-contracts'
 import { buildFundGlobalDistributionId } from './fund-global-manifest'
 import { readIncomeProjectState } from './income-state'
 
@@ -63,11 +63,8 @@ export async function readInitialIncomeAllocation(client: PublicClient, input: {
   if (input.incomeProjectId === input.fundProjectId) throw new Error('FUND and INCOME must be distinct projects.')
   if (!Number.isSafeInteger(input.chainId) || input.chainId <= 0) throw new Error('A supported chain is required.')
   const chainId = input.chainId as JBChainId
-  const deployer = registeredIncomeDeployer(chainId)
-  if (!deployer) return null
-  const distributor = registeredIncomeDistributor(chainId)
-  const sticky = (jbContractAddress['6'] as Record<string, Partial<Record<JBChainId, Address>>>).JBStickyDeployer?.[chainId]
-  if (!distributor || !sticky || !isAddress(sticky) || isAddressEqual(sticky, zeroAddress)) throw new Error('The initial INCOME launcher’s dependencies are not all registered on this chain.')
+  const deployer = registeredHomerunDeployer(chainId), allowlistHook = registeredAllowlistHook(chainId)
+  if (!deployer || !allowlistHook) return null
 
   const project = await readIncomeProjectState(client, { chainId, projectId: input.incomeProjectId, account: input.account })
   if (!project.tokenAddress) throw new Error('The INCOME ERC-20 must be deployed before its initial allocation can be verified.')
@@ -77,8 +74,8 @@ export async function readInitialIncomeAllocation(client: PublicClient, input: {
     CONTROLLER: v6Address('JBController', chainId), DIRECTORY: v6Address('JBDirectory', chainId),
     PROJECTS: v6Address('JBProjects', chainId), TOKENS: v6Address('JBTokens', chainId),
     REV_DEPLOYER: v6Address('REVDeployer', chainId), REV_OWNER: v6Address('REVOwner', chainId),
-    SUCKER_REGISTRY: v6Address('JBSuckerRegistry', chainId), TOKEN_DISTRIBUTOR: distributor,
-    STICKY_DEPLOYER: sticky, OMNICHAIN_DEPLOYER: v6Address('JBOmnichainDeployer', chainId), USDC: USDC_ADDRESSES[chainId],
+    SUCKER_REGISTRY: v6Address('JBSuckerRegistry', chainId), OMNICHAIN_DEPLOYER: v6Address('JBOmnichainDeployer', chainId), USDC: USDC_ADDRESSES[chainId],
+    TERMINAL: v6Address('JBMultiTerminal', chainId), ROUTER_TERMINAL_REGISTRY: v6Address('JBRouterTerminalRegistry', chainId), ALLOWLIST_HOOK: allowlistHook,
   } as const
   const [deployerCode, actualWiring, binding, vault] = await Promise.all([
     client.getCode({ address: deployer, ...at }),

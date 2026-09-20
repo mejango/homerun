@@ -6,7 +6,7 @@ import { fundIpfsUrl } from './fund-project-metadata'
 import { jbCenterIpfs, JBCENTER_MAX_IMAGE_BYTES, type JBCenterIpfsClient } from './jbcenter-ipfs'
 
 const MAX_METADATA_BYTES = 1_000_000
-const textLimits = { name: 160, description: 4_000, location: 200, assetType: 80, revenueDescription: 4_000, minimumRevenueConsequences: 2_000, ownerName: 80, ownerIntroduction: 1_200, ownerWallet: 42, operatorName: 80, operatorIntroduction: 1_200, operatorWallet: 42 } as const
+const textLimits = { name: 160, description: 4_000, location: 200, revenueDescription: 4_000, minimumRevenueConsequences: 2_000, ownerName: 80, ownerIntroduction: 1_200, ownerWallet: 42, operatorName: 80, operatorIntroduction: 1_200, operatorWallet: 42 } as const
 const numericLimits = { monthlyRent: 1_000_000_000_000, monthlyCosts: 1_000_000_000_000, minimumRevenue: 1_000_000_000_000, rentGrowthPercent: 100, costGrowthPercent: 100 } as const
 export type MetadataField = keyof typeof textLimits | keyof typeof numericLimits
 export type ProjectMetadataDraft = Record<MetadataField, string>
@@ -141,7 +141,7 @@ export function validateProjectMetadataDraft(document: ProjectMetadataDocument, 
 }
 
 export function metadataFieldLabel(key: MetadataField): string {
-  return ({ name: 'Project name', description: 'Description', location: 'Location', assetType: 'Asset type', revenueDescription: 'How the asset earns revenue', minimumRevenueConsequences: 'What happens below the minimum revenue?', ownerName: 'Owner name', ownerIntroduction: 'About Ownership', ownerWallet: 'Owner profile address', operatorName: 'Operator name', operatorIntroduction: 'About the Operator', operatorWallet: 'Operator profile address', monthlyRent: 'Expected monthly revenue', monthlyCosts: 'Expected monthly expenses', minimumRevenue: 'Minimum monthly revenue', rentGrowthPercent: 'Annual revenue growth (%)', costGrowthPercent: 'Annual expense growth (%)' })[key]
+  return ({ name: 'Project name', description: 'Description', location: 'Location', revenueDescription: 'How the asset earns revenue', minimumRevenueConsequences: 'What happens below the minimum revenue?', ownerName: 'Owner name', ownerIntroduction: 'About Ownership', ownerWallet: 'Owner profile address', operatorName: 'Operator name', operatorIntroduction: 'About the Operator', operatorWallet: 'Operator profile address', monthlyRent: 'Expected monthly revenue', monthlyCosts: 'Expected monthly expenses', minimumRevenue: 'Minimum monthly revenue', rentGrowthPercent: 'Annual revenue growth (%)', costGrowthPercent: 'Annual expense growth (%)' })[key]
 }
 
 export function buildEditedProjectMetadata(document: ProjectMetadataDocument, draft: ProjectMetadataDraft, imageUris: Partial<Record<MetadataImageKey, string | null>> = {}): Record<string, unknown> {

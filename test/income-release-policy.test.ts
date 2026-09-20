@@ -3,38 +3,48 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { assertIncomeReleaseSource, incomeReleasePolicy } from '../scripts/prepare-income-release.mts'
 
-const helper = readFileSync(new URL('../src/HomerunIncomeDeployer.sol', import.meta.url), 'utf8')
+const helper = readFileSync(new URL('../src/HomerunDeployer.sol', import.meta.url), 'utf8')
 const vault = readFileSync(new URL('../src/HomerunInitialIncomeVault.sol', import.meta.url), 'utf8')
 
 describe('offline INCOME release policy', () => {
   it('accepts the current owner-managed shop source and records the new release identity', () => {
     expect(() => assertIncomeReleaseSource(helper, vault)).not.toThrow()
     expect(incomeReleasePolicy).toMatchObject({
-      launchVersion: 3,
-      helperSaltText: 'homerun.income-deployer.global.v3',
+      launchVersion: 4,
+      helperSaltText: 'homerun.deployer.global.v4',
       splitLockedUntil: '0',
+      economics: { incomeCutPercentPerQuarter: 2, incomeCashOutTaxBps: 1000, stages: 1 },
       shop: { currency: 2, decimals: 6, ownerCanAdjustTiers: true, newTiersWithOwnerMinting: false },
     })
   })
 
   it.each([
-    ['old helper version', 'LAUNCH_VERSION = 3;', 'LAUNCH_VERSION = 2;'],
-    ['incentive recipient gaining authority', 'config.operator = msg.sender;', 'config.operator = operator;'],
-    ['owner check removed', 'if (PROJECTS.ownerOf(fundProjectId) != msg.sender) revert Unauthorized();', ''],
-    ['zero incentive recipient allowed', 'operator == address(0)', 'false'],
-    ['inventory edits disabled', 'nft.preventOperatorAdjustingTiers = false;', 'nft.preventOperatorAdjustingTiers = true;'],
-    ['owner minting allowed', 'nft.preventOperatorMinting = true;', 'nft.preventOperatorMinting = false;'],
+    ['old helper version', 'LAUNCH_VERSION = 4;', 'LAUNCH_VERSION = 3;'],
+    ['incentive recipient gaining authority', 'configuration.operator = _msgSender();', 'configuration.operator = operator;'],
+    ['owner check removed', 'if (PROJECTS.ownerOf(fundProjectId) != _msgSender()) revert HomerunDeployer_Unauthorized(_msgSender());', ''],
+    ['FUND gate removed', 'if (!isFund[fundProjectId]) revert HomerunDeployer_UnsupportedFund(fundProjectId);', ''],
+    ['FUND issuance changed', 'FUND_WEIGHT = 10_000e18;', 'FUND_WEIGHT = 1e18;'],
+    ['forwarder credited for the creation fee', 'originalPayer = JBPayerTrackerLib.resolve(_msgSender());', 'originalPayer = msg.sender;'],
+    ['INCOME cut changed', 'INCOME_CUT_PERCENT = 20_000_000;', 'INCOME_CUT_PERCENT = 50_000_000;'],
+    ['INCOME cash-out tax removed', 'INCOME_CASH_OUT_TAX_RATE = 1000;', 'INCOME_CASH_OUT_TAX_RATE = 0;'],
+    ['second stage reintroduced', 'new REVStageConfig[](1);', 'new REVStageConfig[](2);'],
+    ['reserved split redirected away from the owner', 'beneficiary: payable(_msgSender()),', 'beneficiary: payable(address(0)),'],
+    ['router registry check removed', 'address(REV_DEPLOYER.ROUTER_TERMINAL_REGISTRY()) != address(ROUTER_TERMINAL_REGISTRY)', 'false'],
+    ['FUND token no longer deployed at launch', 'token = address(CONTROLLER.deployERC20For({projectId: projectId, name: name, symbol: ticker, salt: salt}));', 'token = address(0);'],
+    ['allowlist hook no longer installed', 'rulesetConfigurations[0].metadata.dataHook = address(ALLOWLIST_HOOK);', ''],
+    ['inventory edits disabled', 'tiered721HookConfiguration.preventOperatorAdjustingTiers = false;', 'tiered721HookConfiguration.preventOperatorAdjustingTiers = true;'],
+    ['owner minting allowed', 'tiered721HookConfiguration.preventOperatorMinting = true;', 'tiered721HookConfiguration.preventOperatorMinting = false;'],
     ['reserves allowed', 'flags.noNewTiersWithReserves = true;', 'flags.noNewTiersWithReserves = false;'],
-    ['wrong shop denomination', 'tiersConfig.currency = 2;', 'tiersConfig.currency = 1;'],
+    ['wrong shop denomination', 'tiersConfig.currency = JBCurrencyIds.USD;', 'tiersConfig.currency = 1;'],
   ])('rejects release evidence with %s', (_label, before, after) => {
     expect(helper).toContain(before)
-    expect(() => assertIncomeReleaseSource(helper.replace(before, after), vault)).toThrow(/release profile/)
+    expect(() => assertIncomeReleaseSource(helper.replaceAll(before, after), vault)).toThrow(/release profile/)
   })
 
-  it.each([0, 1])('rejects a lock on reserved split %s independently', selected => {
+  it('rejects a lock on the owner reserved split', () => {
     let index = 0
-    const changed = helper.replace(/lockedUntil: 0/g, value => index++ === selected ? 'lockedUntil: type(uint48).max' : value)
-    expect(index).toBe(2)
+    const changed = helper.replace(/lockedUntil: 0/g, () => { index++; return 'lockedUntil: type(uint48).max' })
+    expect(index).toBe(1)
     expect(() => assertIncomeReleaseSource(changed, vault)).toThrow(/release profile/)
   })
 })

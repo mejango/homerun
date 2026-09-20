@@ -1,5 +1,7 @@
 /**
  * Real V6 contracts, isolated Anvil state only. Never accepts a live write URL.
+ * HomerunAllowlistHook and HomerunDeployer are deployed from `out/` onto the
+ * fork first (run `forge build`), since neither is live on any network yet.
  *
  * anvil --host 127.0.0.1 --port 8647 --chain-id 1 \
  *   --fork-url https://juicebox.center/v1/rpc/1 \
@@ -11,19 +13,19 @@
  * restored in finally so no test lifecycle state survives a completed run.
  */
 import assert from 'node:assert/strict'
-import { createPublicClient, createWalletClient, decodeFunctionResult, encodeFunctionData, erc20Abi, formatUnits, http, isAddressEqual, parseEther, toHex, type Address, type Hex, type TransactionReceipt } from 'viem'
+import { createPublicClient, createWalletClient, decodeFunctionResult, encodeFunctionData, erc20Abi, formatUnits, http, isAddressEqual, parseEther, toFunctionSelector, toHex, type Address, type Hex, type TransactionReceipt } from 'viem'
 import { mainnet } from 'viem/chains'
 import { USDC_ADDRESSES, jbProjectsAbi } from '@bananapus/nana-sdk-core'
 import { prepareHookAwareCashOut, previewPay, v6Address } from '@bananapus/nana-sdk-core/v6'
 import {
-  FUND_WEIGHT, buildFundApproval, buildFundAssetAllowanceChange, buildFundClaimCredits,
-  buildFundDeployErc20, buildFundLaunch, buildFundMint, buildFundPay, buildFundReturn,
-  buildFundRulesetChange, buildFundTransferCredits, buildFundUseAllowance,
+  FUND_WEIGHT, buildFundAllowlistChange, buildFundApproval, buildFundAssetAllowanceChange,
+  buildFundLaunch, buildFundMint, buildFundPay, buildFundReturn, buildFundRulesetChange, buildFundUseAllowance,
   offchainFundAmount, operatorMintAmount, type FundRulesetAction, type FundTransaction,
 } from '../src/lib/fund-contracts.ts'
 import { readFundProjectState, type FundProjectState } from '../src/lib/fund-state.ts'
 import { checkLaunchDeployment, verifyFundLaunch } from '../src/lib/fund-launch-verification.ts'
 import { simulateStateChangingTransaction } from '../src/lib/transaction-simulation.ts'
+import { deployHomerunOnFork } from './deploy-homerun-fork.mts'
 
 const LOCAL_RPC = 'http://127.0.0.1:8647' as const
 const CHAIN_ID = 1
@@ -79,6 +81,8 @@ async function balance(account: Address): Promise<bigint> {
 
 async function state(projectId: bigint, account = owner): Promise<FundProjectState> {
   const result = await readFundProjectState(client, { chainId: CHAIN_ID, projectId, account })
+  assert(result.tokenAddress, 'The deployer issues the FUND ERC-20 at launch.')
+  assert(result.allowlist, 'The deployer installs the shared allowlist hook at launch.')
   assert.equal(result.supportedController, true)
   assert.equal(result.supportedTerminals, true)
   assert.equal(result.knownOwnerWrapper, true)
@@ -166,10 +170,12 @@ async function main() {
     assert(await balance(circleReserve) >= funding * 2n, 'The known reserve does not have enough USDC in this fork.')
     for (const account of [owner, holder]) await send('Prefund a local fork test account with USDC', circleReserve, { chainId: CHAIN_ID, address: usdc, abi: erc20Abi, functionName: 'transfer', args: [account, funding] })
 
+    const homerun = await deployHomerunOnFork(client, { chain: mainnet, chainId: CHAIN_ID, url: LOCAL_RPC, deployer: owner })
     const fee = await client.readContract({ address: v6Address('JBProjects', CHAIN_ID), abi: jbProjectsAbi, functionName: 'creationFee' })
     const input = {
       owner, sender: owner, chainIds: [CHAIN_ID],
       projectUri: 'ipfs://QmbFMke1KXqnYyBBWxB74N4c5SBnJMVAiMNRcGu6x1AwQH',
+      tokenName: 'Homerun fork verification FUND', ticker: 'FUND',
       salt: `0x${'64'.repeat(32)}` as Hex, mustStartAtOrAfter: 0, creationFees: { [CHAIN_ID]: fee },
     }
     const launch = buildFundLaunch(input).requests[0]
@@ -181,14 +187,29 @@ async function main() {
     assert.equal(launched.ruleset.weight, FUND_WEIGHT)
     assert.equal(launched.metadata.cashOutTaxRate, 1_000)
     assert.equal(launched.metadata.allowOwnerMinting, false)
-    assert.equal(launched.tokenAddress, null)
     assert.equal(launched.totalSupply, 0n)
+    assert(isAddressEqual(launched.allowlist!.hook, homerun.allowlistHook))
+    assert.equal(launched.allowlist!.open, false)
+    assert.equal(launched.allowlist!.accountAllowed, false)
+    assert.equal(await client.readContract({ address: launched.tokenAddress!, abi: erc20Abi, functionName: 'symbol' }), 'FUND')
     assert.equal(launched.accountingContexts[0].payoutLimits.length, 0)
     assert.equal(launched.accountingContexts[0].surplusAllowances.length, 0)
     assert(launched.permissions.queueRulesets)
     assert.equal((await state(projectId, holder)).permissions.queueRulesets, false)
 
+    // The hook gates the beneficiary: a closed FUND rejects a wallet the owner has not allowed.
+    await approve(holder, projectId, 1_000n * 10n ** 6n)
+    const gated = buildFundPay({ chainId: CHAIN_ID, projectId, terminal, token: usdc, amount: 1_000n * 10n ** 6n, beneficiary: holder, minReturnedTokens: 1n })
+    await assert.rejects(simulateStateChangingTransaction(client, { from: holder, to: gated.address, data: encodeFunctionData(gated), value: gated.value, gas: 30_000_000n }), (error: Error) => {
+      assert.match(String((error as { details?: string }).details ?? error.message), new RegExp(toFunctionSelector('HomerunAllowlistHook_NotAllowed(uint256,address)').slice(2)), 'A closed FUND must reject a wallet outside the allowlist.')
+      return true
+    })
+    console.log('PASS Closed FUND rejects a payment for a wallet outside the allowlist')
+    await send('Allow the holder on the FUND allowlist', owner, buildFundAllowlistChange({ chainId: CHAIN_ID, projectId, accounts: [holder], allowed: true }))
+    assert.equal((await state(projectId, holder)).allowlist!.accountAllowed, true)
     const funded = await pay(projectId, 1_000n * 10n ** 6n)
+    assert.equal(funded.erc20Balance, funded.totalBalance, 'Payments mint the FUND ERC-20 directly; there are no credits.')
+    assert.equal(funded.creditBalance, 0n)
     await rules(projectId, 'pause')
     await rules(projectId, 'resume')
     const branchSnapshot = await localRpc('evm_snapshot')
@@ -225,40 +246,35 @@ async function main() {
     const operatorShare = operatorMintAmount(current.totalSupplyWithReservedTokens, current.totalBalance, 2_000)
     await send('Issue the operator 20% FUND share', owner, buildFundMint({ snapshot: current.rulesetSnapshot, beneficiary: owner, tokenCount: operatorShare, kind: 'operator-share' }))
     current = await state(projectId)
-    assert.equal(current.totalBalance * 10_000n / current.totalSupply, 2_000n)
+    // The share rounds down by at most one token wei.
+    assert(current.totalBalance * 10_000n / current.totalSupply <= 2_000n)
+    assert((current.totalBalance + 1n) * 10_000n / current.totalSupply >= 2_000n)
     await rules(projectId, 'finish-success-minting')
 
-    const creditTransfer = funded.totalBalance / 10n
-    const creditBefore = await state(projectId, holder)
-    await send('Transfer unstaked FUND credits', holder, buildFundTransferCredits({ chainId: CHAIN_ID, projectId, holder, recipient, creditCount: creditTransfer }))
-    assert.equal((await state(projectId, holder)).creditBalance, creditBefore.creditBalance - creditTransfer)
-    await send('Deploy the vanilla FUND ERC20', owner, buildFundDeployErc20({ chainId: CHAIN_ID, projectId, projectName: 'Homerun fork verification', salt: `0x${'65'.repeat(32)}` }))
     current = await state(projectId, holder)
-    assert(current.tokenAddress)
-    const claim = current.creditBalance / 2n
-    await send('Claim FUND credits into ERC20 tokens without staking', holder, buildFundClaimCredits({ chainId: CHAIN_ID, projectId, holder, beneficiary: holder, tokenCount: claim, tokenAddress: current.tokenAddress }))
-    assert.equal((await state(projectId, holder)).erc20Balance, claim)
-    await send('Transfer vanilla FUND ERC20 tokens', holder, { chainId: CHAIN_ID, address: current.tokenAddress, abi: erc20Abi, functionName: 'transfer', args: [recipient, claim / 2n] })
-    assert.equal((await state(projectId, recipient)).erc20Balance, claim / 2n)
+    const transfer = current.erc20Balance / 4n
+    const recipientBefore = (await state(projectId, recipient)).erc20Balance
+    await send('Transfer FUND ERC20 tokens without staking', holder, { chainId: CHAIN_ID, address: current.tokenAddress!, abi: erc20Abi, functionName: 'transfer', args: [recipient, transfer] })
+    assert.equal((await state(projectId, holder)).erc20Balance, current.erc20Balance - transfer)
+    assert.equal((await state(projectId, recipient)).erc20Balance, recipientBefore + transfer)
     await returnFunds(projectId, 600n * 10n ** 6n, 'asset-sale')
     await rules(projectId, 'asset-sale-refunds')
-    await cashOut(projectId, holder, 'Cash out mixed credits and ERC20 FUND after asset sale')
+    await cashOut(projectId, holder, 'Cash out FUND after asset sale')
     await cashOut(projectId, owner, 'Cash out operator FUND after asset sale')
     await cashOut(projectId, recipient, 'Cash out offchain-contributor and transferred FUND after asset sale')
 
     assert.equal(await localRpc('evm_revert', [branchSnapshot]), true)
     current = await state(projectId, holder)
     assert.equal(current.totalBalance, funded.totalBalance)
-    assert.equal(current.tokenAddress, null)
     await rules(projectId, 'failure-refunds')
     await returnFunds(projectId, 50n * 10n ** 6n, 'refunds')
     current = await state(projectId)
     assert.equal(current.metadata.cashOutTaxRate, 0)
     assert.equal(current.accountingContexts[0].payoutLimits.length, 0)
     assert.equal(current.accountingContexts[0].surplusAllowances.length, 0)
-    await cashOut(projectId, holder, 'Claim the failed campaign refund with unstaked FUND credits')
+    await cashOut(projectId, holder, 'Claim the failed campaign refund with unstaked FUND')
     assert.equal((await state(projectId)).totalSupply, 0n)
-    console.log(JSON.stringify({ result: 'passed', chainId: CHAIN_ID, forkBlock: initialBlock.number?.toString(), projectId: projectId.toString(), transactionCount: records.length, transactions: records }, null, 2))
+    console.log(JSON.stringify({ result: 'passed', chainId: CHAIN_ID, forkBlock: initialBlock.number?.toString(), homerun, projectId: projectId.toString(), transactionCount: records.length, transactions: records }, null, 2))
   } finally {
     assert.equal(await localRpc('evm_revert', [initialSnapshot]), true, 'Restore the initial isolated fork state.')
     console.log('Restored initial local fork snapshot. No live transactions were sent.')

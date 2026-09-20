@@ -14,11 +14,13 @@ import { concatHex, encodeAbiParameters, getAddress, getCreate2Address, isAddres
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const workspace = resolve(root, '../..')
 export const incomeReleasePolicy = {
-  profile: 'homerun-income-global-stock-sticky-v3-candidate',
-  launchVersion: 3,
-  helperSaltText: 'homerun.income-deployer.global.v3',
+  profile: 'homerun-deployer-global-v4-candidate',
+  launchVersion: 4,
+  helperSaltText: 'homerun.deployer.global.v4',
+  librarySaltText: 'homerun.deployer.lib.global.v4',
   splitLockedUntil: '0',
-  roles: { controlWallet: 'FUND owner; msg.sender becomes the stock Revnet operator', incentiveRecipient: 'separate nonzero operator argument; grants no project authority' },
+  roles: { controlWallet: 'FUND owner; the signer becomes the stock Revnet operator and holds the whole unlocked reserved split' },
+  economics: { fundWeight: '10,000 per USD', fundCashOutTaxBps: 1000, incomeInitialIssuance: '10 per USD', incomeCutPercentPerQuarter: 2, incomeCashOutTaxBps: 1000, stages: 1 },
   shop: { currency: 2, decimals: 6, ownerCanAdjustTiers: true, ownerCanUpdateCollectionMetadata: false, ownerCanMint: false, ownerCanIncreaseDiscountPercent: false, newTiersWithReserves: false, newTiersWithVotes: false, newTiersWithOwnerMinting: false },
 } as const
 const profile = incomeReleasePolicy.profile
@@ -27,6 +29,10 @@ const linkedGroups = { mainnet: [1, 10, 8453, 42161], testnet: [84532, 421614, 1
 const deterministicFactory = '0x4e59b44847b379578588920cA78FbF26c0B4956C' as const
 const helperSaltText = incomeReleasePolicy.helperSaltText
 const helperSalt = keccak256(toHex(helperSaltText))
+const librarySaltText = incomeReleasePolicy.librarySaltText
+const librarySalt = keccak256(toHex(librarySaltText))
+/** Foundry leaves this placeholder where a linked library address belongs. */
+const linkPlaceholder = /__\$[\da-f]{34}\$__/gu
 const distributionType = 'HomerunInitialIncome(uint256 chainId,address deployer,uint256 fundProjectId,bytes32 sourceSetHash,uint256 totalFundSupply,bytes32 salt)'
 const sha256 = (value: string | Uint8Array) => createHash('sha256').update(value).digest('hex')
 const pathLabel = (path: string) => relative(workspace, path)
@@ -41,21 +47,13 @@ type Artifact = {
     sources: Record<string, SourceMetadata>
   }
 }
-type ArtifactSpec = { name: string; location: string; sourceRoot: string; metadataHash: 'ipfs' | 'none'; constructor: string[] }
+type ArtifactSpec = { name: string; location: string; sourceRoot: string; metadataHash: 'ipfs' | 'none'; constructor: string[]; libraries?: string[] }
 
 const specs: ArtifactSpec[] = [
-  { name: 'HomerunIncomeDeployer', location: 'out', sourceRoot: root, metadataHash: 'ipfs', constructor: ['chains:tuple[](chainId:uint32,controller:address,revDeployer:address,tokenDistributor:address,usdc:address,stickyDeployer:address,omnichainDeployer:address)'] },
+  { name: 'HomerunDeployer', location: 'out', sourceRoot: root, metadataHash: 'ipfs', constructor: ['chains:tuple[](chainId:uint32,controller:address,revDeployer:address,usdc:address,omnichainDeployer:address,routerTerminalRegistry:address,allowlistHook:address)'], libraries: ['HomerunDeployerLib'] },
+  { name: 'HomerunDeployerLib', location: 'out', sourceRoot: root, metadataHash: 'ipfs', constructor: [] },
+  { name: 'HomerunAllowlistHook', location: 'out', sourceRoot: root, metadataHash: 'ipfs', constructor: ['projects:address', 'trustedForwarder:address'] },
   { name: 'HomerunInitialIncomeVault', location: 'out', sourceRoot: root, metadataHash: 'ipfs', constructor: ['incomeToken:address', 'incomeProjectId:uint256', 'fundProjectId:uint256', 'snapshotBlockNumber:uint256', 'snapshotBlockHash:bytes32', 'totalFundSupply:uint256', 'launchSalt:bytes32', 'merkleRoot:bytes32', 'leafCount:uint256', 'manifestHash:bytes32', 'manifestUri_:string', 'sourceSetHash:bytes32', 'localInitialIncomeSupply:uint256'] },
-  ...[
-    ['JBStickyDeployer', ['controller:address', 'terminal:address']],
-    ['JBStickyHook', ['directory:address', 'deployer:address']],
-    ['JBTokenDistributor', ['directory:address', 'controller:address', 'revLoans:address', 'revOwner:address', 'initialRoundDuration:uint256', 'initialVestingRounds:uint256', 'initialClaimDuration:uint48']],
-    ['JBStickyRewardReceiverFactory', ['distributor:address']],
-    ['JBStickyRewardReceiver', ['distributor:address', 'stickyToken:address']],
-    ['JBStickyAutoStick', ['deployer:address', 'distributor:address']],
-    ['JBStickyToken', ['name:string', 'symbol:string', 'tokens:address', 'projectId:uint256', 'hook:address', 'soulbound:bool']],
-    ['JBStickyPriceFeed', ['hook:address', 'terminal:address', 'token:address', 'projectId:uint256', 'underlyingToken:address']],
-  ].map(([name, constructor]) => ({ name: name as string, constructor: constructor as string[], location: 'artifacts/income-release-stock/out', sourceRoot: resolve(root, '../JBSticky'), metadataHash: 'none' as const })),
 ]
 
 function parameterShape(input: AbiParameter): string {
@@ -92,8 +90,11 @@ async function fingerprint(spec: ArtifactSpec) {
   const constructor = artifact.abi.find(entry => entry.type === 'constructor')?.inputs ?? []
   const shape = constructor.map(parameterShape)
   if (JSON.stringify(shape) !== JSON.stringify(spec.constructor)) throw new Error(`${spec.name}: constructor changed; this release profile must be reviewed again.`)
-  if (!/^0x(?:[\da-f]{2})+$/i.test(artifact.bytecode.object) || !/^0x(?:[\da-f]{2})+$/i.test(artifact.deployedBytecode.object)
-    || Object.keys(artifact.bytecode.linkReferences ?? {}).length || Object.keys(artifact.deployedBytecode.linkReferences ?? {}).length) throw new Error(`${spec.name}: executable bytecode is missing or requires linked libraries.`)
+  // A linked library's 20-byte placeholder is the only non-hex content the reviewed profile accepts.
+  const linkedLibraries = [...new Set([artifact.bytecode.linkReferences, artifact.deployedBytecode.linkReferences].flatMap(references => Object.values(references ?? {}).flatMap(file => Object.keys(file))))]
+  const unlinked = (code: Hex) => code.replace(linkPlaceholder, '00'.repeat(20)) as Hex
+  if (!/^0x(?:[\da-f]{2})+$/i.test(unlinked(artifact.bytecode.object)) || !/^0x(?:[\da-f]{2})+$/i.test(unlinked(artifact.deployedBytecode.object))
+    || linkedLibraries.some(library => !spec.libraries?.includes(library)) || spec.libraries?.some(library => !linkedLibraries.includes(library))) throw new Error(`${spec.name}: executable bytecode is missing or links libraries the reviewed profile does not expect.`)
   const settings = artifact.metadata.settings
   if (artifact.metadata.compiler.version !== '0.8.28+commit.7893614a' || settings.evmVersion !== 'cancun' || settings.viaIR !== true || JSON.stringify(settings.optimizer) !== JSON.stringify({ enabled: true, runs: 200 }) || settings.metadata?.bytecodeHash !== spec.metadataHash) {
     throw new Error(`${spec.name}: compilation settings differ from the reviewed profile.`)
@@ -118,8 +119,9 @@ async function fingerprint(spec: ArtifactSpec) {
     summary: {
       name: spec.name, artifact: pathLabel(artifactPath), artifactSha256: sha256(raw),
       compiler: artifact.metadata.compiler.version, settings, constructor,
-      creationBytecodeKeccak256: keccak256(artifact.bytecode.object), creationBytes,
-      runtimeTemplateKeccak256: keccak256(artifact.deployedBytecode.object), runtimeBytes,
+      linkedLibraries, linkStatus: linkedLibraries.length ? 'template hashes below zero the library placeholder; the linked initcode is computed under sharedHelper' : 'no linked libraries',
+      creationBytecodeKeccak256: keccak256(unlinked(artifact.bytecode.object)), creationBytes,
+      runtimeTemplateKeccak256: keccak256(unlinked(artifact.deployedBytecode.object)), runtimeBytes,
       eip170RuntimeHeadroomBytes: 24_576 - runtimeBytes,
       runtimeTemplateIsDeployedCode: false,
       immutableReferences, buildInfo,
@@ -173,36 +175,41 @@ function constructorPlan(artifact: Artifact | undefined, values: unknown[], know
 export function assertIncomeReleaseSource(helperSource: string, vaultSource: string) {
   const normalized = helperSource.replace(/\s+/g, ' ')
   const sourceAssertions = [
-    'constructor(HomerunIncomeChainConfig[] memory chains)',
-    `uint256 public constant LAUNCH_VERSION = ${incomeReleasePolicy.launchVersion};`,
+    'constructor(HomerunChainConfig[] memory chains)',
+    `uint256 public constant override LAUNCH_VERSION = ${incomeReleasePolicy.launchVersion};`,
     'PROTOCOL_CONFIG_HASH = keccak256(abi.encode(chains));',
-    'if (PROJECTS.ownerOf(fundProjectId) != msg.sender) revert Unauthorized();',
-    'config.operator = msg.sender;', 'operator == address(0)', 'beneficiary: payable(operator),',
-    'config.scopeCashOutsToLocalBalances = false;',
-    'nft.baseline721HookConfiguration.tiersConfig.currency = 2;',
-    'nft.baseline721HookConfiguration.tiersConfig.decimals = 6;',
-    'nft.baseline721HookConfiguration.flags.noNewTiersWithReserves = true;',
-    'nft.baseline721HookConfiguration.flags.noNewTiersWithVotes = true;',
-    'nft.baseline721HookConfiguration.flags.noNewTiersWithOwnerMinting = true;',
-    'nft.preventOperatorAdjustingTiers = false;',
-    'nft.preventOperatorUpdatingMetadata = true;',
-    'nft.preventOperatorMinting = true;',
-    'nft.preventOperatorIncreasingDiscountPercent = true;',
-    'return distributor.REV_OWNER() == address(0) && distributor.REV_LOANS() == address(0);',
-    'distributor.ROUND_DURATION() != 7 days', 'distributor.VESTING_ROUNDS() != 4', 'distributor.CLAIM_DURATION() != 3 * 365 days',
-    'totalIncome != INITIAL_INCOME_SUPPLY', 'uint256 stageId = block.timestamp;', 'extraMetadata: 4', distributionType,
+    'if (!isFund[fundProjectId]) revert HomerunDeployer_UnsupportedFund(fundProjectId);',
+    'if (PROJECTS.ownerOf(fundProjectId) != _msgSender()) revert HomerunDeployer_Unauthorized(_msgSender());',
+    'configuration.operator = _msgSender();',
+    'uint112 public constant override FUND_WEIGHT = 10_000e18;', 'uint16 public constant override FUND_CASH_OUT_TAX_RATE = 1000;',
+    'uint112 public constant override INCOME_INITIAL_ISSUANCE = 10 ether;', 'uint32 public constant override INCOME_CUT_PERCENT = 20_000_000;', 'uint16 public constant override INCOME_CASH_OUT_TAX_RATE = 1000;',
+    'suckerDeploymentConfiguration.salt = keccak256(abi.encode(_msgSender(), salt));', 'originalPayer = JBPayerTrackerLib.resolve(_msgSender());', 'beneficiary: payable(_msgSender()),',
+    'configuration.stageConfigurations = new REVStageConfig[](1);', 'address(REV_DEPLOYER.ROUTER_TERMINAL_REGISTRY()) != address(ROUTER_TERMINAL_REGISTRY)',
+    'token = address(CONTROLLER.deployERC20For({projectId: projectId, name: name, symbol: ticker, salt: salt}));',
+    'rulesetConfigurations[0].metadata.dataHook = address(ALLOWLIST_HOOK);', 'rulesetConfigurations[0].metadata.useDataHookForPay = true;',
+    'configuration.scopeCashOutsToLocalBalances = false;',
+    'tiered721HookConfiguration.baseline721HookConfiguration.tiersConfig.currency = JBCurrencyIds.USD;',
+    'tiered721HookConfiguration.baseline721HookConfiguration.tiersConfig.decimals = _USDC_DECIMALS;',
+    'tiered721HookConfiguration.baseline721HookConfiguration.flags.noNewTiersWithReserves = true;',
+    'tiered721HookConfiguration.baseline721HookConfiguration.flags.noNewTiersWithVotes = true;',
+    'tiered721HookConfiguration.baseline721HookConfiguration.flags.noNewTiersWithOwnerMinting = true;',
+    'tiered721HookConfiguration.preventOperatorAdjustingTiers = false;',
+    'tiered721HookConfiguration.preventOperatorUpdatingMetadata = true;',
+    'tiered721HookConfiguration.preventOperatorMinting = true;',
+    'tiered721HookConfiguration.preventOperatorIncreasingDiscountPercent = true;',
+    'totalIncome != INITIAL_INCOME_SUPPLY', 'uint256 stageId = block.timestamp;', 'extraMetadata: _INCOME_STAGE_EXTRA_METADATA', distributionType,
   ]
   const splitLocks = [...normalized.matchAll(/\blockedUntil\s*:\s*([^,}]+)/g)]
-  if (sourceAssertions.some(expected => !normalized.includes(expected)) || splitLocks.length !== 2 || splitLocks.some(match => match[1].trim() !== incomeReleasePolicy.splitLockedUntil)
+  if (sourceAssertions.some(expected => !normalized.includes(expected)) || splitLocks.length !== 1 || splitLocks.some(match => match[1].trim() !== incomeReleasePolicy.splitLockedUntil)
     || !vaultSource.includes(distributionType) || !vaultSource.includes('LOCAL_INITIAL_INCOME_SUPPLY - totalClaimed')) {
-    throw new Error('The source no longer matches the global stock-Sticky release profile. Review the changed semantics before regenerating release evidence.')
+    throw new Error('The source no longer matches the global release profile. Review the changed semantics before regenerating release evidence.')
   }
   return sourceAssertions
 }
 
 export async function prepareIncomeRelease() {
-  const blockers = ['No executed helper/Sticky deployment receipts or per-chain runtime/immutable verification are established by this offline packet.', 'The new helper and claim-vault source must be frozen with its reviewed compiler inputs before a production release.']
-  const helperSource = await readFile(resolve(root, 'src/HomerunIncomeDeployer.sol'), 'utf8')
+  const blockers = ['No executed helper deployment receipts or per-chain runtime/immutable verification are established by this offline packet.', 'The new helper and claim-vault source must be frozen with its reviewed compiler inputs before a production release.']
+  const helperSource = await readFile(resolve(root, 'src/HomerunDeployer.sol'), 'utf8')
   const vaultSource = await readFile(resolve(root, 'src/HomerunInitialIncomeVault.sol'), 'utf8')
   const sourceAssertions = assertIncomeReleaseSource(helperSource, vaultSource)
   const collected = await Promise.all(specs.map(async spec => {
@@ -216,19 +223,13 @@ export async function prepareIncomeRelease() {
     }
   }))
   const byName = new Map(collected.map(entry => [entry.name, entry.result?.artifact]))
-  const required = ['JBController', 'JBDirectory', 'JBProjects', 'JBTokens', 'JBMultiTerminal', 'JBSuckerRegistry', 'JBOmnichainDeployer', 'REVDeployer', 'REVOwner', 'REVLoans', 'USDC', 'JBStickyDeployer', 'JBTokenDistributor', 'HomerunIncomeDeployer']
+  const required = ['JBController', 'JBDirectory', 'JBProjects', 'JBTokens', 'JBMultiTerminal', 'JBRouterTerminalRegistry', 'JBSuckerRegistry', 'JBOmnichainDeployer', 'REVDeployer', 'REVOwner', 'REVLoans', 'USDC', 'HomerunAllowlistHook', 'HomerunDeployer']
   const networks = chainIds.map(chainId => {
     const addresses = Object.fromEntries(required.map(name => [name, registered(name, chainId)]))
     const missingRegistryEntries = required.filter(name => !addresses[name])
     if (missingRegistryEntries.length) blockers.push(`Chain ${chainId}: missing SDK registry entries ${missingRegistryEntries.join(', ')}.`)
     return {
       chainId, addresses, missingRegistryEntries, addressEvidence: 'installed SDK registry; no live RPC performed',
-      constructors: {
-        JBStickyDeployer: constructorPlan(byName.get('JBStickyDeployer'), [addresses.JBController, addresses.JBMultiTerminal], 64),
-        JBTokenDistributor: constructorPlan(byName.get('JBTokenDistributor'), [addresses.JBDirectory, addresses.JBController, zeroAddress, zeroAddress, 604_800n, 4n, 94_608_000n], 224),
-        JBStickyRewardReceiverFactory: constructorPlan(byName.get('JBStickyRewardReceiverFactory'), [addresses.JBTokenDistributor], 32),
-        JBStickyAutoStick: constructorPlan(byName.get('JBStickyAutoStick'), [addresses.JBStickyDeployer, addresses.JBTokenDistributor], 64),
-      },
       helperConstructor: 'sharedHelper.constructor; identical eight-chain array on every network',
       ccipRoutes: (Object.values(linkedGroups).find(group => group.includes(chainId)) ?? []).filter(remote => remote !== chainId).map(remoteChainId => {
         const address = CCIP_SUCKER_DEPLOYER_ADDRESSES[6][chainId]?.[remoteChainId as keyof typeof CCIP_SUCKER_DEPLOYER_ADDRESSES[6][typeof chainId]] ?? null
@@ -242,24 +243,32 @@ export async function prepareIncomeRelease() {
     }
   })
   const chainConfiguration = networks.map(({ chainId, addresses }) => ({
-    chainId, controller: addresses.JBController, revDeployer: addresses.REVDeployer,
-    tokenDistributor: addresses.JBTokenDistributor, usdc: addresses.USDC,
-    stickyDeployer: addresses.JBStickyDeployer, omnichainDeployer: addresses.JBOmnichainDeployer,
+    chainId, controller: addresses.JBController, revDeployer: addresses.REVDeployer, usdc: addresses.USDC,
+    omnichainDeployer: addresses.JBOmnichainDeployer, routerTerminalRegistry: addresses.JBRouterTerminalRegistry, allowlistHook: addresses.HomerunAllowlistHook,
   }))
   if (chainConfiguration.some((entry, index) => index > 0 && entry.chainId <= chainConfiguration[index - 1].chainId)) throw new Error('The shared helper constructor must contain strictly increasing chain IDs.')
-  const helperConstructor = constructorPlan(byName.get('HomerunIncomeDeployer'), [chainConfiguration], 64 + 224 * chainIds.length)
+  // The library deploys first, through the same factory, so its address is identical on every chain and the linked
+  // helper initcode is too.
+  const libraryArtifact = byName.get('HomerunDeployerLib')
+  const libraryInitCodeKeccak256 = libraryArtifact ? keccak256(libraryArtifact.bytecode.object) : null
+  const libraryPredictedAddress = libraryInitCodeKeccak256 ? getCreate2Address({ from: deterministicFactory, salt: librarySalt, bytecodeHash: libraryInitCodeKeccak256 }) : null
+  const helperTemplate = byName.get('HomerunDeployer')
+  const helperArtifact = helperTemplate && libraryPredictedAddress
+    ? { ...helperTemplate, bytecode: { ...helperTemplate.bytecode, object: helperTemplate.bytecode.object.replace(linkPlaceholder, libraryPredictedAddress.slice(2).toLowerCase()) as Hex } }
+    : undefined
+  const helperConstructor = constructorPlan(helperArtifact, [chainConfiguration], 64 + 224 * chainIds.length)
   const protocolConfigHash = helperConstructor.encodedArguments ? keccak256(helperConstructor.encodedArguments) : null
   const helperPredictedAddress = helperConstructor.initCodeKeccak256 ? getCreate2Address({ from: deterministicFactory, salt: helperSalt, bytecodeHash: helperConstructor.initCodeKeccak256 }) : null
-  if (helperPredictedAddress && networks.some(network => network.addresses.HomerunIncomeDeployer && network.addresses.HomerunIncomeDeployer !== helperPredictedAddress)) blockers.push('A registered helper differs from the address implied by the reviewed shared constructor, artifact and salt.')
+  if (helperPredictedAddress && networks.some(network => network.addresses.HomerunDeployer && network.addresses.HomerunDeployer !== helperPredictedAddress)) blockers.push('A registered helper differs from the address implied by the reviewed shared constructor, artifact and salt.')
   const sdkPackage = await readFile(resolve(root, 'node_modules/@bananapus/nana-sdk-core/package.json'))
-  const historicalEvidence = await readFile(resolve(root, 'docs/STICKY_REWARDS.md'))
   return {
     format: 'homerun-income-release-manifest/v3', profile, releaseReady: false, deploymentAuthorized: false,
-    supersedesProfile: 'homerun-income-global-stock-sticky-v2-candidate',
+    supersedesProfile: 'homerun-income-global-stock-sticky-v3-candidate',
+    fundLaunch: { entrypoint: 'launchFundFor(owner,projectUri,name,ticker,mustStartAtOrAfter,salt,peerSuckerDeployers)', rules: incomeReleasePolicy.economics, terminals: ['JBMultiTerminal USDC context', 'JBRouterTerminalRegistry with no contexts'], tokenDeployedAtLaunch: true, payHook: 'HomerunAllowlistHook as the omnichain extra pay hook; owner-managed beneficiary allowlist, closed by default; cash outs ungated', identity: 'isFund(projectId) + FundLaunched event' },
     capturedAt: new Date().toISOString(), liveRpcCalls: 0, walletCalls: 0,
     helperSourceKeccak256: keccak256(toHex(helperSource)),
     vaultSourceKeccak256: keccak256(toHex(vaultSource)),
-    profileChecks: { recursiveConstructorShape: true, sourceAssertions, sourceAssertionsAreFormalVerification: false, metadataHash: { Homerun: 'ipfs', stockSticky: 'none' }, fullInitcodeIncludesConstructor: true },
+    profileChecks: { recursiveConstructorShape: true, sourceAssertions, sourceAssertionsAreFormalVerification: false, metadataHash: { Homerun: 'ipfs' }, fullInitcodeIncludesConstructor: true },
     semantics: {
       launchVersion: incomeReleasePolicy.launchVersion, roles: incomeReleasePolicy.roles, shop: incomeReleasePolicy.shop,
       initialIncomeSupply: '500000000000000000000000', allocationScope: 'one global allocation; local and pending-bridge-destination claims preserve chain identity',
@@ -268,29 +277,27 @@ export async function prepareIncomeRelease() {
       localVault: 'immutable local cap; zero cap and zero-income dust roots allowed; exact rational beneficial ownership can yield positive INCOME with zero integer FUND display balance; perpetual fixed-beneficiary claims; no admin/sweep/expiry',
       snapshotClock: { arbitrumChainIds: [42_161, 421_614], arbitrumPrecompile: '0x0000000000000000000000000000000000000064', arbitrumMethods: ['arbBlockNumber()', 'arbBlockHash(uint256)'], otherChains: 'EVM NUMBER/BLOCKHASH', recentHashWindow: 256, olderHashes: 'explicit FUND-owner attestation; independently reconstructed and finalized by the client' },
       deployment: 'stock asynchronous cross-chain deployment with local atomic premint; remote accounting is asynchronous, not an all-chain readiness barrier',
-      revnet: { initialIssuance: '10000000000000000000', quarterSeconds: 7_884_000, cuts: 8, cutPercent: 50_000_000, finalStageAfterSeconds: 63_072_000, splitPercent: 8_000, operatorSplitPercent: 875_000_000, fundSplitPercent: 125_000_000, splitLockedUntil: incomeReleasePolicy.splitLockedUntil, extraMetadata: 4, scopeCashOutsToLocalBalances: false, commonAbsoluteStartRequired: true, lateCashOutAndLoanDelaySeconds: 604_800 },
-      ongoingRewards: { source: 'chain-local stock Sticky SHARE snapshots', stakeAgeMinimum: 0, ageMultiplier: false, stickyCashOutTaxRate: 0, roundDuration: 604_800, vestingRounds: 4, claimDuration: 94_608_000, revOwner: zeroAddress, revLoans: zeroAddress, startingTimestamp: 'immutable deployment timestamp; must be positive and no later than observation time' },
+      revnet: { initialIssuance: '10000000000000000000', quarterSeconds: 7_884_000, cutPercent: 20_000_000, cutsForever: true, stages: 1, cashOutTaxRate: 1000, splitPercent: 'caller-supplied reservedBps (0..10000)', splits: 'one unlocked split, 100% to the FUND owner', splitLockedUntil: incomeReleasePolicy.splitLockedUntil, extraMetadata: 4, scopeCashOutsToLocalBalances: false, ticker: 'caller-supplied' },
+      ongoingRewards: { status: 'deferred; the owner redirects the reserved split once Sticky or other recipients exist' },
     },
     sdk: { version: JSON.parse(sdkPackage.toString()).version, packageSha256: sha256(sdkPackage), lockfileSha256: sha256(await readFile(resolve(root, 'package-lock.json'))) },
-    repositories: [repository('homerun', root), repository('core-v6', resolve(workspace, 'nana-core-v6')), repository('revnet-v6', resolve(workspace, 'revnet-core-v6')), repository('suckers-v6', resolve(workspace, 'nana-suckers-v6')), repository('omnichain-deployers-v6', resolve(workspace, 'nana-omnichain-deployers-v6')), repository('distributor-v6', resolve(workspace, 'nana-distributor-v6')), repository('JBSticky', resolve(root, '../JBSticky'))],
+    repositories: [repository('homerun', root), repository('core-v6', resolve(workspace, 'nana-core-v6')), repository('revnet-v6', resolve(workspace, 'revnet-core-v6')), repository('suckers-v6', resolve(workspace, 'nana-suckers-v6')), repository('omnichain-deployers-v6', resolve(workspace, 'nana-omnichain-deployers-v6')), repository('router-terminal-v6', resolve(workspace, 'nana-router-terminal-v6'))],
     artifacts: collected.map(entry => entry.result?.summary ?? { name: entry.name, artifact: entry.artifact, artifactSha256: entry.artifactSha256, status: 'unavailable-or-invalid', issue: entry.issue }),
     sharedHelper: {
       factory: deterministicFactory, factoryEvidence: 'canonical source constant; live factory code not checked by this script',
       saltDerivation: `keccak256(UTF8(${JSON.stringify(helperSaltText)}))`, salt: helperSalt, saltStatus: 'prepared release constant; not a deployment record',
+      library: {
+        name: 'HomerunDeployerLib', purpose: 'external library holding the claim-vault creation code so the helper stays under EIP-170; called by delegatecall, so vaults still see the helper as their factory',
+        saltDerivation: `keccak256(UTF8(${JSON.stringify(librarySaltText)}))`, salt: librarySalt, initCodeKeccak256: libraryInitCodeKeccak256, predictedAddress: libraryPredictedAddress,
+        order: 'deploy on every chain before the helper; the helper initcode below embeds this predicted address',
+      },
       chainIds, linkedGroups, constructor: helperConstructor, protocolConfigHash, predictedAddress: helperPredictedAddress,
       addressStatus: helperPredictedAddress ? 'deterministic prediction only; requires executed receipt and runtime verification' : 'unavailable until actual registered dependency inputs exist',
       runtimePolicy: 'same initcode/address and PROTOCOL_CONFIG_HASH across chains; local immutable dependencies can make deployed runtime hashes different',
       perProjectVaultInitcode: 'measure creation bytecode plus all 13 encoded arguments, including the UTF-8 manifest URI, against 49,152 bytes; no singleton vault address is predicted',
     },
     networks,
-    historicalCodeCheck: {
-      source: 'docs/STICKY_REWARDS.md', sourceSha256: sha256(historicalEvidence), reportedDate: '2026-09-10',
-      chainIds,
-      addresses: { JBStickyDeployer: '0x548B27933aD9005bcc66d9A465069bc8553Fa2e2', JBStickyHook: '0xe96d1eda8A34BC3054b5373757B09BEaF9608A7a', JBTokenDistributor: '0xEDa8563977EB0857616C163b8084B3152332e6BE' },
-      result: 'The prior read-only check reported eth_getCode = 0x for all 24 chain/address pairs.',
-      limitation: 'Historical simulation predictions only, not current predictions or verified deployment addresses. No block hashes were recorded in that note. This script does not repeat or upgrade that evidence.',
-    },
-    requiredPostDeploymentEvidence: ['Executed deployment receipts with chain/block/transaction identity, identical shared helper constructor inputs, factory and salt.', 'Full executable-runtime and every immutable-word verification against the exact reviewed artifacts on each chain; template hashes above are not live runtime hashes. Verify LAUNCH_VERSION = 3, shared PROTOCOL_CONFIG_HASH and every usdcOf entry.', 'Verify distinct Owner control and Operator incentive recipient, zero split locks in every stage, and the Owner-managed stock 721 inventory with the reviewed USD denomination and restricted tier flags.', 'Stock Sticky per-chain verified.json with the reviewed source revision and observed runtime hashes; simulation.json is never sufficient.', 'For every directed SDK CCIP route, verify registry allowlisting, directory/tokens, singleton runtime, ccipRemoteChainId, ccipRemoteChainSelector, ccipRouter and reciprocal default-peer predictions. A merely approved alternative deployer is not proof of cross-chain compatibility.', 'Explorer/Sourcify source verification for helper, each vault, Sticky suite and distributor using the exact compiler input and metadata settings.', 'Published V6 SDK registry/artifact update for executed chains only, then pin that SDK release in Homerun and re-run onchain wiring/transaction smoke checks.'],
+    requiredPostDeploymentEvidence: ['Executed deployment receipts with chain/block/transaction identity, identical shared helper constructor inputs, factory and salt.', 'HomerunDeployerLib executed at the predicted address on every chain before the helper, and the helper runtime references exactly that address.', 'Full executable-runtime and every immutable-word verification against the exact reviewed artifacts on each chain; template hashes above are not live runtime hashes. Verify LAUNCH_VERSION = 4, shared PROTOCOL_CONFIG_HASH, TERMINAL, ROUTER_TERMINAL_REGISTRY and every usdcOf entry.', 'Verify the FUND owner becomes the INCOME operator and holds one unlocked reserved split, and the Owner-managed stock 721 inventory with the reviewed USD denomination and restricted tier flags.', 'For every directed SDK CCIP route, verify registry allowlisting, directory/tokens, singleton runtime, ccipRemoteChainId, ccipRemoteChainSelector, ccipRouter and reciprocal default-peer predictions. A merely approved alternative deployer is not proof of cross-chain compatibility.', 'Explorer/Sourcify source verification for the helper and each vault using the exact compiler input and metadata settings.', 'Published V6 SDK registry/artifact update for executed chains only, then pin that SDK release in Homerun and re-run onchain wiring/transaction smoke checks.'],
     blockers,
   }
 }

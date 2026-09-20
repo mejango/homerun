@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MappableAsset, parseSuckerDeployerConfig, type JBChainId } from '@bananapus/nana-sdk-core'
 import { encodeAbiParameters, encodeEventTopics, encodeFunctionData, parseAbi, zeroAddress, zeroHash, type Hex, type PublicClient } from 'viem'
-import { legacyHomerunIncomeDeployerAbi as homerunIncomeDeployerAbi, homerunIncomeDeployerAbi as currentIncomeDeployerAbi, INITIAL_INCOME_SUPPLY } from '../src/lib/income-contracts'
+import { homerunDeployerAbi, INITIAL_INCOME_SUPPLY } from '../src/lib/income-contracts'
 import type { FundTransaction } from '../src/lib/fund-contracts'
 import {
   beginIncomeLaunchSubmission, clearIncomeLaunchPending, exportIncomeLaunchPending, importIncomeLaunchPending,
@@ -10,7 +10,7 @@ import {
 } from '../src/lib/income-launch-session'
 
 const { registered } = vi.hoisted(() => ({ registered: vi.fn() }))
-vi.mock('../src/lib/income-contracts', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/income-contracts')>(), registeredIncomeDeployer: registered }))
+vi.mock('../src/lib/income-contracts', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/income-contracts')>(), registeredHomerunDeployer: registered }))
 const HOLDER = '0x1111111111111111111111111111111111111111'
 const TARGET = '0x2222222222222222222222222222222222222222'
 const OTHER = '0x3333333333333333333333333333333333333333'
@@ -21,8 +21,8 @@ const key = incomeLaunchSessionKey(1, 9n)
 const allocation = { chainId: 1, fundProjectId: 9n, snapshotBlockNumber: 90n, snapshotBlockHash: BLOCK_HASH, merkleRoot: HASH, leafCount: 500n, incomeAmount: INITIAL_INCOME_SUPPLY }
 const snapshot = { sourceSetHash: HASH, totalFundSupply: 1_000_000n, manifestHash: HASH, manifestUri: 'ipfs://manifest', allocations: [allocation] }
 const suckersFor = (chainId: JBChainId, chains: JBChainId[]) => parseSuckerDeployerConfig(chainId, chains, [MappableAsset.USDC], { version: 6, bridge: 'ccip', salt: HASH })
-const args = [9n, snapshot, { name: 'Founder Haus INCOME', ticker: 'INCOME', uri: 'ipfs://metadata', salt: HASH }, 7_000, 1_000, 10n, 1_800_000_000, suckersFor(1, [1])] as const
-const request: FundTransaction = { chainId: 1, address: TARGET, abi: homerunIncomeDeployerAbi, functionName: 'deployIncome', args, value: 100n }
+const args = [9n, snapshot, { name: 'Founder Haus INCOME', ticker: 'RENT', uri: 'ipfs://metadata', salt: HASH }, 8_000, 1_800_000_000, suckersFor(1, [1])] as const
+const request: FundTransaction = { chainId: 1, address: TARGET, abi: homerunDeployerAbi, functionName: 'deployIncome', args, value: 100n }
 const safeAbi = parseAbi([
   'function execTransaction(address to,uint256 value,bytes data,uint8 operation,uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,address gasToken,address refundReceiver,bytes signatures) payable returns (bool success)',
   'event ExecutionSuccess(bytes32 txHash,uint256 payment)', 'event ExecutionFailure(bytes32 txHash,uint256 payment)',
@@ -110,15 +110,18 @@ describe('INCOME launch journal identity and persistence', () => {
 })
 
 describe('strict INCOME launch recovery imports', () => {
-  it('preserves distinct incentive recipients while the saved signer remains the FUND owner', () => {
+  it('rejects a reserved percent above 100% or a blank ticker even when the signer is the FUND owner', () => {
     const storage = memory()
-    const currentRequest = { ...request, abi: currentIncomeDeployerAbi, args: [...args, OTHER] }
-    const record = beginIncomeLaunchSubmission(storage, key, currentRequest, 9n, HOLDER, false, 100n)
+    const record = begin(storage)
     expect(record.holder).toBe(HOLDER)
-    expect(record.data).toBe(encodeFunctionData({ abi: currentIncomeDeployerAbi, functionName: 'deployIncome', args: [...args, OTHER] }).toLowerCase())
     expect(importIncomeLaunchPending(memory(), key, exportIncomeLaunchPending(record))).toEqual(record)
-    const invalidData = encodeFunctionData({ abi: currentIncomeDeployerAbi, functionName: 'deployIncome', args: [...args, zeroAddress] })
-    expect(() => importIncomeLaunchPending(memory(), key, JSON.stringify({ ...record, data: invalidData }))).toThrow()
+    for (const bad of [
+      [args[0], args[1], args[2], 10_001, args[4], args[5]],
+      [args[0], args[1], { ...args[2], ticker: '' }, args[3], args[4], args[5]],
+    ] as const) {
+      const invalidData = encodeFunctionData({ abi: homerunDeployerAbi, functionName: 'deployIncome', args: bad as unknown as typeof args })
+      expect(() => importIncomeLaunchPending(memory(), key, JSON.stringify({ ...record, data: invalidData }))).toThrow()
+    }
   })
   it('round-trips unknown and pending records without asserting execution', () => {
     const storage = memory(), unknown = begin(storage), restored = memory()
@@ -153,13 +156,13 @@ describe('strict INCOME launch recovery imports', () => {
   it('rejects the wrong selector, truncated or trailing calldata, and mismatched first project argument', () => {
     const record = begin()
     const invalid = [
-      encodeFunctionData({ abi: homerunIncomeDeployerAbi, functionName: 'incomeProjectIdOf', args: [9n] }),
+      encodeFunctionData({ abi: homerunDeployerAbi, functionName: 'incomeProjectIdOf', args: [9n] }),
       '0x12345678', record.data.slice(0, -2), `${record.data}00`,
-      encodeFunctionData({ abi: homerunIncomeDeployerAbi, functionName: 'deployIncome', args: [10n, ...args.slice(1)] as unknown as typeof args }),
+      encodeFunctionData({ abi: homerunDeployerAbi, functionName: 'deployIncome', args: [10n, ...args.slice(1)] as unknown as typeof args }),
     ]
     for (const data of invalid) expect(() => importIncomeLaunchPending(memory(), key, JSON.stringify({ ...record, data }))).toThrow()
   })
-  it('validates the entire snapshot, INCOME description, allocation and Sticky destination', () => {
+  it('validates the entire snapshot, INCOME description, reserved percent and start', () => {
     const record = begin()
     const invalidAllocation = (changes: Partial<typeof allocation>) => [9n, { ...snapshot, allocations: [{ ...allocation, ...changes }] }, ...args.slice(2)]
     const invalidArgs: unknown[][] = [
@@ -179,31 +182,27 @@ describe('strict INCOME launch recovery imports', () => {
       [9n, { ...args[1], manifestUri: 'https://mutable.example/manifest' }, ...args.slice(2)],
       [9n, args[1], { ...args[2], salt: zeroHash }, ...args.slice(3)],
       [9n, args[1], { ...args[2], name: ' ' }, ...args.slice(3)],
-      [9n, args[1], { ...args[2], ticker: 'FUND' }, ...args.slice(3)],
+      [9n, args[1], { ...args[2], ticker: '' }, ...args.slice(3)],
       [9n, args[1], { ...args[2], uri: 'https://mutable.example/metadata' }, ...args.slice(3)],
-      [9n, args[1], args[2], 10_000, 1_000, 10n, ...args.slice(6)],
-      [9n, args[1], args[2], 7_000, 0, 10n, ...args.slice(6)],
-      [9n, args[1], args[2], 7_000, 1_000, 0n, ...args.slice(6)],
-      [9n, args[1], args[2], 7_000, 1_000, 9n, ...args.slice(6)],
-      [...args.slice(0, 6), 0, args[7]],
-      [...args.slice(0, 6), 2 ** 48 - 1, args[7]],
-      [...args.slice(0, 7), { ...args[7], salt: BLOCK_HASH }],
+      [9n, args[1], args[2], 10_001, ...args.slice(4)],
+      [...args.slice(0, 4), 0, args[5]],
+      [...args.slice(0, 5), { ...args[5], salt: BLOCK_HASH }],
     ]
-    for (const values of invalidArgs) {
-      const data = encodeFunctionData({ abi: homerunIncomeDeployerAbi, functionName: 'deployIncome', args: values as unknown as typeof args })
-      expect(() => importIncomeLaunchPending(memory(), key, JSON.stringify({ ...record, data }))).toThrow()
+    for (const [index, values] of invalidArgs.entries()) {
+      const data = encodeFunctionData({ abi: homerunDeployerAbi, functionName: 'deployIncome', args: values as unknown as typeof args })
+      expect(() => importIncomeLaunchPending(memory(), key, JSON.stringify({ ...record, data })), `case ${index}`).toThrow()
     }
   })
   it('restores chain-specific attempts with zero or dust local allocations and retains the complete global commitment', () => {
     for (const leaves of [0n, 1n]) {
       const local = { ...allocation, incomeAmount: 0n, leafCount: leaves, merkleRoot: leaves === 0n ? zeroHash : HASH }
       const remote = { ...allocation, chainId: 10, fundProjectId: 44n, snapshotBlockNumber: 500n }
-      const linkedArgs = [9n, { ...snapshot, allocations: [local, remote] }, ...args.slice(2, 7), suckersFor(1, [1, 10])] as unknown as typeof args
+      const linkedArgs = [9n, { ...snapshot, allocations: [local, remote] }, ...args.slice(2, 5), suckersFor(1, [1, 10])] as unknown as typeof args
       const linkedRequest = { ...request, args: linkedArgs }
       const storage = memory()
       const saved = beginIncomeLaunchSubmission(storage, key, linkedRequest, 9n, HOLDER, false, 100n)
       expect(importIncomeLaunchPending(memory(), key, exportIncomeLaunchPending(saved))).toEqual(saved)
-      expect(saved.data).toBe(encodeFunctionData({ abi: homerunIncomeDeployerAbi, functionName: 'deployIncome', args: linkedArgs }).toLowerCase())
+      expect(saved.data).toBe(encodeFunctionData({ abi: homerunDeployerAbi, functionName: 'deployIncome', args: linkedArgs }).toLowerCase())
     }
   })
   it('rejects inconsistent linked topology, duplicate chains and substituted bridge destinations', () => {
@@ -211,18 +210,18 @@ describe('strict INCOME launch recovery imports', () => {
     const local = { ...allocation, incomeAmount: INITIAL_INCOME_SUPPLY / 2n }
     const remote = { ...local, chainId: 10, fundProjectId: 44n, snapshotBlockNumber: 500n }
     const configuration = suckersFor(1, [1, 10])
-    const canonical = [9n, { ...snapshot, allocations: [local, remote] }, ...args.slice(2, 7), configuration]
+    const canonical = [9n, { ...snapshot, allocations: [local, remote] }, ...args.slice(2, 5), configuration]
     const alteredBridge = { ...configuration, deployerConfigurations: configuration.deployerConfigurations.map(entry => ({ ...entry, peer: HASH })) }
     const invalidArgs = [
-      [9n, { ...snapshot, allocations: [remote, local] }, ...args.slice(2, 7), configuration],
-      [9n, { ...snapshot, allocations: [local, local] }, ...args.slice(2, 7), configuration],
-      [9n, { ...snapshot, allocations: [local, { ...remote, chainId: 137 }] }, ...args.slice(2, 7), configuration],
-      [9n, { ...snapshot, allocations: [local, { ...remote, chainId: 11155111 }] }, ...args.slice(2, 7), configuration],
-      [...canonical.slice(0, 7), args[7]],
-      [...canonical.slice(0, 7), alteredBridge],
+      [9n, { ...snapshot, allocations: [remote, local] }, ...args.slice(2, 5), configuration],
+      [9n, { ...snapshot, allocations: [local, local] }, ...args.slice(2, 5), configuration],
+      [9n, { ...snapshot, allocations: [local, { ...remote, chainId: 137 }] }, ...args.slice(2, 5), configuration],
+      [9n, { ...snapshot, allocations: [local, { ...remote, chainId: 11155111 }] }, ...args.slice(2, 5), configuration],
+      [...canonical.slice(0, 5), args[5]],
+      [...canonical.slice(0, 5), alteredBridge],
     ]
     for (const values of invalidArgs) {
-      const data = encodeFunctionData({ abi: homerunIncomeDeployerAbi, functionName: 'deployIncome', args: values as unknown as typeof args })
+      const data = encodeFunctionData({ abi: homerunDeployerAbi, functionName: 'deployIncome', args: values as unknown as typeof args })
       expect(() => importIncomeLaunchPending(memory(), key, JSON.stringify({ ...record, data }))).toThrow()
     }
   })

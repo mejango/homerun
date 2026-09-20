@@ -234,6 +234,7 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
       sameSender(getAccount(wagmiConfig).address, sender)
       const input = {
         owner, sender, chainIds, projectUri: `ipfs://${pin.cid}`,
+        tokenName: resolved.values.fundTokenName, ticker: resolved.values.fundTicker,
         salt, multisigs: resolved.plans, operator: resolved.operator,
         mustStartAtOrAfter: chainIds.length > 1 ? Math.max(...fees.map(row => row.timestamp)) : 0,
         creationFees: Object.fromEntries(fees.map(row => [row.id, row.fee])),

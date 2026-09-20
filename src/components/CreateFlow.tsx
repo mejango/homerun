@@ -12,7 +12,8 @@ import { OperatorProfile } from './OperatorProfile';
 /** Validated setup values. Budget and income estimates remain modeling assumptions. */
 export interface CreateValues {
   name: string;
-  assetType: string;
+  fundTokenName: string;
+  fundTicker: string;
   location: string;
   description: string;
   revenueDescription: string;
@@ -62,10 +63,12 @@ export interface CreateFlowProps {
   renderIntegration?: (values: CreateValues) => ReactNode;
 }
 
-const labels = ['The asset', 'Fundraise', 'Income', 'Review & create'];
+const labels = ['Asset', 'Management', 'Fundraise', 'Income', 'Review & create'];
+const LAST_STEP = labels.length - 1;
 const groups: FieldName[][] = [
-  ['name', 'assetType', 'location', 'description', 'photo', 'ownerMode', 'ownerSigners', 'ownerThreshold', 'ownerIsOperator', 'operatorMode', 'operatorSigners', 'operatorThreshold', 'ownerWallet', 'ownerName', 'ownerIntroduction', 'ownerPhoto', 'operatorWallet', 'operatorName', 'operatorIntroduction', 'operatorPhoto'],
-  ['purchaseBudget', 'opsReserve', 'operatorFundPercent'],
+  ['name', 'location', 'description', 'photo'],
+  ['ownerMode', 'ownerSigners', 'ownerThreshold', 'ownerIsOperator', 'operatorMode', 'operatorSigners', 'operatorThreshold', 'ownerWallet', 'ownerName', 'ownerIntroduction', 'ownerPhoto', 'operatorWallet', 'operatorName', 'operatorIntroduction', 'operatorPhoto'],
+  ['purchaseBudget', 'opsReserve', 'operatorFundPercent', 'fundTokenName', 'fundTicker'],
   ['revenueDescription', 'minimumRevenue', 'minimumRevenueConsequences', 'monthlyRent', 'monthlyCosts', 'rentGrowthPercent', 'costGrowthPercent', 'operatorSplitPercent', 'stickySplitPercent'],
   ['networks', 'networkEnvironment', 'revnetOperatorEnabled'],
 ];
@@ -101,17 +104,17 @@ function Field({ name, label, value, error, onChange, onBlur, prefix, suffix, he
   </div>;
 }
 
-function AssetArt({ type, photo }: { type: string; photo: string }) {
+function AssetArt({ photo }: { photo: string }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     if (photo || !canvas.current) return;
     const element = canvas.current;
-    const paint = () => drawAssetSketch(element, type);
+    const paint = () => drawAssetSketch(element);
     paint();
     const observer = new ResizeObserver(paint);
     observer.observe(element);
     return () => observer.disconnect();
-  }, [type, photo]);
+  }, [photo]);
   return <div className="asset-art">{photo
     ? <Image id="draft-photo" src={photo} alt="Your asset cover photo" width={320} height={160} unoptimized />
     : <canvas id="asset-sketch" ref={canvas} aria-hidden="true" />}</div>;
@@ -182,7 +185,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
         if (next.name === 'Untitled Homerun') next.name = 'Untitled';
         next.revnetOperatorEnabled = true;
         setRaw(next);
-        const savedStep = Number.isInteger(saved.step) ? Math.min(3, Math.max(0, saved.step)) : 0;
+        const savedStep = Number.isInteger(saved.step) ? Math.min(LAST_STEP, Math.max(0, saved.step)) : 0;
         setStep(savedStep);
         setFurthest(savedStep);
       }
@@ -249,11 +252,11 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
   }
 
   function continueStep() {
-    if (validateStep() && step < 3) navigate(step + 1);
+    if (validateStep() && step < LAST_STEP) navigate(step + 1);
   }
 
   function formatField(name: FieldName) {
-    if (![...groups[1], ...groups[2]].includes(name) || ['revenueDescription', 'minimumRevenueConsequences'].includes(name)) return;
+    if (![...groups[2], ...groups[3]].includes(name) || ['revenueDescription', 'minimumRevenueConsequences'].includes(name)) return;
     const result = normalize(raw);
     if (!result.errors[name]) update(name, number(result.values[name] as number));
   }
@@ -319,7 +322,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
   }
 
   const field = (name: FieldName, label: string, props: Partial<FieldProps> = {}) =>
-    <Field name={name} label={label} value={raw[name]} error={errors[name] || (step === 3 ? normalized.errors[name] : undefined)} onChange={update} onBlur={formatField} {...props} />;
+    <Field name={name} label={label} value={raw[name]} error={errors[name] || (step === LAST_STEP ? normalized.errors[name] : undefined)} onChange={update} onBlur={formatField} {...props} />;
 
   const multisig = (role: 'owner' | 'operator') => {
     const mode = `${role}Mode` as const, signers = `${role}Signers` as const, threshold = `${role}Threshold` as const;
@@ -361,17 +364,10 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
         </nav>
         <form id="create-form" noValidate onSubmit={event => { event.preventDefault(); continueStep(); }}>
           <section className="create-step" data-step-panel={step} aria-labelledby={`step-title-${step}`}>
-            <h2 id={`step-title-${step}`} tabIndex={-1} ref={heading}>{['Asset', 'Fundraise', 'Income', 'Review'][step]}</h2>
+            <h2 id={`step-title-${step}`} tabIndex={-1} ref={heading}>{['Asset', 'Management', 'Fundraise', 'Income', 'Review'][step]}</h2>
             {step === 0 && <>
               {field('name', 'Title', { placeholder: 'e.g. Neighborhood Workshop', maxLength: 60 })}
-              <div className="create-pair">
-                <div className="create-field"><label htmlFor="create-assetType">Asset type</label>
-                  <select id="create-assetType" name="assetType" value={String(raw.assetType)} onChange={event => update('assetType', event.target.value)} aria-invalid={Boolean(errors.assetType)}>
-                    <option value="real-estate">Real estate</option><option value="business">Business</option><option value="equipment">Equipment</option><option value="energy">Energy</option><option value="other">Other asset</option>
-                  </select>{errors.assetType && <p className="create-error">{errors.assetType}</p>}
-                </div>
-                {field('location', 'Location (optional)', { placeholder: 'City, region', maxLength: 100 })}
-              </div>
+              {field('location', 'Location (optional)', { placeholder: 'City, region', maxLength: 100 })}
               {field('description', 'The idea (optional)', { rows: 3, maxLength: 600, help: 'A short introduction to the asset and how it earns income.' })}
               <div className="create-field"><label htmlFor="create-photo">Cover photo (optional)</label>
                 <label className="photo-picker" htmlFor="create-photo"><span aria-hidden="true">＋</span><span>{photoBusy.photo ? 'Preparing photo…' : 'Choose a photo'}<small>JPG, PNG or WebP | up to 8 MB</small></span>
@@ -380,6 +376,8 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
                 {photo && <button id="remove-photo" className="quiet-button" type="button" onClick={() => removePhoto('photo')}>Remove photo</button>}
                 {errors.photo && <p className="create-error" id="photo-error">{errors.photo}</p>}
               </div>
+            </>}
+            {step === 1 && <>
               <fieldset className="create-operator-profile"><legend>Owner</legend>
                 <ul className="create-help create-role-description">
                   <li>The owner is the address that owns the asset and process.</li>
@@ -418,7 +416,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
                 </div></>}
               </fieldset>
             </>}
-            {step === 1 && <>
+            {step === 2 && <>
               <div className="fundraise-inputs">
                 <fieldset className="income-field-group modeling-inputs fundraise-modeling" aria-describedby="fundraise-modeling-note"><legend>Modeling inputs</legend>
                   <p id="fundraise-modeling-note" className="input-purpose-note">Budget assumptions for the raise goal. These do not set contract withdrawal allowances.</p>
@@ -426,6 +424,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
                 </fieldset>
                 <fieldset className="income-field-group fundraise-contract"><legend>Contractual settings</legend>
                   {field('operatorFundPercent', 'Owner FUND ownership', { suffix: '%', help: 'Allocated to the Owner after a successful purchase. The Owner may distribute these tokens to the Operator at their discretion.' })}
+                  <div className="income-inputs">{field('fundTokenName', 'FUND token name', { placeholder: 'e.g. Neighborhood Workshop FUND', maxLength: 32, help: 'Blank uses the project title.' })}{field('fundTicker', 'FUND ticker', { placeholder: 'FUND', maxLength: 12, help: 'Deployed with the project as its ERC-20 symbol.' })}</div>
                 </fieldset>
                 <div className="create-callout fundraise-goal"><span>Total fundraising goal</span><strong id="create-raise-goal">{summary ? money(summary.raiseGoal) : '—'}</strong>
                   <p id="create-fee-note">{summary ? `Includes ${money(summary.values.purchaseBudget)} for the asset, ${money(summary.values.opsReserve)} in reserve, and ${money(Math.round((summary.raiseGoal - summary.values.purchaseBudget - summary.values.opsReserve) * 100) / 100)} in assumed payout fees.` : 'Complete the asset and funding inputs to calculate the goal.'}</p>
@@ -442,7 +441,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
               </div>
               <p className="create-note">Contributors receive FUND. If the purchase succeeds, FUND represents a share of net asset-sale proceeds. A failed raise returns the remaining funds.</p>
             </>}
-            {step === 2 && <>
+            {step === 3 && <>
               <fieldset className="income-field-group modeling-inputs" aria-describedby="modeling-inputs-note"><legend>Modeling inputs</legend>
                 <p id="modeling-inputs-note" className="input-purpose-note">Revenue and expense assumptions for the projections. These do not set contract terms.</p>
                 <div className="income-inputs">
@@ -465,26 +464,26 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
               </div>
               <details className="create-terms"><summary>Starting token terms</summary><p>At purchase, 500,000 initial INCOME is allocated across all FUND holders, including inactive ERC20 balances and unclaimed token credits. Claiming this initial allocation requires no activation, staking or vesting. Revenue starts by issuing 10 INCOME per USDC, shared using the percentages above. Issuance falls 5% each quarter for two years.</p><p>Ongoing FUND rewards use stock Sticky: rewards follow your share balance at each snapshot and unlock in four weekly vesting rounds after you start the reward claim. There is no minimum staking period or stake-age bonus. Staying staked longer earns additional reward rounds. Live use requires a verified deployment. Borrowing or cashing out INCOME does not sell FUND.</p></details>
             </>}
-            {step === 3 && <>
+            {step === LAST_STEP && <>
               <div id="create-review">
                 <section className="review-block"><div><h3>{String(raw.name || 'Untitled')}</h3><button type="button" disabled={locked} onClick={() => navigate(0)}>Edit asset</button></div>
                   <p>{String(raw.location || 'Location not specified')}</p>{raw.description && <p>{String(raw.description)}</p>}
                 </section>
-                <section className="review-block"><div><h3>Owner &amp; Operator</h3><button type="button" disabled={locked} onClick={() => navigate(0)}>Edit wallets</button></div>
+                <section className="review-block"><div><h3>Owner &amp; Operator</h3><button type="button" disabled={locked} onClick={() => navigate(1)}>Edit wallets</button></div>
                   <dl><div><dt>Owner: program control and FUND allocation</dt><dd className="break-all">{authorityLabel('owner')}</dd></div>
                     <div><dt>Operator: INCOME incentives</dt><dd className="break-all">{authorityLabel('operator')}</dd></div></dl>
                 </section>
-                <section className="review-block"><div><h3>Minimum revenue</h3><button type="button" disabled={locked} onClick={() => navigate(2)}>Edit income</button></div>
+                <section className="review-block"><div><h3>Minimum revenue</h3><button type="button" disabled={locked} onClick={() => navigate(3)}>Edit income</button></div>
                   <p>{normalized.values.minimumRevenue ? `${money(normalized.values.minimumRevenue)} per month` : 'No minimum specified'}</p>
                   {normalized.values.minimumRevenueConsequences && <p className="whitespace-pre-line">{normalized.values.minimumRevenueConsequences}</p>}
                 </section>
-                {(normalized.values.ownerName || normalized.values.ownerIntroduction || ownerPhoto) && <section className="review-block"><div><h3>Owner</h3><button type="button" disabled={locked} onClick={() => navigate(0)}>Edit owner</button></div>
+                {(normalized.values.ownerName || normalized.values.ownerIntroduction || ownerPhoto) && <section className="review-block"><div><h3>Owner</h3><button type="button" disabled={locked} onClick={() => navigate(1)}>Edit owner</button></div>
                   <OperatorProfile role="Owner" name={normalized.values.ownerName} introduction={normalized.values.ownerIntroduction} photoUrl={ownerPhoto} showHeading={false} />
                 </section>}
-                {(normalized.values.operatorName || normalized.values.operatorIntroduction || operatorPhoto) && <section className="review-block"><div><h3>Operator</h3><button type="button" disabled={locked} onClick={() => navigate(0)}>Edit operator</button></div>
+                {(normalized.values.operatorName || normalized.values.operatorIntroduction || operatorPhoto) && <section className="review-block"><div><h3>Operator</h3><button type="button" disabled={locked} onClick={() => navigate(1)}>Edit operator</button></div>
                   <OperatorProfile name={normalized.values.operatorName} introduction={normalized.values.operatorIntroduction} photoUrl={operatorPhoto} showHeading={false} />
                 </section>}
-                <section className="review-block"><div><h3>The raise</h3><button type="button" disabled={locked} onClick={() => navigate(1)}>Edit raise</button></div>
+                <section className="review-block"><div><h3>The raise</h3><button type="button" disabled={locked} onClick={() => navigate(2)}>Edit raise</button></div>
                   <dl><div><dt>Goal</dt><dd>{summary ? money(summary.raiseGoal) : '—'}</dd></div>
                     <div><dt>FUND ownership after purchase</dt><dd>{summary ? `${number(summary.investorFundPercent)}% contributors / ${number(summary.values.operatorFundPercent)}% Owner` : '—'}</dd></div></dl>
                 </section>
@@ -519,14 +518,14 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
           </section>
           {errors.form && <p id="create-form-error" className="create-error" role="alert">{errors.form}</p>}
           <div className="create-actions">{step > 0 && <button type="button" id="create-back" disabled={locked} className="quiet-button" onClick={() => navigate(step - 1)}>← Back</button>}
-            {step < 3 && <button type="submit" id="create-next" className="create-primary" disabled={photoBusy.photo || photoBusy.ownerPhoto || photoBusy.operatorPhoto}>Continue <span aria-hidden="true">→</span></button>}
+            {step < LAST_STEP && <button type="submit" id="create-next" className="create-primary" disabled={photoBusy.photo || photoBusy.ownerPhoto || photoBusy.operatorPhoto}>Continue <span aria-hidden="true">→</span></button>}
           </div>
         </form>
         <div className="draft-status"><span id="draft-status" role="status">{storageNotice}</span><button type="button" id="start-over" disabled={locked} className="quiet-button" onClick={reset}>Start over</button></div>
         {summary && (renderIntegration ? renderIntegration(summary.values) : <SiteIntegration configuration={deploymentDraft(summary.values)} />)}
       </section>
       <aside className="create-aside" aria-label="Your project preview"><div className="draft-preview">
-        <AssetArt type={String(raw.assetType)} photo={photo} /><h2 id="draft-name">{String(raw.name || '').trim() || 'Untitled'}</h2>
+        <AssetArt photo={photo} /><h2 id="draft-name">{String(raw.name || '').trim() || 'Untitled'}</h2>
         {raw.location && <p id="draft-location">{String(raw.location)}</p>}
         <dl><div><dt>Fundraising goal</dt><dd id="draft-goal">{summary ? money(summary.raiseGoal) : '—'}</dd></div><div><dt>Monthly revenue estimate</dt><dd id="draft-revenue">{summary ? money(summary.values.monthlyRent) : '—'}</dd></div></dl>
         {summary && <div id="draft-ownership" className="draft-ownership"><div className="ownership-mini" aria-hidden="true"><span style={{ width: `${summary.investorFundPercent}%` }} /></div><p>{number(summary.investorFundPercent)}% contributor FUND <span>|</span> {number(summary.values.operatorFundPercent)}% Owner FUND</p></div>}

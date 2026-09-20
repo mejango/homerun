@@ -363,12 +363,10 @@ function ProjectPhoto({
   name,
   photo,
   demo,
-  assetType = "real-estate",
 }: {
   name: string;
   photo?: string;
   demo?: boolean;
-  assetType?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState(0);
@@ -384,7 +382,7 @@ function ProjectPhoto({
             alt={`${name} cover photo`}
           />
         ) : (
-          <AssetIllustration type={assetType} />
+          <AssetIllustration type="real-estate" />
         )}
       </div>
     );
@@ -1700,7 +1698,6 @@ function DemoOverview({
         name={name}
         photo={details.photo}
         demo={!project && !details.photo}
-        assetType={project?.values.assetType}
       />
       <section className="demo-section demo-overview-progress">
         <div>

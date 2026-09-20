@@ -2,11 +2,11 @@
 import { SUPPORTED_CHAINS, jbProjectsAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import { decodeEventLog, getAbiItem, isAddress, isAddressEqual, toEventSelector, zeroAddress, zeroHash, type AbiEvent, type Address, type Hex, type PublicClient } from 'viem'
-import { homerunIncomeDeployerAbi, registeredIncomeDeployer } from './income-contracts'
+import { homerunDeployerAbi, registeredHomerunDeployer } from './income-contracts'
 import { readInitialIncomeAllocation } from './income-allocation-state'
 
 const createEvent = getAbiItem({ abi: jbProjectsAbi, name: 'Create' })
-const incomeEvent = getAbiItem({ abi: homerunIncomeDeployerAbi, name: 'IncomeDeployed' })
+const incomeEvent = getAbiItem({ abi: homerunDeployerAbi, name: 'IncomeDeployed' })
 const UINT256_LIMIT = 1n << 256n
 
 type Header = { number: bigint; hash: Hex }
@@ -63,7 +63,7 @@ export async function readIncomeFundBinding(client: PublicClient, input: {
   if (!Number.isSafeInteger(input.chainId) || !Object.hasOwn(SUPPORTED_CHAINS, input.chainId)) throw new Error('A supported INCOME chain is required.')
   const incomeProjectId = uint(input.incomeProjectId, 'INCOME project ID', true)
   const chainId = input.chainId as JBChainId
-  const deployer = registeredIncomeDeployer(chainId)
+  const deployer = registeredHomerunDeployer(chainId)
   if (!deployer) return null
   const projects = v6Address('JBProjects', chainId)
   const [actualChainId, observedBlock] = await Promise.all([client.getChainId(), client.getBlock({ blockTag: 'latest' })])
@@ -114,7 +114,7 @@ export async function readIncomeFundBinding(client: PublicClient, input: {
   if (recordedLaunches.length !== 1 || !sameLog(launch, recordedLaunches[0])) throw new Error('The creation receipt does not corroborate the exact Homerun INCOME launch.')
   const fundProjectId = uint(launch.args.fundProjectId, 'FUND project ID', true)
   const vault = launch.args.initialAllocationVault
-  if (fundProjectId === incomeProjectId || !validAddress(vault) || !validAddress(launch.args.operator) || !validAddress(launch.args.fundToken) || !validAddress(launch.args.rewardToken) || typeof launch.args.merkleRoot !== 'string' || !/^0x[\da-fA-F]{64}$/.test(launch.args.merkleRoot)) throw new Error('The Homerun INCOME launch contains invalid project or vault identities.')
+  if (fundProjectId === incomeProjectId || !validAddress(vault) || !validAddress(launch.args.owner) || !validAddress(launch.args.fundToken) || typeof launch.args.merkleRoot !== 'string' || !/^0x[\da-fA-F]{64}$/.test(launch.args.merkleRoot)) throw new Error('The Homerun INCOME launch contains invalid project or vault identities.')
   const allocation = await readInitialIncomeAllocation(client, { chainId, incomeProjectId, fundProjectId })
   if (!allocation || allocation.chainId !== chainId || allocation.fundProjectId !== fundProjectId || allocation.incomeProjectId !== incomeProjectId || allocation.blockNumber < created.number || !isAddressEqual(allocation.deployer, deployer) || !isAddressEqual(allocation.vault, vault) || allocation.merkleRoot.toLowerCase() !== launch.args.merkleRoot.toLowerCase()) throw new Error('The discovered FUND does not match the verified INCOME project and initial-allocation vault.')
   await Promise.all([assertCanonical(client, created), assertCanonical(client, observed)])

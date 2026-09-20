@@ -4,19 +4,19 @@
  * This module has no wallet, browser storage, RPC, or lifecycle-state authority.
  * Callers must refresh chain reads, simulate, review and confirm each request.
  */
-import { MappableAsset, NATIVE_TOKEN, USDC_ADDRESSES, jbMultiTerminalAbi, type JBChainId } from '@bananapus/nana-sdk-core'
+import { MappableAsset, NATIVE_TOKEN, USDC_ADDRESSES, jbMultiTerminalAbi, parseSuckerDeployerConfig, type JBChainId } from '@bananapus/nana-sdk-core'
 import {
-  BASE_CURRENCY_USD, buildAccountingContext, buildTerminalConfigurations,
-  buildRulesetConfiguration, buildRulesetMetadata, buildLaunchProjectTx,
-  buildOmnichainLaunchProjectTx, buildQueueRulesetsTx, buildOmnichainQueueRulesetsTx,
-  buildMintTokensTx, buildClaimTokensTx, buildPayTx, buildCashOutTx,
-  buildDeployErc20Tx, buildTransferCreditsTx, v6Address,
+  BASE_CURRENCY_USD, buildRulesetConfiguration, buildRulesetMetadata,
+  buildQueueRulesetsTx, buildOmnichainQueueRulesetsTx,
+  buildMintTokensTx, buildPayTx, buildCashOutTx,
+  v6Address,
   type JBRulesetConfig, type JBRulesetMetadata,
 } from '@bananapus/nana-sdk-core/v6'
-import { erc20Abi, getAddress, isAddress, zeroAddress, zeroHash, type Abi, type Address, type Hex } from 'viem'
+import { erc20Abi, getAddress, isAddress, isAddressEqual, zeroAddress, zeroHash, type Abi, type Address, type Hex } from 'viem'
 
 import { validateMultisigs, type CreateMultisig } from './create-multisig'
 import { isVerifiedProject721Hook, type VerifiedProject721Hook } from './fund-hooks'
+import { homerunAllowlistHookAbi, homerunDeployerAbi, registeredAllowlistHook, registeredHomerunDeployer } from './income-contracts'
 
 export const FUND_WEIGHT = 10_000n * 10n ** 18n
 export const FUND_INITIAL_CASH_OUT_TAX = 1_000
@@ -92,6 +92,9 @@ export type FundLaunchInput = {
   sender: Address
   chainIds: readonly number[]
   projectUri: string
+  /** The FUND ERC-20 deployed alongside the project. */
+  tokenName: string
+  ticker: string
   salt: Hex
   /** One shared absolute timestamp on every chain; zero is permitted only for single-chain launches. */
   mustStartAtOrAfter: number
@@ -99,6 +102,7 @@ export type FundLaunchInput = {
   creationFees: Readonly<Record<number, bigint>>
 }
 
+/** The rules HomerunDeployer.launchFundFor hardcodes, in the SDK shape the verifier and rule changes compare against. */
 export function initialFundRuleset(mustStartAtOrAfter = 0): JBRulesetConfig {
   timestamp(mustStartAtOrAfter)
   return buildRulesetConfiguration({
@@ -116,14 +120,22 @@ export function initialFundRuleset(mustStartAtOrAfter = 0): JBRulesetConfig {
   })
 }
 
+/** One CCIP sucker deployer per linked peer, ascending by remote chain, exactly as the contract validates them. */
+export function fundPeerSuckerDeployers(chainId: JBChainId, chainIds: readonly JBChainId[], salt: Hex): Address[] {
+  const peers = [...chainIds].filter(id => id !== chainId).sort((a, b) => a - b)
+  return parseSuckerDeployerConfig(chainId, peers, [MappableAsset.USDC], { salt, version: 6, bridge: 'ccip' })
+    .deployerConfigurations.map(entry => getAddress(entry.deployer))
+}
+
 export function buildFundLaunch(input: FundLaunchInput): {
   requests: FundTransaction[]
   review: {
     owner: Address; sender: Address; chainIds: readonly number[]; projectUri: string;
-    linked: boolean; denomination: 'USD'; acceptedTreasuryToken: 'USDC';
+    tokenName: string; ticker: string;
+    linked: boolean; denomination: 'USD'; acceptedTreasuryToken: 'USDC'; acceptsAnyTokenViaRouter: true;
     tokensPerDollar: string; cashOutTaxPercent: string; ownerMinting: false;
     ownerCanQueueRulesets: true; payoutLimits: 'none'; surplusAllowances: 'none';
-    incomeDeployed: false; tokensInitially: 'Juicebox credits';
+    incomeDeployed: false; tokensInitially: 'ERC-20';
     salt: Hex; mustStartAtOrAfter: number; creationFees: Readonly<Record<number, bigint>>;
   }
 } {
@@ -136,34 +148,31 @@ export function buildFundLaunch(input: FundLaunchInput): {
   const sender = address(input.sender, 'sending wallet')
   if (!/^ipfs:\/\/[^\s/?#]+(?:\/[^\s]*)?$/.test(input.projectUri)) throw new Error('Publish the project metadata to IPFS before launching.')
   if (!/^0x[\da-fA-F]{64}$/.test(input.salt) || input.salt === zeroHash) throw new Error('A shared nonzero bytes32 launch salt is required.')
+  const tokenName = input.tokenName.trim(), ticker = input.ticker.trim()
+  if (!tokenName || tokenName.length > 32 || !/^[A-Z0-9-]{1,12}$/.test(ticker)) throw new Error('A FUND token name and an uppercase ticker are required.')
   timestamp(input.mustStartAtOrAfter)
   const linked = chains.length > 1
   if (linked && input.mustStartAtOrAfter === 0) throw new Error('Linked launches require one shared absolute start timestamp.')
-  const rulesets = [initialFundRuleset(input.mustStartAtOrAfter)]
   const requests = chains.map(chainId => {
     const fee = input.creationFees[chainId]
     nonnegative(fee, `Current project creation fee on chain ${chainId}`)
-    const usdc = address(USDC_ADDRESSES[chainId], 'USDC')
-    const terminalConfigurations = buildTerminalConfigurations({
-      chainId,
-      accountingContexts: [buildAccountingContext(usdc, 6)],
-    })
-    const shared = { chainId, owner, projectUri: input.projectUri, rulesetConfigurations: rulesets, terminalConfigurations, creationFee: fee }
-    if (!linked) return buildLaunchProjectTx(shared)
-    const request = buildOmnichainLaunchProjectTx({
-      ...shared, chainIds: chains, assets: [MappableAsset.USDC], bridge: 'ccip', salt: input.salt,
-    })
-    const config = request.args[request.args.length - 1] as { deployerConfigurations: readonly unknown[] }
-    if (!config.deployerConfigurations.length) throw new Error(`No bridge deployments are available on ${chainId}.`)
-    return request
+    address(USDC_ADDRESSES[chainId], 'USDC')
+    const deployer = registeredHomerunDeployer(chainId)
+    if (!deployer) throw new Error(`Homerun is not deployed on chain ${chainId} yet.`)
+    // The contract owns the campaign rules; the caller only says who, what, when and which chains.
+    return {
+      chainId, address: deployer, abi: homerunDeployerAbi, functionName: 'launchFundFor',
+      args: [owner, input.projectUri, tokenName, ticker, input.mustStartAtOrAfter, linked ? input.salt : zeroHash, linked ? fundPeerSuckerDeployers(chainId, chains, input.salt) : []],
+      value: fee,
+    } satisfies FundTransaction
   })
   return {
     requests,
     review: {
-      owner, sender, chainIds: chains, projectUri: input.projectUri, linked,
-      denomination: 'USD', acceptedTreasuryToken: 'USDC', tokensPerDollar: '10,000', cashOutTaxPercent: '10',
+      owner, sender, chainIds: chains, projectUri: input.projectUri, tokenName, ticker, linked,
+      denomination: 'USD', acceptedTreasuryToken: 'USDC', acceptsAnyTokenViaRouter: true, tokensPerDollar: '10,000', cashOutTaxPercent: '10',
       ownerMinting: false, ownerCanQueueRulesets: true, payoutLimits: 'none', surplusAllowances: 'none',
-      incomeDeployed: false, tokensInitially: 'Juicebox credits', salt: input.salt,
+      incomeDeployed: false, tokensInitially: 'ERC-20', salt: input.salt,
       mustStartAtOrAfter: input.mustStartAtOrAfter,
       creationFees: Object.fromEntries(chains.map(id => [id, input.creationFees[id]])),
     },
@@ -215,11 +224,14 @@ function assertSnapshot(snapshot: FundRulesetSnapshot): JBRulesetConfig {
   if (config.duration !== 0 || config.weightCutPercent !== 0 || config.approvalHook.toLowerCase() !== zeroAddress) throw new Error('This project has a timed or approval-controlled ruleset; use the full Juicebox ruleset editor.')
   if (config.metadata.dataHook.toLowerCase() === v6Address('JBOmnichainDeployer', chainId).toLowerCase()) {
     const hooks = snapshot.omnichainHooks
-    if (!hooks || hooks.dataHook.toLowerCase() !== zeroAddress || hooks.useDataHookForPay || hooks.useDataHookForCashOut) throw new Error('Read and verify the omnichain project hooks before changing rules.')
+    const allowlistHook = registeredAllowlistHook(chainId)
+    const hasAllowlist = !!hooks && !!allowlistHook && isAddressEqual(hooks.dataHook, allowlistHook) && hooks.useDataHookForPay && !hooks.useDataHookForCashOut
+    if (!hooks || (!hasAllowlist && (hooks.dataHook.toLowerCase() !== zeroAddress || hooks.useDataHookForPay)) || hooks.useDataHookForCashOut) throw new Error('Read and verify the omnichain project hooks before changing rules.')
     if (hooks.tiered721Hook.toLowerCase() !== zeroAddress && (hooks.tiered721UseDataHookForCashOut !== false || !isVerifiedProject721Hook(snapshot.stock721Hook, hooks.tiered721Hook))) throw new Error('Read and verify the stock NFT hook and its cash-out configuration before changing rules.')
     // JBOmnichainDeployer reinjects itself. Passing its own address as the extra
-    // hook causes JBDeployer_SelfReferentialHook and must never be queued.
-    return { ...config, metadata: { ...config.metadata, dataHook: zeroAddress, useDataHookForPay: false, useDataHookForCashOut: false } }
+    // hook causes JBDeployer_SelfReferentialHook and must never be queued. The
+    // allowlist hook rides along as the extra hook so rule changes keep the gate.
+    return { ...config, metadata: { ...config.metadata, dataHook: hasAllowlist ? hooks.dataHook : zeroAddress, useDataHookForPay: hasAllowlist, useDataHookForCashOut: false } }
   }
   if (config.metadata.useDataHookForPay && !config.metadata.useDataHookForCashOut && isVerifiedProject721Hook(snapshot.stock721Hook, config.metadata.dataHook)) return config
   if (config.metadata.dataHook.toLowerCase() !== zeroAddress || config.metadata.useDataHookForPay || config.metadata.useDataHookForCashOut) throw new Error('This project has a custom data hook; use the full Juicebox ruleset editor.')
@@ -388,24 +400,23 @@ export function buildFundCashOut(input: FundTerminalContext & { holder: Address;
     minTokensReclaimed: input.minTokensReclaimed, beneficiary: address(input.beneficiary, 'beneficiary') })
 }
 
-export function buildFundClaimCredits(input: { chainId: number; projectId: bigint; holder: Address; tokenCount: bigint; beneficiary: Address; tokenAddress: Address }): FundTransaction {
-  address(input.tokenAddress, 'deployed FUND ERC20')
+/** Owner-managed payment allowlist on the shared Homerun hook. */
+export function buildFundAllowlistChange(input: { chainId: number; projectId: bigint; accounts: readonly string[]; allowed: boolean }): FundTransaction {
+  const chainId = chain(input.chainId)
   positive(input.projectId, 'Project ID')
-  positive(input.tokenCount, 'Credits to claim')
-  return buildClaimTokensTx({ chainId: chain(input.chainId), projectId: input.projectId, holder: address(input.holder, 'holder'), tokenCount: input.tokenCount, beneficiary: address(input.beneficiary, 'beneficiary') })
+  const hook = registeredAllowlistHook(chainId)
+  if (!hook) throw new Error('The Homerun allowlist hook is not registered on this chain.')
+  const accounts = input.accounts.map(value => address(value, 'allowlist'))
+  if (!accounts.length || accounts.length > 200 || new Set(accounts.map(value => value.toLowerCase())).size !== accounts.length) throw new Error('Enter between 1 and 200 unique addresses.')
+  return { chainId, address: hook, abi: homerunAllowlistHookAbi, functionName: 'setAllowed', args: [input.projectId, accounts, input.allowed] }
 }
 
-export function buildFundTransferCredits(input: { chainId: number; projectId: bigint; holder: Address; creditCount: bigint; recipient: Address }): FundTransaction {
+export function buildFundAllowlistOpen(input: { chainId: number; projectId: bigint; open: boolean }): FundTransaction {
+  const chainId = chain(input.chainId)
   positive(input.projectId, 'Project ID')
-  positive(input.creditCount, 'Credits to transfer')
-  return buildTransferCreditsTx({ ...input, chainId: chain(input.chainId), holder: address(input.holder, 'holder'), recipient: address(input.recipient, 'recipient') })
-}
-
-export function buildFundDeployErc20(input: { chainId: number; projectId: bigint; projectName: string; salt: Hex }): FundTransaction {
-  positive(input.projectId, 'Project ID')
-  if (!input.projectName.trim()) throw new Error('The FUND token needs a name.')
-  if (!/^0x[\da-fA-F]{64}$/.test(input.salt)) throw new Error('A bytes32 token deployment salt is required.')
-  return buildDeployErc20Tx({ chainId: chain(input.chainId), projectId: input.projectId, name: `${input.projectName.trim()} FUND`, symbol: 'FUND', salt: input.salt })
+  const hook = registeredAllowlistHook(chainId)
+  if (!hook) throw new Error('The Homerun allowlist hook is not registered on this chain.')
+  return { chainId, address: hook, abi: homerunAllowlistHookAbi, functionName: 'setOpen', args: [input.projectId, input.open] }
 }
 
 /** A new, explicitly reviewed allowance on one chain, never a modeled asset budget. */

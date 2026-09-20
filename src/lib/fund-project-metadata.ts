@@ -25,7 +25,7 @@ export function buildFundProjectMetadata(
   } satisfies JBProjectMetadata
   return {
     ...metadata,
-    tokens: { name: `${metadata.name} FUND`, symbol: 'FUND' },
+    tokens: { name: values.fundTokenName.trim(), symbol: values.fundTicker.trim().toUpperCase() },
     homerun: {
       version: 1 as const,
       kind: 'fund' as const,

@@ -6,7 +6,8 @@ export const CREATED_PROJECTS_KEY = 'homerun:created-projects:v1';
 
 export const CREATE_DEFAULTS = Object.freeze({
   name: '',
-  assetType: 'real-estate',
+  fundTokenName: '',
+  fundTicker: '',
   location: '',
   description: '',
   revenueDescription: '',
@@ -43,7 +44,6 @@ export const CREATE_DEFAULTS = Object.freeze({
   photo: '',
 });
 
-const ASSET_TYPES = new Set(['real-estate', 'business', 'equipment', 'energy', 'other']);
 const NETWORK_IDS = NETWORK_FAMILIES.map(family => family.id);
 const MONEY_FIELDS = ['purchaseBudget', 'opsReserve', 'monthlyRent', 'monthlyCosts', 'minimumRevenue'];
 const LABELS = {
@@ -78,7 +78,7 @@ export function normalizeCreateDraft(raw = {}) {
   if (!isRecord(raw)) errors.form = 'Enter the details for your asset.';
 
   for (const [key, min, max, label] of [
-    ['name', 2, 60, 'Project name'], ['location', 0, 100, 'Location'], ['description', 0, 600, 'Description'], ['revenueDescription', 0, 1000, 'Revenue plan'],
+    ['name', 2, 60, 'Project name'], ['fundTokenName', 0, 32, 'FUND token name'], ['fundTicker', 0, 12, 'FUND ticker'], ['location', 0, 100, 'Location'], ['description', 0, 600, 'Description'], ['revenueDescription', 0, 1000, 'Revenue plan'],
     ['minimumRevenueConsequences', 0, 2000, 'Minimum revenue consequences'],
     ['ownerName', 0, 80, 'Owner name'], ['ownerIntroduction', 0, 1200, 'Owner introduction'],
     ['operatorName', 0, 80, 'Operator name'], ['operatorIntroduction', 0, 1200, 'Operator introduction'],
@@ -89,14 +89,11 @@ export function normalizeCreateDraft(raw = {}) {
     else if (values[key].length < min) errors[key] = `${label} must contain at least ${min} characters.`;
     else if (values[key].length > max) errors[key] = `${label} must be ${max} characters or fewer.`;
   }
+  // The FUND ERC-20 is deployed at launch, so both fields must resolve to something. Blank means the project name.
+  if (!values.fundTokenName) values.fundTokenName = values.name ? `${values.name} FUND`.slice(0, 32) : '';
+  values.fundTicker = values.fundTicker.toUpperCase() || 'FUND';
+  if (!errors.fundTicker && !/^[A-Z0-9-]+$/.test(values.fundTicker)) errors.fundTicker = 'FUND ticker may only use letters, numbers and dashes.';
 
-  for (const [key, choices, label] of [
-    ['assetType', ASSET_TYPES, 'asset type'],
-  ]) {
-    const input = own(source, key) ? source[key] : CREATE_DEFAULTS[key];
-    values[key] = typeof input === 'string' ? input.trim() : '';
-    if (!choices.has(values[key])) errors[key] = `Choose a supported ${label}.`;
-  }
 
   // Older local previews used a single production network. Preserve that selection on read.
   const networks = own(source, 'networks') ? source.networks
@@ -231,7 +228,7 @@ export function deploymentDraft(raw) {
       description: 'Saved in this browser only. No wallet signature, transaction, or onchain deployment is prepared.',
     },
     asset: {
-      name: values.name, type: values.assetType, location: values.location,
+      name: values.name, location: values.location,
       description: values.description, photo: values.photo,
     },
     networkEnvironment: values.networkEnvironment,

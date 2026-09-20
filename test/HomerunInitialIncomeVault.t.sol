@@ -114,7 +114,7 @@ contract HomerunInitialIncomeVaultTest is Test {
     function testFrontRunningCannotRedirectOrDuplicateAClaim() public {
         vm.prank(RELAYER);
         _claimAlice();
-        vm.expectRevert(HomerunInitialIncomeVault.AlreadyClaimed.selector);
+        vm.expectPartialRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_AlreadyClaimed.selector);
         vm.prank(ALICE);
         _claimAlice();
         assertEq(_token.balanceOf(ALICE), 300_000 ether);
@@ -122,36 +122,36 @@ contract HomerunInitialIncomeVaultTest is Test {
     }
 
     function testChangingBeneficiaryInvalidatesProof() public {
-        vm.expectRevert(HomerunInitialIncomeVault.InvalidProof.selector);
+        vm.expectRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_InvalidProof.selector);
         _vault.claim(0, RELAYER, 600 ether, 300_000 ether, _proof(_bobLeaf));
         assertFalse(_vault.isClaimed(0));
     }
 
     function testChangingIndexInvalidatesProof() public {
-        vm.expectRevert(HomerunInitialIncomeVault.InvalidProof.selector);
+        vm.expectRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_InvalidProof.selector);
         _vault.claim(1, ALICE, 600 ether, 300_000 ether, _proof(_bobLeaf));
     }
 
     function testChangingBalanceOrAmountInvalidatesProof() public {
-        vm.expectRevert(HomerunInitialIncomeVault.InvalidProof.selector);
+        vm.expectRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_InvalidProof.selector);
         _vault.claim(0, ALICE, 599 ether, 300_000 ether, _proof(_bobLeaf));
-        vm.expectRevert(HomerunInitialIncomeVault.InvalidProof.selector);
+        vm.expectRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_InvalidProof.selector);
         _vault.claim(0, ALICE, 600 ether, 300_001 ether, _proof(_bobLeaf));
     }
 
     function testWrongSiblingAndSingleHashedLeafAreRejected() public {
-        vm.expectRevert(HomerunInitialIncomeVault.InvalidProof.selector);
+        vm.expectRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_InvalidProof.selector);
         _vault.claim(0, ALICE, 600 ether, 300_000 ether, _proof(bytes32(uint256(1))));
         bytes32 singleHash = keccak256(abi.encode(_domain(SALT), 0, ALICE, 600 ether, 300_000 ether));
         HomerunInitialIncomeVault vault = _deploy(singleHash, 1, SALT);
-        vm.expectRevert(HomerunInitialIncomeVault.InvalidProof.selector);
+        vm.expectRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_InvalidProof.selector);
         vault.claim(0, ALICE, 600 ether, 300_000 ether, new bytes32[](0));
     }
 
     function testLaunchSaltSeparatesOtherwiseIdenticalVaultProofs() public {
         HomerunInitialIncomeVault other = _deploy(_pair(_aliceLeaf, _bobLeaf), 2, keccak256("different launch"));
         assertNotEq(other.DISTRIBUTION_ID(), _vault.DISTRIBUTION_ID());
-        vm.expectRevert(HomerunInitialIncomeVault.InvalidProof.selector);
+        vm.expectRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_InvalidProof.selector);
         other.claim(0, ALICE, 600 ether, 300_000 ether, _proof(_bobLeaf));
     }
 
@@ -160,7 +160,7 @@ contract HomerunInitialIncomeVaultTest is Test {
         HomerunInitialIncomeVault other = _deploy(_pair(_aliceLeaf, _bobLeaf), 2, SALT);
         assertEq(other.FACTORY(), RELAYER);
         assertNotEq(other.DISTRIBUTION_ID(), _vault.DISTRIBUTION_ID());
-        vm.expectRevert(HomerunInitialIncomeVault.InvalidProof.selector);
+        vm.expectRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_InvalidProof.selector);
         other.claim(0, ALICE, 600 ether, 300_000 ether, _proof(_bobLeaf));
     }
 
@@ -168,13 +168,13 @@ contract HomerunInitialIncomeVaultTest is Test {
         vm.chainId(block.chainid + 1);
         HomerunInitialIncomeVault other = _deploy(_pair(_aliceLeaf, _bobLeaf), 2, SALT);
         assertNotEq(other.DISTRIBUTION_ID(), _vault.DISTRIBUTION_ID());
-        vm.expectRevert(HomerunInitialIncomeVault.InvalidProof.selector);
+        vm.expectRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_InvalidProof.selector);
         other.claim(0, ALICE, 600 ether, 300_000 ether, _proof(_bobLeaf));
     }
 
     function testIndexMustBeInsideCommittedLeafCount() public {
         HomerunInitialIncomeVault vault = _deploy(_bobLeaf, 1, SALT);
-        vm.expectRevert(HomerunInitialIncomeVault.InvalidClaim.selector);
+        vm.expectRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_InvalidClaim.selector);
         vault.claim(1, BOB, 400 ether, 200_000 ether, new bytes32[](0));
     }
 
@@ -182,7 +182,7 @@ contract HomerunInitialIncomeVaultTest is Test {
         bytes32 zeroLeaf = _leaf(_domain(SALT), 0, address(0), 600 ether, 300_000 ether);
         HomerunInitialIncomeVault vault = _deploy(_pair(zeroLeaf, _bobLeaf), 2, SALT);
         _token.mint(address(vault), ALLOCATION);
-        vm.expectRevert(HomerunInitialIncomeVault.InvalidClaim.selector);
+        vm.expectRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_InvalidClaim.selector);
         vault.claim(0, address(0), 600 ether, 300_000 ether, _proof(_bobLeaf));
         vault.claim(1, BOB, 400 ether, 200_000 ether, _proof(zeroLeaf));
         assertFalse(vault.isClaimed(0));
@@ -194,7 +194,7 @@ contract HomerunInitialIncomeVaultTest is Test {
         bytes32 zeroAmountLeaf = _leaf(_domain(SALT), 0, ALICE, 1, 0);
         HomerunInitialIncomeVault vault = _deploy(_pair(zeroAmountLeaf, _bobLeaf), 2, SALT);
         _token.mint(address(vault), ALLOCATION);
-        vm.expectRevert(HomerunInitialIncomeVault.InvalidClaim.selector);
+        vm.expectRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_InvalidClaim.selector);
         vault.claim(0, ALICE, 1, 0, _proof(_bobLeaf));
         vault.claim(1, BOB, 400 ether, 200_000 ether, _proof(zeroAmountLeaf));
         assertFalse(vault.isClaimed(0));
@@ -202,14 +202,14 @@ contract HomerunInitialIncomeVaultTest is Test {
     }
 
     function testSelfRecipientIsRejected() public {
-        vm.expectRevert(HomerunInitialIncomeVault.InvalidClaim.selector);
+        vm.expectRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_InvalidClaim.selector);
         _vault.claim(0, address(_vault), 600 ether, 300_000 ether, _proof(_bobLeaf));
     }
 
     function testImpossibleFundBalancesAreRejected() public {
-        vm.expectRevert(HomerunInitialIncomeVault.InvalidProof.selector);
+        vm.expectRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_InvalidProof.selector);
         _vault.claim(0, ALICE, 0, 300_000 ether, _proof(_bobLeaf));
-        vm.expectRevert(HomerunInitialIncomeVault.InvalidClaim.selector);
+        vm.expectRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_InvalidClaim.selector);
         _vault.claim(0, ALICE, FUND_SUPPLY + 1, 300_000 ether, _proof(_bobLeaf));
     }
 
@@ -246,7 +246,7 @@ contract HomerunInitialIncomeVaultTest is Test {
         assertEq(vault.totalClaimed(), ALLOCATION);
         assertTrue(vault.isClaimed(0));
         assertTrue(vault.isClaimed(1));
-        vm.expectRevert(HomerunInitialIncomeVault.AlreadyClaimed.selector);
+        vm.expectPartialRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_AlreadyClaimed.selector);
         vault.claim(0, ALICE, 0, 300_000 ether, _proof(bobLeaf));
     }
 
@@ -256,7 +256,7 @@ contract HomerunInitialIncomeVaultTest is Test {
         // Even accidental extra funding never expands the distribution cap.
         _token.mint(address(vault), 600_000 ether);
         vault.claim(0, ALICE, 600 ether, 300_000 ether, _proof(overallocatedBob));
-        vm.expectRevert(HomerunInitialIncomeVault.AllocationExceeded.selector);
+        vm.expectPartialRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_AllocationExceeded.selector);
         vault.claim(1, BOB, 400 ether, 300_000 ether, _proof(_aliceLeaf));
         assertEq(vault.totalClaimed(), 300_000 ether);
         assertFalse(vault.isClaimed(1));
@@ -266,7 +266,7 @@ contract HomerunInitialIncomeVaultTest is Test {
     function testMaximumMaliciousAmountCannotOverflowCapAccounting() public {
         bytes32 leaf = _leaf(_domain(SALT), 0, ALICE, 1, type(uint256).max);
         HomerunInitialIncomeVault vault = _deploy(leaf, 1, SALT);
-        vm.expectRevert(HomerunInitialIncomeVault.AllocationExceeded.selector);
+        vm.expectPartialRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_AllocationExceeded.selector);
         vault.claim(0, ALICE, 1, type(uint256).max, new bytes32[](0));
         assertEq(vault.totalClaimed(), 0);
         assertFalse(vault.isClaimed(0));
@@ -279,7 +279,7 @@ contract HomerunInitialIncomeVaultTest is Test {
         assertEq(vault.INITIAL_INCOME_SUPPLY(), ALLOCATION);
         assertEq(vault.LOCAL_INITIAL_INCOME_SUPPLY(), 300_000 ether);
         vault.claim(0, ALICE, 600 ether, 300_000 ether, _proof(_bobLeaf));
-        vm.expectRevert(HomerunInitialIncomeVault.AllocationExceeded.selector);
+        vm.expectPartialRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_AllocationExceeded.selector);
         vault.claim(1, BOB, 400 ether, 200_000 ether, _proof(_aliceLeaf));
         assertEq(vault.totalClaimed(), 300_000 ether);
         assertFalse(vault.isClaimed(1));
@@ -317,7 +317,7 @@ contract HomerunInitialIncomeVaultTest is Test {
         assertEq(vault.SNAPSHOT_BLOCK_NUMBER(), SNAPSHOT_BLOCK);
         assertEq(vault.SNAPSHOT_BLOCK_HASH(), SNAPSHOT_HASH);
         assertEq(vault.DISTRIBUTION_ID(), _domain(SALT));
-        vm.expectRevert(HomerunInitialIncomeVault.InvalidClaim.selector);
+        vm.expectRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_InvalidClaim.selector);
         vault.claim(0, ALICE, 1, 1, new bytes32[](0));
         assertEq(vault.totalClaimed(), 0);
     }
@@ -328,7 +328,7 @@ contract HomerunInitialIncomeVaultTest is Test {
         assertEq(vault.MERKLE_ROOT(), dustLeaf);
         assertEq(vault.LEAF_COUNT(), 1);
         assertEq(vault.LOCAL_INITIAL_INCOME_SUPPLY(), 0);
-        vm.expectRevert(HomerunInitialIncomeVault.InvalidClaim.selector);
+        vm.expectRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_InvalidClaim.selector);
         vault.claim(0, ALICE, 1, 0, new bytes32[](0));
         assertFalse(vault.isClaimed(0));
     }
@@ -336,7 +336,7 @@ contract HomerunInitialIncomeVaultTest is Test {
     function testZeroLocalCapRejectsPositiveClaimEvenAfterExtraFunding() public {
         HomerunInitialIncomeVault vault = _deployLocal(_aliceLeaf, 1, SALT, SOURCE_SET_HASH, 0);
         _token.mint(address(vault), ALLOCATION);
-        vm.expectRevert(HomerunInitialIncomeVault.AllocationExceeded.selector);
+        vm.expectPartialRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_AllocationExceeded.selector);
         vault.claim(0, ALICE, 600 ether, 300_000 ether, new bytes32[](0));
         assertFalse(vault.isClaimed(0));
         assertEq(vault.totalClaimed(), 0);
@@ -346,7 +346,7 @@ contract HomerunInitialIncomeVaultTest is Test {
         HomerunInitialIncomeVault other =
             _deployLocal(_pair(_aliceLeaf, _bobLeaf), 2, SALT, keccak256("another source set"), ALLOCATION);
         assertNotEq(other.DISTRIBUTION_ID(), _vault.DISTRIBUTION_ID());
-        vm.expectRevert(HomerunInitialIncomeVault.InvalidProof.selector);
+        vm.expectRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_InvalidProof.selector);
         other.claim(0, ALICE, 600 ether, 300_000 ether, _proof(_bobLeaf));
     }
 
@@ -447,7 +447,7 @@ contract HomerunInitialIncomeVaultTest is Test {
     }
 
     function testProofLongerThanAddressSpaceBoundIsRejected() public {
-        vm.expectRevert(HomerunInitialIncomeVault.InvalidClaim.selector);
+        vm.expectRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_InvalidClaim.selector);
         _vault.claim(0, ALICE, 600 ether, 300_000 ether, new bytes32[](161));
     }
 
@@ -469,38 +469,38 @@ contract HomerunInitialIncomeVaultTest is Test {
     }
 
     function testRejectsEmptyAndOversizedLeafCounts() public {
-        vm.expectRevert(HomerunInitialIncomeVault.InvalidConfiguration.selector);
+        vm.expectRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_InvalidConfiguration.selector);
         _deploy(_aliceLeaf, 0, SALT);
-        vm.expectRevert(HomerunInitialIncomeVault.InvalidConfiguration.selector);
+        vm.expectRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_InvalidConfiguration.selector);
         _deploy(_aliceLeaf, (uint256(1) << 160) + 1, SALT);
     }
 
     function testRejectsEmptyRootAndLaunchSalt() public {
-        vm.expectRevert(HomerunInitialIncomeVault.InvalidConfiguration.selector);
+        vm.expectRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_InvalidConfiguration.selector);
         _deploy(bytes32(0), 1, SALT);
-        vm.expectRevert(HomerunInitialIncomeVault.InvalidConfiguration.selector);
+        vm.expectRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_InvalidConfiguration.selector);
         _deploy(_aliceLeaf, 1, bytes32(0));
     }
 
     function testRejectsPositiveLocalAllocationWithoutAnyLeaves() public {
-        vm.expectRevert(HomerunInitialIncomeVault.InvalidConfiguration.selector);
+        vm.expectRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_InvalidConfiguration.selector);
         _deployLocal(bytes32(0), 0, SALT, SOURCE_SET_HASH, 1);
     }
 
     function testRejectsLocalAllocationAboveGlobalSupply() public {
-        vm.expectRevert(HomerunInitialIncomeVault.InvalidConfiguration.selector);
+        vm.expectRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_InvalidConfiguration.selector);
         _deployLocal(_aliceLeaf, 1, SALT, SOURCE_SET_HASH, ALLOCATION + 1);
-        vm.expectRevert(HomerunInitialIncomeVault.InvalidConfiguration.selector);
+        vm.expectRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_InvalidConfiguration.selector);
         _deployLocal(_aliceLeaf, 1, SALT, SOURCE_SET_HASH, type(uint256).max);
     }
 
     function testRejectsEmptySourceSetCommitment() public {
-        vm.expectRevert(HomerunInitialIncomeVault.InvalidConfiguration.selector);
+        vm.expectRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_InvalidConfiguration.selector);
         _deployLocal(_aliceLeaf, 1, SALT, bytes32(0), ALLOCATION);
     }
 
     function testRejectsTokenWithoutCode() public {
-        vm.expectRevert(HomerunInitialIncomeVault.InvalidConfiguration.selector);
+        vm.expectRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_InvalidConfiguration.selector);
         new HomerunInitialIncomeVault(
             ALICE,
             2,

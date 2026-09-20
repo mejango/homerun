@@ -2,20 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { USDC_ADDRESSES } from '@bananapus/nana-sdk-core'
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import { zeroAddress, zeroHash, type Address, type Hex, type PublicClient } from 'viem'
-import { INITIAL_INCOME_SUPPLY, registeredIncomeDeployer, registeredIncomeDistributor } from '../src/lib/income-contracts'
+import { INITIAL_INCOME_SUPPLY, registeredAllowlistHook, registeredHomerunDeployer } from '../src/lib/income-contracts'
 import { buildFundGlobalDistributionId } from '../src/lib/fund-global-manifest'
 import { buildFundDistributionId } from '../src/lib/fund-snapshot-merkle'
 import { readIncomeProjectState, type IncomeProjectState } from '../src/lib/income-state'
 import { readInitialIncomeAllocation } from '../src/lib/income-allocation-state'
 
-const registry = vi.hoisted(() => ({ sticky: '0x0000000000000000000000000000000000000100' as Address }))
-vi.mock('@bananapus/nana-sdk-core', async importOriginal => {
-  const actual = await importOriginal<typeof import('@bananapus/nana-sdk-core')>()
-  return { ...actual, jbContractAddress: { ...actual.jbContractAddress, '6': { ...actual.jbContractAddress['6'], JBStickyDeployer: { 1: registry.sticky } } } }
-})
 vi.mock('../src/lib/income-contracts', async importOriginal => ({
   ...await importOriginal<typeof import('../src/lib/income-contracts')>(),
-  registeredIncomeDeployer: vi.fn(), registeredIncomeDistributor: vi.fn(),
+  registeredHomerunDeployer: vi.fn(), registeredAllowlistHook: vi.fn(),
 }))
 vi.mock('../src/lib/income-state', async importOriginal => ({
   ...await importOriginal<typeof import('../src/lib/income-state')>(), readIncomeProjectState: vi.fn(),
@@ -23,9 +18,9 @@ vi.mock('../src/lib/income-state', async importOriginal => ({
 
 const HOLDER = '0x1111111111111111111111111111111111111111' as const
 const HELPER = '0x2222222222222222222222222222222222222222' as const
+const ALLOWLIST = '0x4545454545454545454545454545454545454545' as const
 const VAULT = '0x3333333333333333333333333333333333333333' as const
 const TOKEN = '0x4444444444444444444444444444444444444444' as const
-const DISTRIBUTOR = '0x5555555555555555555555555555555555555555' as const
 const CHAIN = 1
 const INCOME_ID = 7n
 const FUND_ID = 9n
@@ -51,7 +46,7 @@ function fixture(options: { values?: Record<string, unknown>; fail?: string; mis
   const helperValues = {
     CONTROLLER: v6Address('JBController', CHAIN), DIRECTORY: v6Address('JBDirectory', CHAIN), PROJECTS: v6Address('JBProjects', CHAIN),
     TOKENS: v6Address('JBTokens', CHAIN), REV_DEPLOYER: v6Address('REVDeployer', CHAIN), REV_OWNER: v6Address('REVOwner', CHAIN),
-    SUCKER_REGISTRY: v6Address('JBSuckerRegistry', CHAIN), TOKEN_DISTRIBUTOR: DISTRIBUTOR, STICKY_DEPLOYER: registry.sticky,
+    SUCKER_REGISTRY: v6Address('JBSuckerRegistry', CHAIN), TERMINAL: v6Address('JBMultiTerminal', CHAIN), ROUTER_TERMINAL_REGISTRY: v6Address('JBRouterTerminalRegistry', CHAIN), ALLOWLIST_HOOK: ALLOWLIST,
     OMNICHAIN_DEPLOYER: v6Address('JBOmnichainDeployer', CHAIN), USDC: USDC_ADDRESSES[CHAIN], incomeProjectIdOf: INCOME_ID, initialAllocationVaultOf: VAULT,
   }
   const vaultValues = {
@@ -92,8 +87,8 @@ function fixture(options: { values?: Record<string, unknown>; fail?: string; mis
 }
 
 beforeEach(() => {
-  vi.mocked(registeredIncomeDeployer).mockReturnValue(HELPER)
-  vi.mocked(registeredIncomeDistributor).mockReturnValue(DISTRIBUTOR)
+  vi.mocked(registeredHomerunDeployer).mockReturnValue(HELPER)
+  vi.mocked(registeredAllowlistHook).mockReturnValue(ALLOWLIST)
 })
 
 describe('initial INCOME allocation verification', () => {
@@ -143,15 +138,10 @@ describe('initial INCOME allocation verification', () => {
 
   it('returns no allocation for an unregistered launcher without probing caller-provided targets', async () => {
     const f = fixture()
-    vi.mocked(registeredIncomeDeployer).mockReturnValue(null)
+    vi.mocked(registeredHomerunDeployer).mockReturnValue(null)
     expect(await readInitialIncomeAllocation(f.client, INPUT)).toBeNull()
     expect(f.getCode).not.toHaveBeenCalled()
     expect(f.readContract).not.toHaveBeenCalled()
-  })
-
-  it('requires registered dependencies even when the launcher address exists', async () => {
-    vi.mocked(registeredIncomeDistributor).mockReturnValue(null)
-    await expect(readInitialIncomeAllocation(fixture().client, INPUT)).rejects.toThrow(/dependencies.*registered/)
   })
 
   it('returns no allocation only when both verified launcher bindings are empty', async () => {
@@ -165,7 +155,7 @@ describe('initial INCOME allocation verification', () => {
     await expect(readInitialIncomeAllocation(fixture({ values }).client, INPUT)).rejects.toThrow(/matching INCOME/)
   })
 
-  it.each(['CONTROLLER', 'DIRECTORY', 'PROJECTS', 'TOKENS', 'REV_DEPLOYER', 'REV_OWNER', 'SUCKER_REGISTRY', 'TOKEN_DISTRIBUTOR', 'STICKY_DEPLOYER', 'OMNICHAIN_DEPLOYER', 'USDC'])('rejects an incorrect canonical launcher %s dependency', async key => {
+  it.each(['CONTROLLER', 'DIRECTORY', 'PROJECTS', 'TOKENS', 'REV_DEPLOYER', 'REV_OWNER', 'SUCKER_REGISTRY', 'TERMINAL', 'ROUTER_TERMINAL_REGISTRY', 'ALLOWLIST_HOOK', 'OMNICHAIN_DEPLOYER', 'USDC'])('rejects an incorrect canonical launcher %s dependency', async key => {
     await expect(readInitialIncomeAllocation(fixture({ values: { [key]: HOLDER } }).client, INPUT)).rejects.toThrow(/registered V6/)
   })
 

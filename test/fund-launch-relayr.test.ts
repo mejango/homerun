@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fixtures/homerun-deployer')).withHomerunDeployer(await importOriginal()))
+
 import { encodeFunctionResult, toHex, encodeFunctionData, type Address, type Hex } from 'viem'
 import { erc2771ForwarderAbi, JBCoreContracts, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import type { RelayrEntry, RelayrPayment, RelayrQuote, RelayrTransactionRecord } from '@/lib/relayr'
@@ -87,7 +89,7 @@ function makeClient(chainId: number) {
 
 function session(chains = [1, 10], paymentChainId = 8453): LaunchSession {
   return { version: 1, name: 'Asset',
-    input: { owner: TARGET, sender: ACCOUNT, chainIds: chains, projectUri: 'ipfs://launch', salt: `0x${'cc'.repeat(32)}`, mustStartAtOrAfter: NOW, creationFees: Object.fromEntries(chains.map(chain => [chain, 17n])) },
+    input: { owner: TARGET, sender: ACCOUNT, chainIds: chains, projectUri: 'ipfs://launch', tokenName: 'House FUND', ticker: 'HOUSE', salt: `0x${'cc'.repeat(32)}`, mustStartAtOrAfter: NOW, creationFees: Object.fromEntries(chains.map(chain => [chain, 17n])) },
     statuses: Object.fromEntries(chains.map(chain => [chain, { phase: 'ready' as const }])),
     transport: 'relayr', paymentChainId,
   }

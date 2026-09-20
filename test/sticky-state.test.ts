@@ -1,28 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { jbContractAddress, type JBChainId } from "@bananapus/nana-sdk-core";
 import { v6Address } from "@bananapus/nana-sdk-core/v6";
-import {
-  encodeEventTopics,
-  encodeAbiParameters,
-  zeroAddress,
-  type Address,
-  type Hex,
-  type PublicClient,
-} from "viem";
+import { zeroAddress, type Address, type Hex, type PublicClient } from "viem";
 import { initialFundRuleset } from "../src/lib/fund-contracts";
 import {
   quoteStickyStake,
   quoteStickyUnstake,
-  readIncomeStickyBinding,
   readStickyProjectState,
   readStickyRewards,
 } from "../src/lib/sticky-state";
-import { homerunIncomeDeployerAbi } from "../src/lib/income-contracts";
-import { readInitialIncomeAllocation } from "../src/lib/income-allocation-state";
-
-vi.mock("../src/lib/income-allocation-state", () => ({
-  readInitialIncomeAllocation: vi.fn(),
-}));
 
 const DEPLOYER = "0x1111111111111111111111111111111111111111",
   FUND = "0x2222222222222222222222222222222222222222",
@@ -75,7 +61,6 @@ type Options = {
   fail?: string;
   noCode?: boolean;
   metadata?: Record<string, unknown>;
-  deployment?: Record<string, unknown>;
 };
 function fixture(options: Options = {}) {
   const chainId = options.chainId ?? 1,
@@ -317,60 +302,7 @@ function fixture(options: Options = {}) {
     expect(request.args).toEqual([HOLDER, 9n, 10n, FUND, 0n, HOLDER, "0x"]);
     return { result: options.overrides?.netReclaim ?? 19n };
   });
-  const deployArgs = {
-    fundProjectId: 7n,
-    incomeProjectId: 11n,
-    operator: HOLDER,
-    fundToken: FUND,
-    initialAllocationVault: FEED,
-    rewardToken: SHARE,
-    merkleRoot: HASH,
-    ...options.deployment,
-  };
-  const deploymentLog = {
-    address: DEPLOYER,
-    topics: encodeEventTopics({
-      abi: homerunIncomeDeployerAbi,
-      eventName: "IncomeDeployed",
-      args: { fundProjectId: 7n, incomeProjectId: 11n, operator: HOLDER },
-    }),
-    data: encodeAbiParameters(
-      [
-        { type: "address" },
-        { type: "address" },
-        { type: "address" },
-        { type: "bytes32" },
-      ],
-      [
-        deployArgs.fundToken as Address,
-        deployArgs.initialAllocationVault as Address,
-        deployArgs.rewardToken as Address,
-        deployArgs.merkleRoot as Hex,
-      ],
-    ),
-    blockNumber: 990n,
-    blockHash: HASH,
-    transactionHash: HASH,
-    logIndex: 0,
-    transactionIndex: 0,
-    removed: false,
-    args: deployArgs,
-  };
-  const getLogs = vi.fn(async () =>
-    options.deployment?.missing ? [] : [deploymentLog],
-  );
-  const getTransactionReceipt = vi.fn(async () => ({
-    transactionHash: HASH,
-    blockNumber: 990n,
-    blockHash: HASH,
-    status: options.deployment?.reverted ? "reverted" : "success",
-    logs: options.deployment?.duplicate
-      ? [deploymentLog, deploymentLog]
-      : [deploymentLog],
-  }));
   const client = {
-    getLogs,
-    getTransactionReceipt,
     chain: { id: chainId },
     getChainId: vi.fn(async () => (options.wrongChain ? 10 : chainId)),
     getBlock,
@@ -383,8 +315,6 @@ function fixture(options: Options = {}) {
     readContract,
     getBlock,
     simulateContract,
-    getLogs,
-    getTransactionReceipt,
   };
 }
 
@@ -497,130 +427,6 @@ describe("Sticky verified reads and quotes", () => {
 });
 
 describe("Sticky reward entitlement", () => {
-  it("discovers SHARE from the exact immutable helper deployment and preserves its target after split changes", async () => {
-    vi.mocked(readInitialIncomeAllocation).mockResolvedValue({
-      chainId: 1,
-      deployer: DEPLOYER,
-      fundProjectId: 7n,
-      incomeProjectId: 11n,
-      vault: FEED,
-      merkleRoot: HASH,
-      snapshotBlockNumber: 900n,
-      blockNumber: BLOCK,
-      blockHash: HASH,
-    } as never);
-    const { client, readContract } = fixture({
-      overrides: {
-        splitsOf: [{ percent: 1, hook: DISTRIBUTOR, beneficiary: FUND }],
-      },
-    });
-    await expect(
-      readIncomeStickyBinding(client, {
-        chainId: 1,
-        fundProjectId: 7n,
-        incomeProjectId: 11n,
-      }),
-    ).resolves.toEqual({
-      stickyProjectId: 9n,
-      shareToken: SHARE,
-      blockNumber: BLOCK,
-    });
-    expect(
-      readContract.mock.calls.some(
-        ([request]) => request.functionName === "splitsOf",
-      ),
-    ).toBe(false);
-  });
-  it("does not discover a Sticky target without a verified allocation binding", async () => {
-    vi.mocked(readInitialIncomeAllocation).mockResolvedValue(null);
-    const { client, readContract } = fixture();
-    await expect(
-      readIncomeStickyBinding(client, {
-        chainId: 1,
-        fundProjectId: 7n,
-        incomeProjectId: 11n,
-      }),
-    ).resolves.toBeNull();
-    expect(readContract).not.toHaveBeenCalled();
-  });
-  it.each([
-    ["missing event", { missing: true }, /could not be found/],
-    [
-      "foreign vault",
-      { initialAllocationVault: HOLDER },
-      /immutable FUND allocation/,
-    ],
-    [
-      "foreign root",
-      { merkleRoot: `0x${"cd".repeat(32)}` },
-      /immutable FUND allocation/,
-    ],
-    ["zero SHARE", { rewardToken: zeroAddress }, /immutable FUND allocation/],
-    ["foreign FUND", { fundToken: INCOME }, /verified SHARE token/],
-    ["duplicate event", { duplicate: true }, /immutable FUND allocation/],
-    ["reverted launch", { reverted: true }, /receipt is not valid/],
-  ])(
-    "rejects %s as Sticky discovery authority",
-    async (_label, deployment, error) => {
-      vi.mocked(readInitialIncomeAllocation).mockResolvedValue({
-        chainId: 1,
-        deployer: DEPLOYER,
-        fundProjectId: 7n,
-        incomeProjectId: 11n,
-        vault: FEED,
-        merkleRoot: HASH,
-        snapshotBlockNumber: 900n,
-        blockNumber: BLOCK,
-        blockHash: HASH,
-      } as never);
-      const { client } = fixture({ deployment });
-      await expect(
-        readIncomeStickyBinding(client, {
-          chainId: 1,
-          fundProjectId: 7n,
-          incomeProjectId: 11n,
-        }),
-      ).rejects.toThrow(error);
-    },
-  );
-  it("rechecks a cached original deployment against canonical receipts and current Sticky wiring", async () => {
-    vi.mocked(readInitialIncomeAllocation).mockResolvedValue({
-      chainId: 1,
-      deployer: DEPLOYER,
-      fundProjectId: 7n,
-      incomeProjectId: 11n,
-      vault: FEED,
-      merkleRoot: HASH,
-      snapshotBlockNumber: 900n,
-      blockNumber: BLOCK,
-      blockHash: HASH,
-    } as never);
-    const f = fixture();
-    await readIncomeStickyBinding(f.client, {
-      chainId: 1,
-      fundProjectId: 7n,
-      incomeProjectId: 11n,
-    });
-    await readIncomeStickyBinding(f.client, {
-      chainId: 1,
-      fundProjectId: 7n,
-      incomeProjectId: 11n,
-    });
-    expect(f.getLogs).toHaveBeenCalledOnce();
-    expect(f.getTransactionReceipt).toHaveBeenCalledTimes(2);
-    f.getBlock.mockResolvedValue({
-      number: 990n,
-      hash: `0x${"cd".repeat(32)}` as Hex,
-      timestamp: TIMESTAMP,
-    });
-    await expect(
-      readIncomeStickyBinding(f.client, {
-        chainId: 1,
-        fundProjectId: 7n,
-        incomeProjectId: 11n,
-      }),
-    ).rejects.toThrow(/no longer in the canonical/);
-  });
   it("uses completed historical SHARE snapshots and starts a new vesting schedule", async () => {
     const { client } = fixture(),
       state = await readStickyProjectState(client, {

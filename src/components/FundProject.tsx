@@ -1,14 +1,7 @@
 'use client'
 
 import { type JBChainId } from '@bananapus/nana-sdk-core'
-import {
-  buildBurnTokensTx,
-  buildClaimTokensTx,
-  buildDeployErc20Tx,
-  buildTransferCreditsTx,
-  getHookAwareCashOutQuote,
-  prepareHookAwareCashOut,
-} from '@bananapus/nana-sdk-core/v6'
+import { buildBurnTokensTx, getHookAwareCashOutQuote, prepareHookAwareCashOut } from '@bananapus/nana-sdk-core/v6'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { erc20Abi, formatUnits, getAddress, isAddress, isAddressEqual, zeroAddress, type Address, type PublicClient } from 'viem'
@@ -39,7 +32,7 @@ import { useSafeTx, txPhaseLabel, type TxRequest } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { displayChainName, explorerTxUrl } from '@/lib/chainDisplay'
 import { readFundProjectState, type FundProjectState } from '@/lib/fund-state'
-import { parseAmount } from '@/lib/fund-contracts'
+import { buildFundAllowlistChange, buildFundAllowlistOpen, parseAmount } from '@/lib/fund-contracts'
 import { fetchFundProjectMetadata, type FundProjectMetadata } from '@/lib/fund-project-metadata'
 
 /** Reject rounded, negative, exponent and over-precise financial inputs. */
@@ -219,7 +212,7 @@ function ProjectActions({ chainId, projectId, state, client, details, notice, in
     />}
     shop={<div className="grid gap-7"><section><h2 className="mb-5 text-3xl">FUND shop</h2><ProjectShop chainId={state.chainId} projectId={state.projectId} tokenLabel="FUND" /></section>{income.projectId && <section><h2 className="mb-5 text-3xl">INCOME shop</h2>{income.shop}</section>}</div>}
     extras={<div className="grid gap-7"><ProjectPayerAddresses chainId={state.chainId} projectId={state.projectId} tokenLabel="FUND" />{income.extras}<ActionSection title="Contracts"><dl className="grid gap-3 break-all"><div><dt>Project owner</dt><dd>{state.owner}</dd></div><div><dt>Operator</dt><dd>{state.operator ?? 'Not verified'}</dd></div><div><dt>Controller</dt><dd>{state.controller}</dd></div>{state.tokenAddress && <div><dt>FUND ERC-20</dt><dd>{state.tokenAddress}</dd></div>}</dl></ActionSection></div>}
-    operators={<div className="grid gap-7">{income.projectId ? income.operators : null}{gate(<ActionSection title="Operator actions">{!isOperator && <p className="mb-5">Connect a wallet with verified project permissions to manage this project. Contract permissions are checked again before every transaction.</p>}<fieldset disabled={!isOperator} className="min-w-0 border-0 p-0"><OperatorActions state={state} client={client} contextIndex={contextIndex} name={name} /></fieldset></ActionSection>)}<IncomeLaunch state={state} client={client} name={name} plannedAllocation={plan ? { operatorPercent: plan.operatorSplitPercent, fundStakerPercent: plan.fundHolderSplitPercent, operatorWallet: plan.operatorWallet } : undefined} launchUnavailable={blocked} embedExistingProject={false} /></div>}
+    operators={<div className="grid gap-7">{income.projectId ? income.operators : null}{gate(<ActionSection title="Operator actions">{!isOperator && <p className="mb-5">Connect a wallet with verified project permissions to manage this project. Contract permissions are checked again before every transaction.</p>}<fieldset disabled={!isOperator} className="min-w-0 border-0 p-0"><OperatorActions state={state} client={client} contextIndex={contextIndex} /></fieldset></ActionSection>)}<IncomeLaunch state={state} client={client} name={name} plannedAllocation={plan && plan.operatorSplitPercent !== null && plan.fundHolderSplitPercent !== null ? { reservedPercent: plan.operatorSplitPercent + plan.fundHolderSplitPercent } : undefined} launchUnavailable={blocked} embedExistingProject={false} /></div>}
   />
 }
 
@@ -253,6 +246,11 @@ async function freshState(client: PublicClient, state: FundProjectState, account
 
 function PaymentPanel({ state, client, contextIndex, chainSelector, onBusyChange }: { state: FundProjectState; client: PublicClient; contextIndex: number; chainSelector?: ReactNode; onBusyChange?: (busy: boolean) => void }) {
   const context = state.accountingContexts[contextIndex] ?? state.accountingContexts[0]
+  const { address } = useWallet()
+  // The hook reverts for anyone not on the list; say so before a doomed review instead of after.
+  if (state.allowlist && !state.allowlist.open && address && state.allowlist.accountAllowed === false) {
+    return <div className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7"><h2 className="mb-3 text-3xl">Contribute</h2><p role="status">Your wallet is not on this FUND’s allowlist. The owner adds contributors before they can pay.</p></div>
+  }
   return <ProjectPayment chainSelector={chainSelector} onBusyChange={onBusyChange} chainId={state.chainId} projectId={state.projectId} tokenLabel="FUND" title="Contribute" context={context} paused={state.metadata.pausePay} reservedPercent={state.metadata.reservedPercent} rulesetId={state.ruleset.id.toString()} verify={async (account, minimumBlock) => {
     const current = await freshState(client, state, account, minimumBlock)
     const active = current.accountingContexts.find(item => isAddressEqual(item.token, context.token) && isAddressEqual(item.terminal, context.terminal))
@@ -311,64 +309,82 @@ function CashOutPanel({ state, client, contextIndex }: { state: FundProjectState
 function HolderActions({ state, client }: { state: FundProjectState; client: PublicClient }) {
   const { address } = useWallet()
   const tx = useProjectTransaction(state)
-  const [action, setAction] = useState<'claim' | 'transferCredits' | 'transferTokens' | 'burn'>('claim')
+  const [action, setAction] = useState<'transferTokens' | 'burn'>('transferTokens')
   const [amount, setAmount] = useState('')
   const [recipient, setRecipient] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [preparing, setPreparing] = useState(false)
   const count = positiveAmount(amount, 18)
-  const available = action === 'transferTokens' ? state.erc20Balance : action === 'burn' ? state.creditBalance + state.erc20Balance : state.creditBalance
-  const destination = action === 'claim' || action === 'burn' ? address : isAddress(recipient) && !isAddressEqual(recipient, zeroAddress) ? getAddress(recipient) : undefined
-  const unavailable = action === 'claim' || action === 'transferTokens' ? !state.tokenAddress : action === 'transferCredits' && state.metadata.pauseCreditTransfers
+  // A deployer-launched FUND has its ERC-20 from launch and never holds credits, so the token balance is the balance.
+  const available = action === 'burn' ? state.creditBalance + state.erc20Balance : state.erc20Balance
+  const destination = action === 'burn' ? address : isAddress(recipient) && !isAddressEqual(recipient, zeroAddress) ? getAddress(recipient) : undefined
+  const unavailable = !state.tokenAddress
   async function submit() {
     if (!address || !destination || (count <= 0n || count > available)) return
     setError(null); setPreparing(true)
     try {
       let request: TxRequest
-      if (action === 'claim') request = { ...buildClaimTokensTx({ chainId: state.chainId, holder: address, projectId: state.projectId, tokenCount: count, beneficiary: destination }), address: state.controller, label: `Claim ${units(count)} FUND credits as ERC-20 tokens` }
-      else if (action === 'transferCredits') request = { ...buildTransferCreditsTx({ chainId: state.chainId, holder: address, projectId: state.projectId, recipient: destination, creditCount: count }), address: state.controller, label: `Transfer ${units(count)} FUND credits to ${destination}` }
-      else if (action === 'burn') request = { ...buildBurnTokensTx({ chainId: state.chainId, holder: address, projectId: state.projectId, tokenCount: count, memo: 'Voluntary FUND burn' }), address: state.controller, label: `Permanently burn ${units(count)} FUND without receiving funds` }
+      if (action === 'burn') request = { ...buildBurnTokensTx({ chainId: state.chainId, holder: address, projectId: state.projectId, tokenCount: count, memo: 'Voluntary FUND burn' }), address: state.controller, label: `Permanently burn ${units(count)} FUND without receiving funds` }
       else {
         if (!state.tokenAddress) throw new Error('No FUND ERC-20 is deployed.')
         request = { chainId: state.chainId, address: state.tokenAddress, abi: erc20Abi, functionName: 'transfer', args: [destination, count], label: `Transfer ${units(count)} FUND tokens to ${destination}` }
       }
       await tx.send(request, { reverify: async () => {
         const fresh = await freshState(client, state, address)
-        if (count > (action === 'transferTokens' ? fresh.erc20Balance : action === 'burn' ? fresh.creditBalance + fresh.erc20Balance : fresh.creditBalance)) throw new Error('Your token balance changed. Review a new amount.')
-        if (action === 'transferCredits' && fresh.metadata.pauseCreditTransfers) throw new Error('Credit transfers are now paused.')
-        if (action !== 'transferCredits' && fresh.tokenAddress !== state.tokenAddress) throw new Error('The project token changed. Refresh and review again.')
-
+        if (count > (action === 'burn' ? fresh.creditBalance + fresh.erc20Balance : fresh.erc20Balance)) throw new Error('Your token balance changed. Review a new amount.')
+        if (fresh.tokenAddress !== state.tokenAddress) throw new Error('The project token changed. Refresh and review again.')
       } })
     } catch (reason) { setError(errorMessage(reason)) } finally { setPreparing(false) }
   }
   return <div className="grid gap-4">
-    <label className="grid gap-2 text-sm">Action<select value={action} onChange={event => setAction(event.target.value as typeof action)} className="min-h-12 rounded border border-[#bfc9b5] bg-white px-3 pr-9"><option value="claim">Claim credits as wallet tokens</option><option value="transferCredits">Transfer internal credits</option><option value="transferTokens">Transfer ERC-20 tokens</option><option value="burn">Burn without receiving funds</option></select></label>
-    <div className="grid gap-4 sm:grid-cols-2"><Input label="FUND amount" value={amount} onChange={setAmount} />{action.startsWith('transfer') && <Input label="Recipient wallet" value={recipient} onChange={setRecipient} inputMode="text" placeholder="0x…" />}</div>
-    <p className="text-sm">Available: {units(available)} FUND. {action === 'claim' ? 'Claiming changes the representation of your holdings; it does not stake them.' : action === 'burn' ? 'Burning permanently removes these FUND and their future claims. Use cash out to receive treasury funds.' : 'The recipient receives ownership of the transferred FUND.'}</p>
-
-    {unavailable && <p className="text-sm">{action === 'transferCredits' ? 'Credit transfers are paused by the current ruleset.' : 'The operator must deploy a FUND ERC-20 before this action is available.'}</p>}
+    <label className="grid gap-2 text-sm">Action<select value={action} onChange={event => setAction(event.target.value as typeof action)} className="min-h-12 rounded border border-[#bfc9b5] bg-white px-3 pr-9"><option value="transferTokens">Transfer FUND tokens</option><option value="burn">Burn without receiving funds</option></select></label>
+    <div className="grid gap-4 sm:grid-cols-2"><Input label="FUND amount" value={amount} onChange={setAmount} />{action === 'transferTokens' && <Input label="Recipient wallet" value={recipient} onChange={setRecipient} inputMode="text" placeholder="0x…" />}</div>
+    <p className="text-sm">Available: {units(available)} FUND. {action === 'burn' ? 'Burning permanently removes these FUND and their future claims. Use cash out to receive treasury funds.' : 'The recipient receives ownership of the transferred FUND.'}</p>
+    {unavailable && <p className="text-sm">This project has no FUND ERC-20.</p>}
     <button type="button" className="btn-primary min-h-11 w-fit px-5" disabled={preparing || tx.busy || tx.phase === 'review' || unavailable || (count <= 0n || count > available) || !destination} onClick={() => void submit()}>{preparing ? 'Preparing…' : txPhaseLabel(tx.phase, { idle: 'Review token action', pending: 'Confirming onchain…' })}</button>
     {error && <p role="alert" className="text-sm text-red-800">{error}</p>}<TransactionStatus tx={tx} chainId={state.chainId} />
   </div>
 }
 
-function OperatorActions({ state, client, contextIndex, name }: { state: FundProjectState; client: PublicClient; contextIndex: number; name?: string }) {
+/** The owner-managed payment allowlist. Gates beneficiaries; cash outs are never gated. */
+function FundAllowlist({ state, client }: { state: FundProjectState; client: PublicClient }) {
   const { address } = useWallet()
   const tx = useProjectTransaction(state)
+  const [addresses, setAddresses] = useState('')
   const [error, setError] = useState<string | null>(null)
-  async function deployToken() {
+  const allowlist = state.allowlist!
+  const owner = !!address && isAddressEqual(address, state.owner)
+  const accounts = addresses.split(/[\s,;]+/).map(value => value.trim()).filter(Boolean)
+  async function send(request: TxRequest, label: string) {
     if (!address) return
     setError(null)
     try {
-      await tx.send({ ...buildDeployErc20Tx({ chainId: state.chainId, projectId: state.projectId, name: name ? `${name} FUND` : `Homerun FUND ${state.projectId}`, symbol: 'FUND' }), address: state.controller, label: 'Deploy the transferable FUND token' }, { reverify: async () => {
+      await tx.send({ ...request, label }, { reverify: async () => {
         const fresh = await freshState(client, state, address)
-        if (!fresh.permissions.deployErc20 || fresh.tokenAddress) throw new Error('Token deployment authority or state changed. Refresh and review again.')
+        if (!isAddressEqual(fresh.owner, address) || !fresh.allowlist || !isAddressEqual(fresh.allowlist.hook, allowlist.hook)) throw new Error('Allowlist authority or wiring changed. Refresh and review again.')
       } })
+      setAddresses('')
     } catch (reason) { setError(errorMessage(reason)) }
   }
-  return <div className="grid gap-5">
-    {!state.tokenAddress && <div><p className="mb-3 text-sm">Deploy the ERC-20 representation so FUND holders can claim their credits into their wallets.</p><button type="button" className="btn-secondary min-h-11 px-5" disabled={!state.permissions.deployErc20 || tx.busy || tx.phase === 'review'} onClick={() => void deployToken()}>Review FUND token deployment</button></div>}
-    <FundOperatorActions state={state} client={client} contextIndex={contextIndex} />
+  return <div className="grid gap-3 rounded border border-[#c4cdbb] p-4" aria-label="Payment allowlist">
+    <h3 className="text-xl">Payment allowlist</h3>
+    <p className="text-sm">{allowlist.open ? 'Open: anyone can contribute.' : 'Closed: only allowed wallets can receive FUND from a contribution.'} Cash outs are never restricted.</p>
+    <fieldset disabled={!owner || tx.busy || tx.phase === 'review'} className="grid min-w-0 gap-3 border-0 p-0">
+      <button type="button" className="btn-secondary min-h-11 justify-self-start px-4" onClick={() => void send(buildFundAllowlistOpen({ chainId: state.chainId, projectId: state.projectId, open: !allowlist.open }), allowlist.open ? 'Close contributions to the allowlist' : 'Open contributions to everyone')}>{allowlist.open ? 'Close to allowlist' : 'Open to everyone'}</button>
+      <label className="grid gap-2 text-sm">Wallet addresses, one per line<textarea className="min-h-24 w-full rounded border border-[#bfc9b5] bg-white p-3 font-mono text-sm" value={addresses} onChange={event => setAddresses(event.target.value)} placeholder="0x…" /></label>
+      <div className="flex flex-wrap gap-3">
+        <button type="button" className="btn-secondary min-h-11 px-4" disabled={!accounts.length} onClick={() => void send(buildFundAllowlistChange({ chainId: state.chainId, projectId: state.projectId, accounts, allowed: true }), `Allow ${accounts.length} wallet${accounts.length === 1 ? '' : 's'}`)}>Allow</button>
+        <button type="button" className="btn-secondary min-h-11 px-4" disabled={!accounts.length} onClick={() => void send(buildFundAllowlistChange({ chainId: state.chainId, projectId: state.projectId, accounts, allowed: false }), `Remove ${accounts.length} wallet${accounts.length === 1 ? '' : 's'}`)}>Remove</button>
+      </div>
+    </fieldset>
+    {!owner && <p className="text-sm">Only the FUND owner can change the allowlist.</p>}
     {error && <p role="alert" className="text-sm text-red-800">{error}</p>}<TransactionStatus tx={tx} chainId={state.chainId} />
+  </div>
+}
+
+function OperatorActions({ state, client, contextIndex }: { state: FundProjectState; client: PublicClient; contextIndex: number }) {
+  return <div className="grid gap-5">
+    {state.allowlist && <FundAllowlist state={state} client={client} />}
+    <FundOperatorActions state={state} client={client} contextIndex={contextIndex} />
   </div>
 }

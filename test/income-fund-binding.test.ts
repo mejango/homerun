@@ -2,12 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { jbProjectsAbi } from '@bananapus/nana-sdk-core'
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import { encodeAbiParameters, encodeEventTopics, zeroAddress, zeroHash, type Abi, type Address, type Hex, type PublicClient } from 'viem'
-import { homerunIncomeDeployerAbi, registeredIncomeDeployer } from '../src/lib/income-contracts'
+import { homerunDeployerAbi, registeredHomerunDeployer } from '../src/lib/income-contracts'
 import { readInitialIncomeAllocation, type InitialIncomeAllocationState } from '../src/lib/income-allocation-state'
 import { readIncomeFundBinding } from '../src/lib/income-fund-binding'
 
 vi.mock('../src/lib/income-contracts', async importOriginal => ({
-  ...await importOriginal<typeof import('../src/lib/income-contracts')>(), registeredIncomeDeployer: vi.fn(),
+  ...await importOriginal<typeof import('../src/lib/income-contracts')>(), registeredHomerunDeployer: vi.fn(),
 }))
 vi.mock('../src/lib/income-allocation-state', async importOriginal => ({
   ...await importOriginal<typeof import('../src/lib/income-allocation-state')>(), readInitialIncomeAllocation: vi.fn(),
@@ -21,7 +21,7 @@ const CREATED = 712_345n
 const HELPER = '0x1111111111111111111111111111111111111111' as const
 const VAULT = '0x2222222222222222222222222222222222222222' as const
 const FUND_TOKEN = '0x3333333333333333333333333333333333333333' as const
-const SHARE_TOKEN = '0x4444444444444444444444444444444444444444' as const
+
 const OPERATOR = '0x5555555555555555555555555555555555555555' as const
 const SAFE = '0x6666666666666666666666666666666666666666' as const
 const FOREIGN = '0x7777777777777777777777777777777777777777' as const
@@ -47,9 +47,9 @@ function creationLog(args: Record<string, unknown> = {}) {
   return rawLog(PROJECTS, jbProjectsAbi, 'Create', { projectId: INCOME_ID, owner: v6Address('REVOwner', CHAIN), caller: v6Address('REVDeployer', CHAIN), ...args }, 3)
 }
 function deploymentLog(args: Record<string, unknown> = {}) {
-  return rawLog(HELPER, homerunIncomeDeployerAbi, 'IncomeDeployed', {
-    fundProjectId: FUND_ID, incomeProjectId: INCOME_ID, operator: OPERATOR, fundToken: FUND_TOKEN,
-    initialAllocationVault: VAULT, rewardToken: SHARE_TOKEN, merkleRoot: ROOT, ...args,
+  return rawLog(HELPER, homerunDeployerAbi, 'IncomeDeployed', {
+    fundProjectId: FUND_ID, incomeProjectId: INCOME_ID, owner: OPERATOR, fundToken: FUND_TOKEN,
+    initialAllocationVault: VAULT, merkleRoot: ROOT, ...args,
   }, 14)
 }
 type RawLog = ReturnType<typeof rawLog>
@@ -109,7 +109,7 @@ function fixture(options: { generic?: boolean; safe?: boolean } = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  vi.mocked(registeredIncomeDeployer).mockReturnValue(HELPER)
+  vi.mocked(registeredHomerunDeployer).mockReturnValue(HELPER)
 })
 
 describe('INCOME to FUND discovery from canonical creation evidence', () => {
@@ -141,7 +141,7 @@ describe('INCOME to FUND discovery from canonical creation evidence', () => {
 
   it('does no RPC discovery when the SDK has no registered Homerun launcher', async () => {
     const f = fixture()
-    vi.mocked(registeredIncomeDeployer).mockReturnValue(null)
+    vi.mocked(registeredHomerunDeployer).mockReturnValue(null)
     expect(await readIncomeFundBinding(f.client, INPUT)).toBeNull()
     expect(f.getBlock).not.toHaveBeenCalled()
     expect(f.getLogs).not.toHaveBeenCalled()

@@ -75,15 +75,12 @@ test('whole-cent money validation rejects partial parses and nonnumeric values w
   assert.equal(normalizeCreateDraft(draft({ opsReserve: 0, monthlyRent: 0, monthlyCosts: 0 })).valid, true);
 });
 
-test('copy lengths and asset categories are bounded', () => {
+test('copy lengths are bounded', () => {
   for (const [field, value] of [
     ['name', 'x'], ['name', 'x'.repeat(61)], ['name', 123], ['location', 'x'.repeat(101)],
-    ['description', 'x'.repeat(601)], ['assetType', 'token'],
+    ['description', 'x'.repeat(601)],
   ]) {
     assert.ok(normalizeCreateDraft(draft({ [field]: value })).errors[field], `${field}: ${value}`);
-  }
-  for (const assetType of ['real-estate', 'business', 'equipment', 'energy', 'other']) {
-    assert.equal(normalizeCreateDraft(draft({ assetType })).valid, true);
   }
   assert.equal(normalizeCreateDraft(draft({ name: 'x'.repeat(60) })).valid, true);
   for (const raw of [null, [], 'text', 123]) {
@@ -411,7 +408,7 @@ test('saved projects round-trip independently, carry unique IDs, and preserve ea
   const storage = memoryStorage();
   const first = saveCreatedProject(draft(), storage);
   const second = saveCreatedProject(draft({
-    name: 'Corner Shop', assetType: 'business', networks: ['optimism', 'base'], networkEnvironment: 'testnet',
+    name: 'Corner Shop', networks: ['optimism', 'base'], networkEnvironment: 'testnet',
     revnetOperatorEnabled: true, ownerWallet: wallet, operatorWallet: wallet,
   }), storage);
   assert.notEqual(first.id, second.id);
