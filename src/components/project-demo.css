@@ -89,7 +89,7 @@
   padding: 16px 18px;
   background: #edf2f4;
   border: 1px solid #cbd7db;
-  border-radius: 5px;
+  border-radius: var(--radius);
 }
 .homerun-project-layout .demo-model-note p {
   color: #3f5b66;
@@ -109,7 +109,7 @@
 .homerun-project-layout .demo-activity li { margin: 0; padding: 0; border-bottom: 1px solid var(--line); }
 .homerun-project-layout .demo-activity-event > summary { display: flex; align-items: flex-start; gap: 10px; padding: 14px 0; list-style: none; cursor: pointer; }
 .homerun-project-layout .demo-activity-event > summary::-webkit-details-marker { display: none; }
-.homerun-project-layout .demo-activity-event > summary:focus-visible { outline: 2px solid var(--green); outline-offset: 3px; border-radius: 3px; }
+.homerun-project-layout .demo-activity-event > summary:focus-visible { outline: 2px solid var(--green); outline-offset: 3px; border-radius: var(--radius); }
 .homerun-project-layout .demo-activity-body { flex: 1; min-width: 0; }
 .homerun-project-layout .demo-activity-topline { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 5px 8px; min-height: 20px; }
 .homerun-project-layout .demo-activity-flow { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
@@ -214,7 +214,7 @@
 }
 .homerun-project-layout .demo-stages .phase-panel {
   box-shadow: none;
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 24px;
 }
 .homerun-project-layout .demo-stage-actions .project-action-guide {
@@ -222,7 +222,7 @@
 }
 .homerun-project-layout .demo-modeling-controls {
   border: 1px solid #cbd7db;
-  border-radius: 5px;
+  border-radius: var(--radius);
   background: #edf2f4;
 }
 .homerun-project-layout .demo-modeling-controls > summary {
@@ -277,7 +277,7 @@
   min-height: 40px;
   padding: 8px 12px;
   border: 1px solid #b7c8cf;
-  border-radius: 4px;
+  border-radius: var(--radius);
   background: transparent;
   color: #3f5b66;
   font: 13px var(--sans);
@@ -298,7 +298,7 @@
   margin: 24px 0;
   padding: 20px;
   border: 1px solid #cbd7db;
-  border-radius: 5px;
+  border-radius: var(--radius);
   background: #edf2f4;
 }
 .homerun-project-layout .demo-outlook-values dt,

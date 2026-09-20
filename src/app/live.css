@@ -1,8 +1,8 @@
- .contract-panel { border: 1px solid #c4cebf; border-radius: 6px; background: #fffefa; padding: 24px; margin: 24px 0; }
+ .contract-panel { border: 1px solid #c4cebf; border-radius: var(--radius); background: #fffefa; padding: 24px; margin: 24px 0; }
 .contract-panel h2, .contract-panel h3 { margin-top: 0; }
 .contract-panel label { display: block; margin: 18px 0 7px; }
-.contract-panel input, .contract-panel select { width: 100%; min-height: 44px; padding: 10px; border: 1px solid #bfcbbb; border-radius: 4px; background: white; font: inherit; }
-.contract-panel button, .wallet-button { min-height: 44px; padding: 10px 16px; border-radius: 4px; border: 1px solid #476950; background: #41664d; color: white; cursor: pointer; font: inherit; }
+.contract-panel input, .contract-panel select { width: 100%; min-height: 44px; padding: 10px; border: 1px solid #bfcbbb; border-radius: var(--radius); background: white; font: inherit; }
+.contract-panel button, .wallet-button { min-height: 44px; padding: 10px 16px; border-radius: var(--radius); border: 1px solid #476950; background: #41664d; color: white; cursor: pointer; font: inherit; }
 .contract-panel button:disabled { opacity: .5; cursor: not-allowed; }
 .contract-panel a { overflow-wrap: anywhere; }
 .contract-panel [role='alert'] { color: #8c342d; }

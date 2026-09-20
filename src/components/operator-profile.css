@@ -2,7 +2,7 @@
 .operator-profile h2 { margin: 0 0 14px; font-size: 28px; font-weight: 600; line-height: 1.25; }
 .operator-profile-body { display: grid; gap: 24px; align-items: start; }
 .operator-profile-body.has-photo { grid-template-columns: 128px minmax(0, 1fr); }
-.operator-profile-photo { width: 128px; height: 128px; border-radius: 8px; object-fit: cover; }
+.operator-profile-photo { width: 128px; height: 128px; border-radius: var(--radius); object-fit: cover; }
 .operator-profile-copy { min-width: 0; }
 .operator-profile .operator-profile-address { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 0 0 12px; font-size: 14px; line-height: 1.6; color: var(--muted, #647060); }
 .operator-profile-address a { color: var(--ink, #293f34); text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
@@ -12,7 +12,7 @@
 .create-operator-profile legend { float: left; width: 100%; margin-bottom: 12px; font-size: 18px; font-weight: 500; }
 .create-operator-profile > .create-field { clear: both; }
 .create-operator-profile > .create-help { clear: both; margin-bottom: 24px; }
-.create-operator-photo-preview { width: 96px; height: 96px; border-radius: 6px; object-fit: cover; }
+.create-operator-photo-preview { width: 96px; height: 96px; border-radius: var(--radius); object-fit: cover; }
 .review-block .operator-profile { margin-top: 16px; }
 .review-block .operator-profile .operator-profile-name { font-size: 14px; }
 .review-block .operator-profile .operator-profile-introduction { font-size: 13px; }

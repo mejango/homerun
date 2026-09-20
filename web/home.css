@@ -17,7 +17,7 @@
 @media (prefers-reduced-motion: reduce) { .home-asset-word { animation: none; } }
 .home-actions { display: flex; justify-content: center; align-items: center; gap: 24px; margin-top: 23px; }
 .home-actions .see-demo { margin-top: 0; }
-.create-homerun { display: inline-flex; align-items: center; justify-content: center; gap: 15px; min-height: 44px; padding: 9px 15px; border: 1px solid #38694b; border-radius: 3px 5px 3px 4px; background: #38694b; color: #fffefa; font-size: 13px; text-decoration: none; }
+.create-homerun { display: inline-flex; align-items: center; justify-content: center; gap: 15px; min-height: 44px; padding: 9px 15px; border: 1px solid #38694b; border-radius: var(--radius); background: #38694b; color: #fffefa; font-size: 13px; text-decoration: none; }
 .create-homerun:hover { background: #2b533a; }
 .create-homerun:focus-visible { outline: 2px solid #38694b; outline-offset: 4px; }
 .see-demo { display: inline-flex; align-items: center; gap: 13px; min-height: 44px; margin-top: 23px; font-size: 14px; text-decoration: none; position: relative; }
@@ -60,7 +60,7 @@
 .home-copy { top: calc(76px + clamp(18px, 2.7vw, 40px)); }
 @media (max-width: 760px) { .home-copy { top: 93px; } }
 
-.home-color-control select { font: inherit; color: #293a32; background: #fffefa; border: 1px solid #bbc3b4; border-radius: 4px; min-height: 32px; padding: 3px 30px 3px 10px; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='m1 1 5 5 5-5' fill='none' stroke='%23293a32' stroke-width='1.5'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; }
+.home-color-control select { font: inherit; color: #293a32; background: #fffefa; border: 1px solid #bbc3b4; border-radius: var(--radius); min-height: 32px; padding: 3px 30px 3px 10px; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='m1 1 5 5 5-5' fill='none' stroke='%23293a32' stroke-width='1.5'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; }
 .ballpark-hero { height: calc(clamp(650px, 61vw, 900px) + 76px); }
 @media (max-width: 760px) { .ballpark-hero { height: 736px; } }
 

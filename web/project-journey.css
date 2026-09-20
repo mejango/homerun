@@ -3,10 +3,10 @@
 .pj-scene { position: relative; width: 100%; max-width: 220px; margin: 0 auto; --pj-first: 76%; --pj-third: 24%; --pj-side-y: 59%; --pj-top-y: 19%; }
 .pj-canvas { display: block; width: 100%; height: 164px; }
 .pj-stages { position: absolute; inset: 0; pointer-events: none; }
-.pj-stage { position: absolute; left: 50%; top: calc(var(--pj-top-y) - 15px); transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; width: 76px; min-height: 74px; gap: 8px; padding: 0 3px 5px; border: 0; border-radius: 4px; background: transparent; color: #253c32; text-align: center;  }
+.pj-stage { position: absolute; left: 50%; top: calc(var(--pj-top-y) - 15px); transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; width: 76px; min-height: 74px; gap: 8px; padding: 0 3px 5px; border: 0; border-radius: var(--radius); background: transparent; color: #253c32; text-align: center;  }
 .pj-stage[data-journey-phase=raising] { left: var(--pj-first); top: calc(var(--pj-side-y) - 15px); }
 .pj-stage[data-journey-phase=liquidated] { left: var(--pj-third); top: calc(var(--pj-side-y) - 15px); }
-.pj-base { display: grid; place-items: center; flex: 0 0 auto; width: 28px; height: 28px; transform: rotate(45deg); border: 1.5px solid #a3af96; border-radius: 2px 3px 2px 2px; background: #f7f5ef; color: #66755a; transition: background 120ms, border-color 120ms; }
+.pj-base { display: grid; place-items: center; flex: 0 0 auto; width: 28px; height: 28px; transform: rotate(45deg); border: 1.5px solid #a3af96; border-radius: var(--radius); background: #f7f5ef; color: #66755a; transition: background 120ms, border-color 120ms; }
 .pj-base-number { transform: rotate(-45deg); font: 15px/1 Georgia, serif; }
 .pj-stage-copy { position: relative; padding: 0 5px; background: #f7f5ef; }
 .pj-stage-copy > strong { display: block; color: inherit; font: 500 11px/1.4 var(--sans, system-ui, sans-serif); }

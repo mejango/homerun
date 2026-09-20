@@ -1,6 +1,15 @@
 @layer theme, base, components, utilities;
 @import 'tailwindcss/theme.css' layer(theme);
 @import 'tailwindcss/utilities.css' layer(utilities);
+
+/* Every corner shares the hand-drawn radius of the draft card; only circles and pills stay round. */
+@theme inline {
+  --radius-sm: var(--radius);
+  --radius-md: var(--radius);
+  --radius-lg: var(--radius);
+  --radius-xl: var(--radius);
+  --radius-2xl: var(--radius);
+}
 @import '../../web/network.css';
 @import '../../web/lifecycle.css';
 @import '../../web/project-page.css';
