@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { createConnectController, passkeyOption, type ConnectOption } from '@bananapus/nana-sdk-connect/core'
-import { JBConnectModal } from '@bananapus/nana-sdk-connect/react'
+import { JBConnectModal, passkeyLabel } from '@bananapus/nana-sdk-connect/react'
 import { WalletFallbackMark } from '@/components/BrandMarks'
 import { useWallet } from '@/hooks/useWallet'
 import { useMobileWallet } from '@/hooks/useMobileWallet'
@@ -49,6 +49,7 @@ export function ExternalWalletDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <JBConnectModal open controller={controller} onClose={onClose} className="homerun-connect"
+      passkeyLabel={passkeyLabel(typeof navigator === 'undefined' ? '' : navigator.userAgent).replace(/^Continue with (a )?/, '')}
       renderIcon={option => <WalletFallbackMark id={option.id} className="h-5 w-5" />}
       renderHandoff={uri => <PairingCode uri={uri} />}>
       {mobileWallet === 'handoff' ? (

@@ -155,5 +155,10 @@ export function createHomerunPayment(options: { config: HomerunCenterConfig;
     if (payments.pendingPayment()) payments.clearPayment()
     storage.removeItem(key); if (storage.getItem(key) !== null) fail()
   }
-  return { prepare, submit, pending, clear, refresh: () => payments.refreshPayment() }
+  async function complete(callbackUrl: string) {
+    const saved = read(); if (!saved.value) fail()
+    await identity(connection(), saved.value)
+    return payments.completePayment(callbackUrl)
+  }
+  return { prepare, submit, pending, clear, complete, refresh: () => payments.refreshPayment() }
 }

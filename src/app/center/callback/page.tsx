@@ -2,15 +2,17 @@
 import { useEffect, useState } from 'react'
 import { connect } from '@wagmi/core'
 import { wagmiConfig } from '@/providers/Providers'
-import { capturedCenterCallback } from '@/providers/center-callback'
+import { capturedCenterCallback, deliverCenterCallbackToParent } from '@/providers/center-callback'
 
 let completing: Promise<string | null> | null = null
 let callbackResolved = false
 async function complete(): Promise<string | null> {
   const callback = capturedCenterCallback()
   const { centerWalletClient, originalCenterPage } = await import('@/providers/center-runtime')
-  // Opened as a popup: the page that opened this window finishes the sign-in and closes it.
   if (!callbackResolved && callback && new URL(callback.url).search) {
+    // Framed by a Homerun page (a payment review shown inline): that page finishes the payment and removes the frame.
+    if (deliverCenterCallbackToParent(callback.url)) { callbackResolved = true; return null }
+    // Opened as a popup: the page that opened this window finishes the sign-in and closes it.
     const { deliverCenterCallback } = await import('@bananapus/nana-sdk-connect/core')
     if (await deliverCenterCallback(callback.url, { window })) { callbackResolved = true; return null }
   }
@@ -39,7 +41,7 @@ export default function CenterCallbackPage() {
     return () => { active = false }
   }, [attempt])
   return <main className="mx-auto max-w-xl px-6 py-16"><h1 className="text-2xl">Your Juicebox wallet</h1>
-    <p role="status" className="mt-5 break-words">{error ?? (delivered ? 'Signed in. You can close this window.' : 'Restoring your wallet and original page…')}</p>
+    <p role="status" className="mt-5 break-words">{error ?? (delivered ? 'Done. You can close this window.' :'Restoring your wallet and original page…')}</p>
     {error ? <button type="button" className="btn-primary mt-5 px-4 py-3" onClick={() => { setError(null); setAttempt(value => value + 1) }}>Retry</button> : null}
   </main>
 }

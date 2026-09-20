@@ -9,13 +9,14 @@ import { useWallet } from '@/hooks/useWallet'
 import { DisplayTokenAmount } from './DisplayTokenAmount'
 import { CENTER_WALLET_CONFIG } from '@/providers/wallet-config'
 import { centerWalletClient } from '@/providers/center-runtime'
+import { CENTER_FRAME_CALLBACK, CENTER_FRAME_RECEIVED } from '@/providers/center-callback'
 import { createHomerunPayment } from '@/lib/center-payment'
 import { prepareProjectPayQuote } from '@/lib/project-pay-quote'
 
 type Controller = ReturnType<typeof createHomerunPayment>
 type Pending = ReturnType<Controller['pending']>
 const statuses = {
-  reviewing: 'Review this payment in Juicebox wallet and approve with your passkey.',
+  reviewing: 'Approve this payment with your passkey in the Juicebox wallet panel below.',
   approved: 'Approved. Submit this exact payment when you are ready.',
   submitting: 'Checking the original submission…', pending: 'Submitted. Waiting for confirmation…',
   confirming: 'Confirming the payment onchain…', paid: 'Payment confirmed onchain.', reverted: 'The payment reverted onchain.',
@@ -31,6 +32,23 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
   const [controller, setController] = useState<Controller | null>(null), [pending, setPending] = useState<Pending>(null)
   const [input, setInput] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null)
   const generation = useRef(''), working = useRef(false), live = useRef(true)
+  // The review page is framed here: Center admits this origin to frame it and the passkey prompt is delegated to the
+  // frame. On approval Center sends the frame to Homerun's own callback page, which hands the callback up by message.
+  const [frame, setFrame] = useState<string | null>(null), [frameHeight, setFrameHeight] = useState<number>()
+  const frameRef = useRef<HTMLIFrameElement | null>(null), frameClose = useRef<AbortController | null>(null)
+  useEffect(() => {
+    if (!frame) return
+    setFrameHeight(undefined)
+    const issuer = CENTER_WALLET_CONFIG?.issuer
+    const sized = (event: MessageEvent) => {
+      const data = event.data as { type?: unknown; height?: unknown } | null
+      if (event.source !== frameRef.current?.contentWindow || event.origin !== issuer || data?.type !== 'juicebox-center:size' || typeof data.height !== 'number' || !Number.isFinite(data.height)) return
+      setFrameHeight(Math.min(1200, Math.max(160, Math.ceil(data.height))) + 2)
+    }
+    window.addEventListener('message', sized)
+    return () => window.removeEventListener('message', sized)
+  }, [frame])
+  useEffect(() => () => frameClose.current?.abort(), [])
   const identity = `${chainId}:${projectId}:${address ?? ''}:${paused}`
   generation.current = identity
   useEffect(() => { live.current = true; return () => { live.current = false } }, [])
@@ -53,13 +71,35 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
     finally { working.current = false; if (live.current) { setBusy(false); try { setPending(controller?.pending() ?? null) } catch { setError('The saved payment is unavailable. Return to its original tab.') } } }
   }
   const guard = () => { if (!live.current || generation.current !== identity) throw new Error('The project or wallet changed. Return to the original payment.') }
+  /** Shows the review in a frame and resolves with the callback it hands back; rejects when the frame is closed. */
+  function approveInFrame(approvalUrl: string): Promise<string> {
+    const closing = new AbortController(); frameClose.current = closing
+    setFrame(approvalUrl)
+    return new Promise<string>((resolve, reject) => {
+      const origin = window.location.origin
+      const done = () => { window.removeEventListener('message', onMessage); closing.signal.removeEventListener('abort', onAbort) }
+      const onMessage = (event: MessageEvent) => {
+        const data = event.data as { type?: unknown; url?: unknown } | null
+        if (!frameRef.current || event.source !== frameRef.current.contentWindow || event.origin !== origin || data?.type !== CENTER_FRAME_CALLBACK || typeof data.url !== 'string') return
+        done(); frameRef.current.contentWindow?.postMessage({ type: CENTER_FRAME_RECEIVED }, origin); resolve(data.url)
+      }
+      const onAbort = () => { done(); reject(new DOMException('The review was closed.', 'AbortError')) }
+      closing.signal.addEventListener('abort', onAbort); window.addEventListener('message', onMessage)
+    }).finally(() => { frameClose.current = null; if (live.current) setFrame(null) })
+  }
+  async function approve(approvalUrl: string) {
+    let url: string
+    try { url = await approveInFrame(approvalUrl) }
+    catch (cause) { if (cause instanceof DOMException && cause.name === 'AbortError') return; throw cause }
+    guard(); await controller!.complete(url)
+  }
   async function review() {
     if (!controller || !address || !client || chainId !== 8453 || paused) return
     await run(async () => {
       if (pending) {
         const restored = await controller.prepare(pending.intent)
         guard(); if (!restored.approvalUrl) throw new Error('The original review is unavailable. Check payment status.')
-        window.location.assign(restored.approvalUrl); return
+        await approve(restored.approvalUrl); return
       }
       if (!/^[0-9]+(?:\.[0-9]{1,6})?$/.test(input.trim())) throw new Error('Enter a USDC amount with at most six decimal places.')
       const amount = parseUnits(input.trim(), 6); if (amount <= 0n) throw new Error('Enter an amount greater than zero.')
@@ -70,7 +110,7 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
       const reviewed = await controller.prepare({ projectId: projectId.toString(), token, terminal, amount: amount.toString(),
         minimumReturnedTokens: quote.minimumTokenCount.toString(), returnPath: window.location.pathname })
       guard(); if (!reviewed.approvalUrl) throw new Error('The payment review is unavailable. Check its saved status.')
-      window.location.assign(reviewed.approvalUrl)
+      await approve(reviewed.approvalUrl)
     })
   }
   async function submit() {
@@ -105,9 +145,16 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
           disabled={busy || paused} onChange={event => setInput(event.target.value)} className="min-h-12 border border-[#bfc9b5] bg-white px-3" /></label> : null}
         {matching ? <dl className="mt-4 text-sm"><dt>Payment</dt><dd>{formatUnits(BigInt(pending!.intent.amount), 6)} USDC</dd>
           {pending?.status?.expectedPayment ? <><dt className="mt-2">Minimum returned</dt><dd><DisplayTokenAmount value={BigInt(pending.status.expectedPayment.minimumReturnedTokens)} /> {tokenLabel}</dd></> : null}</dl> : null}
-        <p role="status" aria-live="polite" className="mt-4 break-words text-sm">{paused ? 'This project has paused payments.' : status ? statuses[status] : 'Each payment needs your passkey approval.'}</p>
+        <p role="status" aria-live="polite" className="mt-4 break-words text-sm">{paused ? 'This project has paused payments.' : frame ? statuses.reviewing : status ? statuses[status] : 'Each payment needs your passkey approval.'}</p>
+        {frame ? <div className="center-review-frame mt-4">
+          <iframe ref={frameRef} src={frame} title="Juicebox wallet payment review" allow="publickey-credentials-get" referrerPolicy="no-referrer" style={frameHeight ? { height: frameHeight } : undefined} />
+          <div className="mt-3 flex flex-wrap justify-between gap-3 text-sm">
+            <button type="button" className="underline" onClick={() => frameClose.current?.abort()}>Close</button>
+            <a className="underline" href={frame} onClick={() => frameClose.current?.abort()}>Open as a page</a>
+          </div>
+        </div> : null}
         <div className="mt-4 flex flex-wrap gap-3">
-          {!pending || (!pending.submitted && (!status || status === 'reviewing')) ? <button type="button" className="btn-primary min-h-11 px-4" disabled={busy || paused || !controller} onClick={() => void review()}>{busy ? 'Preparing…' : pending ? status ? 'Return to passkey review' : 'Resume payment preparation' : 'Review with a passkey'}</button> : null}
+          {!frame && (!pending || (!pending.submitted && (!status || status === 'reviewing'))) ? <button type="button" className="btn-primary min-h-11 px-4" disabled={busy || paused || !controller} onClick={() => void review()}>{busy ? 'Preparing…' : pending ? status ? 'Approve with your passkey' : 'Resume payment preparation' : 'Review with a passkey'}</button> : null}
           {status === 'approved' && !pending?.submitted ? <button type="button" className="btn-primary min-h-11 px-4" disabled={busy || paused} onClick={() => void submit()}>Submit payment</button> : null}
           {pending && !terminal ? <button type="button" className="btn-secondary min-h-11 px-4" disabled={busy} onClick={() => void run(() => controller!.refresh())}>Check payment status</button> : null}
           {terminal ? <button type="button" className="btn-secondary min-h-11 px-4" disabled={busy} onClick={() => void run(async () => { controller!.clear(); setInput('') })}>Close payment</button> : null}

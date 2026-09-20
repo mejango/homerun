@@ -34,6 +34,14 @@ selected project, amount, beneficiary, terminal and minimum token return. Center
 SDK independently verifies the exact plan, operation, fee bound and owner approval.
 The passkey review and explicit submission are separate steps.
 
+The review is shown inside the payment panel, the way Beep shows it: Center's
+review page is framed with `allow="publickey-credentials-get"`, reports its own
+height by message, and on approval sends the frame to Homerun's `/center/callback`,
+which hands the callback up to the framing page by same-origin message; the page
+completes the payment and removes the frame. The frame only loads when Center
+admits Homerun's origin to frame its own reviews (`WALLET_FRAMEABLE_APP_ORIGINS` on
+Center); "Open as a page" is the full-page fallback either way.
+
 The payment journal records submission before sending. A lost response retains
 that record; retry and polling observe the original operation. Polling pauses
 when hidden/offline and has a finite attempt budget. Another payment cannot

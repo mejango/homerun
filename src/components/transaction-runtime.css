@@ -155,3 +155,8 @@ dialog.ui-modal-host::backdrop { all: revert-layer; }
   --jb-connect-backdrop: rgb(20 35 29 / .55);
 }
 .jb-connect.homerun-connect :is(.jb-connect-primary, .jb-connect-tile) { border-radius: var(--radius); }
+.jb-connect.homerun-connect .jb-connect-powered { display: none; }
+.jb-connect.homerun-connect .jb-connect-primary { display: inline-block; width: auto; min-height: 44px; padding: 10px 20px; }
+
+/* A Center payment review framed inside the payment panel; Center reports the height it needs. */
+.center-review-frame iframe { display: block; width: 100%; height: 23rem; border: 1px solid #c4cdbb; border-radius: var(--radius); background: #f7f5ef; }
