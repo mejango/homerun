@@ -330,8 +330,8 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
     const issue = errors[signers] || errors[threshold] || errors[mode];
     return <div className="create-multisig">
       {raw[mode] === 'existing' ? <>
+        <p className="create-help">The {role} is an address you already control. <button type="button" className="quiet-button create-help-link" onClick={() => update(mode, 'create')}>Create a new multisig?</button></p>
         {field(`${role}Wallet`, `${role === 'owner' ? 'Owner' : 'Operator'} address`, { placeholder: '0x…', maxLength: 42 })}
-        <button type="button" className="quiet-button" onClick={() => update(mode, 'create')}>Create a new multisig</button>
       </> : <>
         <p className="create-help">The {role} is made up of addresses that need to agree on decisions. <button type="button" className="quiet-button create-help-link" onClick={() => update(mode, 'existing')}>Already have a multisig?</button></p>
         <div id={`create-${signers}`} tabIndex={-1}>
