@@ -1,4 +1,4 @@
-:root { --paper: #f7f5ef; --radius: 3px 7px 4px 3px; --surface: #fffefa; --ink: #253c32; --muted: #5f6b61; --green: #24533e; --line: #dedfd4; --soft: #eef1e6; --serif: Georgia, 'Times New Roman', serif; --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+:root { --paper: #f7f5ef; --radius: 3px; --surface: #fffefa; --ink: #253c32; --muted: #5f6b61; --green: #24533e; --line: #dedfd4; --soft: #eef1e6; --serif: Georgia, 'Times New Roman', serif; --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 body { margin: 0; background: var(--paper); color: var(--ink); font: 14px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }

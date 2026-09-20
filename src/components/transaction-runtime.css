@@ -142,14 +142,16 @@ dialog.ui-modal-host::backdrop { all: revert-layer; }
   :is(.modal-dialog, .ui-modal-host) :focus-visible { outline: 2px solid #3f5b66; outline-offset: 3px; }
 }
 
-/* The SDK sign-in modal, on Homerun's card palette. */
-.homerun-connect {
+/* The SDK sign-in modal, on Homerun's card palette. The SDK injects its own `.jb-connect` defaults at runtime,
+   after this sheet, so the override needs both classes to win. */
+.jb-connect.homerun-connect {
   --jb-connect-bg: #f7f5ef;
   --jb-connect-fg: #293e35;
   --jb-connect-muted: #5d6b63;
   --jb-connect-line: #d8dece;
   --jb-connect-accent: #42694e;
   --jb-connect-accent-fg: #fff;
-  --jb-connect-radius: .75rem;
+  --jb-connect-radius: var(--radius);
   --jb-connect-backdrop: rgb(20 35 29 / .55);
 }
+.jb-connect.homerun-connect :is(.jb-connect-primary, .jb-connect-tile) { border-radius: var(--radius); }
