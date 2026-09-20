@@ -12,15 +12,15 @@ exact app origin. Build configuration does not activate that allowlist.
 
 ## Connection and payment behavior
 
-Signing in opens Center in a popup window and the page stays. The callback lands on
-`/center/callback` inside that window, which scrubs its address, hands the callback
-URL to the page that opened it, and closes; the page finishes the exchange and
-connects wagmi. When a browser blocks the popup the SDK falls back to a full-page
-redirect: the app saves the original local pathname before preparing the handoff and
-the callback page completes the exchange itself, then returns to that page. In both
-cases the SDK's original exchange is preserved for retry, and wagmi connects only to
-the completed Base Safe identity. Closing the wallet chooser prevents a delayed
-preparation from launching.
+Signing in opens Center in a frame inside the sign-in dialog and the page stays. The
+callback lands on `/center/callback` inside that frame, which scrubs its address and
+hands the callback URL up to the page; the page finishes the exchange, connects wagmi
+and drops the frame. When the person opens the sign-in as a page of its own (or signs
+up), the flow is a full-page redirect: the app saves the original local pathname
+before preparing the handoff and the callback page completes the exchange itself,
+then returns to that page. In both cases the SDK's original exchange is preserved for
+retry, and wagmi connects only to the completed Base Safe identity. Closing the wallet
+chooser prevents a delayed preparation from launching.
 
 The Center connector supports reads and account discovery. It cannot expose
 generic signing, transaction sending or session-permission methods through the
@@ -33,6 +33,12 @@ preserves original preparation IDs, and checks the decoded payment against the
 selected project, amount, beneficiary, terminal and minimum token return. Center's
 SDK independently verifies the exact plan, operation, fee bound and owner approval.
 The passkey review and explicit submission are separate steps.
+
+The framed sign-in is the SDK's `passkeyOption({ frame: true })` (0.4.0): Center's
+launch form targets a frame the dialog renders with `allow="publickey-credentials-get"`,
+and the callback hands up through the SDK's `deliverCenterCallback`. Center serves
+the sign-in framed only for apps in its `WALLET_FRAMEABLE_APP_ORIGINS`; the page
+inside offers "Open as a page" when it cannot continue there.
 
 The review is shown inside the payment panel, the way Beep shows it: Center's
 review page is framed with `allow="publickey-credentials-get"`, reports its own
@@ -66,7 +72,7 @@ Foundry remappings to the existing protocol libraries. Browser commands
 `1000000000000000` wei fee bound. Build to `.next-center-test`, serve its standalone
 output at `BASE_URL` (default `http://localhost:54064`), then run `npm run test:center`.
 It uses the actual app and pinned SDK with explicitly modeled Center responses to
-check chooser cancellation, URL scrubbing, a lost exchange reply, exact retry,
+check chooser cancellation, the framed sign-in, URL scrubbing, a lost exchange reply, exact retry,
 original-page restoration, reload and sign-out. It writes a sanitized report and
 screenshot under `test-results/center-wallet/`. This test does not authorize funds
 or establish actual server/chain behavior.

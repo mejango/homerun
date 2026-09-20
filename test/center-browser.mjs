@@ -8,13 +8,16 @@ import { expect } from '@playwright/test'
 const base = process.env.BASE_URL || 'http://localhost:54064'
 const issuer = 'https://wallet.homerun.test', audience = 'https://api.homerun.test'
 const wallet = '0x1111111111111111111111111111111111111111'
-const browser = await chromium.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true })
+// The modeled issuer is a public https origin while the app is on localhost; Chrome's local network access
+// checks would otherwise block the frame's navigation from the one to the other, which production never has.
+const browser = await chromium.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true,
+  args: ['--disable-features=LocalNetworkAccessChecks,LocalNetworkAccessForNavigations,PrivateNetworkAccessForNavigations'] })
 const context = await browser.newContext({ viewport: { width: 1200, height: 900 }, reducedMotion: 'reduce' })
 const page = await context.newPage(), errors = []
 page.on('pageerror', error => errors.push(error.name))
 page.setDefaultTimeout(15000)
 const intentId = randomBytes(32).toString('base64url'), code = randomBytes(32).toString('base64url')
-let request, originalExchange, grant, exchanges = 0, launches = 0, held, release, popup
+let request, originalExchange, grant, exchanges = 0, launches = 0, held, release
 const prepared = new Promise(resolve => { held = resolve })
 const continuing = new Promise(resolve => { release = resolve })
 const cors = { 'access-control-allow-origin': base, 'access-control-allow-headers': 'content-type,x-center-wallet-request',
@@ -42,7 +45,9 @@ await context.route(issuer + '/**', async route => {
   }
   if (url.pathname === '/wallet/launch') {
     assert.equal(http.method(), 'POST');assert.equal(http.headers().origin, base)
+    // The launch form is submitted into the frame the dialog shows, never into this page or a popup.
     assert.equal(http.isNavigationRequest(), true);assert.equal(http.resourceType(), 'document')
+    assert.equal(http.frame().name(), 'juicebox-center-frame')
     const form = new URLSearchParams(http.postData())
     assert.deepEqual([...form.keys()].sort(), ['intentId', 'signature']);assert.equal(form.get('intentId'), intentId)
     assert.match(form.get('signature'), /^0x[0-9a-f]{130}$/);launches++
@@ -52,7 +57,7 @@ await context.route(issuer + '/**', async route => {
   }
   if (url.pathname === '/wallet/handoff/exchange') {
     assert.equal(http.headers().cookie, undefined)
-    // The exchange runs in the original page after the popup delivered its callback and closed.
+    // The exchange runs in the original page after the frame handed its callback up.
     assert.equal(page.url(), base + '/founderhaus', 'the page never left for the exchange')
     const body = http.postDataJSON()
     if (originalExchange) assert.deepEqual(body, originalExchange, 'retry preserves the exact signed exchange')
@@ -76,7 +81,7 @@ try {
   assert.equal(callback.headers()['referrer-policy'], 'strict-origin')
   await page.goto(base + '/founderhaus')
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
-  await page.getByRole('button', { name: /^Continue with / }).click()
+  await page.locator('.jb-connect-primary').click()
   await prepared
   await page.getByRole('button', { name: 'Cancel connection', exact: true }).click()
   release()
@@ -84,25 +89,24 @@ try {
   await page.waitForTimeout(300)
   assert.equal(page.url(), base + '/founderhaus', 'closing the chooser cancels delayed navigation')
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
-  const opened = context.waitForEvent('page')
-  await page.getByRole('button', { name: /^Continue with / }).click()
-  // Center opens in a popup; the page stays on the project.
-  popup = await opened
-  popup.on('pageerror', error => errors.push(error.name))
-  await popup.getByRole('heading', { name: 'Modeled Center approval' }).waitFor()
+  await page.locator('.jb-connect-primary').click()
+  // Center opens in a frame inside the dialog; the page stays on the project and opens no window.
+  const frame = page.frameLocator('iframe[name="juicebox-center-frame"]')
+  await frame.getByRole('heading', { name: 'Modeled Center approval' }).waitFor()
   assert.equal(page.url(), base + '/founderhaus')
+  assert.equal(context.pages().length, 1, 'no popup opened')
   await expect(page.getByRole('dialog')).toBeVisible()
-  await popup.getByRole('link', { name: 'Return to Homerun' }).click()
-  // The callback page hands its URL to the page and closes; the lost first exchange shows there.
+  await frame.getByRole('link', { name: 'Return to Homerun' }).click()
+  // The callback page inside the frame hands its URL up to the page; the lost first exchange shows there.
   await expect(page.locator('.jb-connect-error')).toContainText('Retry the pending connection')
-  if (!popup.isClosed()) await popup.waitForEvent('close')
-  await page.getByRole('button', { name: /^Continue with / }).click()
+  await expect(page.locator('iframe[name="juicebox-center-frame"]')).toHaveCount(0)
+  await page.locator('.jb-connect-primary').click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await expect(page).toHaveURL(base + '/founderhaus')
   await expect(page.getByRole('button', { name: /^Signed in as/ })).toBeVisible()
   assert.equal(exchanges, 2)
   assert.equal(launches, 1)
-  assert.equal(context.pages().length, 1, 'the popup closed itself')
+  assert.equal(context.pages().length, 1, 'no window was opened')
   // A callback page reached without an opener scrubs its address before anything else, then completes on its own.
   const direct = await context.newPage()
   await direct.goto(base + '/center/callback?code=' + code + '&state=x&iss=' + encodeURIComponent(issuer))
@@ -121,7 +125,7 @@ try {
   await mkdir('test-results/center-wallet', { recursive: true })
   await page.screenshot({ path: 'test-results/center-wallet/homerun.png', fullPage: true })
   await writeFile('test-results/center-wallet/summary.json', JSON.stringify({ passed: true, browser: browser.version(),
-    evidence: 'real Next app and packaged SDK; modeled Center responses', delayedRedirectCancelled: true, popupSignIn: true,
+    evidence: 'real Next app and packaged SDK; modeled Center responses', delayedRedirectCancelled: true, framedSignIn: true,
     originalExchangeRecovered: true, callbackScrubbed: true, reloadRestored: true, disconnectCleared: true, signedFormLaunch: true, launches, exchanges, pageErrors: errors }, null, 2))
-  console.log('PASS enabled Homerun: chooser cancellation, popup sign-in, callback hand-back and scrubbing, exact retry in the page, reload and disconnect')
+  console.log('PASS enabled Homerun: chooser cancellation, framed sign-in, callback hand-up and scrubbing, exact retry in the page, reload and disconnect')
 } finally { await browser.close() }

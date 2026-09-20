@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { connect } from '@wagmi/core'
 import { wagmiConfig } from '@/providers/Providers'
-import { capturedCenterCallback, deliverCenterCallbackToParent } from '@/providers/center-callback'
+import { capturedCenterCallback } from '@/providers/center-callback'
 
 let completing: Promise<string | null> | null = null
 let callbackResolved = false
@@ -10,9 +10,8 @@ async function complete(): Promise<string | null> {
   const callback = capturedCenterCallback()
   const { centerWalletClient, originalCenterPage } = await import('@/providers/center-runtime')
   if (!callbackResolved && callback && new URL(callback.url).search) {
-    // Framed by a Homerun page (a payment review shown inline): that page finishes the payment and removes the frame.
-    if (deliverCenterCallbackToParent(callback.url)) { callbackResolved = true; return null }
-    // Opened as a popup: the page that opened this window finishes the sign-in and closes it.
+    // Framed by a Homerun page (a sign-in or payment review shown inline) or opened as a popup: that page finishes
+    // the sign-in or payment and removes the frame or closes the window.
     const { deliverCenterCallback } = await import('@bananapus/nana-sdk-connect/core')
     if (await deliverCenterCallback(callback.url, { window })) { callbackResolved = true; return null }
   }
