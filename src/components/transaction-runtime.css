@@ -154,7 +154,7 @@ dialog.ui-modal-host::backdrop { all: revert-layer; }
   --jb-connect-radius: var(--radius);
   --jb-connect-backdrop: rgb(20 35 29 / .55);
 }
-.jb-connect.homerun-connect :is(.jb-connect-primary, .jb-connect-tile, .jb-connect-frame) { border-radius: var(--radius); }
+.jb-connect.homerun-connect :is(.jb-connect-primary, .jb-connect-tile) { border-radius: var(--radius); }
 .jb-connect.homerun-connect .jb-connect-powered { display: none; }
 .jb-connect.homerun-connect .jb-connect-primary { display: inline-block; width: auto; min-height: 44px; padding: 10px 20px; }
 
