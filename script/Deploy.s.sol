@@ -13,15 +13,15 @@ contract Deploy is HomerunDeployment, Sphinx {
     // --------------------------- custom errors ------------------------- //
     //*********************************************************************//
 
-    /// @notice Sphinx resolved a Safe other than the reviewed V6 deployment Safe.
+    /// @notice Sphinx resolved a Safe other than the reviewed Homerun Safe.
     error Deploy_UnexpectedSafe(address expected, address actual);
 
     //*********************************************************************//
     // ------------------------ private constants ------------------------ //
     //*********************************************************************//
 
-    /// @notice The registered `v6-deployment` 4-of-8 Safe used by deploy-all-v6.
-    address private constant _EXPECTED_SAFE = 0x4dc161eF837fF1C4485b08DDFcDB182F2157bE18;
+    /// @notice The `homerun` Sphinx project's 1-of-3 `V6 Jango` Safe.
+    address private constant _EXPECTED_SAFE = 0xd5136c794ee43BEf1eD4cF1eB6DEe45b7F803437;
 
     //*********************************************************************//
     // -------------------- internal stored properties ------------------- //
@@ -36,7 +36,7 @@ contract Deploy is HomerunDeployment, Sphinx {
 
     /// @notice Configures the Sphinx project and supported RPC aliases.
     function configureSphinx() public override {
-        sphinxConfig.projectName = "v6-deployment";
+        sphinxConfig.projectName = "homerun";
         sphinxConfig.mainnets = ["ethereum", "optimism", "base", "arbitrum"];
         sphinxConfig.testnets = ["ethereum_sepolia", "optimism_sepolia", "base_sepolia", "arbitrum_sepolia"];
     }

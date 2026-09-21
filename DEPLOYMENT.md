@@ -1,6 +1,6 @@
 # Deploying the Homerun contracts
 
-Homerun's contracts deploy through the same Sphinx proposal workflow, `v6-deployment` project, 4-of-8 Safe and canonical CREATE2 factory (`0x4e59b44847b379578588920cA78FbF26c0B4956C`) as the other Juicebox V6 repositories. The rollout lives in this repository: `script/Deploy.s.sol:Deploy` is the production entrypoint, `script/helpers/HomerunDeployment.sol` holds the restartable deployment and verification logic, and `script/deploy.mjs` runs it per network group. Nothing here is executed by `deploy-all-v6`.
+Homerun's contracts deploy through the same Sphinx proposal workflow and canonical CREATE2 factory as the other Juicebox V6 repositories, under the `homerun` Sphinx project and its 1-of-3 `V6 Jango` Safe (`0x4e59b44847b379578588920cA78FbF26c0B4956C`) as the other Juicebox V6 repositories. The rollout lives in this repository: `script/Deploy.s.sol:Deploy` is the production entrypoint, `script/helpers/HomerunDeployment.sol` holds the restartable deployment and verification logic, and `script/deploy.mjs` runs it per network group. Nothing here is executed by `deploy-all-v6`.
 
 ## What gets deployed
 
@@ -52,7 +52,7 @@ An explicit `HOMERUN_ENV_FILE` must exist; otherwise the commands load this pack
 
 Protocol addresses come from the sibling `deployments/<network>/` trees: `revnet-core-v6/…/REVDeployer.json` and `nana-omnichain-deployers-v6/…/JBOmnichainDeployer.json`. Preflight also compares each artifact with the Nana SDK's deployment registry and refuses a disagreement. `HOMERUN_WORKSPACE_PATH` (default `../..`) overrides the workspace root; a path outside the committed `fs_permissions` in `foundry.toml` needs an extra read permission. USDC addresses are fixed in the helper and match `deploy-all-v6`'s `JBChainTokens`. Every chain of the group is read on every chain, and each artifact must record its chain ID; only the connected chain's dependencies are checked live: code, `isAllowedToSetFirstController`, the revnet owner's deployer binding, the revnet and omnichain deployers' controller, directory and sucker registry bindings, USDC's six decimals, and a working USD price feed for USDC in `JBPrices` (without it nothing launched here can be paid).
 
-The committed `sphinx.lock` is the public `v6-deployment` organization/project/Safe configuration from `deploy-all-v6`, not credentials. The proposal runner checks that it names the script's project and matches `SPHINX_ORG_ID`; `Deploy.run()` refuses any Safe other than `0x4dc161eF837fF1C4485b08DDFcDB182F2157bE18`.
+The committed `sphinx.lock` is the public organization/project/Safe configuration (regenerate it with `node_modules/.bin/sphinx sync`), not credentials. The proposal runner checks that it names the script's `homerun` project and matches `SPHINX_ORG_ID`; `Deploy.run()` refuses any Safe other than `0xd5136c794ee43BEf1eD4cF1eB6DEe45b7F803437`.
 
 ## Network-group commands
 
