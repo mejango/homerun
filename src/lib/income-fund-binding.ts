@@ -112,7 +112,7 @@ export async function readIncomeFundBinding(client: PublicClient, input: {
   }
   if (recordedLaunches.length !== 1 || !sameLog(launch, recordedLaunches[0])) throw new Error('The creation receipt does not corroborate the exact Homerun INCOME launch.')
   const fundProjectId = uint(launch.args.fundProjectId, 'FUND project ID', true)
-  if (fundProjectId === incomeProjectId || !validAddress(launch.args.owner) || !validAddress(launch.args.fundToken)) throw new Error('The Homerun INCOME launch contains invalid project or owner identities.')
+  if (fundProjectId === incomeProjectId || !validAddress(launch.args.owner)) throw new Error('The Homerun INCOME launch contains invalid project or owner identities.')
   const bound = await client.readContract({ address: deployer, abi: homerunDeployerAbi, functionName: 'incomeProjectIdOf', args: [fundProjectId], blockNumber: observed.number })
   if (bound !== incomeProjectId) throw new Error('The discovered FUND is not bound to this INCOME project by the verified launcher.')
   await Promise.all([assertCanonical(client, created), assertCanonical(client, observed)])

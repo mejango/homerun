@@ -1,6 +1,6 @@
 /**
- * Deploys HomerunAllowlistHook, the HomerunDeployerLib external library and
- * HomerunDeployer from the local `out/` artifacts onto an Anvil fork and
+ * Deploys HomerunAllowlistHook and HomerunDeployer from the local `out/`
+ * artifacts onto an Anvil fork and
  * registers them in the installed SDK registry so the application's builders
  * target them. Fork scripts only: the live SDK registry gains these entries
  * through the release process instead.
@@ -46,11 +46,9 @@ export async function deployHomerunOnFork(client: PublicClient, input: { chain: 
     return getAddress(address)
   }
   const allowlistHook = await deploy('HomerunAllowlistHook', [v6Address('JBProjects', chainId), forwarder])
-  const HomerunDeployerLib = await deploy('HomerunDeployerLib', [])
   const deployer = await deploy('HomerunDeployer', [[{
-    chainId, controller: v6Address('JBController', chainId), revDeployer: registered('REVDeployer'), usdc: USDC_ADDRESSES[chainId],
-    omnichainDeployer, routerTerminalRegistry: registered('JBRouterTerminalRegistry'), allowlistHook,
-  }]], { HomerunDeployerLib })
+    chainId, revDeployer: registered('REVDeployer'), usdc: USDC_ADDRESSES[chainId], omnichainDeployer, allowlistHook,
+  }]])
   registry.HomerunAllowlistHook = { ...registry.HomerunAllowlistHook, [chainId]: allowlistHook }
   registry.HomerunDeployer = { ...registry.HomerunDeployer, [chainId]: deployer }
   return { deployer, allowlistHook }

@@ -7,9 +7,9 @@ Homerun's contracts deploy through the same Sphinx proposal workflow, `v6-deploy
 Two singletons, in this order, both with the salt `HomerunV6`:
 
 1. `HomerunAllowlistHook`, constructed with the canonical `JBProjects` and the trusted forwarder of the local `JBOmnichainDeployer`.
-2. `HomerunDeployer`, constructed with one `HomerunChainConfig` per chain of the network group, in ascending chain ID: `JBController`, `REVDeployer`, USDC, `JBOmnichainDeployer`, `JBRouterTerminalRegistry` and the allowlist hook.
+2. `HomerunDeployer`, constructed with one `HomerunChainConfig` per chain of the network group, in ascending chain ID: `REVDeployer`, USDC, `JBOmnichainDeployer` and the allowlist hook. The controller and the router terminal registry are read from `REVDeployer` in the constructor.
 
-The deployer's constructor calldata is identical on every chain of a group, so every chain of a group shares one deployer address, and `PROTOCOL_CONFIG_HASH` commits to the whole group. Mainnets (Ethereum, Optimism, Base, Arbitrum) and testnets (their Sepolias) are separate groups with separate addresses.
+The deployer's constructor calldata is identical on every chain of a group, so every chain of a group shares one deployer address, and that address commits to the whole group's configuration. Mainnets (Ethereum, Optimism, Base, Arbitrum) and testnets (their Sepolias) are separate groups with separate addresses.
 
 ## Reproducible checkout
 
@@ -50,7 +50,7 @@ An explicit `HOMERUN_ENV_FILE` must exist; otherwise the commands load this pack
 | base_sepolia | RPC_BASE_SEPOLIA | base_sepolia |
 | arbitrum_sepolia | RPC_ARBITRUM_SEPOLIA | arbitrum_sepolia |
 
-Protocol addresses come from the sibling `deployments/<network>/` trees: `nana-core-v6/…/JBController.json`, `revnet-core-v6/…/REVDeployer.json`, `nana-omnichain-deployers-v6/…/JBOmnichainDeployer.json` and `nana-router-terminal-v6/…/JBRouterTerminalRegistry.json`. Preflight also compares each artifact with the Nana SDK's deployment registry and refuses a disagreement. `HOMERUN_WORKSPACE_PATH` (default `../..`) overrides the workspace root; a path outside the committed `fs_permissions` in `foundry.toml` needs an extra read permission. USDC addresses are fixed in the helper and match `deploy-all-v6`'s `JBChainTokens`. Every chain of the group is read on every chain, and each artifact must record its chain ID; only the connected chain's dependencies are checked live: code, `isAllowedToSetFirstController`, the revnet owner's deployer binding, the revnet and omnichain deployers' controller/directory/registry bindings, USDC's six decimals, and a working USD price feed for USDC in `JBPrices` (without it nothing launched here can be paid).
+Protocol addresses come from the sibling `deployments/<network>/` trees: `revnet-core-v6/…/REVDeployer.json` and `nana-omnichain-deployers-v6/…/JBOmnichainDeployer.json`. Preflight also compares each artifact with the Nana SDK's deployment registry and refuses a disagreement. `HOMERUN_WORKSPACE_PATH` (default `../..`) overrides the workspace root; a path outside the committed `fs_permissions` in `foundry.toml` needs an extra read permission. USDC addresses are fixed in the helper and match `deploy-all-v6`'s `JBChainTokens`. Every chain of the group is read on every chain, and each artifact must record its chain ID; only the connected chain's dependencies are checked live: code, `isAllowedToSetFirstController`, the revnet owner's deployer binding, the revnet and omnichain deployers' controller, directory and sucker registry bindings, USDC's six decimals, and a working USD price feed for USDC in `JBPrices` (without it nothing launched here can be paid).
 
 The committed `sphinx.lock` is the public `v6-deployment` organization/project/Safe configuration from `deploy-all-v6`, not credentials. The proposal runner checks that it names the script's project and matches `SPHINX_ORG_ID`; `Deploy.run()` refuses any Safe other than `0x4dc161eF837fF1C4485b08DDFcDB182F2157bE18`.
 
@@ -81,7 +81,7 @@ Do not use `forge script --broadcast` with any of these scripts; execution goes 
 
 ## What a repeated run accepts
 
-A repeated collection or rehearsal skips an existing contract only after checking its compiled runtime against the current artifact, masking only compiler-reported immutable words (every occurrence of an immutable must agree). It then checks every immutable binding through the getters: the hook's `PROJECTS` and forwarder; the deployer's controller, directory, projects, tokens, revnet deployer and owner, sucker registry, terminal, USDC, omnichain deployer, router registry, hook, forwarder, `PROTOCOL_CONFIG_HASH` and every `usdcOf`. Unexpected code or bindings fail the run rather than silently reusing a contract. A changed source revision deploys new predictions; it never upgrades or replaces an earlier deployment.
+A repeated collection or rehearsal skips an existing contract only after checking its compiled runtime against the current artifact, masking only compiler-reported immutable words (every occurrence of an immutable must agree). It then checks every immutable binding through the getters: the hook's `PROJECTS` and forwarder; the deployer's controller, projects, tokens, revnet deployer and owner, terminal, USDC, omnichain deployer, router registry, hook, forwarder and every `usdcOf`. Unexpected code or bindings fail the run rather than silently reusing a contract. A changed source revision deploys new predictions; it never upgrades or replaces an earlier deployment.
 
 ## Interference and recovery
 

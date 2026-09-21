@@ -163,11 +163,9 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
         for (uint256 i; i < chains.length; ++i) {
             chains[i] = HomerunChainConfig({
                 chainId: i == 0 ? 1 : 10,
-                controller: address(jbController()),
                 revDeployer: address(_revDeployer),
                 usdc: address(usdcToken()),
                 omnichainDeployer: address(_omnichain),
-                routerTerminalRegistry: address(_router),
                 allowlistHook: address(_allowlist)
             });
         }
@@ -383,7 +381,6 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
         vm.roll(snapshot.allocations[1].snapshotBlockNumber + 1);
         vm.setBlockhash(snapshot.allocations[1].snapshotBlockNumber, snapshot.allocations[1].snapshotBlockHash);
         _ccipToEthereum = _ccipDeployer(1, _feeProjectId);
-        assertEq(_helper.PROTOCOL_CONFIG_HASH(), keccak256(abi.encode(_chainConfigs())));
     }
 
     function _payAndDistribute(uint256 incomeId) private returns (uint256 customerTokens) {

@@ -43,7 +43,7 @@ type Artifact = {
 type ArtifactSpec = { name: string; location: string; sourceRoot: string; metadataHash: 'ipfs' | 'none'; constructor: string[] }
 
 const specs: ArtifactSpec[] = [
-  { name: 'HomerunDeployer', location: 'out', sourceRoot: root, metadataHash: 'ipfs', constructor: ['chains:tuple[](chainId:uint32,controller:address,revDeployer:address,usdc:address,omnichainDeployer:address,routerTerminalRegistry:address,allowlistHook:address)'] },
+  { name: 'HomerunDeployer', location: 'out', sourceRoot: root, metadataHash: 'ipfs', constructor: ['chains:tuple[](chainId:uint32,revDeployer:address,usdc:address,omnichainDeployer:address,allowlistHook:address)'] },
   { name: 'HomerunAllowlistHook', location: 'out', sourceRoot: root, metadataHash: 'ipfs', constructor: ['projects:address', 'trustedForwarder:address'] },
 ]
 
@@ -164,14 +164,14 @@ export function assertIncomeReleaseSource(helperSource: string) {
   const normalized = helperSource.replace(/\s+/g, ' ')
   const sourceAssertions = [
     'constructor(HomerunChainConfig[] memory chains)',
-    'PROTOCOL_CONFIG_HASH = keccak256(abi.encode(chains));',
+    'CONTROLLER = REV_DEPLOYER.CONTROLLER();', 'ROUTER_TERMINAL_REGISTRY = REV_DEPLOYER.ROUTER_TERMINAL_REGISTRY();',
     'if (!isFund[fundProjectId]) revert HomerunDeployer_UnsupportedFund(fundProjectId);',
     'if (PROJECTS.ownerOf(fundProjectId) != _msgSender()) revert HomerunDeployer_Unauthorized(_msgSender());',
     'configuration.operator = _msgSender();',
     'uint112 public constant override FUND_WEIGHT = 10_000e18;', 'uint16 public constant override FUND_CASH_OUT_TAX_RATE = 1000;',
     'uint112 public constant override INCOME_INITIAL_ISSUANCE = 10e18;', 'uint32 public constant override INCOME_CUT_PERCENT = 20_000_000;', 'uint16 public constant override INCOME_CASH_OUT_TAX_RATE = 1000;',
-    'suckerDeploymentConfiguration.salt = scopedSalt;', 'return keccak256(abi.encode(_msgSender(), owner, salt));', 'originalPayer = JBPayerTrackerLib.resolve(_msgSender());', 'beneficiary: payable(_msgSender()),',
-    'configuration.stageConfigurations = new REVStageConfig[](1);', 'address(REV_DEPLOYER.ROUTER_TERMINAL_REGISTRY()) != address(ROUTER_TERMINAL_REGISTRY)',
+    'suckerDeploymentConfiguration.salt = scopedSalt;', 'keccak256(abi.encode(_msgSender(), owner, salt))', 'originalPayer = JBPayerTrackerLib.resolve(_msgSender());', 'beneficiary: payable(_msgSender()),',
+    'configuration.stageConfigurations = new REVStageConfig[](1);',
     'token = address(CONTROLLER.deployERC20For({projectId: projectId, name: name, symbol: ticker, salt: scopedSalt}));',
     'rulesetConfigurations[0].metadata.dataHook = address(ALLOWLIST_HOOK);', 'rulesetConfigurations[0].metadata.useDataHookForPay = true;',
     'configuration.scopeCashOutsToLocalBalances = false;',
@@ -229,13 +229,12 @@ export async function prepareIncomeRelease() {
     }
   })
   const chainConfiguration = networks.map(({ chainId, addresses }) => ({
-    chainId, controller: addresses.JBController, revDeployer: addresses.REVDeployer, usdc: addresses.USDC,
-    omnichainDeployer: addresses.JBOmnichainDeployer, routerTerminalRegistry: addresses.JBRouterTerminalRegistry, allowlistHook: addresses.HomerunAllowlistHook,
+    chainId, revDeployer: addresses.REVDeployer, usdc: addresses.USDC,
+    omnichainDeployer: addresses.JBOmnichainDeployer, allowlistHook: addresses.HomerunAllowlistHook,
   }))
   if (chainConfiguration.some((entry, index) => index > 0 && entry.chainId <= chainConfiguration[index - 1].chainId)) throw new Error('The shared helper constructor must contain strictly increasing chain IDs.')
   const helperArtifact = byName.get('HomerunDeployer')
-  const helperConstructor = constructorPlan(helperArtifact, [chainConfiguration], 64 + 224 * chainIds.length)
-  const protocolConfigHash = helperConstructor.encodedArguments ? keccak256(helperConstructor.encodedArguments) : null
+  const helperConstructor = constructorPlan(helperArtifact, [chainConfiguration], 64 + 160 * chainIds.length)
   const helperPredictedAddress = helperConstructor.initCodeKeccak256 ? getCreate2Address({ from: deterministicFactory, salt: helperSalt, bytecodeHash: helperConstructor.initCodeKeccak256 }) : null
   if (helperPredictedAddress && networks.some(network => network.addresses.HomerunDeployer && network.addresses.HomerunDeployer !== helperPredictedAddress)) blockers.push('A registered helper differs from the address implied by the reviewed shared constructor, artifact and salt.')
   const sdkPackage = await readFile(resolve(root, 'node_modules/@bananapus/nana-sdk-core/package.json'))
@@ -261,12 +260,12 @@ export async function prepareIncomeRelease() {
     sharedHelper: {
       factory: deterministicFactory, factoryEvidence: 'canonical source constant; live factory code not checked by this script',
       saltDerivation: `keccak256(UTF8(${JSON.stringify(helperSaltText)}))`, salt: helperSalt, saltStatus: 'prepared release constant; not a deployment record',
-      chainIds, linkedGroups, constructor: helperConstructor, protocolConfigHash, predictedAddress: helperPredictedAddress,
+      chainIds, linkedGroups, constructor: helperConstructor, predictedAddress: helperPredictedAddress,
       addressStatus: helperPredictedAddress ? 'deterministic prediction only; requires executed receipt and runtime verification' : 'unavailable until actual registered dependency inputs exist',
-      runtimePolicy: 'same initcode/address and PROTOCOL_CONFIG_HASH across chains; local immutable dependencies can make deployed runtime hashes different',
+      runtimePolicy: 'same initcode/address across chains, which commits to the shared chain configuration; local immutable dependencies can make deployed runtime hashes different',
     },
     networks,
-    requiredPostDeploymentEvidence: ['Executed deployment receipts with chain/block/transaction identity, identical shared helper constructor inputs, factory and salt.', 'Full executable-runtime and every immutable-word verification against the exact reviewed artifacts on each chain; template hashes above are not live runtime hashes. Verify the shared PROTOCOL_CONFIG_HASH, TERMINAL, ROUTER_TERMINAL_REGISTRY and every usdcOf entry.', 'Verify the FUND owner becomes the INCOME operator and holds one unlocked reserved split, and the Owner-managed stock 721 inventory with the reviewed USD denomination and restricted tier flags.', 'For every directed SDK CCIP route, verify registry allowlisting, directory/tokens, singleton runtime, ccipRemoteChainId, ccipRemoteChainSelector, ccipRouter and reciprocal default-peer predictions. A merely approved alternative deployer is not proof of cross-chain compatibility.', 'Explorer/Sourcify source verification for the helper using the exact compiler input and metadata settings.', 'Published V6 SDK registry/artifact update for executed chains only, then pin that SDK release in Homerun and re-run onchain wiring/transaction smoke checks.'],
+    requiredPostDeploymentEvidence: ['Executed deployment receipts with chain/block/transaction identity, identical shared helper constructor inputs, factory and salt.', 'Full executable-runtime and every immutable-word verification against the exact reviewed artifacts on each chain; template hashes above are not live runtime hashes. Verify CONTROLLER, TERMINAL, ROUTER_TERMINAL_REGISTRY and every usdcOf entry.', 'Verify the FUND owner becomes the INCOME operator and holds one unlocked reserved split, and the Owner-managed stock 721 inventory with the reviewed USD denomination and restricted tier flags.', 'For every directed SDK CCIP route, verify registry allowlisting, directory/tokens, singleton runtime, ccipRemoteChainId, ccipRemoteChainSelector, ccipRouter and reciprocal default-peer predictions. A merely approved alternative deployer is not proof of cross-chain compatibility.', 'Explorer/Sourcify source verification for the helper using the exact compiler input and metadata settings.', 'Published V6 SDK registry/artifact update for executed chains only, then pin that SDK release in Homerun and re-run onchain wiring/transaction smoke checks.'],
     blockers,
   }
 }

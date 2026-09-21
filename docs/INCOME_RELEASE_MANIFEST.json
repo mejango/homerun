@@ -22,15 +22,16 @@
     "payHook": "HomerunAllowlistHook as the omnichain extra pay hook; owner-managed beneficiary allowlist, closed by default; cash outs ungated",
     "identity": "isFund(projectId) + FundLaunched event"
   },
-  "capturedAt": "2026-09-21T18:52:48.284Z",
+  "capturedAt": "2026-09-21T19:31:46.189Z",
   "liveRpcCalls": 0,
   "walletCalls": 0,
-  "helperSourceKeccak256": "0x6efdd0c4075f84c440a4346fc50e61b4ae02e14e64c32dc78c2936aee94fa3d1",
+  "helperSourceKeccak256": "0x5315b210e07e5faa445ac58fc11b8ae059fc84c5b995cddce816bd92902b5141",
   "profileChecks": {
     "recursiveConstructorShape": true,
     "sourceAssertions": [
       "constructor(HomerunChainConfig[] memory chains)",
-      "PROTOCOL_CONFIG_HASH = keccak256(abi.encode(chains));",
+      "CONTROLLER = REV_DEPLOYER.CONTROLLER();",
+      "ROUTER_TERMINAL_REGISTRY = REV_DEPLOYER.ROUTER_TERMINAL_REGISTRY();",
       "if (!isFund[fundProjectId]) revert HomerunDeployer_UnsupportedFund(fundProjectId);",
       "if (PROJECTS.ownerOf(fundProjectId) != _msgSender()) revert HomerunDeployer_Unauthorized(_msgSender());",
       "configuration.operator = _msgSender();",
@@ -40,11 +41,10 @@
       "uint32 public constant override INCOME_CUT_PERCENT = 20_000_000;",
       "uint16 public constant override INCOME_CASH_OUT_TAX_RATE = 1000;",
       "suckerDeploymentConfiguration.salt = scopedSalt;",
-      "return keccak256(abi.encode(_msgSender(), owner, salt));",
+      "keccak256(abi.encode(_msgSender(), owner, salt))",
       "originalPayer = JBPayerTrackerLib.resolve(_msgSender());",
       "beneficiary: payable(_msgSender()),",
       "configuration.stageConfigurations = new REVStageConfig[](1);",
-      "address(REV_DEPLOYER.ROUTER_TERMINAL_REGISTRY()) != address(ROUTER_TERMINAL_REGISTRY)",
       "token = address(CONTROLLER.deployERC20For({projectId: projectId, name: name, symbol: ticker, salt: scopedSalt}));",
       "rulesetConfigurations[0].metadata.dataHook = address(ALLOWLIST_HOOK);",
       "rulesetConfigurations[0].metadata.useDataHookForPay = true;",
@@ -116,20 +116,28 @@
     {
       "name": "homerun",
       "path": "extensions/homerun",
-      "commit": "920c150e4cf16fa3c62495f4f0046524ea6943d3",
+      "commit": "206fa40963ef4a6ef9f22afd1f159ab4034e436c",
       "trackedChanges": [
-        "M docs/INCOME_INTEGRATION.md",
+        "M DEPLOYMENT.md",
+        " M docs/INCOME_INTEGRATION.md",
         " M docs/INCOME_RELEASE.md",
         " M docs/INCOME_RELEASE_MANIFEST.json",
-        " M docs/TRANSACTIONS.md",
+        " M script/deploy.mjs",
+        " M script/helpers/HomerunDeployment.sol",
+        " M scripts/deploy-homerun-fork.mts",
         " M scripts/prepare-income-release.mts",
         " M src/HomerunDeployer.sol",
-        " M src/components/IncomeLaunch.tsx",
-        "D  src/interfaces/IArbSys.sol",
         " M src/interfaces/IHomerunDeployer.sol",
         " M src/lib/income-contracts.ts",
+        " M src/lib/income-fund-binding.ts",
         " M src/lib/income-launch.ts",
+        " M src/structs/HomerunChainConfig.sol",
+        " M test/HomerunDeployer.integration.t.sol",
         " M test/HomerunDeployer.t.sol",
+        " M test/deployment/HomerunDeployment.t.sol",
+        " M test/deployment/runner.test.mjs",
+        " M test/income-fund-binding.test.ts",
+        " M test/income-initial-allocation.test.ts",
         " M test/income-launch.test.ts",
         " M test/income-release-policy.test.ts"
       ]
@@ -171,14 +179,14 @@
     {
       "name": "HomerunDeployer",
       "artifact": "extensions/homerun/out/HomerunDeployer.sol/HomerunDeployer.json",
-      "artifactSha256": "3a4f4c9433a3a981f8e8f08575c6da70c3a85ff936b906f17688565ec655f129",
+      "artifactSha256": "0a3af249615398ba369b0b9b6c93b7e2de630a7fb732c590f6c58a0d72bc9ada",
       "status": "unavailable-or-invalid",
       "issue": "HomerunDeployer: compilation settings differ from the reviewed profile."
     },
     {
       "name": "HomerunAllowlistHook",
       "artifact": "extensions/homerun/out/HomerunAllowlistHook.sol/HomerunAllowlistHook.json",
-      "artifactSha256": "a8b8cdb2eac2bde49497200f4937a561bc1ab41ca57a1fd45d14078aaafef137",
+      "artifactSha256": "a30c8bb5c3c48d2388f9ee8a60e86d11105406b0aeacca10ef973547a120c6b3",
       "status": "unavailable-or-invalid",
       "issue": "HomerunAllowlistHook: compilation settings differ from the reviewed profile."
     }
@@ -218,89 +226,72 @@
         [
           {
             "chainId": 1,
-            "controller": "0x3Fcec3572e84b624477BcfF4E2CF1f7dEAb648F1",
             "revDeployer": "0xb552eB94284f94b833837D4b2cBB237128415d4e",
             "usdc": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             "omnichainDeployer": "0xB853758A70a6b4216c09f1d071eA2344AbA0a34f",
-            "routerTerminalRegistry": "0xe0427F250fdb0379c8E98e884Ee4570521208CbC",
             "allowlistHook": null
           },
           {
             "chainId": 10,
-            "controller": "0x3Fcec3572e84b624477BcfF4E2CF1f7dEAb648F1",
             "revDeployer": "0xb552eB94284f94b833837D4b2cBB237128415d4e",
             "usdc": "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
             "omnichainDeployer": "0xB853758A70a6b4216c09f1d071eA2344AbA0a34f",
-            "routerTerminalRegistry": "0xe0427F250fdb0379c8E98e884Ee4570521208CbC",
             "allowlistHook": null
           },
           {
             "chainId": 8453,
-            "controller": "0x3Fcec3572e84b624477BcfF4E2CF1f7dEAb648F1",
             "revDeployer": "0xb552eB94284f94b833837D4b2cBB237128415d4e",
             "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
             "omnichainDeployer": "0xB853758A70a6b4216c09f1d071eA2344AbA0a34f",
-            "routerTerminalRegistry": "0xe0427F250fdb0379c8E98e884Ee4570521208CbC",
             "allowlistHook": null
           },
           {
             "chainId": 42161,
-            "controller": "0x3Fcec3572e84b624477BcfF4E2CF1f7dEAb648F1",
             "revDeployer": "0xb552eB94284f94b833837D4b2cBB237128415d4e",
             "usdc": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
             "omnichainDeployer": "0xB853758A70a6b4216c09f1d071eA2344AbA0a34f",
-            "routerTerminalRegistry": "0xe0427F250fdb0379c8E98e884Ee4570521208CbC",
             "allowlistHook": null
           },
           {
             "chainId": 84532,
-            "controller": "0x3Fcec3572e84b624477BcfF4E2CF1f7dEAb648F1",
             "revDeployer": "0xb552eB94284f94b833837D4b2cBB237128415d4e",
             "usdc": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
             "omnichainDeployer": "0xB853758A70a6b4216c09f1d071eA2344AbA0a34f",
-            "routerTerminalRegistry": "0xe0427F250fdb0379c8E98e884Ee4570521208CbC",
             "allowlistHook": null
           },
           {
             "chainId": 421614,
-            "controller": "0x3Fcec3572e84b624477BcfF4E2CF1f7dEAb648F1",
             "revDeployer": "0xb552eB94284f94b833837D4b2cBB237128415d4e",
             "usdc": "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d",
             "omnichainDeployer": "0xB853758A70a6b4216c09f1d071eA2344AbA0a34f",
-            "routerTerminalRegistry": "0xe0427F250fdb0379c8E98e884Ee4570521208CbC",
             "allowlistHook": null
           },
           {
             "chainId": 11155111,
-            "controller": "0x3Fcec3572e84b624477BcfF4E2CF1f7dEAb648F1",
             "revDeployer": "0xb552eB94284f94b833837D4b2cBB237128415d4e",
             "usdc": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
             "omnichainDeployer": "0xB853758A70a6b4216c09f1d071eA2344AbA0a34f",
-            "routerTerminalRegistry": "0xe0427F250fdb0379c8E98e884Ee4570521208CbC",
             "allowlistHook": null
           },
           {
             "chainId": 11155420,
-            "controller": "0x3Fcec3572e84b624477BcfF4E2CF1f7dEAb648F1",
             "revDeployer": "0xb552eB94284f94b833837D4b2cBB237128415d4e",
             "usdc": "0x5fd84259d66Cd46123540766Be93DFE6D43130D7",
             "omnichainDeployer": "0xB853758A70a6b4216c09f1d071eA2344AbA0a34f",
-            "routerTerminalRegistry": "0xe0427F250fdb0379c8E98e884Ee4570521208CbC",
             "allowlistHook": null
           }
         ]
       ],
       "encodedArguments": null,
       "initCodeKeccak256": null,
-      "encodedArgumentBytes": 1856,
+      "encodedArgumentBytes": 1344,
       "initCodeBytes": null,
       "eip3860InitcodeHeadroomBytes": null,
       "status": "missing-verified-registry-input"
     },
-    "protocolConfigHash": null,
     "predictedAddress": null,
     "addressStatus": "unavailable until actual registered dependency inputs exist",
-    "runtimePolicy": "same initcode/address and PROTOCOL_CONFIG_HASH across chains; local immutable dependencies can make deployed runtime hashes different"
+    "runtimePolicy": "same initcode/address across chains, which commits to the shared chain configuration; local immutable dependencies can make deployed runtime hashes different"
   },
   "networks": [
     {
@@ -738,7 +729,7 @@
   ],
   "requiredPostDeploymentEvidence": [
     "Executed deployment receipts with chain/block/transaction identity, identical shared helper constructor inputs, factory and salt.",
-    "Full executable-runtime and every immutable-word verification against the exact reviewed artifacts on each chain; template hashes above are not live runtime hashes. Verify the shared PROTOCOL_CONFIG_HASH, TERMINAL, ROUTER_TERMINAL_REGISTRY and every usdcOf entry.",
+    "Full executable-runtime and every immutable-word verification against the exact reviewed artifacts on each chain; template hashes above are not live runtime hashes. Verify CONTROLLER, TERMINAL, ROUTER_TERMINAL_REGISTRY and every usdcOf entry.",
     "Verify the FUND owner becomes the INCOME operator and holds one unlocked reserved split, and the Owner-managed stock 721 inventory with the reviewed USD denomination and restricted tier flags.",
     "For every directed SDK CCIP route, verify registry allowlisting, directory/tokens, singleton runtime, ccipRemoteChainId, ccipRemoteChainSelector, ccipRouter and reciprocal default-peer predictions. A merely approved alternative deployer is not proof of cross-chain compatibility.",
     "Explorer/Sourcify source verification for the helper using the exact compiler input and metadata settings.",

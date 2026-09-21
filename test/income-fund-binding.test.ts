@@ -15,7 +15,6 @@ const FUND_ID = 7n
 const LATEST = 1_000_000n
 const CREATED = 712_345n
 const HELPER = '0x1111111111111111111111111111111111111111' as const
-const FUND_TOKEN = '0x3333333333333333333333333333333333333333' as const
 
 const OPERATOR = '0x5555555555555555555555555555555555555555' as const
 const SAFE = '0x6666666666666666666666666666666666666666' as const
@@ -42,7 +41,7 @@ function creationLog(args: Record<string, unknown> = {}) {
 }
 function deploymentLog(args: Record<string, unknown> = {}) {
   return rawLog(HELPER, homerunDeployerAbi, 'IncomeDeployed', {
-    fundProjectId: FUND_ID, incomeProjectId: INCOME_ID, owner: OPERATOR, fundToken: FUND_TOKEN, ...args,
+    fundProjectId: FUND_ID, incomeProjectId: INCOME_ID, owner: OPERATOR, ...args,
   }, 14)
 }
 type RawLog = ReturnType<typeof rawLog>
@@ -203,7 +202,7 @@ describe('INCOME to FUND discovery from canonical creation evidence', () => {
     expect(await readIncomeFundBinding(f.client, INPUT)).toBe(FUND_ID)
   })
 
-  it.each(['duplicate', 'foreign', 'wrong income', 'same fund', 'zero fund', 'zero owner', 'different tx', 'removed', 'wrong block', 'bad raw bytes'])('rejects %s helper discovery evidence', async problem => {
+  it.each(['duplicate', 'foreign', 'wrong income', 'same fund', 'zero fund', 'zero owner', 'different tx', 'removed', 'wrong block', 'bad raw topics'])('rejects %s helper discovery evidence', async problem => {
     const f = fixture()
     if (problem === 'duplicate') f.helperLogs.push(deploymentLog())
     if (problem === 'foreign') f.helperLogs[0].address = FOREIGN
@@ -214,7 +213,7 @@ describe('INCOME to FUND discovery from canonical creation evidence', () => {
     if (problem === 'different tx') f.helperLogs[0].transactionHash = OTHER_HASH
     if (problem === 'removed') f.helperLogs[0].removed = true
     if (problem === 'wrong block') f.helperLogs[0].blockNumber = CREATED - 1n
-    if (problem === 'bad raw bytes') f.helperLogs[0].data = '0x'
+    if (problem === 'bad raw topics') f.helperLogs[0].topics = f.helperLogs[0].topics.slice(0, 2)
     await expect(readIncomeFundBinding(f.client, INPUT)).rejects.toThrow()
   })
 
@@ -257,9 +256,8 @@ describe('INCOME to FUND discovery from canonical creation evidence', () => {
     expect(bindingReads(f)).toBe(0)
   })
 
-  it.each(['token', 'index', 'create bytes'])('rejects inconsistent getLogs and receipt %s evidence', async problem => {
+  it.each(['index', 'create bytes'])('rejects inconsistent getLogs and receipt %s evidence', async problem => {
     const f = fixture()
-    if (problem === 'token') f.receipt.logs[1] = deploymentLog({ fundToken: FOREIGN })
     if (problem === 'index') f.receipt.logs[1] = { ...deploymentLog(), logIndex: 16 }
     if (problem === 'create bytes') f.receipt.logs[0] = creationLog({ owner: FOREIGN })
     await expect(readIncomeFundBinding(f.client, INPUT)).rejects.toThrow()
@@ -277,7 +275,7 @@ describe('INCOME to FUND discovery from canonical creation evidence', () => {
     await expect(readIncomeFundBinding(f.client, INPUT)).rejects.toThrow()
   })
 
-  it.each([0n, FUND_ID, INCOME_ID + 1n, (1n << 256n) - 1n])('rejects a launcher binding that names another INCOME: %s', async bound => {
+  it.each([0n, FUND_ID, INCOME_ID + 1n])('rejects a launcher binding that names another INCOME: %s', async bound => {
     const f = fixture()
     f.binding.value = bound
     await expect(readIncomeFundBinding(f.client, INPUT)).rejects.toThrow('not bound')

@@ -10,7 +10,7 @@ function fixture(group) {
   const env = { SPHINX_ORG_ID: JSON.parse(readFileSync('sphinx.lock')).orgId, SPHINX_API_KEY: 'test-key',
     SPHINX_MANAGED_BASE_URL: 'https://sphinx.example.test', HOMERUN_WORKSPACE_PATH: WORKSPACE };
   const files = {};
-  const manifest = JSON.stringify({ allowlistHook: '0xbb', deployer: '0xcc', protocolConfigHash: '0xdd' });
+  const manifest = JSON.stringify({ allowlistHook: '0xbb', deployer: '0xcc' });
   for (const [, chainId, key, folder] of networks[group]) {
     env[key] = 'http://127.0.0.1:8545';
     for (const [repo, name] of artifacts) {
@@ -93,7 +93,7 @@ test('preflight rejects missing RPCs and mismatched artifacts without leaking va
   const { env, read } = fixture('testnets');
   delete env.RPC_BASE_SEPOLIA;
   assert.throws(() => preflight('testnets', env, read), /missing RPC_BASE_SEPOLIA/);
-  assert.throws(() => preflight('mainnets', env, () => JSON.stringify({ address: '0x' + '12'.repeat(20), chainId: 1 })), /invalid JBController/);
+  assert.throws(() => preflight('mainnets', env, () => JSON.stringify({ address: '0x' + '12'.repeat(20), chainId: 1 })), /invalid REVDeployer/);
   assert.throws(() => preflight('unknown'), /Network group/);
 });
 
@@ -191,7 +191,7 @@ test('an uncommitted checkout can rehearse but neither propose nor verify', asyn
 
 test('a chain predicting different addresses stops the group before the Sphinx proposal', async () => {
   const setup = fixture('mainnets');
-  setup.files['deployments/base/simulation.json'] = JSON.stringify({ allowlistHook: '0xbb', deployer: '0xee', protocolConfigHash: '0xdd' });
+  setup.files['deployments/base/simulation.json'] = JSON.stringify({ allowlistHook: '0xbb', deployer: '0xee' });
   assert.throws(() => requireOneAddressPerGroup('mainnets', 'simulation', setup.read), /base predicts a different deployment/);
   await assert.rejects(run('propose', 'mainnets', { ...setup, spawn(command, args) {
     const tool = readOnlyTool(command, args);

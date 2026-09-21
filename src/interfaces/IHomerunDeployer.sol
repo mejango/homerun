@@ -2,13 +2,11 @@
 pragma solidity ^0.8.0;
 
 import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
-import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
 import {IJBPayerTracker} from "@bananapus/core-v6/src/interfaces/IJBPayerTracker.sol";
 import {IJBProjects} from "@bananapus/core-v6/src/interfaces/IJBProjects.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {IJBTokens} from "@bananapus/core-v6/src/interfaces/IJBTokens.sol";
 import {IJBOmnichainDeployer} from "@bananapus/omnichain-deployers-v6/src/interfaces/IJBOmnichainDeployer.sol";
-import {IJBSuckerRegistry} from "@bananapus/suckers-v6/src/interfaces/IJBSuckerRegistry.sol";
 import {IREVDeployer} from "@rev-net/core-v6/src/interfaces/IREVDeployer.sol";
 import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 import {REVDescription} from "@rev-net/core-v6/src/structs/REVDescription.sol";
@@ -43,10 +41,7 @@ interface IHomerunDeployer is IJBPayerTracker {
     /// @param fundProjectId The ID of the FUND project.
     /// @param incomeProjectId The ID of the new INCOME project.
     /// @param owner The FUND owner, who becomes the INCOME revnet's operator and holds its reserved split.
-    /// @param fundToken The FUND ERC-20 the snapshot was taken over.
-    event IncomeDeployed(
-        uint256 indexed fundProjectId, uint256 indexed incomeProjectId, address indexed owner, address fundToken
-    );
+    event IncomeDeployed(uint256 indexed fundProjectId, uint256 indexed incomeProjectId, address indexed owner);
 
     /// @notice The pay hook installed on every FUND. Its owner-managed allowlist gates payment beneficiaries.
     /// @return hook The allowlist hook.
@@ -56,15 +51,11 @@ interface IHomerunDeployer is IJBPayerTracker {
     /// @return controller The controller.
     function CONTROLLER() external view returns (IJBController controller);
 
-    /// @notice The directory of terminals and controllers.
-    /// @return directory The directory.
-    function DIRECTORY() external view returns (IJBDirectory directory);
-
     /// @notice The cash out tax rate a FUND launches with, out of `JBConstants.MAX_CASH_OUT_TAX_RATE`.
     /// @return rate The tax rate.
     function FUND_CASH_OUT_TAX_RATE() external view returns (uint16 rate);
 
-    /// @notice The CCIP gas allowance every FUND and INCOME sucker mapping uses.
+    /// @notice The CCIP gas allowance every FUND sucker mapping uses.
     /// @return minGas The gas allowance.
     function FUND_SUCKER_MIN_GAS() external view returns (uint32 minGas);
 
@@ -97,11 +88,6 @@ interface IHomerunDeployer is IJBPayerTracker {
     /// @return projects The project registry.
     function PROJECTS() external view returns (IJBProjects projects);
 
-    /// @notice The hash of the complete per-chain configuration the deployer was constructed with.
-    /// @dev Identical on every chain, since the same array is passed everywhere.
-    /// @return hash The configuration hash.
-    function PROTOCOL_CONFIG_HASH() external view returns (bytes32 hash);
-
     /// @notice The number of seconds in one INCOME issuance cycle.
     /// @return seconds_ The cycle length.
     function QUARTER() external view returns (uint32 seconds_);
@@ -118,10 +104,6 @@ interface IHomerunDeployer is IJBPayerTracker {
     /// routing.
     /// @return registry The router terminal registry.
     function ROUTER_TERMINAL_REGISTRY() external view returns (IJBTerminal registry);
-
-    /// @notice The sucker registry linked FUNDs and INCOMEs deploy suckers through.
-    /// @return registry The sucker registry.
-    function SUCKER_REGISTRY() external view returns (IJBSuckerRegistry registry);
 
     /// @notice The terminal every FUND and INCOME treasury lives in.
     /// @return terminal The terminal.

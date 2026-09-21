@@ -70,12 +70,10 @@ export const networks = {
   ],
 };
 
-// One protocol artifact per sibling checkout; the deployer binds all four on every chain of a group.
+// The protocol artifacts the deployer binds on every chain of a group; the core is read from the revnet deployer.
 export const artifacts = [
-  ['nana-core-v6', 'JBController'],
   ['revnet-core-v6', 'REVDeployer'],
   ['nana-omnichain-deployers-v6', 'JBOmnichainDeployer'],
-  ['nana-router-terminal-v6', 'JBRouterTerminalRegistry'],
 ];
 
 // The Nana SDK's deployment registry is an independent record of the same addresses.
@@ -109,9 +107,9 @@ export function preflight(group, env = process.env, read = readFileSync, registr
   if (errors.length) throw new Error(errors.join('\n'));
 }
 
-// Every chain of a group must predict one hook, deployer and protocol configuration hash.
+// Every chain of a group must predict one hook and one deployer.
 export function requireOneAddressPerGroup(group, kind, read = readFileSync) {
-  const fields = ['allowlistHook', 'deployer', 'protocolConfigHash'];
+  const fields = ['allowlistHook', 'deployer'];
   let expected;
   for (const [alias, , , folder] of networks[group]) {
     const manifest = JSON.parse(read(`deployments/${folder}/${kind}.json`, 'utf8'));

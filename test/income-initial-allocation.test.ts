@@ -64,7 +64,7 @@ describe('initial INCOME auto-issuance held by the helper for the FUND owner', (
     expect((await readInitialIncomeAllocation(client({ owner: next }).rpc, input)).owner).toBe(next)
     await expect(readInitialIncomeAllocation(client({ owner: zeroAddress }).rpc, input)).rejects.toThrow('no owner')
   })
-  it.each([{ bound: 0n }, { bound: 11n }, { bound: (1n << 256n) - 1n }])('rejects a FUND the launcher never bound to this INCOME %#', async overrides => {
+  it.each([{ bound: 0n }, { bound: 11n }])('rejects a FUND the launcher never bound to this INCOME %#', async overrides => {
     await expect(readInitialIncomeAllocation(client(overrides).rpc, input)).rejects.toThrow('not bound')
   })
   it('rejects a missing stage, a foreign chain, a reorganization, and an unregistered launcher', async () => {

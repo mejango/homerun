@@ -35,7 +35,6 @@ const other = getAddress('0x0000000000000000000000000000000000000033')
 const hash = `0x${'aa'.repeat(32)}` as Hex
 const snapshotHash = `0x${'bb'.repeat(32)}` as Hex
 const salt = `0x${'cc'.repeat(32)}` as Hex
-const protocolHash = `0x${'dd'.repeat(32)}` as Hex
 const startsAtOrAfter = 1_799_999_900
 const defaultSplits = [
   { percent: 1_000_000_000, projectId: 0n, beneficiary: holder, preferAddToBalance: false, lockedUntil: 0, hook: zeroAddress },
@@ -73,9 +72,9 @@ function configurationSalt(snapshot: ReturnType<typeof globalIncomeSnapshotParam
 
 function client(overrides: Record<string, unknown> = {}, chainId: JBChainId = 8453) {
   const defaults: Record<string, unknown> = {
-    CONTROLLER: v6Address('JBController', chainId), DIRECTORY: v6Address('JBDirectory', chainId), PROJECTS: v6Address('JBProjects', chainId), TOKENS: v6Address('JBTokens', chainId),
-    REV_DEPLOYER: v6Address('REVDeployer', chainId), REV_OWNER: v6Address('REVOwner', chainId), SUCKER_REGISTRY: v6Address('JBSuckerRegistry', chainId),
-    OMNICHAIN_DEPLOYER: v6Address('JBOmnichainDeployer', chainId), TERMINAL: v6Address('JBMultiTerminal', chainId), ROUTER_TERMINAL_REGISTRY: v6Address('JBRouterTerminalRegistry', chainId), ALLOWLIST_HOOK: runtime.allowlist, PROTOCOL_CONFIG_HASH: protocolHash,
+    CONTROLLER: v6Address('JBController', chainId), PROJECTS: v6Address('JBProjects', chainId), TOKENS: v6Address('JBTokens', chainId),
+    REV_DEPLOYER: v6Address('REVDeployer', chainId), REV_OWNER: v6Address('REVOwner', chainId),
+    OMNICHAIN_DEPLOYER: v6Address('JBOmnichainDeployer', chainId), TERMINAL: v6Address('JBMultiTerminal', chainId), ROUTER_TERMINAL_REGISTRY: v6Address('JBRouterTerminalRegistry', chainId), ALLOWLIST_HOOK: runtime.allowlist,
     USDC: USDC_ADDRESSES[chainId], incomeProjectIdOf: 0n, creationFee: 15n,
     currentRulesetOf: [{ id: 80n }, {}], splitsOf: defaultSplits,
   }
@@ -215,18 +214,9 @@ describe('global atomic INCOME launch preparation', () => {
     runtime.remoteStates.set(10, { ...remoteState, metadata: { ...remoteState.metadata, pausePay: false } })
     await expect(prepareIncomeLaunch(f.rpc as unknown as PublicClient, f.input)).rejects.toThrow(/Chain 10.*Finish the successful raise/)
   })
-  it('rejects helpers using different cross-chain protocol profiles', async () => {
-    const f = linkedFixture({ remoteOverrides: { PROTOCOL_CONFIG_HASH: hash } })
-    await expect(prepareIncomeLaunch(f.rpc as unknown as PublicClient, f.input)).rejects.toThrow(/different cross-chain protocol profiles/)
-  })
   it('rejects a remote helper with an incomplete USDC deployment profile', async () => {
     const f = linkedFixture({ remoteOverrides: { usdcOf: holder } })
     await expect(prepareIncomeLaunch(f.rpc as unknown as PublicClient, f.input)).rejects.toThrow(/complete reviewed chain and USDC/)
-  })
-  it('rejects a pending remote binding', async () => {
-    const f = linkedFixture({ remoteOverrides: { incomeProjectIdOf: (1n << 256n) - 1n } })
-    await expect(prepareIncomeLaunch(f.rpc as unknown as PublicClient, f.input)).rejects.toThrow(/pending onchain binding/)
-    expect(runtime.allocation).not.toHaveBeenCalled()
   })
   it('permits the remaining chain after a remote launch with the exact reviewed revnet configuration', async () => {
     const f = linkedFixture()
@@ -328,7 +318,7 @@ describe('global atomic INCOME launch preparation', () => {
     expect(prepared.request.args[3]).toBe(reservedBps)
   })
   it.each([
-    { incomeProjectIdOf: 8n }, { REV_DEPLOYER: holder }, { CONTROLLER: holder }, { OMNICHAIN_DEPLOYER: holder }, { TERMINAL: holder }, { ROUTER_TERMINAL_REGISTRY: holder }, { ALLOWLIST_HOOK: holder }, { PROTOCOL_CONFIG_HASH: zeroHash }, { usdcOf: holder }, { configurationSaltFor: hash },
+    { incomeProjectIdOf: 8n }, { REV_DEPLOYER: holder }, { CONTROLLER: holder }, { OMNICHAIN_DEPLOYER: holder }, { TERMINAL: holder }, { ROUTER_TERMINAL_REGISTRY: holder }, { ALLOWLIST_HOOK: holder }, { usdcOf: holder }, { configurationSaltFor: hash },
   ])('refuses unverified or already bound launch %#', async override => {
     await expect(prepareIncomeLaunch(client(override) as unknown as PublicClient, input)).rejects.toThrow()
   })
@@ -397,8 +387,7 @@ describe('global atomic INCOME launch preparation', () => {
     expect(await readIncomeLaunchBinding(client({ incomeProjectIdOf: 8n }) as unknown as PublicClient, 8453, 7n)).toBe(8n)
     expect(await readIncomeLaunchBinding(client() as unknown as PublicClient, 8453, 7n)).toBeNull()
   })
-  it('rejects reserved or wrong-chain binding', async () => {
-    await expect(readIncomeLaunchBinding(client({ incomeProjectIdOf: (1n << 256n) - 1n }) as unknown as PublicClient, 8453, 7n)).rejects.toThrow(/progress/)
+  it('rejects a wrong-chain binding', async () => {
     const rpc = client(); rpc.getChainId.mockResolvedValue(1)
     await expect(readIncomeLaunchBinding(rpc as unknown as PublicClient, 8453, 7n)).rejects.toThrow(/different chain/)
   })

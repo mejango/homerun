@@ -41,7 +41,6 @@ export async function readIncomeLaunchBinding(client: PublicClient, chainId: JBC
   if (block.number === null || !block.hash) throw new Error('A confirmed snapshot block is required.')
   await verifyIncomeLaunchWiring(client, chainId, block.number)
   const id = await client.readContract({ address: deployer, abi: homerunDeployerAbi, functionName: 'incomeProjectIdOf', args: [fundProjectId], blockNumber: block.number })
-  if (id === (1n << 256n) - 1n) throw new Error('The INCOME launch is still in progress.')
   const sameBlock = await client.getBlock({ blockNumber: block.number })
   if (sameBlock.hash !== block.hash) throw new Error('The chain reorganized during the INCOME read. Refresh and try again.')
   return id === 0n ? null : id
@@ -51,10 +50,9 @@ export async function verifyIncomeLaunchWiring(client: PublicClient, chainId: JB
   const deployer = registeredHomerunDeployer(chainId), allowlistHook = registeredAllowlistHook(chainId)
   if (!deployer || !allowlistHook) throw new Error('Verified Homerun deployer and allowlist hook registrations are required.')
   const expected = {
-    CONTROLLER: v6Address('JBController', chainId), DIRECTORY: v6Address('JBDirectory', chainId),
-    PROJECTS: v6Address('JBProjects', chainId), TOKENS: v6Address('JBTokens', chainId),
-    REV_DEPLOYER: v6Address('REVDeployer', chainId), REV_OWNER: v6Address('REVOwner', chainId),
-    SUCKER_REGISTRY: v6Address('JBSuckerRegistry', chainId), USDC: USDC_ADDRESSES[chainId],
+    CONTROLLER: v6Address('JBController', chainId), PROJECTS: v6Address('JBProjects', chainId),
+    TOKENS: v6Address('JBTokens', chainId), REV_DEPLOYER: v6Address('REVDeployer', chainId),
+    REV_OWNER: v6Address('REVOwner', chainId), USDC: USDC_ADDRESSES[chainId],
     OMNICHAIN_DEPLOYER: v6Address('JBOmnichainDeployer', chainId), TERMINAL: v6Address('JBMultiTerminal', chainId),
     ROUTER_TERMINAL_REGISTRY: v6Address('JBRouterTerminalRegistry', chainId), ALLOWLIST_HOOK: allowlistHook,
   } as const
@@ -150,13 +148,11 @@ export async function prepareIncomeLaunch(client: PublicClient, input: {
     if (BigInt(allocation.snapshotBlockNumber) >= fund.blockNumber) throw new Error('The ownership snapshot must precede the current confirmed block.')
     await verifyIncomeLaunchWiring(source, allocation.chainId, fund.blockNumber)
     const at = { blockNumber: fund.blockNumber }
-    const [protocolHash, existing, acceptedUsdc] = await Promise.all([
-      source.readContract({ address: deployer, abi: homerunDeployerAbi, functionName: 'PROTOCOL_CONFIG_HASH', ...at }),
+    const [existing, acceptedUsdc] = await Promise.all([
       source.readContract({ address: deployer, abi: homerunDeployerAbi, functionName: 'incomeProjectIdOf', args: [BigInt(allocation.fundProjectId)], ...at }),
       Promise.all(manifest.allocations.map(entry => source.readContract({ address: deployer, abi: homerunDeployerAbi, functionName: 'usdcOf', args: [entry.chainId], ...at }))),
     ])
-    if (protocolHash === zeroHash || acceptedUsdc.some((actual, i) => !isAddressEqual(actual, USDC_ADDRESSES[manifest.allocations[i].chainId]))) throw new Error('The helper does not support the complete reviewed chain and USDC deployment profile.')
-    if (existing === (1n << 256n) - 1n) throw new Error('An INCOME launch has a pending onchain binding.')
+    if (acceptedUsdc.some((actual, i) => !isAddressEqual(actual, USDC_ADDRESSES[manifest.allocations[i].chainId]))) throw new Error('The helper does not support the complete reviewed chain and USDC deployment profile.')
     if (allocation.chainId === input.chainId && existing !== 0n) throw new Error('This FUND already has an INCOME launch recorded by the verified launcher.')
     // A completed peer may already be distributing asset-sale proceeds or burning FUND. Its frozen
     // initial rights remain authoritative; only projects still awaiting launch must remain closed raises.
@@ -176,9 +172,8 @@ export async function prepareIncomeLaunch(client: PublicClient, input: {
       // Stock identity deliberately excludes splits: each chain's Owner may update any recipient or split
       // percentage after launch. Those changes do not alter the frozen initial plan for unlaunched chains.
     }
-    return { allocation, source, fund, protocolHash }
+    return { allocation, source, fund }
   }))
-  if (observations.some(entry => entry.protocolHash !== observations[0].protocolHash)) throw new Error('The helpers were deployed with different cross-chain protocol profiles.')
   const fund = observations.find(entry => entry.allocation.chainId === input.chainId)!.fund
   if (!isAddressEqual(fund.owner, input.account)) throw new Error('The FUND owner must launch INCOME.')
   const [creationFee, actualConfigurationSalt] = await Promise.all([

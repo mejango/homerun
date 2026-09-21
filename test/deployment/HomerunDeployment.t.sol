@@ -102,11 +102,9 @@ contract HomerunDeploymentTest is TestBaseWorkflow {
             _chains.push(
                 HomerunChainConfig({
                     chainId: group[i],
-                    controller: address(jbController()),
                     revDeployer: address(_revDeployer),
                     usdc: _usdcOf(group[i]),
                     omnichainDeployer: address(_omnichain),
-                    routerTerminalRegistry: address(_router),
                     allowlistHook: address(0)
                 })
             );
@@ -212,11 +210,10 @@ contract HomerunDeploymentTest is TestBaseWorkflow {
 
     function test_rejectsConsistentlyWrongImmutableDependency() public {
         HomerunDeploymentAddresses memory deployed = _deployment.deployFor(_chains);
-        // A legitimate second deployer, linked to the same library, has identical opcodes and a different protocol
-        // configuration hash.
+        // A legitimate second deployer has identical opcodes and different immutable bindings.
         HomerunChainConfig[] memory other = new HomerunChainConfig[](1);
         other[0] = _chains[0];
-        other[0].allowlistHook = deployed.allowlistHook;
+        other[0].allowlistHook = address(new HomerunAllowlistHook(jbProjects(), FORWARDER));
         address different = _deployment.deployVariant(other, "variant");
         vm.etch(deployed.deployer, different.code);
         _deployment.verifyRuntime("HomerunDeployer", deployed.deployer);
@@ -234,14 +231,16 @@ contract HomerunDeploymentTest is TestBaseWorkflow {
     }
 
     function test_rejectsMissingProtocolCodeBeforeAnyDeployment() public {
+        bytes memory code = address(_revDeployer).code;
         vm.etch(address(_revDeployer), hex"");
         vm.expectPartialRevert(HomerunDeployment.HomerunDeployment_MissingCode.selector);
         _deployment.deployFor(_chains);
-        assertEq(_deployment.predict(_chains).allowlistHook.code.length, 0);
+        vm.etch(address(_revDeployer), code);
+        assertEq(_deployment.predict(_chains).deployer.code.length, 0);
     }
 
     function test_rejectsWrongProtocolBindingBeforeAnyDeployment() public {
-        vm.mockCall(address(_revDeployer), abi.encodeWithSignature("CONTROLLER()"), abi.encode(address(0xdead)));
+        vm.mockCall(address(_omnichain), abi.encodeWithSignature("CONTROLLER()"), abi.encode(address(0xdead)));
         vm.expectPartialRevert(HomerunDeployment.HomerunDeployment_BindingMismatch.selector);
         _deployment.deployFor(_chains);
     }
@@ -341,9 +340,6 @@ contract HomerunDeploymentTest is TestBaseWorkflow {
         assertEq(vm.parseJsonAddress(json, ".deployer"), deployed.deployer);
         assertEq(vm.parseJsonBytes32(json, ".allowlistHookCodehash"), deployed.allowlistHook.codehash);
         assertEq(vm.parseJsonBytes32(json, ".deployerCodehash"), deployed.deployer.codehash);
-        assertEq(
-            vm.parseJsonBytes32(json, ".protocolConfigHash"), HomerunDeployer(deployed.deployer).PROTOCOL_CONFIG_HASH()
-        );
         assertEq(vm.parseJsonUint(json, ".chainId"), 1);
         assertEq(vm.parseJsonUint(json, ".evmBlockNumber"), 100);
         assertEq(vm.parseJsonUint(json, ".rpcBlockNumber"), 1000);

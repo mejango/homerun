@@ -10,7 +10,7 @@ The installed SDK has no `HomerunDeployer` registry entry on any of the eight ne
 
 ## Global release profile
 
-The same `HomerunDeployer` artifact takes one ordered array of eight chain configurations. Each entry is `(uint32 chainId, address controller, address revDeployer, address usdc, address omnichainDeployer, address routerTerminalRegistry, address allowlistHook)`. `HomerunAllowlistHook(projects, trustedForwarder)` and the `HomerunDeployerLib` external library are deployed once per chain before the helper, the library at the same deterministic address everywhere so the linked helper initcode stays identical.
+The same `HomerunDeployer` artifact takes one ordered array of eight chain configurations. Each entry is `(uint32 chainId, address revDeployer, address usdc, address omnichainDeployer, address allowlistHook)`. `HomerunAllowlistHook(projects, trustedForwarder)` and the `HomerunDeployerLib` external library are deployed once per chain before the helper, the library at the same deterministic address everywhere so the linked helper initcode stays identical.
 
 The complete array is identical on every network and sorted numerically:
 
@@ -18,7 +18,7 @@ The complete array is identical on every network and sorted numerically:
 1, 10, 8453, 42161, 84532, 421614, 11155111, 11155420
 ```
 
-The helper selects its local dependencies from that array during construction. `PROTOCOL_CONFIG_HASH = keccak256(abi.encode(chains))` must match on all eight networks. Local immutable values, including USDC, can differ, so **identical CREATE2 addresses do not imply identical deployed runtime hashes**. Verify every chain independently.
+The helper selects its local dependencies from that array during construction, and derives the controller and the router terminal registry from `REVDeployer`. The CREATE2 address commits to the whole array, so a matching address on all eight networks is the profile check. Local immutable values, including USDC, can differ, so **identical CREATE2 addresses do not imply identical deployed runtime hashes**. Verify every chain independently.
 
 The FUND Owner remains the authorized caller and becomes `REVConfig.operator`, the stock Revnet control wallet. The separate Homerun Operator is a nonzero initial INCOME incentive beneficiary, passed after `suckerConfiguration`; canonical `REVOwner` continues to hold the INCOME NFT. The client verifies helper version 3 before freezing a new plan and before preparing unfinished networks. Legacy receipt and pending-record decoding preserves exact original calldata; it is not a new-launch compatibility path for an old helper. Recovery and binding lookup currently require the saved helper to remain in the registry. If a future registry replaces an already-used helper, retain explicit legacy helper discovery before migration.
 
@@ -56,7 +56,7 @@ The packet verifies every source hash in each artifact's compiler metadata and l
 | `HomerunDeployer` | 26,896 bytes | 21,544 bytes | 28,752 bytes with the eight-entry constructor; below 49,152 |
 | `HomerunAllowlistHook` | 2,739 bytes | 2,554 bytes | Two-word constructor |
 
-The claim vault and its `HomerunDeployerLib` creation library are gone; the helper records the initial allocation as a stock revnet auto-issuance instead, and its sizes above predate that change, so re-measure them before release. The helper's constructor occupies `64 + 224 × 8 = 1,856` bytes (seven words per chain: chain ID, controller, REVDeployer, USDC, omnichain deployer, router terminal registry, allowlist hook). Its runtime has 3,032 bytes of EIP-170 headroom. EIP-3860 applies to **creation bytecode plus constructor arguments**, not the creation template alone. The script checks complete fixed singleton constructors and the known helper payload size even while dependency values are unavailable.
+The claim vault and its `HomerunDeployerLib` creation library are gone; the helper records the initial allocation as a stock revnet auto-issuance instead, and its sizes above predate that change, so re-measure them before release. The helper's constructor occupies `64 + 160 × 8 = 1,344` bytes (five words per chain: chain ID, REVDeployer, USDC, omnichain deployer, allowlist hook). Its runtime has 3,032 bytes of EIP-170 headroom. EIP-3860 applies to **creation bytecode plus constructor arguments**, not the creation template alone. The script checks complete fixed singleton constructors and the known helper payload size even while dependency values are unavailable.
 
 Runtime templates contain unresolved immutable words. Their hashes are not live code hashes. Verification must patch and compare **every immutable occurrence** using actual chain/project/constructor values, including full uint256 and EIP712 words. Keep the exact compiler input: the local integration build resolves remappings to absolute source paths, which enter IPFS metadata. Recompiling elsewhere with rewritten paths can change bytecode even if source contents match.
 
@@ -90,7 +90,7 @@ The installed `@bananapus/nana-sdk-core` has canonical core, omnichain, router-t
 Required evidence for the current v4 release:
 
 1. Executed receipts for the shared helper deployments, with chain, transaction, block hash, constructor calldata, factory and salt. A proposal or simulation is insufficient.
-2. Per-chain source/runtime/immutable verification. Verify both launch selectors, `PROTOCOL_CONFIG_HASH`, every `usdcOf` entry, `TERMINAL`, `ROUTER_TERMINAL_REGISTRY` and the local core/REV/omnichain bindings.
+2. Per-chain source/runtime/immutable verification. Verify both launch selectors, every `usdcOf` entry, `CONTROLLER`, `TERMINAL`, `ROUTER_TERMINAL_REGISTRY` and the local core/REV/omnichain bindings.
 3. Every directed SDK CCIP route's allowlisting, directory/tokens, singleton, router, remote selector and chain ID, plus matching reciprocal default peers. The helper accepts an approved compatible route; registry approval alone does not prove two independently selected deployer generations produce matching peers. The packet records the exact SDK route addresses for review.
 4. Initial project relationships: the FUND launched by the helper with its deployed ERC-20, FUND owner control of INCOME, the single unlocked reserved split to the owner, and the recorded helper auto-issuance matching the manifest's local amount. Preserve actual project IDs and addresses from receipts, never predictions.
 5. Publish executed-chain artifacts through `juice-sdk-v4/packages/core`: update registry types and artifact inputs, use the SDK's generators, publish the package, and pin its release in Homerun. Do not hand-edit only generated output or insert simulation addresses. Re-run runtime wiring checks and testnet transaction/bridge smoke flows against that SDK before enabling the corresponding chains.

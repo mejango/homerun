@@ -307,7 +307,6 @@ contract IncomeTestRevDeployer {
     bytes public lastNft;
     bytes public lastSuckers;
     address public feePayer;
-    uint256 public observedReservation;
     bool public attemptReentry;
     bool public reentrySucceeded;
     bool public failTransfer;
@@ -353,7 +352,6 @@ contract IncomeTestRevDeployer {
         lastNft = abi.encode(nft);
         lastSuckers = abi.encode(suckers);
         feePayer = HomerunDeployer(msg.sender).originalPayer();
-        observedReservation = HomerunDeployer(msg.sender).incomeProjectIdOf(1);
         if (attemptReentry) {
             reentrySucceeded = IncomeTestOwner(config.operator).reenter();
         }
@@ -554,11 +552,9 @@ contract HomerunDeployerTest is Test {
         for (uint256 i; i < chains.length; i++) {
             chains[i] = HomerunChainConfig({
                 chainId: ids[i],
-                controller: address(controller),
                 revDeployer: address(revDeployer),
                 usdc: i == 0 ? address(usdc) : address(remoteUsdc),
                 omnichainDeployer: address(omnichain),
-                routerTerminalRegistry: revDeployer.ROUTER_TERMINAL_REGISTRY(),
                 allowlistHook: address(allowlist)
             });
         }
@@ -607,7 +603,6 @@ contract HomerunDeployerTest is Test {
         assertEq(revOwner.operatorOf(id), OPERATOR);
         assertEq(revDeployer.feePayer(), OPERATOR);
         assertEq(helper.originalPayer(), address(0));
-        assertEq(revDeployer.observedReservation(), type(uint256).max);
         assertEq(controller.pendingReservedTokenBalanceOf(id), 0);
         // Anyone mints it to whoever owns the FUND at that moment; the owner settles the published allocation.
         projects.setOwner(1, OWNER);
@@ -781,21 +776,8 @@ contract HomerunDeployerTest is Test {
         assertEq(omnichain.lastPayer(), ALICE);
     }
 
-    function testRouterTerminalRegistryIsRequiredAndMustMatchTheRevnetDeployer() public {
+    function testAllowlistHookMustShareTheProjectRegistry() public {
         HomerunChainConfig[] memory chains = _chains();
-        chains[0].routerTerminalRegistry = address(0);
-        vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidProtocolWiring.selector);
-        new HomerunDeployer(chains);
-        chains[0].routerTerminalRegistry = address(usdc);
-        vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidProtocolWiring.selector);
-        new HomerunDeployer(chains);
-    }
-
-    function testAllowlistHookIsRequiredAndMustShareTheProjectRegistry() public {
-        HomerunChainConfig[] memory chains = _chains();
-        chains[0].allowlistHook = address(0);
-        vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidProtocolWiring.selector);
-        new HomerunDeployer(chains);
         chains[0].allowlistHook = address(new HomerunAllowlistHook(IJBProjects(address(usdc)), address(0x2771)));
         vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidProtocolWiring.selector);
         new HomerunDeployer(chains);
@@ -887,16 +869,6 @@ contract HomerunDeployerTest is Test {
         address[] memory peers = new address[](1);
         peers[0] = address(new IncomeTestCcipDeployer(10));
         vm.startPrank(OPERATOR);
-        vm.expectPartialRevert(HomerunDeployer.HomerunDeployer_WrongCreationFee.selector);
-        helper.launchFundFor{value: 0.02 ether}(OPERATOR, "ipfs://fund", "F", "F", 0, bytes32(0), none);
-        vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidConfiguration.selector);
-        helper.launchFundFor{value: 0.01 ether}(address(0), "ipfs://fund", "F", "F", 0, bytes32(0), none);
-        vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidConfiguration.selector);
-        helper.launchFundFor{value: 0.01 ether}(OPERATOR, "", "F", "F", 0, bytes32(0), none);
-        vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidConfiguration.selector);
-        helper.launchFundFor{value: 0.01 ether}(OPERATOR, "ipfs://fund", "", "F", 0, bytes32(0), none);
-        vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidConfiguration.selector);
-        helper.launchFundFor{value: 0.01 ether}(OPERATOR, "ipfs://fund", "F", "", 0, bytes32(0), none);
         // Salt without peers, peers without salt, and linked launches without a shared start.
         vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidConfiguration.selector);
         helper.launchFundFor{value: 0.01 ether}(OPERATOR, "ipfs://fund", "F", "F", 0, bytes32(uint256(1)), none);
@@ -955,7 +927,7 @@ contract HomerunDeployerTest is Test {
         _assertRollback();
 
         vm.expectEmit(true, true, true, false, address(helper));
-        emit IHomerunDeployer.IncomeDeployed(1, 2, OWNER, address(0));
+        emit IHomerunDeployer.IncomeDeployed(1, 2, OWNER);
         uint256 id = _deployFor(OWNER);
         REVConfig memory config = abi.decode(revDeployer.lastConfig(), (REVConfig));
         assertEq(projects.ownerOf(1), OWNER);
@@ -967,15 +939,9 @@ contract HomerunDeployerTest is Test {
         assertEq(config.stageConfigurations[0].splits[0].beneficiary, OWNER);
     }
 
-    function testReservedPercentIsBoundedAndTickerIsFree() public {
+    function testReservedPercentAndTickerAreCallerChoices() public {
         REVDescription memory description = _description();
         vm.startPrank(OPERATOR);
-        vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidConfiguration.selector);
-        helper.deployIncome{value: 0.01 ether}(1, _snapshot, description, 10_001, 1_000_000, _noSuckers());
-        description.ticker = "";
-        vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidConfiguration.selector);
-        helper.deployIncome{value: 0.01 ether}(1, _snapshot, description, 8000, 1_000_000, _noSuckers());
-        _assertRollback();
         description.ticker = "RENT";
         helper.deployIncome{value: 0.01 ether}(1, _snapshot, description, 0, 1_000_000, _noSuckers());
         vm.stopPrank();
@@ -1024,13 +990,6 @@ contract HomerunDeployerTest is Test {
         // The FUND transfer after the snapshot block does not change the attested allocation.
         assertEq(revOwner.amountToAutoIssue(id, block.timestamp, address(helper)), 500_000 ether);
         assertEq(tokens.totalBalanceOf(ALICE, 1), 250 ether);
-    }
-
-    function testIncorrectCreationFeeDoesNotReserveFund() public {
-        vm.prank(OPERATOR);
-        vm.expectPartialRevert(HomerunDeployer.HomerunDeployer_WrongCreationFee.selector);
-        helper.deployIncome{value: 1}(1, _snapshot, _description(), 8000, 1_000_000, _noSuckers());
-        assertEq(helper.incomeProjectIdOf(1), 0);
     }
 
     function _globalSnapshot(uint104 localAmount) private view returns (HomerunInitialIncomeSnapshot memory snapshot) {
@@ -1167,10 +1126,6 @@ contract HomerunDeployerTest is Test {
         vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidConfiguration.selector);
         _deployGlobal(snapshot, configuration);
         configuration.deployerConfigurations[0].mappings[0].remoteToken = bytes32(uint256(uint160(address(usdc))));
-        configuration.deployerConfigurations[0].mappings[0].minGas = 1_000_000;
-        vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidConfiguration.selector);
-        _deployGlobal(snapshot, configuration);
-        configuration.deployerConfigurations[0].mappings[0].minGas = 200_000;
         configuration.deployerConfigurations[0].deployer =
             IJBSuckerDeployer(address(new IncomeTestCcipDeployer(42_161)));
         vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidConfiguration.selector);

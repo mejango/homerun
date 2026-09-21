@@ -146,18 +146,11 @@ abstract contract HomerunDeployment is Script {
             value: vm.envOr({name: "HOMERUN_REVISION", defaultValue: string("unrecorded")})
         });
         _serializeContract({key: key, name: "create2Factory", target: DETERMINISTIC_FACTORY});
-        _serializeContract({key: key, name: "controller", target: local.controller});
         _serializeContract({key: key, name: "revDeployer", target: local.revDeployer});
         _serializeContract({key: key, name: "omnichainDeployer", target: local.omnichainDeployer});
-        _serializeContract({key: key, name: "routerTerminalRegistry", target: local.routerTerminalRegistry});
         _serializeContract({key: key, name: "usdc", target: local.usdc});
         _serializeContract({key: key, name: "allowlistHook", target: deployed.allowlistHook});
         _serializeContract({key: key, name: "deployer", target: deployed.deployer});
-        vm.serializeBytes32({
-            objectKey: key,
-            valueKey: "protocolConfigHash",
-            value: keccak256(abi.encode(_configured(chains, deployed.allowlistHook)))
-        });
         string memory json = vm.serializeBytes32({objectKey: key, valueKey: "salt", value: HOMERUN_SALT});
         string memory directory = string.concat("deployments/", _network(block.chainid));
         vm.createDir({path: directory, recursive: true});
@@ -191,10 +184,6 @@ abstract contract HomerunDeployment is Script {
             string memory network = _network(group[i]);
             chains[i] = HomerunChainConfig({
                 chainId: group[i],
-                controller: _readAddress({
-                    path: string.concat(workspace, "/nana-core-v6/deployments/", network, "/JBController.json"),
-                    chainId: group[i]
-                }),
                 revDeployer: _readAddress({
                     path: string.concat(workspace, "/revnet-core-v6/deployments/", network, "/REVDeployer.json"),
                     chainId: group[i]
@@ -203,12 +192,6 @@ abstract contract HomerunDeployment is Script {
                 omnichainDeployer: _readAddress({
                     path: string.concat(
                         workspace, "/nana-omnichain-deployers-v6/deployments/", network, "/JBOmnichainDeployer.json"
-                    ),
-                    chainId: group[i]
-                }),
-                routerTerminalRegistry: _readAddress({
-                    path: string.concat(
-                        workspace, "/nana-router-terminal-v6/deployments/", network, "/JBRouterTerminalRegistry.json"
                     ),
                     chainId: group[i]
                 }),
@@ -275,22 +258,19 @@ abstract contract HomerunDeployment is Script {
         _verifyRuntime({name: "HomerunDeployer", target: deployed.deployer});
         HomerunChainConfig memory local = _local(chains);
         HomerunDeployer deployer = HomerunDeployer(deployed.deployer);
-        IJBController controller = IJBController(local.controller);
         IREVDeployer revDeployer = IREVDeployer(local.revDeployer);
+        IJBController controller = revDeployer.CONTROLLER();
         if (
-            address(deployer.CONTROLLER()) != local.controller
-                || address(deployer.DIRECTORY()) != address(controller.DIRECTORY())
+            address(deployer.CONTROLLER()) != address(controller)
                 || address(deployer.PROJECTS()) != address(controller.PROJECTS())
                 || address(deployer.TOKENS()) != address(controller.TOKENS())
                 || address(deployer.REV_DEPLOYER()) != local.revDeployer
                 || address(deployer.REV_OWNER()) != revDeployer.OWNER()
-                || address(deployer.SUCKER_REGISTRY()) != address(revDeployer.SUCKER_REGISTRY())
                 || address(deployer.TERMINAL()) != address(revDeployer.MULTI_TERMINAL())
                 || deployer.USDC() != local.usdc || address(deployer.OMNICHAIN_DEPLOYER()) != local.omnichainDeployer
-                || address(deployer.ROUTER_TERMINAL_REGISTRY()) != local.routerTerminalRegistry
+                || address(deployer.ROUTER_TERMINAL_REGISTRY()) != address(revDeployer.ROUTER_TERMINAL_REGISTRY())
                 || address(deployer.ALLOWLIST_HOOK()) != deployed.allowlistHook
                 || deployer.trustedForwarder() != _forwarderOf(chains)
-                || deployer.PROTOCOL_CONFIG_HASH() != keccak256(abi.encode(_configured(chains, deployed.allowlistHook)))
         ) revert HomerunDeployment_BindingMismatch({target: deployed.deployer, binding: "deployer dependencies"});
         for (uint256 i; i < chains.length; i++) {
             if (deployer.usdcOf(chains[i].chainId) != chains[i].usdc) {
@@ -310,33 +290,31 @@ abstract contract HomerunDeployment is Script {
             }
         }
         HomerunChainConfig memory local = _local(chains);
-        _requireCode(local.controller);
         _requireCode(local.revDeployer);
         _requireCode(local.omnichainDeployer);
-        _requireCode(local.routerTerminalRegistry);
         _requireCode(local.usdc);
-        IJBController controller = IJBController(local.controller);
-        IJBDirectory directory = controller.DIRECTORY();
         IREVDeployer revDeployer = IREVDeployer(local.revDeployer);
+        IJBController controller = revDeployer.CONTROLLER();
+        IJBDirectory directory = controller.DIRECTORY();
         JBOmnichainDeployer omnichainDeployer = JBOmnichainDeployer(local.omnichainDeployer);
+        _requireCode(address(controller));
         _requireCode(address(directory));
         _requireCode(address(controller.PROJECTS()));
         _requireCode(address(controller.TOKENS()));
         _requireCode(revDeployer.OWNER());
         _requireCode(address(revDeployer.MULTI_TERMINAL()));
+        _requireCode(address(revDeployer.ROUTER_TERMINAL_REGISTRY()));
         _requireCode(address(revDeployer.SUCKER_REGISTRY()));
         _requireCode(omnichainDeployer.trustedForwarder());
         if (
-            !directory.isAllowedToSetFirstController(local.controller)
+            !directory.isAllowedToSetFirstController(address(controller))
                 || address(IREVOwner(revDeployer.OWNER()).deployer()) != local.revDeployer
-                || address(revDeployer.CONTROLLER()) != local.controller
                 || address(revDeployer.DIRECTORY()) != address(directory)
-                || address(revDeployer.ROUTER_TERMINAL_REGISTRY()) != local.routerTerminalRegistry
-                || address(omnichainDeployer.CONTROLLER()) != local.controller
+                || address(omnichainDeployer.CONTROLLER()) != address(controller)
                 || address(omnichainDeployer.DIRECTORY()) != address(directory)
                 || address(omnichainDeployer.SUCKER_REGISTRY()) != address(revDeployer.SUCKER_REGISTRY())
                 || IERC20Metadata(local.usdc).decimals() != 6
-        ) revert HomerunDeployment_BindingMismatch({target: local.controller, binding: "protocol dependencies"});
+        ) revert HomerunDeployment_BindingMismatch({target: local.revDeployer, binding: "protocol dependencies"});
         // Every FUND and INCOME mints against USD through this feed; without it no project launched here can be paid.
         // forge-lint: disable-next-line(unsafe-typecast)
         try controller.PRICES().pricePerUnitOf(0, uint32(uint160(local.usdc)), JBCurrencyIds.USD, 6) returns (
@@ -423,7 +401,7 @@ abstract contract HomerunDeployment is Script {
     /// @param chains The per-chain protocol configuration.
     /// @return args The ABI-encoded constructor arguments.
     function _hookArgs(HomerunChainConfig[] memory chains) internal view returns (bytes memory args) {
-        return abi.encode(IJBController(_local(chains).controller).PROJECTS(), _forwarderOf(chains));
+        return abi.encode(IREVDeployer(_local(chains).revDeployer).CONTROLLER().PROJECTS(), _forwarderOf(chains));
     }
 
     /// @notice The number of immutable bindings explicitly checked for each deployment artifact.
@@ -432,7 +410,7 @@ abstract contract HomerunDeployment is Script {
     function _immutableCount(string memory name) private pure returns (uint256 count) {
         bytes32 nameHash = keccak256(bytes(name));
         if (nameHash == keccak256("HomerunAllowlistHook")) return 2;
-        if (nameHash == keccak256("HomerunDeployer")) return 14;
+        if (nameHash == keccak256("HomerunDeployer")) return 11;
         revert HomerunDeployment_InvalidArtifact(name);
     }
 
@@ -518,7 +496,7 @@ abstract contract HomerunDeployment is Script {
     function _verifyHook(HomerunChainConfig[] memory chains, HomerunDeploymentAddresses memory deployed) private view {
         _verifyRuntime({name: "HomerunAllowlistHook", target: deployed.allowlistHook});
         HomerunAllowlistHook hook = HomerunAllowlistHook(deployed.allowlistHook);
-        IJBProjects projects = IJBController(_local(chains).controller).PROJECTS();
+        IJBProjects projects = IREVDeployer(_local(chains).revDeployer).CONTROLLER().PROJECTS();
         if (address(hook.PROJECTS()) != address(projects) || hook.trustedForwarder() != _forwarderOf(chains)) {
             revert HomerunDeployment_BindingMismatch({target: deployed.allowlistHook, binding: "hook dependencies"});
         }
