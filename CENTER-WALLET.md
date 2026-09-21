@@ -38,7 +38,10 @@ The framed sign-in is the SDK's `passkeyOption({ frame: true })` (0.4.0): Center
 launch form targets a frame the dialog renders with `allow="publickey-credentials-get"`,
 and the callback hands up through the SDK's `deliverCenterCallback`. Center serves
 the sign-in framed only for apps in its `WALLET_FRAMEABLE_APP_ORIGINS`; the page
-inside offers "Open as a page" when it cannot continue there.
+inside offers "Fullscreen" when it cannot continue there. Signing up runs inside the
+frame as well (the frame delegates passkey creation; SDK 0.5.1): the new account's
+first session issues Homerun's code and the frame returns to the callback. Recovery
+stays a page of its own.
 
 The review is shown inside the payment panel, the way Beep shows it: Center's
 review page is framed with `allow="publickey-credentials-get"`, reports its own
