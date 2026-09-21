@@ -625,6 +625,18 @@ contract HomerunDeployerTest is Test {
         helper.mintInitialAllocation(7);
     }
 
+    function testStrangerMintingThroughTheRevnetOwnerFirstCannotStrandTheAllocation() public {
+        uint256 id = _deploy();
+        // The revnet's own auto-issuance is permissionless; a stranger sends the allocation here early.
+        vm.prank(BOB);
+        revOwner.autoIssueFor(id, block.timestamp, address(helper));
+        assertEq(tokens.totalBalanceOf(address(helper), id), 500_000 ether);
+        assertEq(revOwner.amountToAutoIssue(id, block.timestamp, address(helper)), 0);
+        helper.mintInitialAllocation(1);
+        assertEq(tokens.totalBalanceOf(OPERATOR, id), 500_000 ether);
+        assertEq(tokens.totalBalanceOf(address(helper), id), 0);
+    }
+
     function testCorrectIncomeConfigurationRoutesTheWholeReservedSplitToTheOwner() public {
         _deploy();
         REVConfig memory config = abi.decode(revDeployer.lastConfig(), (REVConfig));

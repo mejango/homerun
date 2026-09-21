@@ -359,8 +359,9 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
     }
 
     /// @notice Mints a FUND's initial INCOME allocation to whoever owns the FUND right now.
-    /// @dev Anyone can call this once INCOME's stage has started, and it pays out once. The owner settles the published
-    /// allocation to the snapshot's holders from their balance.
+    /// @dev Anyone can call this once INCOME's stage has started. `REVOwner.autoIssueFor` is itself permissionless,
+    /// so the allocation may already sit here when this runs; whatever this contract holds of the INCOME token goes to
+    /// the owner, who settles the published allocation to the snapshot's holders from their balance.
     /// @param fundProjectId The ID of the FUND project.
     function mintInitialAllocation(uint256 fundProjectId) external override nonReentrant {
         uint256 incomeProjectId = incomeProjectIdOf[fundProjectId];
@@ -369,17 +370,19 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
         }
         // INCOME has exactly one stage; the revnet deployer keyed its auto-issuance by that stage's ID.
         (JBRuleset memory stage,,) = CONTROLLER.latestQueuedRulesetOf(incomeProjectId);
-        uint256 amount =
+        uint256 pending =
             REV_OWNER.amountToAutoIssue({revnetId: incomeProjectId, stageId: stage.id, beneficiary: address(this)});
+        IERC20 token = IERC20(address(TOKENS.tokenOf(incomeProjectId)));
+        if (pending != 0) {
+            uint256 heldBefore = token.balanceOf(address(this));
+            REV_OWNER.autoIssueFor({revnetId: incomeProjectId, stageId: stage.id, beneficiary: address(this)});
+            if (token.balanceOf(address(this)) - heldBefore != pending) {
+                revert HomerunDeployer_IncompleteIssuance(incomeProjectId);
+            }
+        }
+        uint256 amount = token.balanceOf(address(this));
         if (amount == 0) revert HomerunDeployer_NothingToMint(fundProjectId);
         address owner = PROJECTS.ownerOf(fundProjectId);
-        IERC20 token = IERC20(address(TOKENS.tokenOf(incomeProjectId)));
-        // Balance deltas, not absolute balances, prove the mint, so tokens sent here by anyone else cannot block it.
-        uint256 heldBefore = token.balanceOf(address(this));
-        REV_OWNER.autoIssueFor({revnetId: incomeProjectId, stageId: stage.id, beneficiary: address(this)});
-        if (token.balanceOf(address(this)) - heldBefore != amount) {
-            revert HomerunDeployer_IncompleteIssuance(incomeProjectId);
-        }
         token.safeTransfer({to: owner, value: amount});
         emit InitialAllocationMinted({
             fundProjectId: fundProjectId,

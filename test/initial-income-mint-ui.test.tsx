@@ -33,7 +33,7 @@ vi.mock('@/hooks/useSafeTx', () => ({
 import { InitialIncomeMint } from '../src/components/InitialIncomeMint'
 
 function allocation(changes: Partial<InitialIncomeAllocationState> = {}): InitialIncomeAllocationState {
-  return { chainId: 8453, incomeProjectId: 8n, fundProjectId: 7n, deployer: HELPER, owner: OWNER, blockNumber: 150n, blockHash: `0x${'d'.repeat(64)}`, blockTimestamp: 15_000n, stageId: 12_000n, stageStart: 12_000n, started: true, pending: 250_000n * units, ...changes }
+  return { chainId: 8453, incomeProjectId: 8n, fundProjectId: 7n, deployer: HELPER, owner: OWNER, blockNumber: 150n, blockHash: `0x${'d'.repeat(64)}`, blockTimestamp: 15_000n, stageId: 12_000n, stageStart: 12_000n, started: true, recorded: 250_000n * units, held: 0n, pending: 250_000n * units, ...changes }
 }
 
 describe('initial INCOME mint to the FUND owner', () => {
@@ -79,10 +79,16 @@ describe('initial INCOME mint to the FUND owner', () => {
     runtime.allocation = { data: allocation({ started: false, stageStart: 4_102_444_800n }), isPending: false, isError: false, isPlaceholderData: false }
     await render(null)
     expect(button().disabled).toBe(true); expect(host.textContent).toContain('Mints once the shared stage starts'); expect(host.querySelector('a[target="_blank"]')).toBeNull()
-    runtime.allocation = { data: allocation({ pending: 0n }), isPending: false, isError: false, isPlaceholderData: false }
+    runtime.allocation = { data: allocation({ recorded: 0n, pending: 0n }), isPending: false, isError: false, isPlaceholderData: false }
     await render(null)
     expect(button().disabled).toBe(true); expect(host.textContent).toContain('Minted'); expect(host.textContent).toContain('Nothing is left to mint')
     await act(async () => button().click()); expect(runtime.send).not.toHaveBeenCalled()
+  })
+
+  it('still pays out INCOME a stranger minted to the helper', async () => {
+    runtime.allocation = { data: allocation({ recorded: 0n, held: 250_000n * units }), isPending: false, isError: false, isPlaceholderData: false }
+    await render(null); expect(host.textContent).toContain('250000 INCOME'); expect(button().disabled).toBe(false)
+    await act(async () => button().click()); expect(runtime.send).toHaveBeenCalledOnce()
   })
 
   it('waits for the verified allocation and surfaces read failures without a mint button', async () => {

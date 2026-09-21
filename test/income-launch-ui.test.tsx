@@ -46,7 +46,7 @@ function eventReceipt(chainId: number) {
 }
 function allocation(chainId: number) {
   const local = runtime.manifest!.allocations.find(entry => entry.chainId === chainId)!
-  return { chainId, incomeProjectId: 10n, fundProjectId: BigInt(local.fundProjectId), deployer: HELPER, owner: OWNER, blockNumber: 201n, blockHash: BLOCK_HASH, blockTimestamp: 1200n, stageId: 1000n, stageStart: 1000n, started: true, pending: BigInt(local.incomeAmount) }
+  return { chainId, incomeProjectId: 10n, fundProjectId: BigInt(local.fundProjectId), deployer: HELPER, owner: OWNER, blockNumber: 201n, blockHash: BLOCK_HASH, blockTimestamp: 1200n, stageId: 1000n, stageStart: 1000n, started: true, recorded: BigInt(local.incomeAmount), held: 0n, pending: BigInt(local.incomeAmount) }
 }
 function readFile(file: File) { return new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = reject; reader.readAsText(file) }) }
 

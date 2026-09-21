@@ -7,13 +7,14 @@ const { registered } = vi.hoisted(() => ({ registered: vi.fn() }))
 vi.mock('../src/lib/income-contracts', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/income-contracts')>(), registeredHomerunDeployer: registered }))
 
 const HELPER = getAddress('0x2222222222222222222222222222222222222222')
+const TOKEN = getAddress('0x4444444444444444444444444444444444444444')
 const OWNER = getAddress('0x1111111111111111111111111111111111111111')
 const HASH = `0x${'ab'.repeat(32)}` as Hex
 const OTHER = `0x${'cd'.repeat(32)}` as Hex
 const AMOUNT = 250_000n * 10n ** 18n
 const input = { chainId: 8453, incomeProjectId: 10n, fundProjectId: 7n }
 
-function client(overrides: { bound?: bigint; owner?: Address; stageId?: bigint; start?: bigint; pending?: bigint; reorg?: boolean; chainId?: number } = {}) {
+function client(overrides: { bound?: bigint; owner?: Address; token?: Address; stageId?: bigint; start?: bigint; recorded?: bigint; held?: bigint; reorg?: boolean; chainId?: number } = {}) {
   const reads: { address: Address; functionName: string; args?: readonly unknown[]; blockNumber?: bigint }[] = []
   const rpc = {
     getChainId: vi.fn(async () => overrides.chainId ?? 8453),
@@ -23,7 +24,9 @@ function client(overrides: { bound?: bigint; owner?: Address; stageId?: bigint; 
       if (request.functionName === 'incomeProjectIdOf') { expect(request.address).toBe(HELPER); expect(request.args).toEqual([7n]); return overrides.bound ?? 10n }
       if (request.functionName === 'ownerOf') { expect(request.address).toBe(v6Address('JBProjects', 8453)); expect(request.args).toEqual([7n]); return overrides.owner ?? OWNER }
       if (request.functionName === 'latestQueuedRulesetOf') { expect(request.address).toBe(v6Address('JBController', 8453)); expect(request.args).toEqual([10n]); return [{ id: Number(overrides.stageId ?? 1_799_999_900n), start: Number(overrides.start ?? 1_799_999_900n) }, {}, 0] }
-      if (request.functionName === 'amountToAutoIssue') { expect(request.address).toBe(v6Address('REVOwner', 8453)); expect(request.args).toEqual([10n, overrides.stageId ?? 1_799_999_900n, HELPER]); return overrides.pending ?? AMOUNT }
+      if (request.functionName === 'tokenOf') { expect(request.address).toBe(v6Address('JBTokens', 8453)); expect(request.args).toEqual([10n]); return overrides.token ?? TOKEN }
+      if (request.functionName === 'balanceOf') { expect(request.address).toBe(TOKEN); expect(request.args).toEqual([HELPER]); return overrides.held ?? 0n }
+      if (request.functionName === 'amountToAutoIssue') { expect(request.address).toBe(v6Address('REVOwner', 8453)); expect(request.args).toEqual([10n, overrides.stageId ?? 1_799_999_900n, HELPER]); return overrides.recorded ?? AMOUNT }
       throw new Error(`Unexpected read ${request.functionName}`)
     }),
   }
@@ -33,9 +36,9 @@ function client(overrides: { bound?: bigint; owner?: Address; stageId?: bigint; 
 beforeEach(() => { registered.mockReturnValue(HELPER) })
 
 describe('initial INCOME auto-issuance held by the helper for the FUND owner', () => {
-  it('reads the launcher binding, the current FUND owner, the single stage and the pending helper allocation at one block', async () => {
+  it('reads the launcher binding, the current FUND owner, the single stage, the recorded issuance and the held balance at one block', async () => {
     const { rpc, reads, calls } = client()
-    expect(await readInitialIncomeAllocation(rpc, input)).toEqual<InitialIncomeAllocationState>({ chainId: 8453, incomeProjectId: 10n, fundProjectId: 7n, deployer: HELPER, owner: OWNER, blockNumber: 100n, blockHash: HASH, blockTimestamp: 1_800_000_000n, stageId: 1_799_999_900n, stageStart: 1_799_999_900n, started: true, pending: AMOUNT })
+    expect(await readInitialIncomeAllocation(rpc, input)).toEqual<InitialIncomeAllocationState>({ chainId: 8453, incomeProjectId: 10n, fundProjectId: 7n, deployer: HELPER, owner: OWNER, blockNumber: 100n, blockHash: HASH, blockTimestamp: 1_800_000_000n, stageId: 1_799_999_900n, stageStart: 1_799_999_900n, started: true, recorded: AMOUNT, held: 0n, pending: AMOUNT })
     expect(reads.every(read => read.blockNumber === 100n)).toBe(true)
     expect(calls.getBlock).toHaveBeenCalledWith({ blockTag: 'latest' })
     expect(calls.getBlock).toHaveBeenLastCalledWith({ blockNumber: 100n })
@@ -47,9 +50,14 @@ describe('initial INCOME auto-issuance held by the helper for the FUND owner', (
     expect(reads.every(read => read.blockNumber === 90n)).toBe(true)
     expect(calls.getBlock).toHaveBeenCalledTimes(1)
   })
-  it('reports a stage that has not started and a minted allocation without inventing amounts', async () => {
+  it('reports a stage that has not started and a paid-out allocation without inventing amounts', async () => {
     expect(await readInitialIncomeAllocation(client({ start: 1_800_000_100n }).rpc, input)).toMatchObject({ started: false, pending: AMOUNT })
-    expect(await readInitialIncomeAllocation(client({ pending: 0n }).rpc, input)).toMatchObject({ started: true, pending: 0n })
+    expect(await readInitialIncomeAllocation(client({ recorded: 0n }).rpc, input)).toMatchObject({ started: true, recorded: 0n, held: 0n, pending: 0n })
+  })
+  it('counts INCOME a stranger already minted to the helper as still payable to the owner', async () => {
+    expect(await readInitialIncomeAllocation(client({ recorded: 0n, held: AMOUNT }).rpc, input)).toMatchObject({ recorded: 0n, held: AMOUNT, pending: AMOUNT })
+    expect(await readInitialIncomeAllocation(client({ recorded: AMOUNT - 5n, held: 5n }).rpc, input)).toMatchObject({ recorded: AMOUNT - 5n, held: 5n, pending: AMOUNT })
+    await expect(readInitialIncomeAllocation(client({ token: zeroAddress }).rpc, input)).rejects.toThrow('no ERC-20')
   })
   it('follows the current FUND owner rather than the launch-time owner', async () => {
     const next = getAddress('0x3333333333333333333333333333333333333333')
@@ -75,6 +83,8 @@ describe('initial INCOME auto-issuance held by the helper for the FUND owner', (
     const state = await readInitialIncomeAllocation(client().rpc, input)
     expect(() => assertInitialIncomeAllocation(state, AMOUNT)).not.toThrow()
     expect(() => assertInitialIncomeAllocation({ ...state, started: false }, AMOUNT)).not.toThrow()
+    expect(() => assertInitialIncomeAllocation({ ...state, recorded: 0n, held: AMOUNT }, AMOUNT)).not.toThrow()
+    expect(() => assertInitialIncomeAllocation({ ...state, recorded: AMOUNT - 1n, held: 1n }, AMOUNT)).not.toThrow()
     expect(() => assertInitialIncomeAllocation({ ...state, pending: 0n }, AMOUNT)).not.toThrow()
     expect(() => assertInitialIncomeAllocation({ ...state, pending: 0n }, 0n)).not.toThrow()
     expect(() => assertInitialIncomeAllocation({ ...state, pending: 0n, started: false }, AMOUNT)).toThrow('does not match the published manifest')
@@ -85,6 +95,7 @@ describe('initial INCOME auto-issuance held by the helper for the FUND owner', (
     const state = await readInitialIncomeAllocation(client().rpc, input)
     expect(buildInitialIncomeMint(state)).toMatchObject({ chainId: 8453, address: HELPER, functionName: 'mintInitialAllocation', args: [7n] })
     expect(buildInitialIncomeMint(state).value).toBeUndefined()
+    expect(buildInitialIncomeMint({ ...state, recorded: 0n, held: AMOUNT })).toMatchObject({ functionName: 'mintInitialAllocation', args: [7n] })
     expect(() => buildInitialIncomeMint({ ...state, pending: 0n })).toThrow('Nothing is left to mint')
     expect(() => buildInitialIncomeMint({ ...state, started: false })).toThrow('not started')
   })

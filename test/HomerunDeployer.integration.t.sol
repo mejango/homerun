@@ -804,6 +804,22 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
         assertEq(jbTokens().totalBalanceOf(OPERATOR, incomeId), 0);
     }
 
+    function testRealStrangerMintingThroughRevOwnerFirstStillPaysTheOwner() public {
+        SnapshotFixture memory fixture = _snapshot(_holders());
+        uint256 incomeId = _deploySnapshot(8000, fixture);
+        (JBRuleset memory stage,,) = jbController().latestQueuedRulesetOf(incomeId);
+        vm.prank(CUSTOMER);
+        _revOwner.autoIssueFor(incomeId, stage.id, address(_helper));
+        assertEq(jbTokens().totalBalanceOf(address(_helper), incomeId), 500_000 ether);
+        assertEq(_revOwner.amountToAutoIssue(incomeId, stage.id, address(_helper)), 0);
+        vm.prank(BOB);
+        _helper.mintInitialAllocation(_fundId);
+        assertEq(jbTokens().totalBalanceOf(OPERATOR, incomeId), 500_000 ether);
+        assertEq(jbTokens().totalBalanceOf(address(_helper), incomeId), 0);
+        vm.expectRevert(abi.encodeWithSelector(HomerunDeployer.HomerunDeployer_NothingToMint.selector, _fundId));
+        _helper.mintInitialAllocation(_fundId);
+    }
+
     function testRealPastStartMintsImmediatelyAndInheritsCashOutDelay() public {
         uint256 incomeId = _deploy(8000);
         _assertLocalAllocation(incomeId, 500_000 ether);

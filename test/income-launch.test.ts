@@ -108,7 +108,7 @@ function linkedFixture(options: { remoteOverrides?: Record<string, unknown>; emp
 function allocationState({ chainId, incomeProjectId, fundProjectId }: { chainId: JBChainId; incomeProjectId: bigint; fundProjectId: bigint }): InitialIncomeAllocationState {
   const value = runtime.allocationManifest!, local = value.allocations.find(entry => entry.chainId === chainId && BigInt(entry.fundProjectId) === fundProjectId)!
   if (!local) throw new Error('No fixture for the requested initial INCOME allocation')
-  return { chainId, incomeProjectId, fundProjectId, deployer: runtime.launcher, owner: holder, blockNumber: 100n, blockHash: hash, blockTimestamp: 1_800_000_000n, stageId: BigInt(startsAtOrAfter), stageStart: BigInt(startsAtOrAfter), started: true, pending: BigInt(local.incomeAmount) }
+  return { chainId, incomeProjectId, fundProjectId, deployer: runtime.launcher, owner: holder, blockNumber: 100n, blockHash: hash, blockTimestamp: 1_800_000_000n, stageId: BigInt(startsAtOrAfter), stageStart: BigInt(startsAtOrAfter), started: true, recorded: BigInt(local.incomeAmount), held: 0n, pending: BigInt(local.incomeAmount) }
 }
 function launchedPeerFixture() {
   const fixture = linkedFixture(), snapshot = globalIncomeSnapshotParameters(fixture.manifest, input.manifestUri)
