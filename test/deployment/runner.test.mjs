@@ -117,8 +117,13 @@ test('release dependencies must match pinned clean sibling checkouts and package
   const { read } = fixture('mainnets');
   verifyDependencies(readOnlyTool, env, read);
   assert.throws(() => verifyDependencies((command, args) => ({ status: 0, stdout: args[2] === 'rev-parse' ? 'wrong' : '' }), env, read), /reviewed revision/);
-  assert.throws(() => verifyDependencies((command, args) => args[2] === 'status'
-    ? { status: 0, stdout: ' M src/JBController.sol' } : readOnlyTool(command, args), env, read), /must be clean/);
+  for (const change of [' M src/JBController.sol', '?? src/JBNew.sol', 'R  test/Old.t.sol -> src/Moved.sol']) {
+    assert.throws(() => verifyDependencies((command, args) => args[2] === 'status'
+      ? { status: 0, stdout: change } : readOnlyTool(command, args), env, read), /must be clean/);
+  }
+  // Test edits, scratch directories and Finder droppings do not compile into the contracts.
+  verifyDependencies((command, args) => args[2] === 'status'
+    ? { status: 0, stdout: ' M test/REVLoans.t.sol\n?? .DS_Store\n?? src/.DS_Store\n?? .scratch/\n' } : readOnlyTool(command, args), env, read);
   assert.throws(() => verifyDependencies(readOnlyTool, env, file => file.endsWith('package.json') ? '{"version":"0.0.0"}' : read(file)), /reviewed version/);
   // Every source root the compiled deployer depends on is pinned: sibling checkouts by revision, their packages by version.
   const artifact = JSON.parse(readFileSync('out/HomerunDeployer.sol/HomerunDeployer.json', 'utf8'));

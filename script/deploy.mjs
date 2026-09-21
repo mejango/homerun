@@ -40,8 +40,11 @@ export function verifyDependencies(spawn = spawnSync, env = process.env, read = 
     const args = ['-C', `${workspace(env)}/${name}`];
     const revision = spawn('git', [...args, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
     const status = spawn('git', [...args, 'status', '--porcelain', '--untracked-files=normal'], { encoding: 'utf8' });
-    if (revision.status !== 0 || revision.stdout.trim() !== expected || status.status !== 0 || status.stdout.trim()) {
-      throw new Error(`${name} must be clean at the reviewed revision ${expected}.`);
+    // Only a sibling's `src/` compiles into the contracts; tests, scratch files and Finder droppings do not.
+    const sourceChanges = status.stdout?.split('\n')
+      .filter(line => /^.{3}(.* -> )?src\//.test(line) && !/\/\.DS_Store$/.test(line)) ?? [];
+    if (revision.status !== 0 || revision.stdout.trim() !== expected || status.status !== 0 || sourceChanges.length) {
+      throw new Error(`${name} must be clean under src/ at the reviewed revision ${expected}.`);
     }
   }
   for (const [path, expected] of Object.entries(packages)) {
