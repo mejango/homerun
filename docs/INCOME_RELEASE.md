@@ -4,7 +4,7 @@
 
 **The checked-in manifest and size/test totals below are historical v2 evidence.** Current source launches every FUND itself through `launchFundFor` with fixed campaign rules and a caller-named ERC-20, registers the router terminal registry on FUND and INCOME so any token can pay through swap routing, only attaches INCOME to a FUND it launched, resolves the signer behind the stock ERC-2771 forwarder, gives INCOME a caller-supplied name and ticker, one issuance stage (10/USD, 2% cut per quarter, 10% cash-out tax), and one unlocked reserved split held by the FUND owner. Stock Sticky and the token distributor are no longer constructor dependencies; the owner redirects the reserved split once they exist. The revised helper requires a new verified deployment and SDK registration.
 
-The installed SDK has no `HomerunDeployer` registry entry on any of the eight networks. Offline preparation reports that gap and leaves dependency-derived helper addresses unset.
+The verified helper and hook addresses are pinned in `src/lib/homerun-addresses.ts` from `deployments/<network>/verified.json`; an SDK registry entry, when present, takes precedence.
 
 [INCOME_RELEASE_MANIFEST.json](INCOME_RELEASE_MANIFEST.json) records the exact source graph, artifact hashes, locations and hashes of full compiler inputs, constructors, size checks, installed SDK addresses, and remaining blockers. The full build files remain local, ignored artifacts; the manifest does not embed them. [prepare-income-release.mts](../scripts/prepare-income-release.mts) regenerates it using local files only. It has no RPC, wallet, broadcast, registry-write, or address-override option. Predictions and locally compiled templates never establish deployed addresses or live runtime identity.
 
@@ -85,7 +85,7 @@ Earlier stock Sticky rehearsals (six networks in an isolated local VM, Arbitrum 
 | --- | --- |
 | `HomerunDeployer` | The same complete ordered eight-chain dependency array on every network |
 
-The installed `@bananapus/nana-sdk-core` has canonical core, omnichain, router-terminal, Revnet, USDC and CCIP records, but no `HomerunDeployer` registry entry on any of the eight networks. All eight missing entries are explicit in the packet. This is an observation of the installed SDK, not proof that no contract exists onchain.
+The installed `@bananapus/nana-sdk-core` has canonical core, omnichain, router-terminal, Revnet, USDC and CCIP records; the Homerun hook and helper come from `src/lib/homerun-addresses.ts` until the registry carries them.
 
 Required evidence for the current v4 release:
 

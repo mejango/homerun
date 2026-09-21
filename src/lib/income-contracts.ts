@@ -6,6 +6,7 @@ import {
 } from '@bananapus/nana-sdk-core/v6'
 import { getAddress, isAddress, parseAbi, zeroAddress, type Address } from 'viem'
 import type { FundTransaction } from './fund-contracts'
+import { HOMERUN_ALLOWLIST_HOOK, HOMERUN_DEPLOYER } from './homerun-addresses'
 
 export const INITIAL_INCOME_SUPPLY = 500_000n * 10n ** 18n
 export const INCOME_INITIAL_ISSUANCE = 10n * 10n ** 18n
@@ -107,15 +108,16 @@ export function registeredIncomeDistributor(chainId: JBChainId): Address | null 
   return result && isAddress(result) && result.toLowerCase() !== zeroAddress ? getAddress(result) : null
 }
 
+/** A registry entry (a fork deployment registers one) wins over the verified deployment. */
 export function registeredAllowlistHook(chainId: JBChainId): Address | null {
   const contracts = jbContractAddress['6'] as Record<string, Partial<Record<JBChainId, Address>>>
-  const result = contracts.HomerunAllowlistHook?.[chainId]
+  const result = contracts.HomerunAllowlistHook?.[chainId] ?? HOMERUN_ALLOWLIST_HOOK[chainId]
   return result && isAddress(result) && result.toLowerCase() !== zeroAddress ? getAddress(result) : null
 }
 
 export function registeredHomerunDeployer(chainId: JBChainId): Address | null {
   const contracts = jbContractAddress['6'] as Record<string, Partial<Record<JBChainId, Address>>>
-  const result = contracts.HomerunDeployer?.[chainId]
+  const result = contracts.HomerunDeployer?.[chainId] ?? HOMERUN_DEPLOYER[chainId]
   return result && isAddress(result) && result.toLowerCase() !== zeroAddress ? getAddress(result) : null
 }
 

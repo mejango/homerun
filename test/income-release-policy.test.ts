@@ -9,7 +9,7 @@ describe('offline INCOME release policy', () => {
   it('accepts the current owner-managed shop source and records the new release identity', () => {
     expect(() => assertIncomeReleaseSource(helper)).not.toThrow()
     expect(incomeReleasePolicy).toMatchObject({
-      helperSaltText: 'homerun.deployer.global.v4',
+      helperSaltText: 'HomerunV6',
       splitLockedUntil: '0',
       economics: { incomeCutPercentPerQuarter: 2, incomeCashOutTaxBps: 1000, stages: 1 },
       shop: { currency: 2, decimals: 6, ownerCanAdjustTiers: true, newTiersWithOwnerMinting: false },

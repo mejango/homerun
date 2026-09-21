@@ -64,6 +64,6 @@ Reads are pinned to a mined block and reject chain, identity or reorganization m
 
 The actual-protocol tests instantiate Juicebox, REVDeployer/REVOwner/REVLoans, the router terminal registry, the 721 infrastructure and Suckers locally. They exercise exact supply materialization, minting to the current FUND owner after a post-snapshot FUND transfer, a future shared start, a stranger triggering `autoIssueFor` early, payments and reserved routing, salt scoping and rollback. Holder enumeration occurs outside the launch transaction.
 
-The helper is a new integration contract, not a verified production deployment. Installed SDK records do not yet contain a verified Homerun helper deployment.
+The helper is deployed and verified on all eight networks (`deployments/<network>/`); the app resolves it from `src/lib/homerun-addresses.ts`, with an SDK registry entry taking precedence when one exists (a fork deployment registers one).
 
 The same composition supports one or multiple chains, with exactly one linked FUND project per chain. Complete source history, immutable global manifests, and canonical deployment registration are required. Missing RPC history, ambiguous per-chain project identities or unresolved custody must remain explicit blockers rather than silently reducing the allocation scope. Actual-protocol tests compare identical REV hashes, token addresses and reciprocal CCIP peers across delayed chains, including a launch after the eight-quarter boundary.

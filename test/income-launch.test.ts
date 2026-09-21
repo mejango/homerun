@@ -28,6 +28,7 @@ import { incomeConfigurationHash, incomeConfigurationSalt, incomeLaunchBlockers,
 import { buildFundGlobalManifest, fundGlobalManifestHash, globalIncomeSnapshotParameters, verifyFundGlobalManifestHistory } from '../src/lib/fund-global-manifest'
 import { homerunDeployerAbi, INITIAL_INCOME_SUPPLY } from '../src/lib/income-contracts'
 import { readFundProjectState } from '../src/lib/fund-state'
+import { HOMERUN_DEPLOYER } from '../src/lib/homerun-addresses'
 
 const holder = getAddress('0x0000000000000000000000000000000000000011')
 const token = getAddress('0x0000000000000000000000000000000000000022')
@@ -363,7 +364,15 @@ describe('global atomic INCOME launch preparation', () => {
     expect(incomeLaunchBlockers({ ...runtime.state, ...patch } as FundProjectState).length).toBeGreaterThan(0)
   })
   it('reports missing add-ons without substituting simulation addresses', () => {
-    expect(incomeLaunchBlockers({ ...runtime.state, chainId: 1, linkedChainIds: [1] }).filter(value => value.includes('verified and registered'))).toHaveLength(1)
+    // The registry mock has no entry for chain 1, so only the pinned deployment resolves it.
+    const pinned = HOMERUN_DEPLOYER[1]
+    delete HOMERUN_DEPLOYER[1]
+    try {
+      expect(incomeLaunchBlockers({ ...runtime.state, chainId: 1, linkedChainIds: [1] }).filter(value => value.includes('verified and registered'))).toHaveLength(1)
+    } finally {
+      HOMERUN_DEPLOYER[1] = pinned
+    }
+    expect(incomeLaunchBlockers({ ...runtime.state, chainId: 1, linkedChainIds: [1] }).filter(value => value.includes('verified and registered'))).toHaveLength(0)
   })
   it.each([false, true])('allows an authenticated stocked FUND shop at the INCOME transition (omnichain=%s)', omnichain => {
     const hook = other
