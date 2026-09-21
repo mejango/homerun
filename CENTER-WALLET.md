@@ -39,7 +39,8 @@ launch form targets a frame the dialog renders with `allow="publickey-credential
 and the callback hands up through the SDK's `deliverCenterCallback`. Center serves
 the sign-in framed only for apps in its `WALLET_FRAMEABLE_APP_ORIGINS`; the page
 inside offers "Fullscreen" when it cannot continue there. Signing up runs inside the
-frame as well (the frame delegates passkey creation; SDK 0.5.1): the new account's
+frame as well (the frame delegates passkey prompts and creation to Center's origin by
+name, since it has no `src` for the browser to take one from; SDK 0.5.2): the new account's
 first session issues Homerun's code and the frame returns to the callback. Recovery
 stays a page of its own.
 
