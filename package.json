@@ -20,6 +20,7 @@
     "test:contracts": "node scripts/test-contracts.mjs",
     "check": "npm run lint && npm run check:indexer && npm test && npm run test:live && npm run build && npm run test:contracts",
     "check:indexer": "node scripts/check-bendystraw-schema.mjs 7 --offline",
+    "check:networks": "tsx scripts/check-fund-networks.ts && tsx scripts/check-income-networks.ts",
     "start": "node scripts/start-standalone.mjs",
     "typecheck": "tsc --noEmit",
     "test:live": "vitest run",

@@ -32,7 +32,7 @@ const selections = mode === 'single' ? [[8453]] : mode === 'linked' ? [[...chain
 const created: { chainId: number; projectId: string; hash: Hex; linked: boolean; salt: Hex; start: number }[] = []
 for (const selection of selections) {
   const input = {
-    owner, sender: owner, chainIds: selection, projectUri: 'ipfs://QmbFMke1KXqnYyBBWxB74N4c5SBnJMVAiMNRcGu6x1AwQH',
+    owner, sender: owner, chainIds: selection, projectUri: 'ipfs://QmbFMke1KXqnYyBBWxB74N4c5SBnJMVAiMNRcGu6x1AwQH', tokenName: 'Preflight FUND', ticker: 'PREFLIGHT',
     salt: (process.env.FUND_PREFLIGHT_SALT ?? `0x${randomBytes(32).toString('hex')}`) as Hex,
     mustStartAtOrAfter: selection.length > 1 ? timestamp : 0, creationFees: fees,
   }

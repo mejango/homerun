@@ -16,7 +16,7 @@ async function main() {
   console.log(`Read-only RPC proof via ${jbCenterBaseUrl()}, Origin ${jbCenterAppOrigin()}.`)
   const results = await Promise.allSettled(groups.flatMap(chainIds => {
     const plan = buildFundLaunch({
-      owner, sender: owner, chainIds, projectUri: 'ipfs://network-preflight',
+      owner, sender: owner, chainIds, projectUri: 'ipfs://network-preflight', tokenName: 'Network preflight FUND', ticker: 'PREFLIGHT',
       salt: `0x${randomBytes(32).toString('hex')}`, mustStartAtOrAfter: Math.floor(Date.now() / 1000),
       creationFees: Object.fromEntries(chainIds.map(id => [id, 0n])),
     })
@@ -29,22 +29,21 @@ async function main() {
         const registry = v6Address('JBSuckerRegistry', id)
         const registryCode = await client.getCode({ address: registry })
         if (!registryCode || registryCode === '0x') throw new Error('JBSuckerRegistry is not deployed.')
-        const config = request.args.at(-1) as { deployerConfigurations: { deployer: Address; mappings: { localToken: Address; remoteToken: Hex }[] }[] }
-        if (config.deployerConfigurations.length !== chainIds.length - 1) throw new Error('The SDK omitted one or more selected peer routes.')
-        const peers = await Promise.all(config.deployerConfigurations.map(async deployment => {
+        // The deployer builds every sucker's USDC mapping itself; the launch names only the CCIP peer deployers.
+        const peerDeployers = request.args.at(-1) as Address[]
+        if (peerDeployers.length !== chainIds.length - 1) throw new Error('The SDK omitted one or more selected peer routes.')
+        const peers = await Promise.all(peerDeployers.map(async deployer => {
           const [code, allowed, remoteId] = await Promise.all([
-            client.getCode({ address: deployment.deployer }),
-            client.readContract({ address: registry, abi: jbSuckerRegistryAbi, functionName: 'suckerDeployerIsAllowed', args: [deployment.deployer] }),
-            client.readContract({ address: deployment.deployer, abi: deployerAbi, functionName: 'ccipRemoteChainId' }),
+            client.getCode({ address: deployer }),
+            client.readContract({ address: registry, abi: jbSuckerRegistryAbi, functionName: 'suckerDeployerIsAllowed', args: [deployer] }),
+            client.readContract({ address: deployer, abi: deployerAbi, functionName: 'ccipRemoteChainId' }),
           ])
           if (!code || code === '0x' || !allowed) throw new Error('A configured CCIP deployer is absent or disallowed.')
           const remote = Number(remoteId) as JBChainId
           if (remote === id || !(chainIds as readonly number[]).includes(remote)) throw new Error('A CCIP deployer names an unexpected peer chain.')
-          if (deployment.mappings.length !== 1) throw new Error('A CCIP route does not contain exactly the reviewed USDC mapping.')
-          const mapping = deployment.mappings[0]
-          if (mapping.localToken.toLowerCase() !== USDC_ADDRESSES[id].toLowerCase() || mapping.remoteToken.toLowerCase() !== `0x${USDC_ADDRESSES[remote].slice(2).padStart(64, '0')}`.toLowerCase()) throw new Error('A CCIP USDC mapping differs from the canonical tokens.')
-          const mappingAllowed = await client.readContract({ address: registry, abi: jbSuckerRegistryAbi, functionName: 'tokenMappingIsAllowed', args: [mapping.localToken, remoteId, mapping.remoteToken] })
-          if (!mappingAllowed) throw new Error('The USDC mapping is not allowed by the deployed registry.')
+          const remoteToken = `0x${USDC_ADDRESSES[remote].slice(2).padStart(64, '0')}` as Hex
+          const mappingAllowed = await client.readContract({ address: registry, abi: jbSuckerRegistryAbi, functionName: 'tokenMappingIsAllowed', args: [USDC_ADDRESSES[id], remoteId, remoteToken] })
+          if (!mappingAllowed) throw new Error('The USDC mapping the deployer will request is not allowed by the deployed registry.')
           return remote
         }))
         if (new Set(peers).size !== chainIds.length - 1) throw new Error('Selected CCIP routes repeat a peer chain.')
