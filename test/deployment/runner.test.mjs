@@ -169,9 +169,28 @@ test('proposal rejects a missing lock, wrong organization, or unregistered proje
   }
 });
 
-test('an uncommitted checkout can rehearse but neither propose nor verify', async () => {
+test('a broadcast sends every destination from the funded key, then verifies every destination', async () => {
+  const setup = fixture('testnets');
+  await assert.rejects(run('broadcast', 'testnets', { ...setup, spawn: readOnlyTool }), /HOMERUN_DEPLOYER_KEY/);
+  setup.env.HOMERUN_DEPLOYER_KEY = '0x' + '11'.repeat(32);
+  const calls = [];
+  await run('broadcast', 'testnets', { ...setup, spawn(command, args, options) {
+    const tool = readOnlyTool(command, args);
+    if (tool) return tool;
+    calls.push({ script: args[1], alias: args[3], flags: args.slice(4), chainId: options.env.HOMERUN_EXPECTED_CHAIN_ID });
+    return { status: 0 };
+  } });
+  const aliases = networks.testnets.map(([alias]) => alias);
+  assert.deepEqual(calls.map(call => call.script), [...aliases.map(() => 'script/Broadcast.s.sol:Broadcast'), ...aliases.map(() => 'script/Verify.s.sol:Verify')]);
+  assert.deepEqual(calls.map(call => call.alias), [...aliases, ...aliases]);
+  assert.deepEqual(calls.map(call => call.chainId), [...networks.testnets, ...networks.testnets].map(([, id]) => String(id)));
+  assert.deepEqual(calls[0].flags, ['--broadcast', '--private-key', setup.env.HOMERUN_DEPLOYER_KEY, '-vv']);
+  assert.deepEqual(calls[4].flags.slice(0, 2), ['--fork-block-number', '100']);
+});
+
+test('an uncommitted checkout can rehearse but neither propose, broadcast nor verify', async () => {
   const dirtyGit = (command, args) => command === 'git' && args[0] === 'status' ? { status: 0, stdout: ' M src/HomerunDeployer.sol' } : readOnlyTool(command, args);
-  for (const action of ['propose', 'verify']) {
+  for (const action of ['propose', 'broadcast', 'verify']) {
     await assert.rejects(run(action, 'testnets', { ...fixture('testnets'), spawn(command, args) {
       const tool = dirtyGit(command, args);
       if (tool) return tool;

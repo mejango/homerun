@@ -77,7 +77,7 @@ sh scripts/forge.sh script script/Rehearse.s.sol:Rehearse --rpc-url ethereum_sep
 sh scripts/forge.sh script script/Verify.s.sol:Verify --rpc-url ethereum_sepolia -vv
 ```
 
-Do not use `forge script --broadcast` with any of these scripts; execution goes through Sphinx.
+`deploy:broadcast:<group>` is the alternative to a proposal: it sends the missing deployment transactions from `HOMERUN_DEPLOYER_KEY` through the canonical factory on every destination (`script/Broadcast.s.sol:Broadcast`), then runs the same `Verify` pass and writes `verified.json`. The factory derives every address from the salt and creation code alone, so a broadcast and a proposal land on the same addresses. Like a proposal it refuses an uncommitted checkout and re-checks the dependency pins. Do not run `forge script --broadcast` by hand; use the runner so every destination is verified.
 
 ## What a repeated run accepts
 
