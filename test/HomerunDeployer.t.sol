@@ -395,6 +395,8 @@ contract IncomeTestOwner {
                 (1, _snapshot, _description(), uint16(8000), uint48(1_000_000), _noSuckers())
             )
         );
+        // The first four bytes of revert data are the selector.
+        // forge-lint: disable-next-line(unsafe-typecast)
         if (result.length >= 4) reentryError = bytes4(result);
     }
 
@@ -460,7 +462,7 @@ contract IncomeTestOmnichainDeployer {
     )
         external
         payable
-        returns (uint256 projectId, address, address[] memory suckers)
+        returns (uint256 projectId, address, address[] memory)
     {
         lastOwner = owner;
         lastUri = projectUri;
@@ -470,6 +472,7 @@ contract IncomeTestOmnichainDeployer {
         lastValue = msg.value;
         lastPayer = IJBPayerTracker(msg.sender).originalPayer();
         projectId = IncomeTestProjects(PROJECTS).createFor{value: msg.value}(owner);
+        return (projectId, address(0), new address[](0));
     }
 }
 
@@ -985,7 +988,7 @@ contract HomerunDeployerTest is Test {
     function testHistoricalSnapshotDoesNotChangeAfterTransfer() public {
         IncomeTestToken fundToken = IncomeTestToken(tokens.tokenOf(1));
         vm.prank(ALICE);
-        fundToken.transfer(BOB, 50 ether);
+        assertTrue(fundToken.transfer(BOB, 50 ether));
         uint256 id = _deploy();
         // The FUND transfer after the snapshot block does not change the attested allocation.
         assertEq(revOwner.amountToAutoIssue(id, block.timestamp, address(helper)), 500_000 ether);

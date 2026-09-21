@@ -59,6 +59,8 @@ contract HomerunDeploymentTest is TestBaseWorkflow {
         // Every supported chain prices USDC against USD in JBPrices; the deployment refuses a chain that does not.
         JBMatchingPriceFeed feed = new JBMatchingPriceFeed();
         vm.prank(multisig());
+        // The currency ID of an ERC-20 is the low 32 bits of its address, by protocol convention.
+        // forge-lint: disable-next-line(unsafe-typecast)
         jbPrices().addPriceFeedFor(0, JBCurrencyIds.USD, uint32(uint160(MAINNET_USDC)), feed);
 
         uint256 feeProjectId = jbProjects().createFor(multisig());

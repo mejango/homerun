@@ -146,6 +146,12 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
         _ccipToOptimism = _ccipDeployer(10, feeProjectId);
     }
 
+    /// @dev Permission data keys projects by `uint64`; a test FUND's ID is small.
+    function _fundId64() private view returns (uint64 fundId) {
+        // forge-lint: disable-next-line(unsafe-typecast)
+        return uint64(_fundId);
+    }
+
     function _ccipDeployer(uint32 remoteChainId, uint256 feeProjectId) private returns (JBCCIPSuckerDeployer deployer) {
         deployer = new JBCCIPSuckerDeployer(jbDirectory(), jbPermissions(), jbTokens(), address(this), FORWARDER);
         // Launch and token mapping do not send transport messages. This test contract is only a nonzero router
@@ -208,9 +214,7 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
         jbPermissions()
             .setPermissionsFor(
                 OPERATOR,
-                JBPermissionsData({
-                operator: address(_omnichain), projectId: uint64(_fundId), permissionIds: permissionIds
-            })
+                JBPermissionsData({operator: address(_omnichain), projectId: _fundId64(), permissionIds: permissionIds})
             );
         (, JBRulesetMetadata memory metadata) = jbController().currentRulesetOf(_fundId);
         JBRulesetConfig[] memory rulesets = new JBRulesetConfig[](1);
@@ -417,7 +421,7 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
         IERC20 income = IERC20(address(jbTokens().tokenOf(incomeId)));
         for (uint256 i = 1; i < fixture.holders.length; ++i) {
             vm.prank(OPERATOR);
-            income.transfer(fixture.holders[i], fixture.allocations[i]);
+            assertTrue(income.transfer(fixture.holders[i], fixture.allocations[i]));
         }
         assertEq(jbTokens().totalBalanceOf(OPERATOR, incomeId), 100_000 ether);
         assertEq(jbTokens().totalBalanceOf(ALICE, incomeId), 300_000 ether);
@@ -1002,7 +1006,7 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
         shop.tiersConfig.tiers = _shopItems();
         shop.flags.issueTokensForSplits = true;
         JBQueueRulesetsConfig memory queue;
-        queue.projectId = uint64(_fundId);
+        queue.projectId = _fundId64();
         queue.memo = "Create project shop";
         queue.rulesetConfigurations = new JBPayDataHookRulesetConfig[](1);
         queue.rulesetConfigurations[0].duration = previous.duration;
@@ -1033,16 +1037,14 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
         priorPermissions[0] = JBPermissionIds.SET_PROJECT_URI;
         vm.prank(OPERATOR);
         jbPermissions()
-            .setPermissionsFor(OPERATOR, JBPermissionsData(address(projectDeployer), uint64(_fundId), priorPermissions));
+            .setPermissionsFor(OPERATOR, JBPermissionsData(address(projectDeployer), _fundId64(), priorPermissions));
         uint256 priorBitmap = jbPermissions().permissionsOf(address(projectDeployer), OPERATOR, _fundId);
         uint8[] memory creationPermissions = new uint8[](2);
         creationPermissions[0] = priorPermissions[0];
         creationPermissions[1] = JBPermissionIds.QUEUE_RULESETS;
         vm.prank(OPERATOR);
         jbPermissions()
-            .setPermissionsFor(
-                OPERATOR, JBPermissionsData(address(projectDeployer), uint64(_fundId), creationPermissions)
-            );
+            .setPermissionsFor(OPERATOR, JBPermissionsData(address(projectDeployer), _fundId64(), creationPermissions));
         assertEq(jbPermissions().permissionsOf(address(projectDeployer), OPERATOR, 0), 0);
         assertEq(jbPermissions().permissionsOf(address(projectDeployer), OPERATOR, _feeProjectId), 0);
         vm.prank(OPERATOR);
@@ -1050,7 +1052,7 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
             projectDeployer.queueRulesetsOf(_fundId, shop, queue, jbController(), salt);
         vm.prank(OPERATOR);
         jbPermissions()
-            .setPermissionsFor(OPERATOR, JBPermissionsData(address(projectDeployer), uint64(_fundId), priorPermissions));
+            .setPermissionsFor(OPERATOR, JBPermissionsData(address(projectDeployer), _fundId64(), priorPermissions));
         assertEq(jbPermissions().permissionsOf(address(projectDeployer), OPERATOR, _fundId), priorBitmap);
 
         (JBRuleset memory configured, JBRulesetMetadata memory configuredMetadata) =
