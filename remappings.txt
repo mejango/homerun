@@ -17,3 +17,4 @@
 forge-std/=../../nana-core-v6/lib/forge-std/src/
 lib/forge-std/=../../nana-core-v6/lib/forge-std/
 solady/=../../revnet-core-v6/node_modules/solady/
+@sphinx-labs/contracts/=node_modules/@sphinx-labs/contracts/

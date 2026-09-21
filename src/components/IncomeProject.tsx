@@ -17,7 +17,7 @@ import { IncomeReservedTokens } from '@/components/IncomeReservedTokens'
 import { IncomeOperatorActions } from '@/components/IncomeOperatorActions'
 import { ProjectActivity } from '@/components/ProjectActivity'
 import { DisplayTokenAmount } from '@/components/DisplayTokenAmount'
-import { InitialIncomeClaim } from '@/components/InitialIncomeClaim'
+import { InitialIncomeMint } from '@/components/InitialIncomeMint'
 import { useSafeTx, txPhaseLabel, type TxRequest } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { displayChainName, explorerTxUrl } from '@/lib/chainDisplay'
@@ -231,7 +231,7 @@ function IncomeActions({ state, client, fundProjectId, writesUnavailable, bindin
     activity: projectId && <ProjectActivity chainId={chainId} projectId={projectId} />,
     overview: state && <Panel title="Revenue"><dl className="grid gap-5 sm:grid-cols-2"><div><dt>INCOME supply</dt><dd><DisplayTokenAmount value={state.totalSupply} /> INCOME</dd></div><div><dt>Payments</dt><dd>{state.metadata.pausePay ? 'Paused' : 'Open'}</dd></div>{state.accountingContexts.map(item => <div key={`${item.terminal}:${item.token}`}><dt>Treasury</dt><dd><DisplayTokenAmount value={item.balance} decimals={item.decimals} /> {item.symbol}</dd></div>)}</dl><p className="mt-4 text-sm">Verified at block {state.blockNumber.toString()}. INCOME is separate from FUND and does not grant an asset-sale claim.</p></Panel>,
     stages: state && <div className="grid gap-7"><LiveProjectActions token="INCOME" state={{cashOutsEnabled: state.cashOutsAvailable, hasInitialAllocation: !!fundProjectId}} /><Panel title="INCOME schedule"><dl className="grid gap-4"><div><dt>Current ruleset</dt><dd>{state.ruleset.id.toString()}</dd></div><div><dt>Started</dt><dd>{new Date(Number(state.ruleset.start) * 1_000).toLocaleString()}</dd></div><div><dt>Cash-outs and loans</dt><dd>{state.cashOutsAvailable ? 'Available under the current contract terms' : `Unlock ${new Date(Number(state.cashOutDelay) * 1_000).toLocaleString()}`}</dd></div></dl><p className="mt-4">Initial INCOME allocations and ongoing Sticky rewards are separate. Sticky rewards vest in four weekly rounds after a claim is materialized.</p></Panel></div>,
-    accountsYou: gate(ready && <><Panel title="Your INCOME"><p className="break-words text-2xl"><DisplayTokenAmount value={state.totalBalance} /> INCOME</p><p className="mt-2 text-sm"><DisplayTokenAmount value={state.creditBalance} /> credits / <DisplayTokenAmount value={state.erc20Balance} /> ERC-20 tokens</p></Panel><IncomeTokenActions state={state} client={client} />{fundProjectId && <InitialIncomeClaim chainId={state.chainId} fundProjectId={fundProjectId} incomeProjectId={state.projectId} />}<IncomeHolderRewards state={state} client={client} fundProjectId={fundProjectId} /></>),
+    accountsYou: gate(ready && <><Panel title="Your INCOME"><p className="break-words text-2xl"><DisplayTokenAmount value={state.totalBalance} /> INCOME</p><p className="mt-2 text-sm"><DisplayTokenAmount value={state.creditBalance} /> credits / <DisplayTokenAmount value={state.erc20Balance} /> ERC-20 tokens</p></Panel><IncomeTokenActions state={state} client={client} />{fundProjectId && <InitialIncomeMint chainId={state.chainId} fundProjectId={fundProjectId} incomeProjectId={state.projectId} manifestUri={details?.incomeManifestUri ?? null} />}<IncomeHolderRewards state={state} client={client} fundProjectId={fundProjectId} /></>),
     accountsAll: projectId && <ProjectParticipants chainId={chainId} projectId={projectId} tokenLabel="INCOME" />,
     market: gate(ready && context && <>{currency}<IncomeCashOut state={state} client={client} context={context} /></>),
     settlement: gate(ready && <IncomeBridgeActions state={state} />),
@@ -250,7 +250,7 @@ function IncomeHolderRewards({ state, client, fundProjectId }: { state: IncomePr
   if (state.rewards) return <IncomeRewards state={state} client={client} />
   if (!fundId) return null
   return <Panel title="Ongoing FUND rewards">
-    <p>The owner holds the reserved share of new INCOME until it is split further. Initial INCOME claims remain separate and require no staking.</p>
+    <p>The owner holds the reserved share of new INCOME until it is split further. The initial INCOME allocation is settled by the owner and requires no staking.</p>
   </Panel>
 }
 

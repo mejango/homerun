@@ -10,7 +10,6 @@ import type { PreparedIncomeLaunch, prepareIncomeLaunch } from '../../src/lib/in
 export const OWNER = '0x1111111111111111111111111111111111111111' as Address
 export const HELPER = '0x2222222222222222222222222222222222222222' as Address
 export const TOKEN = '0x3333333333333333333333333333333333333333' as Address
-export const VAULT = '0x4444444444444444444444444444444444444444' as Address
 export const BLOCK_HASH = toHex(987n, { size: 32 }), TX_HASH = toHex(988n, { size: 32 }), SALT = toHex(989n, { size: 32 })
 export const CHAIN_IDS = [1, 10, 8453, 42161] as const
 export const FUND_IDS = [5n, 6n, 7n, 8n]

@@ -3,7 +3,7 @@
 `scripts/verify-fund-fork.mts` exercises the application’s FUND builders, pinned
 project-state reader, launch receipt verifier, transaction simulation, and SDK
 payment/cash-out preparation against deployed Ethereum Juicebox V6 contracts.
-`HomerunAllowlistHook`, `HomerunDeployerLib` and `HomerunDeployer` are not live on
+`HomerunAllowlistHook` and `HomerunDeployer` are not live on
 any network yet, so the script first deploys them from the local `out/` artifacts
 onto the fork (`scripts/deploy-homerun-fork.mts`) and points the installed SDK
 registry at those addresses for the rest of the run.

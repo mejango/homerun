@@ -52,21 +52,17 @@ function validateCall(record: IncomeLaunchPending): void {
     const local = snapshot.allocations.find(entry => entry.chainId === record.chainId)
     let previousChain = 0
     let totalIncome = 0n
-    let totalLeaves = 0n
     for (const entry of snapshot.allocations) {
       if (!FUND_CHAIN_IDS.some(id => id === entry.chainId) || entry.chainId <= previousChain
-        || !positive(entry.fundProjectId) || !positive(entry.snapshotBlockNumber) || !nonzeroHash(entry.snapshotBlockHash)
-        || entry.leafCount > 1n << 160n || (entry.leafCount === 0n) !== (entry.merkleRoot === zeroHash)
-        || (entry.leafCount === 0n && entry.incomeAmount !== 0n)) throw invalid()
+        || !positive(entry.fundProjectId) || !positive(entry.snapshotBlockNumber) || !nonzeroHash(entry.snapshotBlockHash)) throw invalid()
       previousChain = entry.chainId
       totalIncome += entry.incomeAmount
-      totalLeaves += entry.leafCount
     }
     const isMainnet = (chainId: number) => [1, 10, 8453, 42161].includes(chainId)
     if (fundProjectId !== BigInt(record.projectId)
       || !local || local.fundProjectId !== fundProjectId || local.snapshotBlockNumber > BigInt(record.afterBlock)
       || !nonzeroHash(snapshot.sourceSetHash) || !positive(snapshot.totalFundSupply)
-      || totalIncome !== INITIAL_INCOME_SUPPLY || !positive(totalLeaves)
+      || totalIncome !== INITIAL_INCOME_SUPPLY
       || snapshot.allocations.some(entry => isMainnet(entry.chainId) !== isMainnet(record.chainId))
       || !nonzeroHash(snapshot.manifestHash) || !ipfs(snapshot.manifestUri)
       || !description.name.trim() || description.name.length > 160 || !description.ticker.trim() || description.ticker.length > 32

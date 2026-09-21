@@ -617,7 +617,7 @@ describe("global Sticky prerequisites", () => {
       ]),
     });
     expect(prepared.localAllocation.incomeAmount).toBe("0");
-    expect(prepared.localAllocation.leafCount).toBe("0");
+    expect(prepared.localAllocation.holders).toEqual([]);
     expect(prepared.request.args[0]).toBe(FUND);
   });
   it("allows the current FUND owner to finish a frozen snapshot after NFT ownership changes", async () => {

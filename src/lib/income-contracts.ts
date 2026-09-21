@@ -17,7 +17,7 @@ export const INCOME_SLIPPAGE_BPS = 100n
 
 /** Source: HomerunDeployer.sol. Enabled only after a verified deployment enters the SDK registry. */
 export const homerunDeployerAbi = parseAbi([
-  'struct InitialAllocation { uint32 chainId; uint256 fundProjectId; uint256 snapshotBlockNumber; bytes32 snapshotBlockHash; bytes32 merkleRoot; uint256 leafCount; uint104 incomeAmount; }',
+  'struct InitialAllocation { uint32 chainId; uint256 fundProjectId; uint256 snapshotBlockNumber; bytes32 snapshotBlockHash; uint104 incomeAmount; }',
   'struct InitialSnapshot { bytes32 sourceSetHash; uint256 totalFundSupply; bytes32 manifestHash; string manifestUri; InitialAllocation[] allocations; }',
   'struct SuckerMapping { address localToken; uint32 minGas; bytes32 remoteToken; }',
   'struct SuckerDeployerConfig { address deployer; bytes32 peer; SuckerMapping[] mappings; }',
@@ -46,11 +46,11 @@ export const homerunDeployerAbi = parseAbi([
   'function PROTOCOL_CONFIG_HASH() view returns (bytes32)',
   'function usdcOf(uint32 chainId) view returns (address)',
   'function incomeProjectIdOf(uint256 fundProjectId) view returns (uint256)',
-  'function initialAllocationVaultOf(uint256 fundProjectId) view returns (address)',
-  'function distributionIdFor(uint256 fundProjectId, InitialSnapshot snapshot, bytes32 salt) view returns (bytes32)',
   'function configurationSaltFor(InitialSnapshot snapshot, bytes32 launchSalt) pure returns (bytes32)',
   'function deployIncome(uint256 fundProjectId, InitialSnapshot snapshot, (string name, string ticker, string uri, bytes32 salt) description, uint16 reservedBps, uint48 startsAtOrAfter, SuckerConfiguration suckerConfiguration) payable returns (uint256 incomeProjectId)',
-  'event IncomeDeployed(uint256 indexed fundProjectId, uint256 indexed incomeProjectId, address indexed owner, address fundToken, address initialAllocationVault, bytes32 merkleRoot)',
+  'event IncomeDeployed(uint256 indexed fundProjectId, uint256 indexed incomeProjectId, address indexed owner, address fundToken)',
+  'function mintInitialAllocation(uint256 fundProjectId)',
+  'event InitialAllocationMinted(uint256 indexed fundProjectId, uint256 indexed incomeProjectId, address indexed owner, uint256 incomeAmount, address caller)',
 ])
 
 /** Source: HomerunAllowlistHook.sol. Gates FUND payment beneficiaries; the FUND owner manages it. */

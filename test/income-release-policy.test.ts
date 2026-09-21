@@ -4,11 +4,10 @@ import { describe, expect, it } from 'vitest'
 import { assertIncomeReleaseSource, incomeReleasePolicy } from '../scripts/prepare-income-release.mts'
 
 const helper = readFileSync(new URL('../src/HomerunDeployer.sol', import.meta.url), 'utf8')
-const vault = readFileSync(new URL('../src/HomerunInitialIncomeVault.sol', import.meta.url), 'utf8')
 
 describe('offline INCOME release policy', () => {
   it('accepts the current owner-managed shop source and records the new release identity', () => {
-    expect(() => assertIncomeReleaseSource(helper, vault)).not.toThrow()
+    expect(() => assertIncomeReleaseSource(helper)).not.toThrow()
     expect(incomeReleasePolicy).toMatchObject({
       launchVersion: 4,
       helperSaltText: 'homerun.deployer.global.v4',
@@ -30,7 +29,9 @@ describe('offline INCOME release policy', () => {
     ['second stage reintroduced', 'new REVStageConfig[](1);', 'new REVStageConfig[](2);'],
     ['reserved split redirected away from the owner', 'beneficiary: payable(_msgSender()),', 'beneficiary: payable(address(0)),'],
     ['router registry check removed', 'address(REV_DEPLOYER.ROUTER_TERMINAL_REGISTRY()) != address(ROUTER_TERMINAL_REGISTRY)', 'false'],
-    ['FUND token no longer deployed at launch', 'token = address(CONTROLLER.deployERC20For({projectId: projectId, name: name, symbol: ticker, salt: salt}));', 'token = address(0);'],
+    ['FUND token no longer deployed at launch', 'token = address(CONTROLLER.deployERC20For({projectId: projectId, name: name, symbol: ticker, salt: scopedSalt}));', 'token = address(0);'],
+    ['token salt no longer scoped to the launcher', 'return keccak256(abi.encode(_msgSender(), owner, salt));', 'return salt;'],
+    ['initial allocation no longer paid to the current owner', 'address owner = PROJECTS.ownerOf(fundProjectId);', 'address owner = _msgSender();'],
     ['allowlist hook no longer installed', 'rulesetConfigurations[0].metadata.dataHook = address(ALLOWLIST_HOOK);', ''],
     ['inventory edits disabled', 'tiered721HookConfiguration.preventOperatorAdjustingTiers = false;', 'tiered721HookConfiguration.preventOperatorAdjustingTiers = true;'],
     ['owner minting allowed', 'tiered721HookConfiguration.preventOperatorMinting = true;', 'tiered721HookConfiguration.preventOperatorMinting = false;'],
@@ -38,13 +39,13 @@ describe('offline INCOME release policy', () => {
     ['wrong shop denomination', 'tiersConfig.currency = JBCurrencyIds.USD;', 'tiersConfig.currency = 1;'],
   ])('rejects release evidence with %s', (_label, before, after) => {
     expect(helper).toContain(before)
-    expect(() => assertIncomeReleaseSource(helper.replaceAll(before, after), vault)).toThrow(/release profile/)
+    expect(() => assertIncomeReleaseSource(helper.replaceAll(before, after))).toThrow(/release profile/)
   })
 
   it('rejects a lock on the owner reserved split', () => {
     let index = 0
     const changed = helper.replace(/lockedUntil: 0/g, () => { index++; return 'lockedUntil: type(uint48).max' })
     expect(index).toBe(1)
-    expect(() => assertIncomeReleaseSource(changed, vault)).toThrow(/release profile/)
+    expect(() => assertIncomeReleaseSource(changed)).toThrow(/release profile/)
   })
 })

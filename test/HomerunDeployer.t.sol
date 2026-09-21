@@ -12,7 +12,6 @@ import {IHomerunAllowlistHook} from "../src/interfaces/IHomerunAllowlistHook.sol
 import {HomerunChainConfig} from "../src/structs/HomerunChainConfig.sol";
 import {HomerunInitialIncomeAllocation} from "../src/structs/HomerunInitialIncomeAllocation.sol";
 import {HomerunInitialIncomeSnapshot} from "../src/structs/HomerunInitialIncomeSnapshot.sol";
-import {HomerunInitialIncomeVault} from "../src/HomerunInitialIncomeVault.sol";
 import {HomerunAllowlistHook} from "../src/HomerunAllowlistHook.sol";
 import {IJBProjects} from "@bananapus/core-v6/src/interfaces/IJBProjects.sol";
 import {JBBeforePayRecordedContext} from "@bananapus/core-v6/src/structs/JBBeforePayRecordedContext.sol";
@@ -504,7 +503,6 @@ contract HomerunDeployerTest is Test {
     HomerunAllowlistHook private allowlist;
     HomerunDeployer private helper;
     HomerunInitialIncomeSnapshot private _snapshot;
-    bytes32 private _distributionId;
 
     function setUp() public {
         vm.warp(1_000_000);
@@ -546,12 +544,8 @@ contract HomerunDeployerTest is Test {
         _snapshot.allocations[0].snapshotBlockHash = keccak256("finalized block");
         vm.setBlockhash(99, _snapshot.allocations[0].snapshotBlockHash);
         _snapshot.totalFundSupply = 500 ether;
-        _snapshot.allocations[0].leafCount = 3;
         _snapshot.manifestHash = keccak256("independently reconciled manifest");
         _snapshot.manifestUri = "ipfs://snapshot";
-        _distributionId = helper.distributionIdFor(1, _snapshot, _description().salt);
-        bytes32[] memory tree = _tree();
-        _snapshot.allocations[0].merkleRoot = tree[0];
     }
 
     function _chains() private view returns (HomerunChainConfig[] memory chains) {
@@ -600,89 +594,35 @@ contract HomerunDeployerTest is Test {
         return helper.deployIncome{value: 0.01 ether}(1, _snapshot, _description(), 8000, 1_000_000, _noSuckers());
     }
 
-    function _leaf(uint256 index) private view returns (bytes32) {
-        address beneficiary = index == 0 ? OPERATOR : index == 1 ? ALICE : BOB;
-        uint256 fundBalance = index == 1 ? 300 ether : 100 ether;
-        uint256 incomeAmount = fundBalance * 1000;
-        return
-            keccak256(
-                bytes.concat(keccak256(abi.encode(_distributionId, index, beneficiary, fundBalance, incomeAmount)))
-            );
-    }
-
-    function _hashPair(bytes32 a, bytes32 b) private pure returns (bytes32) {
-        return a < b ? keccak256(bytes.concat(a, b)) : keccak256(bytes.concat(b, a));
-    }
-
-    function _tree() private view returns (bytes32[] memory tree) {
-        bytes32[3] memory sorted = [_leaf(0), _leaf(1), _leaf(2)];
-        for (uint256 i; i < 3; ++i) {
-            for (uint256 j = i + 1; j < 3; ++j) {
-                if (sorted[j] < sorted[i]) (sorted[i], sorted[j]) = (sorted[j], sorted[i]);
-            }
-        }
-        tree = new bytes32[](5);
-        for (uint256 i; i < 3; ++i) {
-            tree[4 - i] = sorted[i];
-        }
-        tree[1] = _hashPair(tree[3], tree[4]);
-        tree[0] = _hashPair(tree[1], tree[2]);
-    }
-
-    function _proof(uint256 index) private view returns (bytes32[] memory proof) {
-        bytes32[] memory tree = _tree();
-        bytes32 leaf = _leaf(index);
-        uint256 pos = 2;
-        while (tree[pos] != leaf) ++pos;
-        proof = new bytes32[](pos == 2 ? 1 : 2);
-        uint256 i;
-        while (pos != 0) {
-            proof[i++] = tree[pos % 2 == 0 ? pos - 1 : pos + 1];
-            pos = (pos - 1) / 2;
-        }
-    }
-
-    function testLaunchAtomicallyFundsBoundVaultAndPreservesOwner() public {
+    function testLaunchRecordsTheInitialAllocationForTheOwnerAndPreservesOwnership() public {
         assertEq(helper.LAUNCH_VERSION(), 4);
         uint256 id = _deploy();
-        HomerunInitialIncomeVault vault = HomerunInitialIncomeVault(helper.initialAllocationVaultOf(1));
         assertEq(id, 2);
         assertEq(helper.incomeProjectIdOf(1), id);
-        assertEq(tokens.totalSupplyOf(id), 500_000 ether);
-        assertEq(tokens.totalBalanceOf(address(vault), id), 500_000 ether);
-        assertEq(tokens.totalBalanceOf(address(helper), id), 0);
-        assertEq(tokens.totalBalanceOf(ALICE, id), 0);
-        assertEq(vault.INCOME_PROJECT_ID(), id);
-        assertEq(vault.FUND_PROJECT_ID(), 1);
-        assertEq(address(vault.INCOME_TOKEN()), tokens.tokenOf(id));
-        assertEq(vault.FACTORY(), address(helper));
-        assertEq(vault.MERKLE_ROOT(), _snapshot.allocations[0].merkleRoot);
-        assertEq(vault.DISTRIBUTION_ID(), _distributionId);
-        assertEq(vault.TOTAL_FUND_SUPPLY(), 500 ether);
+        // Nothing is minted at launch: the allocation is a stock revnet auto-issuance to the helper.
+        assertEq(tokens.totalSupplyOf(id), 0);
+        assertEq(revOwner.amountToAutoIssue(id, block.timestamp, address(helper)), 500_000 ether);
+        assertEq(revOwner.amountToAutoIssue(id, block.timestamp, OPERATOR), 0);
         assertEq(tokens.totalSupplyOf(1), 500 ether);
         assertEq(projects.ownerOf(id), address(revOwner));
         assertEq(revOwner.operatorOf(id), OPERATOR);
         assertEq(revDeployer.feePayer(), OPERATOR);
         assertEq(helper.originalPayer(), address(0));
         assertEq(revDeployer.observedReservation(), type(uint256).max);
-        assertEq(revOwner.amountToAutoIssue(id, block.timestamp, address(helper)), 0);
         assertEq(controller.pendingReservedTokenBalanceOf(id), 0);
-    }
-
-    function testInactiveCreditsAndErc20HoldersClaimExistingIncome() public {
-        uint256 id = _deploy();
-        HomerunInitialIncomeVault vault = HomerunInitialIncomeVault(helper.initialAllocationVaultOf(1));
-        vault.claim(0, OPERATOR, 100 ether, 100_000 ether, _proof(0));
-        vault.claim(1, ALICE, 300 ether, 300_000 ether, _proof(1));
-        vault.claim(2, BOB, 100 ether, 100_000 ether, _proof(2));
-        assertEq(tokens.totalBalanceOf(ALICE, id), 300_000 ether);
-        assertEq(tokens.totalBalanceOf(OPERATOR, id), 100_000 ether);
-        assertEq(tokens.totalBalanceOf(BOB, id), 100_000 ether);
-        assertEq(tokens.totalBalanceOf(address(vault), id), 0);
+        // Anyone mints it to whoever owns the FUND at that moment; the owner settles the published allocation.
+        projects.setOwner(1, OWNER);
+        vm.prank(BOB);
+        helper.mintInitialAllocation(1);
+        assertEq(tokens.totalBalanceOf(OWNER, id), 500_000 ether);
+        assertEq(tokens.totalBalanceOf(OPERATOR, id), 0);
+        assertEq(tokens.totalBalanceOf(address(helper), id), 0);
         assertEq(tokens.totalSupplyOf(id), 500_000 ether);
-        assertEq(vault.totalClaimed(), 500_000 ether);
-        assertEq(tokens.creditBalanceOf(ALICE, 1), 250 ether);
-        assertEq(tokens.totalBalanceOf(ALICE, 1), 300 ether);
+        assertEq(revOwner.amountToAutoIssue(id, block.timestamp, address(helper)), 0);
+        vm.expectRevert(abi.encodeWithSelector(HomerunDeployer.HomerunDeployer_NothingToMint.selector, 1));
+        helper.mintInitialAllocation(1);
+        vm.expectRevert(abi.encodeWithSelector(HomerunDeployer.HomerunDeployer_UnsupportedFund.selector, 7));
+        helper.mintInitialAllocation(7);
     }
 
     function testCorrectIncomeConfigurationRoutesTheWholeReservedSplitToTheOwner() public {
@@ -798,11 +738,12 @@ contract HomerunDeployerTest is Test {
         assertEq(id, 2);
         assertTrue(helper.isFund(2));
         assertEq(projects.ownerOf(2), OWNER);
-        // The token salt is scoped to this contract, not the caller, so linked FUNDs share a token address.
-        assertEq(controller.lastTokenSalt(), bytes32(uint256(7)));
+        // The token salt is scoped to the caller, like the sucker salt: a linked FUND still shares one token address
+        // on every chain, and another launcher reusing the public salt cannot block it.
+        assertEq(controller.lastTokenSalt(), keccak256(abi.encode(ALICE, OWNER, bytes32(uint256(7)))));
         assertEq(omnichain.lastRulesetsHash(), keccak256(abi.encode(_expectedFundRulesets(1_000_000))));
         JBSuckerDeploymentConfig memory expected;
-        expected.salt = keccak256(abi.encode(ALICE, bytes32(uint256(7))));
+        expected.salt = keccak256(abi.encode(ALICE, OWNER, bytes32(uint256(7))));
         expected.deployerConfigurations = new JBSuckerDeployerConfig[](1);
         JBTokenMapping[] memory mappings = new JBTokenMapping[](1);
         mappings[0] = JBTokenMapping({
@@ -845,6 +786,10 @@ contract HomerunDeployerTest is Test {
         vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidProtocolWiring.selector);
         new HomerunDeployer(chains);
         chains[0].allowlistHook = address(new HomerunAllowlistHook(IJBProjects(address(usdc)), address(0x2771)));
+        vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidProtocolWiring.selector);
+        new HomerunDeployer(chains);
+        // A hook trusting another forwarder would let relayed allowlist changes resolve to a forged owner.
+        chains[0].allowlistHook = address(new HomerunAllowlistHook(IJBProjects(address(projects)), address(0xBEEF)));
         vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidProtocolWiring.selector);
         new HomerunDeployer(chains);
     }
@@ -999,7 +944,7 @@ contract HomerunDeployerTest is Test {
         _assertRollback();
 
         vm.expectEmit(true, true, true, false, address(helper));
-        emit IHomerunDeployer.IncomeDeployed(1, 2, OWNER, address(0), address(0), bytes32(0));
+        emit IHomerunDeployer.IncomeDeployed(1, 2, OWNER, address(0));
         uint256 id = _deployFor(OWNER);
         REVConfig memory config = abi.decode(revDeployer.lastConfig(), (REVConfig));
         assertEq(projects.ownerOf(1), OWNER);
@@ -1029,45 +974,14 @@ contract HomerunDeployerTest is Test {
         assertEq(config.stageConfigurations[0].splits.length, 1);
     }
 
-    function testRejectsLiveMintingAndPendingReservedTokens() public {
-        (JBRuleset memory ruleset, JBRulesetMetadata memory metadata) = controller.currentRulesetOf(1);
-        metadata.allowOwnerMinting = true;
-        controller.setRuleset(1, ruleset, metadata);
-        vm.expectPartialRevert(HomerunDeployer.HomerunDeployer_FundNotClosed.selector);
-        _deploy();
-        _closed();
-        controller.setPending(1, 1);
-        vm.expectPartialRevert(HomerunDeployer.HomerunDeployer_FundNotClosed.selector);
-        _deploy();
-    }
-
     function testLinkedFundIsCoveredByAttestedGlobalSnapshot() public {
         suckers.setLinked(true);
-        assertEq(_deploy(), 2);
-    }
-
-    function testIssuanceFailureRollsBackProjectAndReservation() public {
-        revOwner.setFail(address(helper));
-        vm.expectRevert(bytes("issuance failed"));
-        _deploy();
-        _assertRollback();
-        revOwner.setFail(address(0));
-        assertEq(_deploy(), 2);
-    }
-
-    function testVaultFundingFailureRollsBackProjectAndReservation() public {
-        revDeployer.setFailTransfer(true);
-        vm.expectRevert(bytes("transfer failed"));
-        _deploy();
-        _assertRollback();
-        revDeployer.setFailTransfer(false);
         assertEq(_deploy(), 2);
     }
 
     function _assertRollback() private view {
         assertEq(projects.count(), 1);
         assertEq(helper.incomeProjectIdOf(1), 0);
-        assertEq(helper.initialAllocationVaultOf(1), address(0));
         assertEq(tokens.tokenOf(2), address(0));
         assertEq(address(helper).balance, 0);
         assertEq(helper.originalPayer(), address(0));
@@ -1096,9 +1010,8 @@ contract HomerunDeployerTest is Test {
         vm.prank(ALICE);
         fundToken.transfer(BOB, 50 ether);
         uint256 id = _deploy();
-        HomerunInitialIncomeVault vault = HomerunInitialIncomeVault(helper.initialAllocationVaultOf(1));
-        vault.claim(1, ALICE, 300 ether, 300_000 ether, _proof(1));
-        assertEq(tokens.totalBalanceOf(ALICE, id), 300_000 ether);
+        // The FUND transfer after the snapshot block does not change the attested allocation.
+        assertEq(revOwner.amountToAutoIssue(id, block.timestamp, address(helper)), 500_000 ether);
         assertEq(tokens.totalBalanceOf(ALICE, 1), 250 ether);
     }
 
@@ -1132,14 +1045,11 @@ contract HomerunDeployerTest is Test {
             abi.encodeWithSignature("arbBlockHash(uint256)", snapshotHeight),
             abi.encode(_snapshot.allocations[0].snapshotBlockHash)
         );
-        _distributionId = helper.distributionIdFor(1, _snapshot, _description().salt);
-        _snapshot.allocations[0].merkleRoot = _tree()[0];
     }
 
     function testArbitrumUsesL2SnapshotHeightAndHashInsteadOfL1Opcodes() public {
         _useArbitrumSnapshot(42_161, 1000);
         assertEq(_deploy(), 2);
-        assertEq(HomerunInitialIncomeVault(helper.initialAllocationVaultOf(1)).SNAPSHOT_BLOCK_NUMBER(), 1000);
     }
 
     function testArbitrumSepoliaUsesL2SnapshotHeightAndHash() public {
@@ -1171,33 +1081,9 @@ contract HomerunDeployerTest is Test {
         assertEq(_deploy(), 2);
     }
 
-    function testRejectsIncompleteSnapshotCommitment() public {
-        _snapshot.allocations[0].merkleRoot = bytes32(0);
-        vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidSnapshot.selector);
-        _deploy();
-    }
-
     function testFutureSnapshotRejected() public {
         _snapshot.allocations[0].snapshotBlockNumber = 100;
         vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidSnapshot.selector);
-        _deploy();
-    }
-
-    function testManySnapshotLeavesDoNotEnumerateOrBlockLaunch() public {
-        _snapshot.allocations[0].leafCount = 1_000_000;
-        assertEq(_deploy(), 2);
-        assertEq(HomerunInitialIncomeVault(helper.initialAllocationVaultOf(1)).LEAF_COUNT(), 1_000_000);
-    }
-
-    function testCustomHookAndCustomFundTokenRejected() public {
-        (JBRuleset memory ruleset, JBRulesetMetadata memory metadata) = controller.currentRulesetOf(1);
-        metadata.dataHook = address(0x123);
-        controller.setRuleset(1, ruleset, metadata);
-        vm.expectPartialRevert(HomerunDeployer.HomerunDeployer_UnsupportedFund.selector);
-        _deploy();
-        _closed();
-        vm.etch(tokens.tokenOf(1), hex"00");
-        vm.expectPartialRevert(HomerunDeployer.HomerunDeployer_UnsupportedFund.selector);
         _deploy();
     }
 
@@ -1216,18 +1102,13 @@ contract HomerunDeployerTest is Test {
         snapshot.allocations = new HomerunInitialIncomeAllocation[](2);
         snapshot.allocations[0] = _snapshot.allocations[0];
         snapshot.allocations[0].incomeAmount = localAmount;
-        if (localAmount == 0) {
-            snapshot.allocations[0].leafCount = 0;
-            snapshot.allocations[0].merkleRoot = bytes32(0);
-        }
+        if (localAmount == 0) {}
         uint104 remoteAmount = uint104(500_000 ether) - localAmount;
         snapshot.allocations[1] = HomerunInitialIncomeAllocation({
             chainId: 10,
             fundProjectId: 7,
             snapshotBlockNumber: 89,
             snapshotBlockHash: keccak256("remote finalized block"),
-            merkleRoot: remoteAmount == 0 ? bytes32(0) : keccak256("attested remote allocations"),
-            leafCount: remoteAmount == 0 ? 0 : 1,
             incomeAmount: remoteAmount
         });
     }
@@ -1257,30 +1138,29 @@ contract HomerunDeployerTest is Test {
         HomerunInitialIncomeSnapshot memory snapshot = _globalSnapshot(uint104(120_000 ether));
         REVSuckerDeploymentConfig memory configuration = _globalSuckers();
         uint256 incomeId = _deployGlobal(snapshot, configuration);
-        HomerunInitialIncomeVault vault = HomerunInitialIncomeVault(helper.initialAllocationVaultOf(1));
-        assertEq(vault.LOCAL_INITIAL_INCOME_SUPPLY(), 120_000 ether);
-        assertEq(tokens.totalSupplyOf(incomeId), 120_000 ether);
-        assertEq(tokens.totalBalanceOf(address(vault), incomeId), 120_000 ether);
-        assertEq(tokens.totalBalanceOf(address(helper), incomeId), 0);
+        assertEq(revOwner.amountToAutoIssue(incomeId, block.timestamp, address(helper)), 120_000 ether);
+        assertEq(tokens.totalSupplyOf(incomeId), 0);
         REVConfig memory config = abi.decode(revDeployer.lastConfig(), (REVConfig));
         assertEq(config.stageConfigurations[0].autoIssuances.length, 2);
         assertEq(config.stageConfigurations[0].autoIssuances[0].count, 120_000 ether);
+        assertEq(config.stageConfigurations[0].autoIssuances[0].beneficiary, address(helper));
         assertEq(config.stageConfigurations[0].autoIssuances[1].count, 380_000 ether);
         assertEq(config.stageConfigurations[0].autoIssuances[1].chainId, 10);
         assertEq(config.stageConfigurations[0].autoIssuances[1].beneficiary, address(helper));
         assertEq(config.description.salt, helper.configurationSaltFor(snapshot, _description().salt));
+        helper.mintInitialAllocation(1);
+        assertEq(tokens.totalBalanceOf(OPERATOR, incomeId), 120_000 ether);
         assertEq(revOwner.amountToAutoIssue(incomeId, block.timestamp, address(helper)), 0);
     }
 
-    function testZeroLocalAllocationDoesNotCallAutoIssueOrMint() public {
+    function testZeroLocalAllocationRecordsNothingToMint() public {
         HomerunInitialIncomeSnapshot memory snapshot = _globalSnapshot(0);
         REVSuckerDeploymentConfig memory configuration = _globalSuckers();
         uint256 incomeId = _deployGlobal(snapshot, configuration);
-        HomerunInitialIncomeVault vault = HomerunInitialIncomeVault(helper.initialAllocationVaultOf(1));
-        assertEq(vault.LOCAL_INITIAL_INCOME_SUPPLY(), 0);
-        assertEq(vault.LEAF_COUNT(), 0);
-        assertEq(vault.MERKLE_ROOT(), bytes32(0));
+        assertEq(revOwner.amountToAutoIssue(incomeId, block.timestamp, address(helper)), 0);
         assertEq(tokens.totalSupplyOf(incomeId), 0);
+        vm.expectRevert(abi.encodeWithSelector(HomerunDeployer.HomerunDeployer_NothingToMint.selector, 1));
+        helper.mintInitialAllocation(1);
         REVConfig memory config = abi.decode(revDeployer.lastConfig(), (REVConfig));
         assertEq(config.stageConfigurations[0].autoIssuances[0].count, 0);
         assertEq(config.stageConfigurations[0].autoIssuances[1].count, 500_000 ether);
@@ -1323,11 +1203,11 @@ contract HomerunDeployerTest is Test {
     function testGlobalSnapshotAndManifestAreCommittedIntoRevnetIdentity() public view {
         HomerunInitialIncomeSnapshot memory snapshot = _globalSnapshot(uint104(120_000 ether));
         bytes32 beforeChange = helper.configurationSaltFor(snapshot, _description().salt);
-        snapshot.allocations[1].merkleRoot = keccak256("changed remote root");
-        bytes32 changedRoot = helper.configurationSaltFor(snapshot, _description().salt);
-        assertNotEq(beforeChange, changedRoot);
+        snapshot.allocations[1].snapshotBlockHash = keccak256("changed remote source block");
+        bytes32 changedBlock = helper.configurationSaltFor(snapshot, _description().salt);
+        assertNotEq(beforeChange, changedBlock);
         snapshot.manifestHash = keccak256("changed public manifest");
-        assertNotEq(changedRoot, helper.configurationSaltFor(snapshot, _description().salt));
+        assertNotEq(changedBlock, helper.configurationSaltFor(snapshot, _description().salt));
     }
 
     function testGlobalLaunchRequiresEveryRemoteSucker() public {
@@ -1348,26 +1228,14 @@ contract HomerunDeployerTest is Test {
         vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidConfiguration.selector);
         _deployGlobal(snapshot, configuration);
         configuration.deployerConfigurations[0].mappings[0].remoteToken = bytes32(uint256(uint160(address(usdc))));
+        configuration.deployerConfigurations[0].mappings[0].minGas = 1_000_000;
+        vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidConfiguration.selector);
+        _deployGlobal(snapshot, configuration);
+        configuration.deployerConfigurations[0].mappings[0].minGas = 200_000;
         configuration.deployerConfigurations[0].deployer =
             IJBSuckerDeployer(address(new IncomeTestCcipDeployer(42_161)));
         vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidConfiguration.selector);
         _deployGlobal(snapshot, configuration);
-    }
-
-    function testCanonicalEmptyOmnichainHookIsAcceptedButExtraHooksAreRejected() public {
-        (JBRuleset memory ruleset, JBRulesetMetadata memory metadata) = controller.currentRulesetOf(1);
-        metadata.dataHook = address(omnichain);
-        metadata.useDataHookForPay = true;
-        metadata.useDataHookForCashOut = true;
-        controller.setRuleset(1, ruleset, metadata);
-        omnichain.setExtraHook(address(0x123), false, false);
-        vm.expectPartialRevert(HomerunDeployer.HomerunDeployer_UnsupportedFund.selector);
-        _deploy();
-        omnichain.setExtraHook(address(allowlist), true, true);
-        vm.expectPartialRevert(HomerunDeployer.HomerunDeployer_UnsupportedFund.selector);
-        _deploy();
-        omnichain.setExtraHook(address(0), false, false);
-        assertEq(_deploy(), 2);
     }
 
     function testSharedProtocolProfileRequiresUniqueSortedChains() public {
@@ -1378,16 +1246,5 @@ contract HomerunDeployerTest is Test {
         chains[0].chainId = 10;
         vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidProtocolWiring.selector);
         new HomerunDeployer(chains);
-    }
-
-    function testPendingOrUpcomingRulesetBlocksLaunch() public {
-        controller.setFutureRulesetIds(11, 0);
-        vm.expectPartialRevert(HomerunDeployer.HomerunDeployer_FundNotClosed.selector);
-        _deploy();
-        controller.setFutureRulesetIds(0, 11);
-        vm.expectPartialRevert(HomerunDeployer.HomerunDeployer_FundNotClosed.selector);
-        _deploy();
-        controller.setFutureRulesetIds(10, 10);
-        _deploy();
     }
 }

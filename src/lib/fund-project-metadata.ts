@@ -60,6 +60,8 @@ export type FundProjectMetadata = {
   logoUrl: string | null
   owner: ProjectProfileMetadata | null
   operator: ProjectProfileMetadata | null
+  /** The published initial INCOME allocation an INCOME launch pointed at; informational, the launch commits its hash. */
+  incomeManifestUri: string | null
   plan: {
     ownerWallet: Address | null
     operatorWallet: Address | null
@@ -126,6 +128,7 @@ export function parseFundProjectMetadata(value: unknown): FundProjectMetadata {
     logoUrl: fundIpfsUrl(metadata.logoUri),
     owner: profile('owner'),
     operator: profile('operator'),
+    incomeManifestUri: homerun?.type === 'income' && typeof homerun.manifestUri === 'string' && fundIpfsUrl(homerun.manifestUri) ? homerun.manifestUri : null,
     plan: setup ? {
       ownerWallet: wallet(Object.hasOwn(setup, 'ownerWallet') ? setup.ownerWallet : setup.operatorWallet),
       operatorWallet: wallet(setup.operatorWallet),

@@ -15,7 +15,8 @@ import { buildFundLaunch, buildFundMint, buildFundRulesetChange, type FundRulese
 import { readFundProjectState } from '../src/lib/fund-state.ts'
 import { checkLaunchDeployment, verifyFundLaunch } from '../src/lib/fund-launch-verification.ts'
 import { readFundOwnershipSnapshot } from '../src/lib/fund-snapshot.ts'
-import { buildFundSnapshotManifest, fundSnapshotManifestHash, parseFundSnapshotManifest, serializeFundSnapshotManifest, verifyFundSnapshotHistory } from '../src/lib/fund-snapshot-manifest.ts'
+import { readFundGlobalSnapshot } from '../src/lib/fund-global-snapshot.ts'
+import { buildFundGlobalManifest, fundGlobalManifestHash, parseFundGlobalManifest, serializeFundGlobalManifest, verifyFundGlobalManifestHistory } from '../src/lib/fund-global-manifest.ts'
 import { INITIAL_INCOME_SUPPLY } from '../src/lib/income-contracts.ts'
 import { simulateStateChangingTransaction } from '../src/lib/transaction-simulation.ts'
 import { deployHomerunOnFork } from './deploy-homerun-fork.mts'
@@ -136,18 +137,22 @@ async function main() {
     assert.equal(snapshot.evidence.eventCounts.ClaimTokens ?? 0, 0)
     assert.equal(snapshot.evidence.eventCounts.TransferCredits ?? 0, 0)
     assert.equal(snapshot.evidence.eventCounts.Transfer, 4)
-    const manifest = buildFundSnapshotManifest(snapshot, { destinationChainId: CHAIN_ID, helper, launchSalt: salt })
-    const parsed = parseFundSnapshotManifest(JSON.parse(serializeFundSnapshotManifest(manifest)))
-    const expectedHash = fundSnapshotManifestHash(manifest)
-    assert.equal(fundSnapshotManifestHash(parsed), expectedHash)
-    assert.equal(parsed.holders.reduce((sum, row) => sum + BigInt(row.incomeAmount), 0n), INITIAL_INCOME_SUPPLY)
-    const verified = await verifyFundSnapshotHistory(client, parsed, { logBlockWindow: 8n })
-    assert.equal(fundSnapshotManifestHash(verified), expectedHash)
+    const clients = new Map([[CHAIN_ID, client]])
+    const historyInput = { clients, root: { chainId: CHAIN_ID, projectId }, cuts: new Map([[CHAIN_ID, { blockNumber: lastReceipt.blockNumber, blockHash: lastReceipt.blockHash }]]), creationBlocks: new Map([[`${CHAIN_ID}:${projectId}`, creation.blockNumber]]), logBlockWindow: 8n } as const
+    const manifest = buildFundGlobalManifest(await readFundGlobalSnapshot(historyInput), { helper, launchSalt: salt })
+    const parsed = parseFundGlobalManifest(JSON.parse(serializeFundGlobalManifest(manifest)))
+    const expectedHash = fundGlobalManifestHash(manifest)
+    assert.equal(fundGlobalManifestHash(parsed), expectedHash)
+    assert.equal(parsed.allocations.length, 1)
+    assert.equal(parsed.allocations[0].holders.length, 4)
+    assert.equal(parsed.allocations[0].holders.reduce((sum, row) => sum + BigInt(row.incomeAmount), 0n), INITIAL_INCOME_SUPPLY)
+    const verified = await verifyFundGlobalManifestHistory(clients, parsed, { logBlockWindow: 8n })
+    assert.equal(fundGlobalManifestHash(verified), expectedHash)
 
     await send('Move tokens after the chosen snapshot', carol, { chainId: CHAIN_ID, address: tokenAddress, abi: erc20Abi, functionName: 'transfer', args: [dave, parseEther('5')] })
-    const historicalAgain = await verifyFundSnapshotHistory(client, parsed, { logBlockWindow: 8n })
-    assert.equal(fundSnapshotManifestHash(historicalAgain), expectedHash, 'Later transfers must not change a pinned historical ownership manifest.')
-    console.log(JSON.stringify({ result: 'passed', chainId: CHAIN_ID, forkBlock: initialBlock.number?.toString(), projectId: projectId.toString(), snapshotBlock: snapshot.blockNumber.toString(), holderCount: snapshot.holders.length, totalFund: '1000', totalCredits: '0', totalErc20: '1000', manifestHash: expectedHash, root: manifest.merkleRoot, transactions, eventCounts: snapshot.evidence.eventCounts, historicalSnapshotUnchangedAfterTransfer: true }, null, 2))
+    const historicalAgain = await verifyFundGlobalManifestHistory(clients, parsed, { logBlockWindow: 8n })
+    assert.equal(fundGlobalManifestHash(historicalAgain), expectedHash, 'Later transfers must not change a pinned historical ownership manifest.')
+    console.log(JSON.stringify({ result: 'passed', chainId: CHAIN_ID, forkBlock: initialBlock.number?.toString(), projectId: projectId.toString(), snapshotBlock: snapshot.blockNumber.toString(), holderCount: snapshot.holders.length, totalFund: '1000', totalCredits: '0', totalErc20: '1000', manifestHash: expectedHash, localIncomeAmount: parsed.allocations[0].incomeAmount, transactions, eventCounts: snapshot.evidence.eventCounts, historicalSnapshotUnchangedAfterTransfer: true }, null, 2))
   } finally {
     assert.equal(await mutate('evm_revert', [initial]), true)
     console.log('Restored initial local Base fork state. No live transactions were sent.')

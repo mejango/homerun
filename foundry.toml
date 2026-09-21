@@ -2,12 +2,31 @@
 src = "src"
 test = "test"
 solc = "0.8.28"
+bytecode_hash = "none"
 evm_version = "cancun"
 optimizer = true
 via_ir = true
 optimizer_runs = 200
-libs = ["../../nana-core-v6/node_modules", "../../nana-core-v6/lib"]
+libs = ["node_modules", "../../nana-core-v6/node_modules", "../../nana-core-v6/lib"]
 allow_paths = ["../.."]
+# Required by Sphinx proposal artifact collection.
+extra_output = ["storageLayout"]
+# Match deploy-all-v6: artifact inspection is local script work, outside transaction gas estimates.
+memory_limit = 1073741824
+gas_limit = 9223372036854775807
+fs_permissions = [
+  { access = "read", path = "./" },
+  { access = "read", path = "../../nana-core-v6/deployments" },
+  { access = "read", path = "../../revnet-core-v6/deployments" },
+  { access = "read", path = "../../nana-omnichain-deployers-v6/deployments" },
+  { access = "read", path = "../../nana-router-terminal-v6/deployments" },
+  { access = "read-write", path = "./deployments" },
+  { access = "read-write", path = "./cache" }
+]
+
+# Sphinx 0.33 uses the non-isolated script model; use it for every deployment rehearsal, proposal and verification.
+[profile.deploy]
+isolate = false
 
 [profile.default.fuzz]
 runs = 512
@@ -16,3 +35,13 @@ runs = 512
 number_underscore = "thousands"
 multiline_func_header = "all"
 wrap_comments = true
+
+[rpc_endpoints]
+ethereum = "${RPC_ETHEREUM_MAINNET}"
+optimism = "${RPC_OPTIMISM_MAINNET}"
+base = "${RPC_BASE_MAINNET}"
+arbitrum = "${RPC_ARBITRUM_MAINNET}"
+ethereum_sepolia = "${RPC_ETHEREUM_SEPOLIA}"
+optimism_sepolia = "${RPC_OPTIMISM_SEPOLIA}"
+base_sepolia = "${RPC_BASE_SEPOLIA}"
+arbitrum_sepolia = "${RPC_ARBITRUM_SEPOLIA}"

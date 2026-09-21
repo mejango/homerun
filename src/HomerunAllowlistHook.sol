@@ -16,8 +16,9 @@ import {IHomerunAllowlistHook} from "./interfaces/IHomerunAllowlistHook.sol";
 /// @notice A pay hook that accepts FUND payments only for beneficiaries a project's owner has allowed, or for anyone
 /// once the owner opens the project.
 /// @dev One deployment serves every FUND; `HomerunDeployer` installs it as each FUND's extra pay hook. It gates the
-/// beneficiary rather than the payer, since swap-routed payments arrive from the router and what matters is who ends
-/// up holding FUND. A new FUND starts closed with an empty list. Cash outs are never gated.
+/// beneficiary rather than the payer, since swap-routed payments arrive from the router. It gates payments only: FUND
+/// is a transferable ERC-20, and a linked FUND's suckers mint bridged FUND to whoever the sender named. A new FUND
+/// starts closed with an empty list. Cash outs are never gated.
 contract HomerunAllowlistHook is ERC2771Context, IHomerunAllowlistHook {
     //*********************************************************************//
     // --------------------------- custom errors ------------------------- //

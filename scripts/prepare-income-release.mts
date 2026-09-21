@@ -17,7 +17,6 @@ export const incomeReleasePolicy = {
   profile: 'homerun-deployer-global-v4-candidate',
   launchVersion: 4,
   helperSaltText: 'homerun.deployer.global.v4',
-  librarySaltText: 'homerun.deployer.lib.global.v4',
   splitLockedUntil: '0',
   roles: { controlWallet: 'FUND owner; the signer becomes the stock Revnet operator and holds the whole unlocked reserved split' },
   economics: { fundWeight: '10,000 per USD', fundCashOutTaxBps: 1000, incomeInitialIssuance: '10 per USD', incomeCutPercentPerQuarter: 2, incomeCashOutTaxBps: 1000, stages: 1 },
@@ -29,11 +28,6 @@ const linkedGroups = { mainnet: [1, 10, 8453, 42161], testnet: [84532, 421614, 1
 const deterministicFactory = '0x4e59b44847b379578588920cA78FbF26c0B4956C' as const
 const helperSaltText = incomeReleasePolicy.helperSaltText
 const helperSalt = keccak256(toHex(helperSaltText))
-const librarySaltText = incomeReleasePolicy.librarySaltText
-const librarySalt = keccak256(toHex(librarySaltText))
-/** Foundry leaves this placeholder where a linked library address belongs. */
-const linkPlaceholder = /__\$[\da-f]{34}\$__/gu
-const distributionType = 'HomerunInitialIncome(uint256 chainId,address deployer,uint256 fundProjectId,bytes32 sourceSetHash,uint256 totalFundSupply,bytes32 salt)'
 const sha256 = (value: string | Uint8Array) => createHash('sha256').update(value).digest('hex')
 const pathLabel = (path: string) => relative(workspace, path)
 type SourceMetadata = { keccak256: Hex }
@@ -47,13 +41,11 @@ type Artifact = {
     sources: Record<string, SourceMetadata>
   }
 }
-type ArtifactSpec = { name: string; location: string; sourceRoot: string; metadataHash: 'ipfs' | 'none'; constructor: string[]; libraries?: string[] }
+type ArtifactSpec = { name: string; location: string; sourceRoot: string; metadataHash: 'ipfs' | 'none'; constructor: string[] }
 
 const specs: ArtifactSpec[] = [
-  { name: 'HomerunDeployer', location: 'out', sourceRoot: root, metadataHash: 'ipfs', constructor: ['chains:tuple[](chainId:uint32,controller:address,revDeployer:address,usdc:address,omnichainDeployer:address,routerTerminalRegistry:address,allowlistHook:address)'], libraries: ['HomerunDeployerLib'] },
-  { name: 'HomerunDeployerLib', location: 'out', sourceRoot: root, metadataHash: 'ipfs', constructor: [] },
+  { name: 'HomerunDeployer', location: 'out', sourceRoot: root, metadataHash: 'ipfs', constructor: ['chains:tuple[](chainId:uint32,controller:address,revDeployer:address,usdc:address,omnichainDeployer:address,routerTerminalRegistry:address,allowlistHook:address)'] },
   { name: 'HomerunAllowlistHook', location: 'out', sourceRoot: root, metadataHash: 'ipfs', constructor: ['projects:address', 'trustedForwarder:address'] },
-  { name: 'HomerunInitialIncomeVault', location: 'out', sourceRoot: root, metadataHash: 'ipfs', constructor: ['incomeToken:address', 'incomeProjectId:uint256', 'fundProjectId:uint256', 'snapshotBlockNumber:uint256', 'snapshotBlockHash:bytes32', 'totalFundSupply:uint256', 'launchSalt:bytes32', 'merkleRoot:bytes32', 'leafCount:uint256', 'manifestHash:bytes32', 'manifestUri_:string', 'sourceSetHash:bytes32', 'localInitialIncomeSupply:uint256'] },
 ]
 
 function parameterShape(input: AbiParameter): string {
@@ -90,11 +82,8 @@ async function fingerprint(spec: ArtifactSpec) {
   const constructor = artifact.abi.find(entry => entry.type === 'constructor')?.inputs ?? []
   const shape = constructor.map(parameterShape)
   if (JSON.stringify(shape) !== JSON.stringify(spec.constructor)) throw new Error(`${spec.name}: constructor changed; this release profile must be reviewed again.`)
-  // A linked library's 20-byte placeholder is the only non-hex content the reviewed profile accepts.
-  const linkedLibraries = [...new Set([artifact.bytecode.linkReferences, artifact.deployedBytecode.linkReferences].flatMap(references => Object.values(references ?? {}).flatMap(file => Object.keys(file))))]
-  const unlinked = (code: Hex) => code.replace(linkPlaceholder, '00'.repeat(20)) as Hex
-  if (!/^0x(?:[\da-f]{2})+$/i.test(unlinked(artifact.bytecode.object)) || !/^0x(?:[\da-f]{2})+$/i.test(unlinked(artifact.deployedBytecode.object))
-    || linkedLibraries.some(library => !spec.libraries?.includes(library)) || spec.libraries?.some(library => !linkedLibraries.includes(library))) throw new Error(`${spec.name}: executable bytecode is missing or links libraries the reviewed profile does not expect.`)
+  const linkedLibraries = [artifact.bytecode.linkReferences, artifact.deployedBytecode.linkReferences].flatMap(references => Object.values(references ?? {}).flatMap(file => Object.keys(file)))
+  if (!/^0x(?:[\da-f]{2})+$/i.test(artifact.bytecode.object) || !/^0x(?:[\da-f]{2})+$/i.test(artifact.deployedBytecode.object) || linkedLibraries.length) throw new Error(`${spec.name}: executable bytecode is missing or links a library the reviewed profile does not expect.`)
   const settings = artifact.metadata.settings
   if (artifact.metadata.compiler.version !== '0.8.28+commit.7893614a' || settings.evmVersion !== 'cancun' || settings.viaIR !== true || JSON.stringify(settings.optimizer) !== JSON.stringify({ enabled: true, runs: 200 }) || settings.metadata?.bytecodeHash !== spec.metadataHash) {
     throw new Error(`${spec.name}: compilation settings differ from the reviewed profile.`)
@@ -119,9 +108,9 @@ async function fingerprint(spec: ArtifactSpec) {
     summary: {
       name: spec.name, artifact: pathLabel(artifactPath), artifactSha256: sha256(raw),
       compiler: artifact.metadata.compiler.version, settings, constructor,
-      linkedLibraries, linkStatus: linkedLibraries.length ? 'template hashes below zero the library placeholder; the linked initcode is computed under sharedHelper' : 'no linked libraries',
-      creationBytecodeKeccak256: keccak256(unlinked(artifact.bytecode.object)), creationBytes,
-      runtimeTemplateKeccak256: keccak256(unlinked(artifact.deployedBytecode.object)), runtimeBytes,
+      linkedLibraries,
+      creationBytecodeKeccak256: keccak256(artifact.bytecode.object), creationBytes,
+      runtimeTemplateKeccak256: keccak256(artifact.deployedBytecode.object), runtimeBytes,
       eip170RuntimeHeadroomBytes: 24_576 - runtimeBytes,
       runtimeTemplateIsDeployedCode: false,
       immutableReferences, buildInfo,
@@ -172,7 +161,7 @@ function constructorPlan(artifact: Artifact | undefined, values: unknown[], know
 }
 
 /** Deliberately narrow source checks supplement exact artifact fingerprints, not formal verification. */
-export function assertIncomeReleaseSource(helperSource: string, vaultSource: string) {
+export function assertIncomeReleaseSource(helperSource: string) {
   const normalized = helperSource.replace(/\s+/g, ' ')
   const sourceAssertions = [
     'constructor(HomerunChainConfig[] memory chains)',
@@ -183,9 +172,9 @@ export function assertIncomeReleaseSource(helperSource: string, vaultSource: str
     'configuration.operator = _msgSender();',
     'uint112 public constant override FUND_WEIGHT = 10_000e18;', 'uint16 public constant override FUND_CASH_OUT_TAX_RATE = 1000;',
     'uint112 public constant override INCOME_INITIAL_ISSUANCE = 10 ether;', 'uint32 public constant override INCOME_CUT_PERCENT = 20_000_000;', 'uint16 public constant override INCOME_CASH_OUT_TAX_RATE = 1000;',
-    'suckerDeploymentConfiguration.salt = keccak256(abi.encode(_msgSender(), salt));', 'originalPayer = JBPayerTrackerLib.resolve(_msgSender());', 'beneficiary: payable(_msgSender()),',
+    'suckerDeploymentConfiguration.salt = scopedSalt;', 'return keccak256(abi.encode(_msgSender(), owner, salt));', 'originalPayer = JBPayerTrackerLib.resolve(_msgSender());', 'beneficiary: payable(_msgSender()),',
     'configuration.stageConfigurations = new REVStageConfig[](1);', 'address(REV_DEPLOYER.ROUTER_TERMINAL_REGISTRY()) != address(ROUTER_TERMINAL_REGISTRY)',
-    'token = address(CONTROLLER.deployERC20For({projectId: projectId, name: name, symbol: ticker, salt: salt}));',
+    'token = address(CONTROLLER.deployERC20For({projectId: projectId, name: name, symbol: ticker, salt: scopedSalt}));',
     'rulesetConfigurations[0].metadata.dataHook = address(ALLOWLIST_HOOK);', 'rulesetConfigurations[0].metadata.useDataHookForPay = true;',
     'configuration.scopeCashOutsToLocalBalances = false;',
     'tiered721HookConfiguration.baseline721HookConfiguration.tiersConfig.currency = JBCurrencyIds.USD;',
@@ -197,21 +186,20 @@ export function assertIncomeReleaseSource(helperSource: string, vaultSource: str
     'tiered721HookConfiguration.preventOperatorUpdatingMetadata = true;',
     'tiered721HookConfiguration.preventOperatorMinting = true;',
     'tiered721HookConfiguration.preventOperatorIncreasingDiscountPercent = true;',
-    'totalIncome != INITIAL_INCOME_SUPPLY', 'uint256 stageId = block.timestamp;', 'extraMetadata: _INCOME_STAGE_EXTRA_METADATA', distributionType,
+    'totalIncome != INITIAL_INCOME_SUPPLY', 'extraMetadata: _INCOME_STAGE_EXTRA_METADATA', 'count: snapshot.allocations[i].incomeAmount, beneficiary: address(this)', 'address owner = PROJECTS.ownerOf(fundProjectId);',
   ]
   const splitLocks = [...normalized.matchAll(/\blockedUntil\s*:\s*([^,}]+)/g)]
   if (sourceAssertions.some(expected => !normalized.includes(expected)) || splitLocks.length !== 1 || splitLocks.some(match => match[1].trim() !== incomeReleasePolicy.splitLockedUntil)
-    || !vaultSource.includes(distributionType) || !vaultSource.includes('LOCAL_INITIAL_INCOME_SUPPLY - totalClaimed')) {
+) {
     throw new Error('The source no longer matches the global release profile. Review the changed semantics before regenerating release evidence.')
   }
   return sourceAssertions
 }
 
 export async function prepareIncomeRelease() {
-  const blockers = ['No executed helper deployment receipts or per-chain runtime/immutable verification are established by this offline packet.', 'The new helper and claim-vault source must be frozen with its reviewed compiler inputs before a production release.']
+  const blockers = ['No executed helper deployment receipts or per-chain runtime/immutable verification are established by this offline packet.', 'The new helper source must be frozen with its reviewed compiler inputs before a production release.']
   const helperSource = await readFile(resolve(root, 'src/HomerunDeployer.sol'), 'utf8')
-  const vaultSource = await readFile(resolve(root, 'src/HomerunInitialIncomeVault.sol'), 'utf8')
-  const sourceAssertions = assertIncomeReleaseSource(helperSource, vaultSource)
+  const sourceAssertions = assertIncomeReleaseSource(helperSource)
   const collected = await Promise.all(specs.map(async spec => {
     try { return { name: spec.name, result: await fingerprint(spec) } }
     catch (error) {
@@ -247,15 +235,7 @@ export async function prepareIncomeRelease() {
     omnichainDeployer: addresses.JBOmnichainDeployer, routerTerminalRegistry: addresses.JBRouterTerminalRegistry, allowlistHook: addresses.HomerunAllowlistHook,
   }))
   if (chainConfiguration.some((entry, index) => index > 0 && entry.chainId <= chainConfiguration[index - 1].chainId)) throw new Error('The shared helper constructor must contain strictly increasing chain IDs.')
-  // The library deploys first, through the same factory, so its address is identical on every chain and the linked
-  // helper initcode is too.
-  const libraryArtifact = byName.get('HomerunDeployerLib')
-  const libraryInitCodeKeccak256 = libraryArtifact ? keccak256(libraryArtifact.bytecode.object) : null
-  const libraryPredictedAddress = libraryInitCodeKeccak256 ? getCreate2Address({ from: deterministicFactory, salt: librarySalt, bytecodeHash: libraryInitCodeKeccak256 }) : null
-  const helperTemplate = byName.get('HomerunDeployer')
-  const helperArtifact = helperTemplate && libraryPredictedAddress
-    ? { ...helperTemplate, bytecode: { ...helperTemplate.bytecode, object: helperTemplate.bytecode.object.replace(linkPlaceholder, libraryPredictedAddress.slice(2).toLowerCase()) as Hex } }
-    : undefined
+  const helperArtifact = byName.get('HomerunDeployer')
   const helperConstructor = constructorPlan(helperArtifact, [chainConfiguration], 64 + 224 * chainIds.length)
   const protocolConfigHash = helperConstructor.encodedArguments ? keccak256(helperConstructor.encodedArguments) : null
   const helperPredictedAddress = helperConstructor.initCodeKeccak256 ? getCreate2Address({ from: deterministicFactory, salt: helperSalt, bytecodeHash: helperConstructor.initCodeKeccak256 }) : null
@@ -267,16 +247,14 @@ export async function prepareIncomeRelease() {
     fundLaunch: { entrypoint: 'launchFundFor(owner,projectUri,name,ticker,mustStartAtOrAfter,salt,peerSuckerDeployers)', rules: incomeReleasePolicy.economics, terminals: ['JBMultiTerminal USDC context', 'JBRouterTerminalRegistry with no contexts'], tokenDeployedAtLaunch: true, payHook: 'HomerunAllowlistHook as the omnichain extra pay hook; owner-managed beneficiary allowlist, closed by default; cash outs ungated', identity: 'isFund(projectId) + FundLaunched event' },
     capturedAt: new Date().toISOString(), liveRpcCalls: 0, walletCalls: 0,
     helperSourceKeccak256: keccak256(toHex(helperSource)),
-    vaultSourceKeccak256: keccak256(toHex(vaultSource)),
     profileChecks: { recursiveConstructorShape: true, sourceAssertions, sourceAssertionsAreFormalVerification: false, metadataHash: { Homerun: 'ipfs' }, fullInitcodeIncludesConstructor: true },
     semantics: {
       launchVersion: incomeReleasePolicy.launchVersion, roles: incomeReleasePolicy.roles, shop: incomeReleasePolicy.shop,
-      initialIncomeSupply: '500000000000000000000000', allocationScope: 'one global allocation; local and pending-bridge-destination claims preserve chain identity',
-      sourceSetHash: 'keccak256 of canonical full global snapshot report', distributionType, distributionTypeHash: keccak256(toHex(distributionType)),
-      rootAuthority: 'FUND-owner-attested; membership proofs do not establish historical truth, completeness or sum',
-      localVault: 'immutable local cap; zero cap and zero-income dust roots allowed; exact rational beneficial ownership can yield positive INCOME with zero integer FUND display balance; perpetual fixed-beneficiary claims; no admin/sweep/expiry',
+      initialIncomeSupply: '500000000000000000000000', allocationScope: 'one global allocation; each chain\'s share is recorded for the owner on that chain',
+      sourceSetHash: 'keccak256 of canonical full global snapshot report',
+      allocationAuthority: 'FUND-owner-attested published manifest; each chain\'s share is a stock revnet auto-issuance to the helper that anyone mints to the current FUND owner, who settles it offchain; no claim contract, root or proof',
       snapshotClock: { arbitrumChainIds: [42_161, 421_614], arbitrumPrecompile: '0x0000000000000000000000000000000000000064', arbitrumMethods: ['arbBlockNumber()', 'arbBlockHash(uint256)'], otherChains: 'EVM NUMBER/BLOCKHASH', recentHashWindow: 256, olderHashes: 'explicit FUND-owner attestation; independently reconstructed and finalized by the client' },
-      deployment: 'stock asynchronous cross-chain deployment with local atomic premint; remote accounting is asynchronous, not an all-chain readiness barrier',
+      deployment: 'stock asynchronous cross-chain deployment; each chain records its allocation at launch and anyone mints it to the current FUND owner once the shared stage starts',
       revnet: { initialIssuance: '10000000000000000000', quarterSeconds: 7_884_000, cutPercent: 20_000_000, cutsForever: true, stages: 1, cashOutTaxRate: 1000, splitPercent: 'caller-supplied reservedBps (0..10000)', splits: 'one unlocked split, 100% to the FUND owner', splitLockedUntil: incomeReleasePolicy.splitLockedUntil, extraMetadata: 4, scopeCashOutsToLocalBalances: false, ticker: 'caller-supplied' },
       ongoingRewards: { status: 'deferred; the owner redirects the reserved split once Sticky or other recipients exist' },
     },
@@ -286,18 +264,12 @@ export async function prepareIncomeRelease() {
     sharedHelper: {
       factory: deterministicFactory, factoryEvidence: 'canonical source constant; live factory code not checked by this script',
       saltDerivation: `keccak256(UTF8(${JSON.stringify(helperSaltText)}))`, salt: helperSalt, saltStatus: 'prepared release constant; not a deployment record',
-      library: {
-        name: 'HomerunDeployerLib', purpose: 'external library holding the claim-vault creation code so the helper stays under EIP-170; called by delegatecall, so vaults still see the helper as their factory',
-        saltDerivation: `keccak256(UTF8(${JSON.stringify(librarySaltText)}))`, salt: librarySalt, initCodeKeccak256: libraryInitCodeKeccak256, predictedAddress: libraryPredictedAddress,
-        order: 'deploy on every chain before the helper; the helper initcode below embeds this predicted address',
-      },
       chainIds, linkedGroups, constructor: helperConstructor, protocolConfigHash, predictedAddress: helperPredictedAddress,
       addressStatus: helperPredictedAddress ? 'deterministic prediction only; requires executed receipt and runtime verification' : 'unavailable until actual registered dependency inputs exist',
       runtimePolicy: 'same initcode/address and PROTOCOL_CONFIG_HASH across chains; local immutable dependencies can make deployed runtime hashes different',
-      perProjectVaultInitcode: 'measure creation bytecode plus all 13 encoded arguments, including the UTF-8 manifest URI, against 49,152 bytes; no singleton vault address is predicted',
     },
     networks,
-    requiredPostDeploymentEvidence: ['Executed deployment receipts with chain/block/transaction identity, identical shared helper constructor inputs, factory and salt.', 'HomerunDeployerLib executed at the predicted address on every chain before the helper, and the helper runtime references exactly that address.', 'Full executable-runtime and every immutable-word verification against the exact reviewed artifacts on each chain; template hashes above are not live runtime hashes. Verify LAUNCH_VERSION = 4, shared PROTOCOL_CONFIG_HASH, TERMINAL, ROUTER_TERMINAL_REGISTRY and every usdcOf entry.', 'Verify the FUND owner becomes the INCOME operator and holds one unlocked reserved split, and the Owner-managed stock 721 inventory with the reviewed USD denomination and restricted tier flags.', 'For every directed SDK CCIP route, verify registry allowlisting, directory/tokens, singleton runtime, ccipRemoteChainId, ccipRemoteChainSelector, ccipRouter and reciprocal default-peer predictions. A merely approved alternative deployer is not proof of cross-chain compatibility.', 'Explorer/Sourcify source verification for the helper and each vault using the exact compiler input and metadata settings.', 'Published V6 SDK registry/artifact update for executed chains only, then pin that SDK release in Homerun and re-run onchain wiring/transaction smoke checks.'],
+    requiredPostDeploymentEvidence: ['Executed deployment receipts with chain/block/transaction identity, identical shared helper constructor inputs, factory and salt.', 'Full executable-runtime and every immutable-word verification against the exact reviewed artifacts on each chain; template hashes above are not live runtime hashes. Verify LAUNCH_VERSION = 4, shared PROTOCOL_CONFIG_HASH, TERMINAL, ROUTER_TERMINAL_REGISTRY and every usdcOf entry.', 'Verify the FUND owner becomes the INCOME operator and holds one unlocked reserved split, and the Owner-managed stock 721 inventory with the reviewed USD denomination and restricted tier flags.', 'For every directed SDK CCIP route, verify registry allowlisting, directory/tokens, singleton runtime, ccipRemoteChainId, ccipRemoteChainSelector, ccipRouter and reciprocal default-peer predictions. A merely approved alternative deployer is not proof of cross-chain compatibility.', 'Explorer/Sourcify source verification for the helper using the exact compiler input and metadata settings.', 'Published V6 SDK registry/artifact update for executed chains only, then pin that SDK release in Homerun and re-run onchain wiring/transaction smoke checks.'],
     blockers,
   }
 }

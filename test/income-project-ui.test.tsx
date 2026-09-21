@@ -36,7 +36,7 @@ vi.mock('@/components/ProjectSplitsEditor', () => ({ ProjectSplitsEditor: ({ cha
 vi.mock('wagmi', () => ({ usePublicClient: () => ({}) }))
 vi.mock('@/hooks/useReviewedPermit2Signature', () => ({ useReviewedPermit2Signature: () => ({ signPermit2Async: vi.fn() }) }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address, isConnected: true }) }))
-vi.mock('@/components/InitialIncomeClaim', () => ({ InitialIncomeClaim: ({ fundProjectId, incomeProjectId }: { fundProjectId: bigint; incomeProjectId: bigint }) => <div>Initial claim FUND {fundProjectId.toString()} INCOME {incomeProjectId.toString()}</div> }))
+vi.mock('@/components/InitialIncomeMint', () => ({ InitialIncomeMint: ({ fundProjectId, incomeProjectId, manifestUri }: { fundProjectId: bigint; incomeProjectId: bigint; manifestUri: string | null }) => <div>Initial INCOME FUND {fundProjectId.toString()} INCOME {incomeProjectId.toString()} manifest {manifestUri ?? 'none'}</div> }))
 vi.mock('@/hooks/useSafeTx', () => ({
   txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,
   useSafeTx: () => {
@@ -335,9 +335,9 @@ describe('INCOME transaction surfaces', () => {
     expect(runtime.send).not.toHaveBeenCalled()
   })
 
-  it('mounts initial claims separately and explains the owner-held reserved split', async () => {
+  it('mounts the initial allocation panel separately and explains the owner-held reserved split', async () => {
     await act(async () => root.render(<IncomeProject chainId={1} projectId={7n} fundProjectId={3n} />)); await visitActions()
-    expect(host.textContent).toContain('Initial claim FUND 3 INCOME 7')
+    expect(host.textContent).toContain('Initial INCOME FUND 3 INCOME 7')
     expect(host.querySelector('.hpl-metadata')?.textContent).toContain('INCOME supply: 100')
     expect(host.querySelector('.hpl-metadata')?.textContent).toContain('INCOME treasury: <0.000001 ETH')
     expect(host.textContent).toContain('The owner holds the reserved share of new INCOME')
@@ -348,17 +348,17 @@ describe('INCOME transaction surfaces', () => {
   it('discovers holder operations from a canonical standalone INCOME link without a FUND query parameter', async () => {
     runtime.discoveredFund = 3n
     await render()
-    expect(host.textContent).toContain('Initial claim FUND 3 INCOME 7')
+    expect(host.textContent).toContain('Initial INCOME FUND 3 INCOME 7')
     runtime.discoveryError = true
     await render()
-    expect(host.textContent).toContain('Initial claim FUND 3 INCOME 7')
+    expect(host.textContent).toContain('Initial INCOME FUND 3 INCOME 7')
   })
 
   it('keeps INCOME transactions reachable when historical FUND discovery is unavailable', async () => {
     runtime.discoveryError = true
     await render()
     expect(host.textContent).toContain('The original FUND connection could not be discovered')
-    expect(host.textContent).not.toContain('Initial claim FUND')
+    expect(host.textContent).not.toContain('Initial INCOME FUND')
     expect(host.querySelector('fieldset[aria-label="INCOME transactions"]')?.hasAttribute('disabled')).toBe(false)
     expect(section('Pay the project')).toBeDefined()
   })

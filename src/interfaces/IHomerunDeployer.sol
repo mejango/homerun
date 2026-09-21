@@ -25,20 +25,27 @@ interface IHomerunDeployer is IJBPayerTracker {
     /// @param caller The address that launched it.
     event FundLaunched(uint256 indexed projectId, address indexed owner, address caller);
 
-    /// @notice Emitted when a FUND's INCOME is deployed and its local initial allocation is funded.
+    /// @notice Emitted when a FUND's initial INCOME allocation is minted to the FUND's owner.
+    /// @param fundProjectId The ID of the FUND project.
+    /// @param incomeProjectId The ID of the INCOME project.
+    /// @param owner The FUND owner that received the allocation.
+    /// @param incomeAmount The INCOME minted.
+    /// @param caller The address that triggered the mint.
+    event InitialAllocationMinted(
+        uint256 indexed fundProjectId,
+        uint256 indexed incomeProjectId,
+        address indexed owner,
+        uint256 incomeAmount,
+        address caller
+    );
+
+    /// @notice Emitted when a FUND's INCOME is deployed with its initial allocation recorded for the owner.
     /// @param fundProjectId The ID of the FUND project.
     /// @param incomeProjectId The ID of the new INCOME project.
     /// @param owner The FUND owner, who becomes the INCOME revnet's operator and holds its reserved split.
     /// @param fundToken The FUND ERC-20 the snapshot was taken over.
-    /// @param initialAllocationVault The vault funded with this chain's initial allocation.
-    /// @param merkleRoot The root of this chain's allocation leaves.
     event IncomeDeployed(
-        uint256 indexed fundProjectId,
-        uint256 indexed incomeProjectId,
-        address indexed owner,
-        address fundToken,
-        address initialAllocationVault,
-        bytes32 merkleRoot
+        uint256 indexed fundProjectId, uint256 indexed incomeProjectId, address indexed owner, address fundToken
     );
 
     /// @notice The pay hook installed on every FUND. Its owner-managed allowlist gates payment beneficiaries.
@@ -53,10 +60,6 @@ interface IHomerunDeployer is IJBPayerTracker {
     /// @return directory The directory.
     function DIRECTORY() external view returns (IJBDirectory directory);
 
-    /// @notice The EIP-712-style type hash committed in every initial allocation leaf.
-    /// @return typehash The type hash.
-    function DISTRIBUTION_TYPEHASH() external view returns (bytes32 typehash);
-
     /// @notice The cash out tax rate a FUND launches with, out of `JBConstants.MAX_CASH_OUT_TAX_RATE`.
     /// @return rate The tax rate.
     function FUND_CASH_OUT_TAX_RATE() external view returns (uint16 rate);
@@ -64,10 +67,6 @@ interface IHomerunDeployer is IJBPayerTracker {
     /// @notice The CCIP gas allowance every FUND sucker mapping uses.
     /// @return minGas The gas allowance.
     function FUND_SUCKER_MIN_GAS() external view returns (uint32 minGas);
-
-    /// @notice The code hash of a canonical `JBERC20` clone. Only FUNDs still using one can launch INCOME.
-    /// @return hash The code hash.
-    function FUND_TOKEN_CODE_HASH() external view returns (bytes32 hash);
 
     /// @notice The FUND issued per unit of USD paid, as a fixed point number with 18 decimals.
     /// @return weight The issuance weight.
@@ -152,27 +151,9 @@ interface IHomerunDeployer is IJBPayerTracker {
         pure
         returns (bytes32 salt);
 
-    /// @notice The domain every initial allocation leaf for a FUND is committed under on this chain.
-    /// @param fundProjectId The ID of the FUND project.
-    /// @param snapshot The global initial allocation snapshot.
-    /// @param salt The salt the FUND owner launches INCOME with.
-    /// @return distributionId The distribution ID.
-    function distributionIdFor(
-        uint256 fundProjectId,
-        HomerunInitialIncomeSnapshot calldata snapshot,
-        bytes32 salt
-    )
-        external
-        view
-        returns (bytes32 distributionId);
-
     /// @notice The INCOME project a FUND launched, if any.
     /// @custom:param fundProjectId The ID of the FUND project.
     function incomeProjectIdOf(uint256 fundProjectId) external view returns (uint256);
-
-    /// @notice The vault holding this chain's initial INCOME allocation for a FUND, if any.
-    /// @custom:param fundProjectId The ID of the FUND project.
-    function initialAllocationVaultOf(uint256 fundProjectId) external view returns (address);
 
     /// @notice Whether a project was launched as a FUND through this deployer. INCOME only attaches to these.
     /// @custom:param projectId The ID of the project.
@@ -205,6 +186,10 @@ interface IHomerunDeployer is IJBPayerTracker {
         external
         payable
         returns (uint256 incomeProjectId);
+
+    /// @notice Mints a FUND's initial INCOME allocation to whoever owns the FUND right now.
+    /// @param fundProjectId The ID of the FUND project.
+    function mintInitialAllocation(uint256 fundProjectId) external;
 
     /// @notice Launches a FUND with Homerun's fixed campaign rules and deploys its ERC-20.
     /// @dev Linked launches must use the same `salt` and the same caller on every chain.

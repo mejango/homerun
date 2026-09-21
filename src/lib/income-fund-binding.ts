@@ -3,7 +3,6 @@ import { SUPPORTED_CHAINS, jbProjectsAbi, type JBChainId } from '@bananapus/nana
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import { decodeEventLog, getAbiItem, isAddress, isAddressEqual, toEventSelector, zeroAddress, zeroHash, type AbiEvent, type Address, type Hex, type PublicClient } from 'viem'
 import { homerunDeployerAbi, registeredHomerunDeployer } from './income-contracts'
-import { readInitialIncomeAllocation } from './income-allocation-state'
 
 const createEvent = getAbiItem({ abi: jbProjectsAbi, name: 'Create' })
 const incomeEvent = getAbiItem({ abi: homerunDeployerAbi, name: 'IncomeDeployed' })
@@ -55,7 +54,7 @@ async function assertCanonical(client: PublicClient, block: Header): Promise<voi
  * Generic revnets have no Homerun relationship and return null. Provider errors,
  * conflicting history, and invalid bindings fail visibly instead of hiding holder
  * operations. This discovery requires archive history; a caller that already
- * knows FUND can read the perpetual allocation directly without these old reads.
+ * knows FUND can read the launcher's binding directly without these old reads.
  */
 export async function readIncomeFundBinding(client: PublicClient, input: {
   chainId: number; incomeProjectId: bigint
@@ -113,10 +112,9 @@ export async function readIncomeFundBinding(client: PublicClient, input: {
   }
   if (recordedLaunches.length !== 1 || !sameLog(launch, recordedLaunches[0])) throw new Error('The creation receipt does not corroborate the exact Homerun INCOME launch.')
   const fundProjectId = uint(launch.args.fundProjectId, 'FUND project ID', true)
-  const vault = launch.args.initialAllocationVault
-  if (fundProjectId === incomeProjectId || !validAddress(vault) || !validAddress(launch.args.owner) || !validAddress(launch.args.fundToken) || typeof launch.args.merkleRoot !== 'string' || !/^0x[\da-fA-F]{64}$/.test(launch.args.merkleRoot)) throw new Error('The Homerun INCOME launch contains invalid project or vault identities.')
-  const allocation = await readInitialIncomeAllocation(client, { chainId, incomeProjectId, fundProjectId })
-  if (!allocation || allocation.chainId !== chainId || allocation.fundProjectId !== fundProjectId || allocation.incomeProjectId !== incomeProjectId || allocation.blockNumber < created.number || !isAddressEqual(allocation.deployer, deployer) || !isAddressEqual(allocation.vault, vault) || allocation.merkleRoot.toLowerCase() !== launch.args.merkleRoot.toLowerCase()) throw new Error('The discovered FUND does not match the verified INCOME project and initial-allocation vault.')
+  if (fundProjectId === incomeProjectId || !validAddress(launch.args.owner) || !validAddress(launch.args.fundToken)) throw new Error('The Homerun INCOME launch contains invalid project or owner identities.')
+  const bound = await client.readContract({ address: deployer, abi: homerunDeployerAbi, functionName: 'incomeProjectIdOf', args: [fundProjectId], blockNumber: observed.number })
+  if (bound !== incomeProjectId) throw new Error('The discovered FUND is not bound to this INCOME project by the verified launcher.')
   await Promise.all([assertCanonical(client, created), assertCanonical(client, observed)])
   return fundProjectId
 }

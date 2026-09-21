@@ -92,7 +92,7 @@ describe('complete allocation edge cases', () => {
       { beneficiary: zeroAddress, count: INITIAL_INCOME_SUPPLY / 2n }, { beneficiary: first, count: INITIAL_INCOME_SUPPLY / 2n },
     ])
   })
-  it('has no per-transaction holder cap because launch funds one bounded vault', () => {
+  it('has no per-transaction holder cap because launch records one owner auto-issuance', () => {
     const holders = Array.from({ length: 204 }, (_, index) => ({ holder: getAddress(`0x${(index + 1).toString(16).padStart(40, '0')}`), balance: 1n }))
     expect(allocateInitialIncome(holders, 204n).reduce((sum, allocation) => sum + allocation.count, 0n)).toBe(INITIAL_INCOME_SUPPLY)
   })

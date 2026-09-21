@@ -35,13 +35,9 @@ Mainnet projects link Ethereum, Optimism, Base and Arbitrum; test projects use t
 
 The initial supply is one global 500,000 INCOME allocation. A finalized historical report includes live ERC-20 balances, Owner FUND and unsettled Sucker rights; pending bridge claims retain the destination chain, preserving contract-wallet identity. Beneficial custody ownership retains exact rational FUND weights before allocating INCOME. A holder with less than one FUND atom can therefore have a zero integer display balance and a positive INCOME claim. Local vault caps sum to 500,000. Empty chains receive zero-cap vaults, and positive FUND dust that rounds to zero INCOME remains in the public manifest. Claims transfer already-minted INCOME to fixed beneficiaries, with no stake requirement, deadline, vesting or administrator.
 
-The immutable Merkle roots remain **Owner attestations**. Membership proofs do not establish historical truth, completeness or correct totals. The client reconstructs the full global history and reconciles the public manifest before review. The domain is:
+The published allocation remains an **Owner attestation**. The contract records each chain's amount as an auto-issuance to the helper, paid to the FUND owner on mint, and commits the manifest hash; it does not establish historical truth, completeness or correct per-holder amounts. The client reconstructs the full global history and reconciles the public manifest before review.
 
-```
-HomerunInitialIncome(uint256 chainId,address deployer,uint256 fundProjectId,bytes32 sourceSetHash,uint256 totalFundSupply,bytes32 salt)
-```
-
-`sourceSetHash` commits the complete canonical global report; the helper's effective REV description salt additionally commits the manifest and all ordered local roots/counts. Every chain repeats the same nonzero global auto-issuance rows. Only the local allocation is minted and moved to its vault atomically; cross-chain launch and remote supply reporting retain stock REV asynchronous behavior. No global readiness oracle is added. A shared past start produces the stock seven-day local cash-out/loan delay, while local payments are available after launch.
+`sourceSetHash` commits the complete canonical global report; the helper's effective REV description salt additionally commits the manifest and all ordered local amounts. Every chain repeats the same global auto-issuance rows to the helper. Anyone mints the local amount through `HomerunDeployer.mintInitialAllocation` once the stage has started, which pays whoever owns the FUND, and the owner settles it offchain; cross-chain launch and remote supply reporting retain stock REV asynchronous behavior. No global readiness oracle is added. A shared past start produces the stock seven-day local cash-out/loan delay, while local payments are available after launch.
 
 Snapshot numbers and hashes use each chain's RPC block domain. Arbitrum One and Arbitrum Sepolia resolve that domain through canonical `ArbSys` at `0x64`; their Solidity `block.number` reports an L1-origin height. The helper checks recent L2 hashes through `arbBlockHash` and uses ordinary EVM hashes on other chains. Older snapshots remain explicitly Owner-attested so Safe execution can outlive the 256-block history window. [Arbitrum's block-number reference](https://docs.arbitrum.io/arbitrum-essentials/arbitrum-vs-ethereum/block-numbers-and-time) explains the distinction.
 
@@ -51,18 +47,16 @@ Ongoing holder rewards are deferred. When Sticky (or any other recipient) is dep
 
 ## Compilation and size evidence
 
-The profile uses Solidity `0.8.28+commit.7893614a`, optimizer enabled with 200 runs, `viaIR`, and Cancun. Homerun helper/vault artifacts use IPFS metadata hashing.
+The profile uses Solidity `0.8.28+commit.7893614a`, optimizer enabled with 200 runs, `viaIR`, and Cancun. Homerun helper artifacts use IPFS metadata hashing.
 
 The packet verifies every source hash in each artifact's compiler metadata and locates matching full build information with the exact compiler input and output. It rejects stale sources, changed constructor components/order, unexpected or missing library links, missing build information and incompatible settings. Constructor validation recurses through the entire tuple array. Source-pattern checks are a guard against profile drift, not formal verification.
 
 | Contract | Creation template | Runtime template | Full initcode / limit |
 | --- | ---: | ---: | --- |
-| `HomerunDeployerLib` | 4,636 bytes | 4,604 bytes | No constructor; deployed first through the same factory |
 | `HomerunDeployer` | 26,896 bytes | 21,544 bytes | 28,752 bytes with the eight-entry constructor; below 49,152 |
 | `HomerunAllowlistHook` | 2,739 bytes | 2,554 bytes | Two-word constructor |
-| `HomerunInitialIncomeVault` | 4,135 bytes | 2,863 bytes | Measure its actual 13 arguments, including the UTF-8 manifest URI, on each launch |
 
-`HomerunDeployerLib` is an external library holding the claim-vault creation code; with it inlined the helper's runtime was 25,678 bytes, over EIP-170. Library calls are delegate calls, so a vault still records the helper as its factory. The library deploys on every chain through the deterministic factory with salt `keccak256(UTF8("homerun.deployer.lib.global.v4"))` before the helper, and the helper's initcode embeds that predicted address; the manifest's `sharedHelper.library` records it. The helper's constructor occupies `64 + 224 × 8 = 1,856` bytes (seven words per chain: chain ID, controller, REVDeployer, USDC, omnichain deployer, router terminal registry, allowlist hook). Its runtime has 3,032 bytes of EIP-170 headroom. EIP-3860 applies to **creation bytecode plus constructor arguments**, not the creation template alone. The script checks complete fixed singleton constructors and the known helper payload size even while dependency values are unavailable. A per-project vault's dynamic URI must be included in its own size and transaction simulation checks.
+The claim vault and its `HomerunDeployerLib` creation library are gone; the helper records the initial allocation as a stock revnet auto-issuance instead, and its sizes above predate that change, so re-measure them before release. The helper's constructor occupies `64 + 224 × 8 = 1,856` bytes (seven words per chain: chain ID, controller, REVDeployer, USDC, omnichain deployer, router terminal registry, allowlist hook). Its runtime has 3,032 bytes of EIP-170 headroom. EIP-3860 applies to **creation bytecode plus constructor arguments**, not the creation template alone. The script checks complete fixed singleton constructors and the known helper payload size even while dependency values are unavailable.
 
 Runtime templates contain unresolved immutable words. Their hashes are not live code hashes. Verification must patch and compare **every immutable occurrence** using actual chain/project/constructor values, including full uint256 and EIP712 words. Keep the exact compiler input: the local integration build resolves remappings to absolute source paths, which enter IPFS metadata. Recompiling elsewhere with rewritten paths can change bytecode even if source contents match.
 
@@ -90,7 +84,6 @@ Earlier stock Sticky rehearsals (six networks in an isolated local VM, Arbitrum 
 | Component | Required constructor / creation boundary |
 | --- | --- |
 | `HomerunDeployer` | The same complete ordered eight-chain dependency array on every network |
-| Initial vault | Created by the helper's INCOME launch; actual events and immutable bindings identify it |
 
 The installed `@bananapus/nana-sdk-core` has canonical core, omnichain, router-terminal, Revnet, USDC and CCIP records, but no `HomerunDeployer` registry entry on any of the eight networks. All eight missing entries are explicit in the packet. This is an observation of the installed SDK, not proof that no contract exists onchain.
 
@@ -99,7 +92,7 @@ Required evidence for the current v4 release:
 1. Executed receipts for the shared helper deployments, with chain, transaction, block hash, constructor calldata, factory and salt. A proposal or simulation is insufficient.
 2. Per-chain source/runtime/immutable verification. Verify helper `LAUNCH_VERSION() = 4`, both launch selectors, `PROTOCOL_CONFIG_HASH`, every `usdcOf` entry, `TERMINAL`, `ROUTER_TERMINAL_REGISTRY` and the local core/REV/omnichain bindings.
 3. Every directed SDK CCIP route's allowlisting, directory/tokens, singleton, router, remote selector and chain ID, plus matching reciprocal default peers. The helper accepts an approved compatible route; registry approval alone does not prove two independently selected deployer generations produce matching peers. The packet records the exact SDK route addresses for review.
-4. Initial project relationships: the FUND launched by the helper with its deployed ERC-20, FUND owner control of INCOME, the single unlocked reserved split to the owner, and the immutable local vault source/root/manifest/cap with complete funding. Preserve actual project IDs and addresses from receipts, never predictions.
+4. Initial project relationships: the FUND launched by the helper with its deployed ERC-20, FUND owner control of INCOME, the single unlocked reserved split to the owner, and the recorded helper auto-issuance matching the manifest's local amount. Preserve actual project IDs and addresses from receipts, never predictions.
 5. Publish executed-chain artifacts through `juice-sdk-v4/packages/core`: update registry types and artifact inputs, use the SDK's generators, publish the package, and pin its release in Homerun. Do not hand-edit only generated output or insert simulation addresses. Re-run runtime wiring checks and testnet transaction/bridge smoke flows against that SDK before enabling the corresponding chains.
 
-The packet is concrete preparation for those remaining deployment and verification steps. It does not claim the new helper/vault are audited or that an unavailable deployment is ready for use.
+The packet is concrete preparation for those remaining deployment and verification steps. It does not claim the new helper is audited or that an unavailable deployment is ready for use.

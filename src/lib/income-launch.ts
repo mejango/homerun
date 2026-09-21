@@ -3,8 +3,8 @@ import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import { encodeAbiParameters, isAddressEqual, keccak256, parseAbiParameters, zeroAddress, zeroHash, type Address, type Hex, type PublicClient } from 'viem'
 import { type FundTransaction } from './fund-contracts'
 import { readFundProjectState, type FundProjectState } from './fund-state'
-import { readInitialIncomeAllocation } from './income-allocation-state'
-import { getFundGlobalClaim, fundGlobalManifestHash, globalIncomeSnapshotParameters, parseFundGlobalManifest, verifyFundGlobalManifestHistory, type FundGlobalManifest, type GlobalIncomeAllocation } from './fund-global-manifest'
+import { assertInitialIncomeAllocation, readInitialIncomeAllocation } from './income-initial-allocation'
+import { fundGlobalManifestHash, globalIncomeSnapshotParameters, parseFundGlobalManifest, verifyFundGlobalManifestHistory, type FundGlobalManifest, type GlobalIncomeAllocation } from './fund-global-manifest'
 import { homerunDeployerAbi, INCOME_QUARTER_SECONDS, INCOME_INITIAL_ISSUANCE, INCOME_CUT_PERCENT, INCOME_CASH_OUT_TAX_RATE, registeredAllowlistHook, registeredHomerunDeployer } from './income-contracts'
 import { isVerifiedProject721Hook } from './fund-hooks'
 
@@ -40,12 +40,8 @@ export async function readIncomeLaunchBinding(client: PublicClient, chainId: JBC
   const block = await client.getBlock({ blockTag: 'latest' })
   if (block.number === null || !block.hash) throw new Error('A confirmed snapshot block is required.')
   await verifyIncomeLaunchWiring(client, chainId, block.number)
-  const [id, vault] = await Promise.all([
-    client.readContract({ address: deployer, abi: homerunDeployerAbi, functionName: 'incomeProjectIdOf', args: [fundProjectId], blockNumber: block.number }),
-    client.readContract({ address: deployer, abi: homerunDeployerAbi, functionName: 'initialAllocationVaultOf', args: [fundProjectId], blockNumber: block.number }),
-  ])
+  const id = await client.readContract({ address: deployer, abi: homerunDeployerAbi, functionName: 'incomeProjectIdOf', args: [fundProjectId], blockNumber: block.number })
   if (id === (1n << 256n) - 1n) throw new Error('The INCOME launch is still in progress.')
-  if ((id === 0n) !== isAddressEqual(vault, zeroAddress)) throw new Error('The INCOME allocation binding is incomplete.')
   const sameBlock = await client.getBlock({ blockNumber: block.number })
   if (sameBlock.hash !== block.hash) throw new Error('The chain reorganized during the INCOME read. Refresh and try again.')
   return id === 0n ? null : id
@@ -99,11 +95,11 @@ export type PreparedIncomeLaunch = {
 
 /** Exact Solidity commitment used by the helper. */
 export function incomeConfigurationSalt(snapshot: InitialIncomeSnapshot, launchSalt: Hex): Hex {
-  const allocationHash = keccak256(encodeAbiParameters(parseAbiParameters('(uint32 chainId,uint256 fundProjectId,uint256 snapshotBlockNumber,bytes32 snapshotBlockHash,bytes32 merkleRoot,uint256 leafCount,uint104 incomeAmount)[]'), [snapshot.allocations]))
+  const allocationHash = keccak256(encodeAbiParameters(parseAbiParameters('(uint32 chainId,uint256 fundProjectId,uint256 snapshotBlockNumber,bytes32 snapshotBlockHash,uint104 incomeAmount)[]'), [snapshot.allocations]))
   return keccak256(encodeAbiParameters(parseAbiParameters('bytes32,bytes32,uint256,bytes32,bytes32'), [launchSalt, snapshot.sourceSetHash, snapshot.totalFundSupply, snapshot.manifestHash, allocationHash]))
 }
 
-/** REVDeployer._makeRulesetConfigurations: exact nested ABI encoding of the single stage, including every global premint. */
+/** REVDeployer._makeRulesetConfigurations: exact nested ABI encoding of the single stage, including every chain's auto-issuance to the helper. */
 export function incomeConfigurationHash(input: {
   name: string; ticker: string; configurationSalt: Hex; startsAtOrAfter: number; reservedBps: number;
   helper: Address; snapshot: InitialIncomeSnapshot;
@@ -120,9 +116,12 @@ export function incomeConfigurationHash(input: {
 
 /**
  * Reproduces every finalized source chain, including pending bridge rights, before constructing a local launch.
- * Stock revnets deploy asynchronously. Each local allocation is fully minted before local activity; the canonical
- * bridge reports remote supply asynchronously. No global readiness oracle or temporary custom permission is added.
+ * Stock revnets deploy asynchronously. Each chain records its allocation as an auto-issuance to the helper, paid to the FUND owner on mint; the
+ * canonical bridge reports remote supply asynchronously. No global readiness oracle or temporary custom permission is added.
  */
+/** How far ahead of the chain clock a new INCOME draft starts its shared stage. */
+export const INCOME_START_LEAD_SECONDS = 10 * 60
+
 export async function prepareIncomeLaunch(client: PublicClient, input: {
   chainId: JBChainId; fundProjectId: bigint; account: Address; manifest: unknown; manifestUri: string;
   name: string; ticker: string; projectUri: string; salt: Hex; reservedBps: number;
@@ -145,7 +144,7 @@ export async function prepareIncomeLaunch(client: PublicClient, input: {
     const source = clients.get(allocation.chainId)
     const registered = registeredHomerunDeployer(allocation.chainId)
     if (!source) throw new Error(`A verified RPC client is required for source chain ${allocation.chainId}.`)
-    if (!registered || !isAddressEqual(registered, deployer)) throw new Error('Every claim chain must register the same deterministic INCOME helper address.')
+    if (!registered || !isAddressEqual(registered, deployer)) throw new Error('Every snapshot chain must register the same deterministic INCOME helper address.')
     if (await source.getChainId() !== allocation.chainId) throw new Error('A source RPC returned a different chain.')
     const finalized = await source.getBlock({ blockTag: 'finalized' })
     if (finalized.number === null || !finalized.hash || BigInt(allocation.snapshotBlockNumber) > finalized.number) throw new Error('Every ownership snapshot must be finalized before launch.')
@@ -162,16 +161,13 @@ export async function prepareIncomeLaunch(client: PublicClient, input: {
     if (BigInt(allocation.snapshotBlockNumber) >= fund.blockNumber) throw new Error('The ownership snapshot must precede the current confirmed block.')
     await verifyIncomeLaunchWiring(source, allocation.chainId, fund.blockNumber)
     const at = { blockNumber: fund.blockNumber }
-    const [protocolHash, existing, existingVault, block, acceptedUsdc] = await Promise.all([
+    const [protocolHash, existing, acceptedUsdc] = await Promise.all([
       source.readContract({ address: deployer, abi: homerunDeployerAbi, functionName: 'PROTOCOL_CONFIG_HASH', ...at }),
       source.readContract({ address: deployer, abi: homerunDeployerAbi, functionName: 'incomeProjectIdOf', args: [BigInt(allocation.fundProjectId)], ...at }),
-      source.readContract({ address: deployer, abi: homerunDeployerAbi, functionName: 'initialAllocationVaultOf', args: [BigInt(allocation.fundProjectId)], ...at }),
-      source.getBlock(at),
       Promise.all(manifest.allocations.map(entry => source.readContract({ address: deployer, abi: homerunDeployerAbi, functionName: 'usdcOf', args: [entry.chainId], ...at }))),
     ])
     if (protocolHash === zeroHash || acceptedUsdc.some((actual, i) => !isAddressEqual(actual, USDC_ADDRESSES[manifest.allocations[i].chainId]))) throw new Error('The helper does not support the complete reviewed chain and USDC deployment profile.')
-    if ((existing === 0n) !== isAddressEqual(existingVault, zeroAddress) || existing === (1n << 256n) - 1n) throw new Error('An INCOME launch has an incomplete or pending onchain binding.')
-    if (BigInt(input.startsAtOrAfter) > block.timestamp) throw new Error('The shared INCOME stage must have started before its initial allocation can be minted atomically.')
+    if (existing === (1n << 256n) - 1n) throw new Error('An INCOME launch has a pending onchain binding.')
     if (allocation.chainId === input.chainId && existing !== 0n) throw new Error('This FUND already has an INCOME launch recorded by the verified launcher.')
     // A completed peer may already be distributing asset-sale proceeds or burning FUND. Its frozen
     // initial rights remain authoritative; only projects still awaiting launch must remain closed raises.
@@ -181,11 +177,14 @@ export async function prepareIncomeLaunch(client: PublicClient, input: {
       if (blockers.length) throw new Error(`Chain ${allocation.chainId}: ${blockers.join(' ')}`)
     }
     if (allocation.chainId !== input.chainId && existing !== 0n) {
-      const initialAllocation = await readInitialIncomeAllocation(source, { chainId: allocation.chainId, incomeProjectId: existing, fundProjectId: BigInt(allocation.fundProjectId) })
-      if (!initialAllocation || initialAllocation.blockNumber < fund.blockNumber || !isAddressEqual(initialAllocation.vault, existingVault) || initialAllocation.manifestUri !== input.manifestUri) throw new Error('An existing linked INCOME has no verified initial vault for the original published manifest.')
-      getFundGlobalClaim(manifest, initialAllocation, zeroAddress)
-      const actualConfigurationHash = await source.readContract({ address: v6Address('REVDeployer', allocation.chainId), abi: revDeployerAbi, functionName: 'hashedEncodedConfigurationOf', args: [existing], ...at })
+      // The ruleset hash commits the manifest and every chain's allocation to the helper; the auto-issuance read shows
+      // whether this peer's share is still pending in full or already minted.
+      const [initialAllocation, actualConfigurationHash] = await Promise.all([
+        readInitialIncomeAllocation(source, { chainId: allocation.chainId, incomeProjectId: existing, fundProjectId: BigInt(allocation.fundProjectId), blockNumber: fund.blockNumber }),
+        source.readContract({ address: v6Address('REVDeployer', allocation.chainId), abi: revDeployerAbi, functionName: 'hashedEncodedConfigurationOf', args: [existing], ...at }),
+      ])
       if (actualConfigurationHash !== expectedConfigurationHash) throw new Error('An existing linked INCOME uses a different start time, name, economics, or global allocation. Restore its original launch plan.')
+      assertInitialIncomeAllocation(initialAllocation, BigInt(allocation.incomeAmount))
       // Stock identity deliberately excludes splits: each chain's Owner may update any recipient or split
       // percentage after launch. Those changes do not alter the frozen initial plan for unlaunched chains.
     }

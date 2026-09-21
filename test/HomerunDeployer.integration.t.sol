@@ -17,6 +17,7 @@ import {JBMetadataResolver} from "@bananapus/core-v6/src/libraries/JBMetadataRes
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {IJBToken} from "@bananapus/core-v6/src/interfaces/IJBToken.sol";
 import {JBERC20} from "@bananapus/core-v6/src/JBERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {JBMatchingPriceFeed} from "@bananapus/core-v6/src/periphery/JBMatchingPriceFeed.sol";
 import {JBOmnichainDeployer} from "@bananapus/omnichain-deployers-v6/src/JBOmnichainDeployer.sol";
 import {JBDeployerHookConfig} from "@bananapus/omnichain-deployers-v6/src/structs/JBDeployerHookConfig.sol";
@@ -60,7 +61,6 @@ import {HomerunDeployer} from "../src/HomerunDeployer.sol";
 import {HomerunChainConfig} from "../src/structs/HomerunChainConfig.sol";
 import {HomerunInitialIncomeAllocation} from "../src/structs/HomerunInitialIncomeAllocation.sol";
 import {HomerunInitialIncomeSnapshot} from "../src/structs/HomerunInitialIncomeSnapshot.sol";
-import {HomerunInitialIncomeVault} from "../src/HomerunInitialIncomeVault.sol";
 
 /// @notice Actual local Juicebox/Revnet deployment and reserved-token routing, with no mocked protocol calls.
 /// @dev Uses the canonical registry's supported no-AMM fallback and a real fixed USD/USDC matching price feed.
@@ -88,15 +88,12 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
     HomerunAllowlistHook private _allowlist;
     HomerunDeployer private _helper;
     JBERC20 private _fundToken;
-    HomerunInitialIncomeVault private _vault;
 
     struct SnapshotFixture {
         HomerunInitialIncomeSnapshot snapshot;
         address[] holders;
         uint256[] balances;
         uint256[] allocations;
-        bytes32[] tree;
-        uint256[] treeIndices;
     }
 
     function setUp() public override {
@@ -253,12 +250,22 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
     }
 
     function _deploySnapshot(uint16 reservedBps, SnapshotFixture memory fixture) private returns (uint256 incomeId) {
+        return _deploySnapshotStarting(reservedBps, fixture, STARTS_AT);
+    }
+
+    function _deploySnapshotStarting(
+        uint16 reservedBps,
+        SnapshotFixture memory fixture,
+        uint48 startsAtOrAfter
+    )
+        private
+        returns (uint256 incomeId)
+    {
         REVDescription memory description =
             REVDescription({name: "House income", ticker: "RENT", uri: "ipfs://income", salt: LAUNCH_SALT});
         REVSuckerDeploymentConfig memory suckers = _suckerConfig(fixture.snapshot);
         vm.prank(OPERATOR);
-        incomeId = _helper.deployIncome(_fundId, fixture.snapshot, description, reservedBps, STARTS_AT, suckers);
-        _vault = HomerunInitialIncomeVault(_helper.initialAllocationVaultOf(_fundId));
+        incomeId = _helper.deployIncome(_fundId, fixture.snapshot, description, reservedBps, startsAtOrAfter, suckers);
     }
 
     function _suckerConfig(HomerunInitialIncomeSnapshot memory snapshot)
@@ -286,8 +293,7 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
         }
     }
 
-    /// @dev Matches OpenZeppelin StandardMerkleTree: double-hashed ABI leaves, sorted leaves, complete binary heap,
-    /// reverse leaf placement, and sorted-pair internal hashes. Balances are captured before any Sticky deposits.
+    /// @dev The published allocation the owner settles: every holder's balance and pro-rata share at the snapshot.
     function _snapshot(address[] memory holders) private returns (SnapshotFixture memory fixture) {
         fixture.holders = holders;
         fixture.balances = new uint256[](holders.length);
@@ -309,8 +315,6 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
             fundProjectId: _fundId,
             snapshotBlockNumber: block.number - 1,
             snapshotBlockHash: snapshotHash,
-            merkleRoot: bytes32(0),
-            leafCount: holders.length,
             incomeAmount: 500_000 ether
         });
         fixture.snapshot = HomerunInitialIncomeSnapshot({
@@ -322,54 +326,6 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
             manifestUri: "ipfs://independently-reconciled-snapshot",
             allocations: allocations
         });
-        fixture = _buildTree(fixture, uint32(block.chainid));
-        fixture.snapshot.allocations[0].merkleRoot = fixture.tree[0];
-    }
-
-    function _buildTree(SnapshotFixture memory fixture, uint32 chainId) private view returns (SnapshotFixture memory) {
-        bytes32 domain = keccak256(
-            abi.encode(
-                _helper.DISTRIBUTION_TYPEHASH(),
-                chainId,
-                address(_helper),
-                _fundId,
-                fixture.snapshot.sourceSetHash,
-                fixture.snapshot.totalFundSupply,
-                LAUNCH_SALT
-            )
-        );
-        bytes32[] memory leaves = new bytes32[](fixture.holders.length);
-        uint256[] memory originalIndices = new uint256[](fixture.holders.length);
-        for (uint256 i; i < fixture.holders.length; ++i) {
-            leaves[i] = keccak256(
-                bytes.concat(
-                    keccak256(abi.encode(domain, i, fixture.holders[i], fixture.balances[i], fixture.allocations[i]))
-                )
-            );
-            originalIndices[i] = i;
-        }
-        for (uint256 i = 1; i < leaves.length; ++i) {
-            uint256 j = i;
-            while (j != 0 && leaves[j - 1] > leaves[j]) {
-                (leaves[j - 1], leaves[j]) = (leaves[j], leaves[j - 1]);
-                (originalIndices[j - 1], originalIndices[j]) = (originalIndices[j], originalIndices[j - 1]);
-                --j;
-            }
-        }
-        fixture.tree = new bytes32[](2 * leaves.length - 1);
-        fixture.treeIndices = new uint256[](leaves.length);
-        for (uint256 i; i < leaves.length; ++i) {
-            uint256 treeIndex = fixture.tree.length - 1 - i;
-            fixture.tree[treeIndex] = leaves[i];
-            fixture.treeIndices[originalIndices[i]] = treeIndex;
-        }
-        for (uint256 i = leaves.length - 1; i != 0;) {
-            --i;
-            bytes32 a = fixture.tree[2 * i + 1];
-            bytes32 b = fixture.tree[2 * i + 2];
-            fixture.tree[i] = a < b ? keccak256(abi.encodePacked(a, b)) : keccak256(abi.encodePacked(b, a));
-        }
-        return fixture;
     }
 
     /// @dev Two isolated chains start with the same actual 500 FUND ledger. Each receives half the global mint.
@@ -396,8 +352,6 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
                 fundProjectId: _fundId,
                 snapshotBlockNumber: i == 0 ? originBlock : base.snapshot.allocations[0].snapshotBlockNumber,
                 snapshotBlockHash: i == 0 ? originHash : base.snapshot.allocations[0].snapshotBlockHash,
-                merkleRoot: bytes32(0),
-                leafCount: emptyOrigin && i == 0 ? 0 : 3,
                 incomeAmount: emptyOrigin ? (i == 0 ? 0 : uint104(500_000 ether)) : uint104(250_000 ether)
             });
         }
@@ -419,8 +373,6 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
             for (uint256 j; j < 3; ++j) {
                 fixtures[i].allocations[j] = base.balances[j] * rows[i].incomeAmount / (500 ether);
             }
-            fixtures[i] = _buildTree(fixtures[i], rows[i].chainId);
-            snapshot.allocations[i].merkleRoot = fixtures[i].tree[0];
         }
     }
 
@@ -434,25 +386,6 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
         assertEq(_helper.PROTOCOL_CONFIG_HASH(), keccak256(abi.encode(_chainConfigs())));
     }
 
-    function _proof(SnapshotFixture memory fixture, uint256 index) private pure returns (bytes32[] memory proof) {
-        uint256 treeIndex = fixture.treeIndices[index];
-        uint256 length;
-        for (uint256 i = treeIndex; i != 0; i = (i - 1) / 2) {
-            ++length;
-        }
-        proof = new bytes32[](length);
-        for (uint256 i; treeIndex != 0; ++i) {
-            proof[i] = fixture.tree[treeIndex % 2 == 0 ? treeIndex - 1 : treeIndex + 1];
-            treeIndex = (treeIndex - 1) / 2;
-        }
-    }
-
-    function _claim(SnapshotFixture memory fixture, uint256 index) private {
-        _vault.claim(
-            index, fixture.holders[index], fixture.balances[index], fixture.allocations[index], _proof(fixture, index)
-        );
-    }
-
     function _payAndDistribute(uint256 incomeId) private returns (uint256 customerTokens) {
         usdcToken().mint(CUSTOMER, 100e6);
         vm.startPrank(CUSTOMER);
@@ -462,56 +395,59 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
         jbController().sendReservedTokensToSplitsOf(incomeId);
     }
 
-    function testRealDeploymentAtomicallyMintsAllInitialIncome() public {
+    function testRealDeploymentRecordsTheWholeInitialIncomeForTheOwner() public {
         SnapshotFixture memory fixture = _snapshot(_holders());
         uint256 incomeId = _deploySnapshot(8000, fixture);
-        address vaultAddress = _helper.initialAllocationVaultOf(_fundId);
-        HomerunInitialIncomeVault vault = HomerunInitialIncomeVault(vaultAddress);
         assertEq(_helper.incomeProjectIdOf(_fundId), incomeId);
         assertEq(jbProjects().ownerOf(_fundId), OPERATOR);
         assertEq(jbProjects().ownerOf(incomeId), address(_revOwner));
         assertTrue(_revOwner.isOperatorOf(incomeId, OPERATOR));
         assertFalse(_revOwner.isOperatorOf(incomeId, address(_helper)));
-        assertEq(jbTokens().totalSupplyOf(incomeId), 500_000 ether);
-        assertEq(jbTokens().tokenOf(incomeId).balanceOf(vaultAddress), 500_000 ether);
+        // The launch records the allocation; nothing is minted until the stage has started and someone asks.
+        assertEq(jbTokens().totalSupplyOf(incomeId), 0);
         assertEq(jbTokens().totalCreditSupplyOf(incomeId), 0);
-        assertEq(vault.DISTRIBUTION_ID(), _helper.distributionIdFor(_fundId, fixture.snapshot, LAUNCH_SALT));
-        assertEq(vault.MERKLE_ROOT(), fixture.snapshot.allocations[0].merkleRoot);
+        (JBRuleset memory ruleset, JBRulesetMetadata memory metadata) = jbController().currentRulesetOf(incomeId);
+        assertEq(metadata.dataHook, address(_revOwner));
+        assertEq(metadata.reservedPercent, 8000);
+        assertEq(_revOwner.amountToAutoIssue(incomeId, ruleset.id, address(_helper)), 500_000 ether);
+        assertEq(_revOwner.amountToAutoIssue(incomeId, ruleset.id, OPERATOR), 0);
         assertEq(jbTokens().totalSupplyOf(_fundId), 500 ether);
         // The FUND token exists from launch, so success mints are ERC-20 balances, never credits.
         assertEq(jbTokens().creditBalanceOf(ALICE, _fundId), 0);
         assertEq(_fundToken.balanceOf(ALICE), 300 ether);
-        (JBRuleset memory ruleset, JBRulesetMetadata memory metadata) = jbController().currentRulesetOf(incomeId);
-        assertEq(metadata.dataHook, address(_revOwner));
-        assertEq(metadata.reservedPercent, 8000);
-        assertEq(_revOwner.amountToAutoIssue(incomeId, ruleset.id, address(_helper)), 0);
-        assertEq(jbController().pendingReservedTokenBalanceOf(incomeId), 0);
-        assertEq(jbTokens().totalBalanceOf(address(_helper), incomeId), 0);
-        for (uint256 i; i < fixture.holders.length; ++i) {
-            _claim(fixture, i);
+        _mintInitialIncome(incomeId, 500_000 ether);
+        // The owner settles the published allocation from their own balance.
+        IERC20 income = IERC20(address(jbTokens().tokenOf(incomeId)));
+        for (uint256 i = 1; i < fixture.holders.length; ++i) {
+            vm.prank(OPERATOR);
+            income.transfer(fixture.holders[i], fixture.allocations[i]);
         }
         assertEq(jbTokens().totalBalanceOf(OPERATOR, incomeId), 100_000 ether);
         assertEq(jbTokens().totalBalanceOf(ALICE, incomeId), 300_000 ether);
         assertEq(jbTokens().totalBalanceOf(BOB, incomeId), 100_000 ether);
-        assertEq(vault.totalClaimed(), 500_000 ether);
-        assertEq(jbTokens().tokenOf(incomeId).balanceOf(vaultAddress), 0);
         assertEq(jbTokens().totalSupplyOf(incomeId), 500_000 ether);
     }
 
-    function testRealInitialClaimsStayWithSnapshotHoldersAfterFundMoves() public {
-        SnapshotFixture memory fixture = _snapshot(_holders());
-        uint256 incomeId = _deploySnapshot(8000, fixture);
-        vm.prank(ALICE);
-        _fundToken.transfer(CUSTOMER, 300 ether);
-        assertEq(jbTokens().totalBalanceOf(ALICE, _fundId), 0);
+    /// @dev Mints the recorded allocation for INCOME's single stage to the FUND's current owner, as anyone may once
+    /// the stage has started.
+    function _mintInitialIncome(uint256 incomeId, uint256 expected) private {
+        (JBRuleset memory stage,,) = jbController().latestQueuedRulesetOf(incomeId);
+        assertEq(_revOwner.amountToAutoIssue(incomeId, stage.id, address(_helper)), expected);
+        address owner = jbProjects().ownerOf(_fundId);
+        if (expected == 0) {
+            vm.expectRevert(abi.encodeWithSelector(HomerunDeployer.HomerunDeployer_NothingToMint.selector, _fundId));
+            _helper.mintInitialAllocation(_fundId);
+            return;
+        }
+        uint256 before = jbTokens().totalBalanceOf(owner, incomeId);
         vm.prank(CUSTOMER);
-        _claim(fixture, 1);
-        assertEq(jbTokens().totalBalanceOf(ALICE, incomeId), 300_000 ether);
-        assertEq(jbTokens().totalBalanceOf(CUSTOMER, incomeId), 0);
-        assertEq(_fundToken.getTotalActiveVotes(), 0);
-        vm.expectPartialRevert(HomerunInitialIncomeVault.HomerunInitialIncomeVault_AlreadyClaimed.selector);
-        _claim(fixture, 1);
-        assertEq(jbTokens().totalSupplyOf(incomeId), 500_000 ether);
+        _helper.mintInitialAllocation(_fundId);
+        assertEq(jbTokens().totalBalanceOf(owner, incomeId) - before, expected);
+        assertEq(jbTokens().totalBalanceOf(address(_helper), incomeId), 0);
+        assertEq(_revOwner.amountToAutoIssue(incomeId, stage.id, address(_helper)), 0);
+        assertEq(jbController().pendingReservedTokenBalanceOf(incomeId), 0);
+        vm.expectRevert(abi.encodeWithSelector(HomerunDeployer.HomerunDeployer_NothingToMint.selector, _fundId));
+        _helper.mintInitialAllocation(_fundId);
     }
 
     function testRealDistinctOwnerControlsIncomeAndHoldsTheReservedSplit() public {
@@ -678,7 +614,7 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
         IJBToken income = jbTokens().tokenOf(incomeId);
         assertEq(income.balanceOf(CUSTOMER), 200 ether);
         assertEq(income.balanceOf(OPERATOR), 800 ether);
-        assertEq(jbTokens().totalSupplyOf(incomeId), 501_000 ether);
+        assertEq(jbTokens().totalSupplyOf(incomeId), 1000 ether);
         assertEq(jbController().pendingReservedTokenBalanceOf(incomeId), 0);
         assertEq(jbTerminalStore().balanceOf(address(jbMultiTerminal()), incomeId, address(usdcToken())), 100e6);
     }
@@ -689,7 +625,7 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
         IJBToken income = jbTokens().tokenOf(incomeId);
         assertEq(income.balanceOf(CUSTOMER), 0);
         assertEq(income.balanceOf(OPERATOR), 1000 ether);
-        assertEq(jbTokens().totalSupplyOf(incomeId), 501_000 ether);
+        assertEq(jbTokens().totalSupplyOf(incomeId), 1000 ether);
     }
 
     function testRealZeroReservedIssuanceGivesEverythingToTheCustomer() public {
@@ -703,44 +639,6 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
         assertEq(jbTokens().tokenOf(incomeId).balanceOf(OPERATOR), 0);
     }
 
-    function testRealTinyFundFragmentationAllowsBoundedLaunchAndEveryClaim() public {
-        address attacker = address(0x600);
-        vm.prank(ALICE);
-        _fundToken.transfer(attacker, 201);
-        address[] memory fragmentedHolders = new address[](204);
-        fragmentedHolders[0] = OPERATOR;
-        fragmentedHolders[1] = ALICE;
-        fragmentedHolders[2] = BOB;
-        vm.startPrank(attacker);
-        for (uint256 i; i < 201; ++i) {
-            address recipient = address(uint160(0x1000 + i));
-            _fundToken.transfer(recipient, 1);
-            fragmentedHolders[i + 3] = recipient;
-        }
-        vm.stopPrank();
-        assertEq(_fundToken.balanceOf(attacker), 0);
-        assertEq(jbTokens().totalSupplyOf(_fundId), 500 ether);
-        assertEq(_fundToken.balanceOf(fragmentedHolders[203]), 1);
-        SnapshotFixture memory fixture = _snapshot(fragmentedHolders);
-        uint256 launchGasBefore = gasleft();
-        uint256 incomeId = _deploySnapshot(8000, fixture);
-        uint256 launchGasUsed = launchGasBefore - gasleft();
-        emit log_named_uint("Atomic launch gas with 204 snapshot holders", launchGasUsed);
-        assertLt(launchGasUsed, 4_000_000, "launch excludes holder enumeration and claim execution");
-        HomerunInitialIncomeVault vault = HomerunInitialIncomeVault(_helper.initialAllocationVaultOf(_fundId));
-        assertEq(vault.LEAF_COUNT(), 204);
-        assertEq(jbTokens().tokenOf(incomeId).balanceOf(address(vault)), 500_000 ether);
-        assertEq(jbTokens().totalSupplyOf(incomeId), 500_000 ether);
-        for (uint256 i; i < fixture.holders.length; ++i) {
-            _claim(fixture, i);
-            assertEq(jbTokens().totalBalanceOf(fixture.holders[i], incomeId), fixture.allocations[i]);
-        }
-        assertEq(jbTokens().totalBalanceOf(fragmentedHolders[203], incomeId), 1000);
-        assertEq(vault.totalClaimed(), 500_000 ether);
-        assertEq(jbTokens().tokenOf(incomeId).balanceOf(address(vault)), 0);
-        assertEq(jbTokens().totalSupplyOf(_fundId), 500 ether);
-    }
-
     function _deployWithDistinctOwner() private returns (uint256 incomeId) {
         vm.prank(OPERATOR);
         jbProjects().transferFrom(OPERATOR, OWNER, _fundId);
@@ -750,7 +648,6 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
         REVSuckerDeploymentConfig memory suckers = _suckerConfig(fixture.snapshot);
         vm.prank(OWNER);
         incomeId = _helper.deployIncome(_fundId, fixture.snapshot, description, 8000, STARTS_AT, suckers);
-        _vault = HomerunInitialIncomeVault(_helper.initialAllocationVaultOf(_fundId));
     }
 
     function _reservedSplitGroups(
@@ -801,13 +698,10 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
         assertFalse(_revOwner.isOperatorOf(incomeId, NEXT_OPERATOR));
     }
 
-    function _assertLocalAllocation(uint256 incomeId, uint256 expected) private view {
+    function _assertLocalAllocation(uint256 incomeId, uint256 expected) private {
+        _mintInitialIncome(incomeId, expected);
         assertEq(jbTokens().totalSupplyOf(incomeId), expected);
-        assertEq(_vault.LOCAL_INITIAL_INCOME_SUPPLY(), expected);
-        assertEq(jbTokens().tokenOf(incomeId).balanceOf(address(_vault)), expected);
         assertEq(jbTokens().totalBalanceOf(address(_helper), incomeId), 0);
-        assertEq(jbController().pendingReservedTokenBalanceOf(incomeId), 0);
-        assertEq(_revOwner.amountToAutoIssue(incomeId, block.timestamp, address(_helper)), 0);
         (, JBRulesetMetadata memory metadata) = jbController().currentRulesetOf(incomeId);
         assertFalse(metadata.scopeCashOutsToLocalBalances);
         assertEq(metadata.metadata, 4);
@@ -837,10 +731,7 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
         address originIncomeToken = address(jbTokens().tokenOf(originIncomeId));
         address originSucker = _assertCcipRoute(originIncomeId, 10);
         uint256 originSupply = jbTokens().totalSupplyOf(originIncomeId);
-        for (uint256 i; i < 3; ++i) {
-            _claim(fixtures[0], i);
-        }
-        assertEq(jbTokens().totalBalanceOf(ALICE, originIncomeId), 150_000 ether);
+        assertEq(jbTokens().totalBalanceOf(OPERATOR, originIncomeId), 250_000 ether);
 
         _switchToIsolatedOptimism(fixtures[1].snapshot, STARTS_AT + 3 days);
         uint256 remoteIncomeId = _deploySnapshot(8000, fixtures[1]);
@@ -849,19 +740,13 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
         assertEq(address(jbTokens().tokenOf(remoteIncomeId)), originIncomeToken);
         assertEq(_assertCcipRoute(remoteIncomeId, 1), originSucker);
         assertEq(originSupply + jbTokens().totalSupplyOf(remoteIncomeId), 500_000 ether);
-        for (uint256 i; i < 3; ++i) {
-            _claim(fixtures[1], i);
-        }
-        assertEq(jbTokens().totalBalanceOf(ALICE, remoteIncomeId), 150_000 ether);
-        assertEq(_vault.totalClaimed(), 250_000 ether);
+        assertEq(jbTokens().totalBalanceOf(OPERATOR, remoteIncomeId), 250_000 ether);
     }
 
     function testRealZeroLocalAllocationLeavesAllFiveHundredThousandForRemoteChain() public {
         SnapshotFixture[2] memory fixtures = _globalSnapshots(true);
         uint256 originIncomeId = _deploySnapshot(8000, fixtures[0]);
         _assertLocalAllocation(originIncomeId, 0);
-        assertEq(_vault.LEAF_COUNT(), 0);
-        assertEq(_vault.MERKLE_ROOT(), bytes32(0));
         assertEq(jbTokens().totalSupplyOf(_fundId), 0);
         bytes32 originHash = _revDeployer.hashedEncodedConfigurationOf(originIncomeId);
         address originSucker = _assertCcipRoute(originIncomeId, 10);
@@ -871,11 +756,7 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
         _assertLocalAllocation(remoteIncomeId, 500_000 ether);
         assertEq(_revDeployer.hashedEncodedConfigurationOf(remoteIncomeId), originHash);
         assertEq(_assertCcipRoute(remoteIncomeId, 1), originSucker);
-        for (uint256 i; i < 3; ++i) {
-            _claim(fixtures[1], i);
-        }
-        assertEq(_vault.totalClaimed(), 500_000 ether);
-        assertEq(jbTokens().totalBalanceOf(ALICE, remoteIncomeId), 300_000 ether);
+        assertEq(jbTokens().totalBalanceOf(OPERATOR, remoteIncomeId), 500_000 ether);
     }
 
     function testRealLaunchAfterEightQuartersKeepsDecayingAndPreservesIdentity() public {
@@ -899,8 +780,34 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
         }
         assertEq(current.weight, expectedWeight, "issuance keeps cutting 2% per quarter, never freezes");
         assertEq(_revOwner.amountToAutoIssue(remoteIncomeId, current.id, address(_helper)), 0);
-        _claim(fixtures[1], 1);
-        assertEq(jbTokens().totalBalanceOf(ALICE, remoteIncomeId), 150_000 ether);
+        assertEq(jbTokens().totalBalanceOf(OPERATOR, remoteIncomeId), 250_000 ether);
+    }
+
+    function testRealFutureStartDefersTheOwnerMintWithoutCashOutDelay() public {
+        SnapshotFixture memory fixture = _snapshot(_holders());
+        uint48 startsAt = uint48(block.timestamp + 10 minutes);
+        uint256 incomeId = _deploySnapshotStarting(8000, fixture, startsAt);
+        (JBRuleset memory stage,,) = jbController().latestQueuedRulesetOf(incomeId);
+        assertEq(jbTokens().totalSupplyOf(incomeId), 0);
+        assertEq(_revOwner.amountToAutoIssue(incomeId, stage.id, address(_helper)), 500_000 ether);
+        // A stage that has not started carries no revnet cash out delay.
+        assertEq(_revOwner.cashOutDelayOf(incomeId), 0);
+        vm.expectPartialRevert(REVOwner.REVOwner_StageNotStarted.selector);
+        _helper.mintInitialAllocation(_fundId);
+
+        // The FUND changes hands before the stage starts: the allocation follows the FUND.
+        vm.prank(OPERATOR);
+        jbProjects().transferFrom(OPERATOR, OWNER, _fundId);
+        vm.warp(startsAt);
+        _mintInitialIncome(incomeId, 500_000 ether);
+        assertEq(jbTokens().totalBalanceOf(OWNER, incomeId), 500_000 ether);
+        assertEq(jbTokens().totalBalanceOf(OPERATOR, incomeId), 0);
+    }
+
+    function testRealPastStartMintsImmediatelyAndInheritsCashOutDelay() public {
+        uint256 incomeId = _deploy(8000);
+        _assertLocalAllocation(incomeId, 500_000 ether);
+        assertEq(_revOwner.cashOutDelayOf(incomeId), block.timestamp + _revDeployer.CASH_OUT_DELAY());
     }
 
     function testRealCanonicalOmnichainFundHookCanLaunchIncomeAfterClosing() public {
@@ -967,6 +874,24 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
         assertGt(
             jbMultiTerminal().cashOutTokensOf(BOB, fundId, 1000 ether, address(usdcToken()), 0, payable(BOB), ""), 0
         );
+    }
+
+    function testRealLinkedLaunchTokenSaltIsScopedToTheCaller() public {
+        uint256 fee = jbProjects().creationFee();
+        address[] memory peers = new address[](1);
+        peers[0] = address(_ccipToOptimism);
+        bytes32 salt = keccak256("shared salt");
+        vm.deal(OWNER, fee);
+        vm.deal(ALICE, fee);
+        vm.prank(OWNER);
+        (, address ownerToken) =
+            _helper.launchFundFor{value: fee}(OWNER, "ipfs://a", "A FUND", "AAA", uint48(block.timestamp), salt, peers);
+        // A launch salt is public (it is emitted). Another launcher reusing it must neither collide with nor block
+        // the first launcher's remaining chains.
+        vm.prank(ALICE);
+        (, address aliceToken) =
+            _helper.launchFundFor{value: fee}(ALICE, "ipfs://b", "B FUND", "BBB", uint48(block.timestamp), salt, peers);
+        assertTrue(ownerToken != aliceToken);
     }
 
     function testRealStockedOmnichainFundShopCanLaunchSeparateIncomeShop() public {
@@ -1145,20 +1070,6 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
         assertEq(incomeHook.STORE().maxTierIdOf(address(incomeHook)), 0);
     }
 
-    function testRealNoncanonicalFundShopCannotEnterIncomeSnapshot() public {
-        _attachFundShop(_hookDeployer(), false);
-        SnapshotFixture memory fixture = _snapshot(_holders());
-        vm.expectPartialRevert(HomerunDeployer.HomerunDeployer_UnsupportedFund.selector);
-        _deploySnapshot(8000, fixture);
-    }
-
-    function testRealFundShopWithNftCashOutsCannotEnterIncomeSnapshot() public {
-        _attachFundShop(JB721TiersHookDeployer(address(_omnichain.HOOK_DEPLOYER())), true);
-        SnapshotFixture memory fixture = _snapshot(_holders());
-        vm.expectPartialRevert(HomerunDeployer.HomerunDeployer_UnsupportedFund.selector);
-        _deploySnapshot(8000, fixture);
-    }
-
     /// @notice Golden vector independently encoded with Viem, including a zero-valued global issuance row.
     /// @dev Uses fixed beneficiary data and the real REVDeployer so this hash does not depend on fixture nonces.
     function testRealRevnetConfigurationMatchesFixedViemVector() public {
@@ -1168,15 +1079,13 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
         snapshot.manifestHash = bytes32(uint256(2));
         snapshot.manifestUri = "ipfs://global-vector";
         snapshot.allocations = new HomerunInitialIncomeAllocation[](3);
-        snapshot.allocations[0] = HomerunInitialIncomeAllocation(1, 7, 99, bytes32(uint256(11)), bytes32(0), 0, 0);
-        snapshot.allocations[1] = HomerunInitialIncomeAllocation(
-            10, 8, 100, bytes32(uint256(12)), bytes32(uint256(21)), 2, uint104(200_000 ether)
-        );
-        snapshot.allocations[2] = HomerunInitialIncomeAllocation(
-            8453, 9, 101, bytes32(uint256(13)), bytes32(uint256(22)), 3, uint104(300_000 ether)
-        );
+        snapshot.allocations[0] = HomerunInitialIncomeAllocation(1, 7, 99, bytes32(uint256(11)), 0);
+        snapshot.allocations[1] =
+            HomerunInitialIncomeAllocation(10, 8, 100, bytes32(uint256(12)), uint104(200_000 ether));
+        snapshot.allocations[2] =
+            HomerunInitialIncomeAllocation(8453, 9, 101, bytes32(uint256(13)), uint104(300_000 ether));
         bytes32 configurationSalt = _helper.configurationSaltFor(snapshot, bytes32(uint256(3)));
-        assertEq(configurationSalt, 0x5eb066edce4131b5cc292e75da46a3303f7915f03506cc9a543b160f27ffcd9a);
+        assertEq(configurationSalt, 0xba844f8a9fd17eec81c3c0e8d0acfc8470d079e6c646bc0e4a099166f4148a11);
 
         REVConfig memory config;
         config.description = REVDescription("Global INCOME vector", "RENT", "ipfs://vector", configurationSalt);
@@ -1209,7 +1118,7 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
         (uint256 incomeId,) = _revDeployer.deployFor(0, config, contexts, suckers, nft, new REVCroptopAllowedPost[](0));
         assertEq(
             _revDeployer.hashedEncodedConfigurationOf(incomeId),
-            0x41bf0e1e9635c90bd0ebf612705b6db6eec7d7024c7b138d9a2325d389365914
+            0x78e512e3b06ea190817cd931528acef3b45664a1a18726b16e41da9c9100f541
         );
     }
 }

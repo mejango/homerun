@@ -18,7 +18,7 @@ const HASH = `0x${'ab'.repeat(32)}` as Hex
 const EXECUTION_HASH = `0x${'ef'.repeat(32)}` as Hex
 const BLOCK_HASH = `0x${'cd'.repeat(32)}` as Hex
 const key = incomeLaunchSessionKey(1, 9n)
-const allocation = { chainId: 1, fundProjectId: 9n, snapshotBlockNumber: 90n, snapshotBlockHash: BLOCK_HASH, merkleRoot: HASH, leafCount: 500n, incomeAmount: INITIAL_INCOME_SUPPLY }
+const allocation = { chainId: 1, fundProjectId: 9n, snapshotBlockNumber: 90n, snapshotBlockHash: BLOCK_HASH, incomeAmount: INITIAL_INCOME_SUPPLY }
 const snapshot = { sourceSetHash: HASH, totalFundSupply: 1_000_000n, manifestHash: HASH, manifestUri: 'ipfs://manifest', allocations: [allocation] }
 const suckersFor = (chainId: JBChainId, chains: JBChainId[]) => parseSuckerDeployerConfig(chainId, chains, [MappableAsset.USDC], { version: 6, bridge: 'ccip', salt: HASH })
 const args = [9n, snapshot, { name: 'Founder Haus INCOME', ticker: 'RENT', uri: 'ipfs://metadata', salt: HASH }, 8_000, 1_800_000_000, suckersFor(1, [1])] as const
@@ -171,9 +171,6 @@ describe('strict INCOME launch recovery imports', () => {
       invalidAllocation({ snapshotBlockHash: zeroHash }),
       invalidAllocation({ fundProjectId: 10n }),
       invalidAllocation({ chainId: 10 }),
-      invalidAllocation({ leafCount: 0n }),
-      invalidAllocation({ leafCount: (1n << 160n) + 1n }),
-      invalidAllocation({ merkleRoot: zeroHash }),
       invalidAllocation({ incomeAmount: INITIAL_INCOME_SUPPLY - 1n }),
       [9n, { ...args[1], sourceSetHash: zeroHash }, ...args.slice(2)],
       [9n, { ...args[1], totalFundSupply: 0n }, ...args.slice(2)],
@@ -193,9 +190,9 @@ describe('strict INCOME launch recovery imports', () => {
       expect(() => importIncomeLaunchPending(memory(), key, JSON.stringify({ ...record, data })), `case ${index}`).toThrow()
     }
   })
-  it('restores chain-specific attempts with zero or dust local allocations and retains the complete global commitment', () => {
-    for (const leaves of [0n, 1n]) {
-      const local = { ...allocation, incomeAmount: 0n, leafCount: leaves, merkleRoot: leaves === 0n ? zeroHash : HASH }
+  it('restores chain-specific attempts with a zero local allocation and retains the complete global commitment', () => {
+    {
+      const local = { ...allocation, incomeAmount: 0n }
       const remote = { ...allocation, chainId: 10, fundProjectId: 44n, snapshotBlockNumber: 500n }
       const linkedArgs = [9n, { ...snapshot, allocations: [local, remote] }, ...args.slice(2, 5), suckersFor(1, [1, 10])] as unknown as typeof args
       const linkedRequest = { ...request, args: linkedArgs }

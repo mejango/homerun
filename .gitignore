@@ -17,3 +17,9 @@ next-env.d.ts
 public/assets/
 public/docs/
 /artifacts/
+
+# Deployment rehearsals and local tests; only verified.json manifests are committed.
+deployments/**/simulation.json
+deployments/**/test.json
+deployments/_test/
+broadcast/

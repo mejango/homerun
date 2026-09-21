@@ -22,19 +22,19 @@ vi.mock('@/lib/income-contracts', async importOriginal => ({ ...await importOrig
 vi.mock('@/lib/income-launch', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/income-launch')>(), assertIncomeLaunchVersion: runtime.version, incomeLaunchBlockers: () => runtime.blockers, prepareIncomeLaunch: runtime.prepare, readIncomeLaunchBinding: runtime.readBinding }))
 vi.mock('@/lib/fund-global-snapshot', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/fund-global-snapshot')>(), readFundGlobalSnapshot: runtime.snapshot }))
 vi.mock('@/lib/fund-global-manifest', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/fund-global-manifest')>(), verifyFundGlobalManifestHistory: runtime.history }))
-vi.mock('@/lib/income-allocation-state', () => ({ readInitialIncomeAllocation: runtime.allocation }))
+vi.mock('@/lib/income-initial-allocation', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/income-initial-allocation')>(), readInitialIncomeAllocation: runtime.allocation }))
 vi.mock('@/lib/income-launch-session', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/income-launch-session')>(), verifyIncomeLaunchExecution: runtime.verify }))
 vi.mock('@/lib/jbcenter-ipfs', () => ({ JBCENTER_IPFS_GATEWAY: 'https://ipfs.test/ipfs/', jbCenterIpfs: { pinMedia: runtime.pinMedia, pinJson: runtime.pinJson } }))
 vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => runtime.safe, waitForSafeExecutionHash: runtime.waitSafe }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 
 import { IncomeLaunch, type PlannedIncomeAllocation } from '../src/components/IncomeLaunch'
-import { fundGlobalManifestHash, serializeFundGlobalManifest } from '../src/lib/fund-global-manifest'
+import { serializeFundGlobalManifest } from '../src/lib/fund-global-manifest'
 import { homerunDeployerAbi } from '../src/lib/income-contracts'
 import { beginIncomeLaunchSubmission, incomeLaunchSessionKey, readIncomeLaunchPending, type IncomeLaunchPending } from '../src/lib/income-launch-session'
 import { readIncomeGlobalDraft, saveIncomeGlobalDraft, serializeIncomeGlobalDraft } from '../src/lib/income-global-launch-draft'
 import { displayChainName } from '../src/lib/chainDisplay'
-import { BLOCK_HASH, CHAIN_IDS, FUND_IDS, HELPER, OWNER, TOKEN, VAULT, fundState, globalDraft, globalManifest, globalSnapshot, hashFor, launchInput, launchPlan } from './fixtures/income-global-launch'
+import { BLOCK_HASH, CHAIN_IDS, FUND_IDS, HELPER, OWNER, TOKEN, fundState, globalDraft, globalManifest, globalSnapshot, hashFor, launchInput, launchPlan } from './fixtures/income-global-launch'
 
 const KEY = incomeLaunchSessionKey(8453, 7n)
 type Callbacks = { reverify: () => Promise<unknown>; beforeWrite: () => Promise<void>; onWriteRejected: () => void }
@@ -42,11 +42,11 @@ function pending() { return readIncomeLaunchPending(localStorage, KEY) }
 function draft() { return readIncomeGlobalDraft(localStorage, 8453, 7n)! }
 function eventReceipt(chainId: number) {
   const local = runtime.manifest!.allocations.find(entry => entry.chainId === chainId)!
-  return { transactionHash: hashFor(chainId), blockNumber: 201n, logs: [{ address: HELPER, topics: encodeEventTopics({ abi: homerunDeployerAbi, eventName: 'IncomeDeployed', args: { fundProjectId: BigInt(local.fundProjectId), incomeProjectId: 10n, owner: OWNER } }), data: encodeAbiParameters([{ type: 'address' }, { type: 'address' }, { type: 'bytes32' }], [TOKEN, VAULT, local.merkleRoot]) }] }
+  return { transactionHash: hashFor(chainId), blockNumber: 201n, logs: [{ address: HELPER, topics: encodeEventTopics({ abi: homerunDeployerAbi, eventName: 'IncomeDeployed', args: { fundProjectId: BigInt(local.fundProjectId), incomeProjectId: 10n, owner: OWNER } }), data: encodeAbiParameters([{ type: 'address' }], [TOKEN]) }] }
 }
 function allocation(chainId: number) {
-  const manifest = runtime.manifest!, local = manifest.allocations.find(entry => entry.chainId === chainId)!
-  return { chainId, deployer: HELPER, fundProjectId: BigInt(local.fundProjectId), snapshotBlockNumber: BigInt(local.snapshotBlockNumber), snapshotBlockHash: local.snapshotBlockHash, sourceSetHash: manifest.sourceSetHash, totalFundSupply: BigInt(manifest.totalFundSupply), launchSalt: manifest.launchSalt, merkleRoot: local.merkleRoot, leafCount: BigInt(local.leafCount), manifestHash: fundGlobalManifestHash(manifest), distributionId: local.distributionId, initialIncomeSupply: 500_000n * 10n ** 18n, localInitialIncomeSupply: BigInt(local.incomeAmount), vault: VAULT, blockNumber: 201n }
+  const local = runtime.manifest!.allocations.find(entry => entry.chainId === chainId)!
+  return { chainId, incomeProjectId: 10n, fundProjectId: BigInt(local.fundProjectId), deployer: HELPER, owner: OWNER, blockNumber: 201n, blockHash: BLOCK_HASH, blockTimestamp: 1200n, stageId: 1000n, stageStart: 1000n, started: true, pending: BigInt(local.incomeAmount) }
 }
 function readFile(file: File) { return new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = reject; reader.readAsText(file) }) }
 
@@ -94,7 +94,7 @@ describe('global INCOME launch flow', () => {
     expect(runtime.pinJson).not.toHaveBeenCalled()
     await click('Save shared launch plan')
     expect(section(42161).textContent).toContain('still needs INCOME')
-    expect(runtime.pinMedia).toHaveBeenCalledOnce(); expect(draft().startsAtOrAfter).toBe(1001)
+    expect(runtime.pinMedia).toHaveBeenCalledOnce(); expect(draft().startsAtOrAfter).toBe(43_161 + 600) // the latest chain clock plus the ten-minute lead
   })
 
   it('keeps the ownership file downloadable after a failed publication', async () => {
@@ -247,7 +247,7 @@ describe('global INCOME launch flow', () => {
     expect(button('Review Base deployment').closest('fieldset')?.disabled).toBe(true)
   })
 
-  it('counts only the network whose receipt, binding, and local vault have all verified', async () => {
+  it('counts only the network whose receipt, binding, and recorded allocation have all verified', async () => {
     await ready(); const record = savedPending(); await act(async () => window.dispatchEvent(new Event('homerun-income-launch-recovery')))
     await hashInput(hashFor(8453)); await click('Check execution', section())
     expect(runtime.verify).toHaveBeenCalledWith(runtime.clients.get(8453), record, hashFor(8453)); expect(pending()).toBeNull()
@@ -256,16 +256,17 @@ describe('global INCOME launch flow', () => {
     expect(host.textContent).toContain('Existing INCOME 8453/10')
   })
 
-  it('retains pending recovery when the vault cannot be verified', async () => {
-    await ready(); savedPending(); runtime.allocation.mockResolvedValue(null); await act(async () => window.dispatchEvent(new Event('homerun-income-launch-recovery')))
+  it('retains pending recovery when the recorded allocation cannot be read', async () => {
+    await ready(); savedPending(); runtime.allocation.mockRejectedValue(new Error('Initial allocation RPC unavailable')); await act(async () => window.dispatchEvent(new Event('homerun-income-launch-recovery')))
     await hashInput(hashFor(8453)); await click('Check execution', section())
-    expect(pending()).not.toBeNull(); expect(host.textContent).toContain('vault could not be verified'); expect(host.textContent).toContain('0 of 4')
+    expect(pending()).not.toBeNull(); expect(host.textContent).toContain('Initial allocation RPC unavailable'); expect(host.textContent).toContain('0 of 4')
+    expect(runtime.allocation).toHaveBeenCalledWith(runtime.clients.get(8453), { chainId: 8453, incomeProjectId: 10n, fundProjectId: 7n })
   })
 
-  it('refuses a funded vault bound to another global source set', async () => {
-    await ready(); savedPending(); runtime.allocation.mockImplementation(async (_client, {chainId}) => ({ ...allocation(chainId), sourceSetHash: BLOCK_HASH })); await act(async () => window.dispatchEvent(new Event('homerun-income-launch-recovery')))
+  it('refuses a deployment whose recorded owner allocation differs from the frozen plan', async () => {
+    await ready(); savedPending(); runtime.allocation.mockImplementation(async (_client, {chainId}) => ({ ...allocation(chainId), pending: 1n })); await act(async () => window.dispatchEvent(new Event('homerun-income-launch-recovery')))
     await hashInput(hashFor(8453)); await click('Check execution', section())
-    expect(pending()).not.toBeNull(); expect(host.textContent).toContain('does not match the verified initial INCOME vault')
+    expect(pending()).not.toBeNull(); expect(host.textContent).toContain('does not match the published manifest')
   })
 
   it('restores downloaded ownership history and republishes the exact imported bytes', async () => {
@@ -312,7 +313,7 @@ describe('global INCOME launch flow', () => {
     expect(host.textContent).toContain('3 of 4 networks confirmed'); expect(host.textContent).not.toContain('Every network’s deployment'); expect(runtime.verify).toHaveBeenCalled()
   })
 
-  it('confirms all four local vaults, including the empty allocation, before declaring completion', async () => {
+  it('confirms all four recorded allocations, including the empty one, before declaring completion', async () => {
     restorePlan(); let shared = draft()
     for (const chainId of CHAIN_IDS) { const record = savedPending(chainId); shared = { ...shared, chains: shared.chains.map(row => row.chainId === chainId ? { ...row, execution: { hash: hashFor(chainId), record } } : row) } }
     saveIncomeGlobalDraft(localStorage, shared); await render()

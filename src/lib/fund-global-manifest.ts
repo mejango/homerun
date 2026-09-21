@@ -1,14 +1,12 @@
 /** Chain-preserving, operator-attested initial INCOME allocations. */
 import type { JBChainId } from '@bananapus/nana-sdk-core'
-import { encodeAbiParameters, getAddress, isAddress, isAddressEqual, keccak256, stringToHex, zeroAddress, zeroHash, type Address, type Hex, type PublicClient } from 'viem'
+import { getAddress, isAddress, isAddressEqual, keccak256, stringToHex, zeroAddress, zeroHash, type Address, type Hex, type PublicClient } from 'viem'
 import { INITIAL_INCOME_SUPPLY } from './income-contracts'
 import { readFundGlobalSnapshot, type FundGlobalSnapshot, type FundGlobalSnapshotInput } from './fund-global-snapshot'
-import { buildFundMerkleTree, type FundSnapshotEntry } from './fund-snapshot-merkle'
 import { ownershipWeight, addOwnershipWeights, sumOwnershipWeights } from './fund-ownership-weight'
 
 export type SnapshotJson = null | boolean | number | string | SnapshotJson[] | { [key: string]: SnapshotJson }
-export const FUND_GLOBAL_MANIFEST_SCHEMA = 'homerun.initial-income.global-snapshot.v2'
-const TYPE_HASH = keccak256(stringToHex('HomerunInitialIncome(uint256 chainId,address deployer,uint256 fundProjectId,bytes32 sourceSetHash,uint256 totalFundSupply,bytes32 salt)'))
+export const FUND_GLOBAL_MANIFEST_SCHEMA = 'homerun.initial-income.global-snapshot.v3'
 const UINT256_LIMIT = 1n << 256n
 
 export type GlobalIncomeAllocation = {
@@ -16,16 +14,13 @@ export type GlobalIncomeAllocation = {
   fundProjectId: string
   snapshotBlockNumber: string
   snapshotBlockHash: Hex
-  merkleRoot: Hex
-  leafCount: string
   incomeAmount: string
-  distributionId: Hex
-  holders: { index: string; beneficiary: Address; fundBalance: string; liveFundBalance: string; pendingFundBalance: string; fundWeight?: { numerator: string; denominator: string }; incomeAmount: string; claimable: boolean; proof: Hex[] }[]
+  holders: { beneficiary: Address; fundBalance: string; liveFundBalance: string; pendingFundBalance: string; fundWeight?: { numerator: string; denominator: string }; incomeAmount: string }[]
 }
 export type FundGlobalManifest = {
   schema: typeof FUND_GLOBAL_MANIFEST_SCHEMA
-  attestation: 'operator-proposed-root; complete-canonical-rpc-history-required'
-  allocationPolicy: 'global-floor-pro-rata; remainder-to-lowest-chain-and-address; preserve-claim-chain'
+  attestation: 'owner-attested-allocation; complete-canonical-rpc-history-required'
+  allocationPolicy: 'global-floor-pro-rata; remainder-to-lowest-chain-and-address; preserve-holder-chain; owner-settles-offchain'
   helper: Address
   launchSalt: Hex
   sourceSetHash: Hex
@@ -106,15 +101,6 @@ function canonicalText(value: unknown): string {
 }
 export function fundGlobalSourceSetHash(snapshot: unknown): Hex { return keccak256(stringToHex(canonicalText(snapshot))) }
 
-export function buildFundGlobalDistributionId(input: {
-  chainId: number; helper: Address; fundProjectId: bigint; sourceSetHash: Hex; totalFundSupply: bigint; launchSalt: Hex
-}): Hex {
-  return keccak256(encodeAbiParameters(
-    [{ type: 'bytes32' }, { type: 'uint256' }, { type: 'address' }, { type: 'uint256' }, { type: 'bytes32' }, { type: 'uint256' }, { type: 'bytes32' }],
-    [TYPE_HASH, BigInt(chain(input.chainId)), address(input.helper, 'helper'), uint(input.fundProjectId.toString(), 'FUND ID', true), hash(input.sourceSetHash, 'source set'), uint(input.totalFundSupply.toString(), 'global FUND supply', true), hash(input.launchSalt, 'launch salt')],
-  ))
-}
-
 /** Internal consistency is distinct from reproducing historical ownership using the RPC. */
 function reportDescription(value: unknown) {
   const report = record(value, 'global snapshot report')
@@ -172,28 +158,25 @@ function buildFromReport(snapshot: SnapshotJson, input: { helper: Address; launc
   const amounts = holders.map(holder => INITIAL_INCOME_SUPPLY * holder.fundWeight.numerator / (holder.fundWeight.denominator * totalFundSupply))
   amounts[0] += INITIAL_INCOME_SUPPLY - amounts.reduce((sum, amount) => sum + amount, 0n)
   const allocations = projects.map((project, position): GlobalIncomeAllocation => {
-    const distributionId = buildFundGlobalDistributionId({ chainId: project.chainId, helper, fundProjectId: project.projectId, sourceSetHash, totalFundSupply, launchSalt })
     const rows = holders.map((holder, index) => ({ ...holder, incomeAmount: amounts[index] })).filter(holder => holder.claimChainId === project.chainId)
-    const entries: FundSnapshotEntry[] = rows.map((holder, index) => ({ index: BigInt(index), beneficiary: holder.beneficiary, fundBalance: holder.fundBalance, incomeAmount: holder.incomeAmount }))
-    const tree = entries.length ? buildFundMerkleTree(distributionId, entries) : { root: zeroHash, proofs: [] as Hex[][] }
     const cut = cuts[position]
     return {
       chainId: project.chainId, fundProjectId: project.projectId.toString(), snapshotBlockNumber: cut.blockNumber.toString(), snapshotBlockHash: cut.blockHash,
-      merkleRoot: tree.root, leafCount: entries.length.toString(), incomeAmount: amounts.filter((_, index) => holders[index].claimChainId === project.chainId).reduce((sum, amount) => sum + amount, 0n).toString(), distributionId,
-      holders: entries.map((entry, index) => ({ index: entry.index.toString(), beneficiary: entry.beneficiary, fundBalance: entry.fundBalance.toString(), liveFundBalance: rows[index].liveFundBalance.toString(), pendingFundBalance: rows[index].pendingFundBalance.toString(),
-        ...(!equalWeight(rows[index].fundWeight, ownershipWeight(entry.fundBalance)) ? { fundWeight: { numerator: rows[index].fundWeight.numerator.toString(), denominator: rows[index].fundWeight.denominator.toString() } } : {}),
-        incomeAmount: entry.incomeAmount.toString(), claimable: entry.incomeAmount > 0n && !isAddressEqual(entry.beneficiary, zeroAddress), proof: tree.proofs[index] })),
+      incomeAmount: rows.reduce((sum, row) => sum + row.incomeAmount, 0n).toString(),
+      holders: rows.map(row => ({ beneficiary: row.beneficiary, fundBalance: row.fundBalance.toString(), liveFundBalance: row.liveFundBalance.toString(), pendingFundBalance: row.pendingFundBalance.toString(),
+        ...(!equalWeight(row.fundWeight, ownershipWeight(row.fundBalance)) ? { fundWeight: { numerator: row.fundWeight.numerator.toString(), denominator: row.fundWeight.denominator.toString() } } : {}),
+        incomeAmount: row.incomeAmount.toString() })),
     }
   })
   if (allocations.reduce((sum, allocation) => sum + BigInt(allocation.incomeAmount), 0n) !== INITIAL_INCOME_SUPPLY) throw new Error('The initial allocations must total exactly 500,000 INCOME across all chains.')
-  return { schema: FUND_GLOBAL_MANIFEST_SCHEMA, attestation: 'operator-proposed-root; complete-canonical-rpc-history-required', allocationPolicy: 'global-floor-pro-rata; remainder-to-lowest-chain-and-address; preserve-claim-chain', helper, launchSalt, sourceSetHash, totalFundSupply: totalFundSupply.toString(), totalIncomeAmount: INITIAL_INCOME_SUPPLY.toString(), snapshot, allocations }
+  return { schema: FUND_GLOBAL_MANIFEST_SCHEMA, attestation: 'owner-attested-allocation; complete-canonical-rpc-history-required', allocationPolicy: 'global-floor-pro-rata; remainder-to-lowest-chain-and-address; preserve-holder-chain; owner-settles-offchain', helper, launchSalt, sourceSetHash, totalFundSupply: totalFundSupply.toString(), totalIncomeAmount: INITIAL_INCOME_SUPPLY.toString(), snapshot, allocations }
 }
 
 export function buildFundGlobalManifest(snapshot: FundGlobalSnapshot, input: { helper: Address; launchSalt: Hex }): FundGlobalManifest {
   return buildFromReport(canonicalSnapshotJson(snapshot), input)
 }
 
-/** Verifies the committed report, deterministic global amounts, per-chain roots and every proof. */
+/** Verifies the committed report and the deterministic global amounts. */
 export function parseFundGlobalManifest(value: unknown): FundGlobalManifest {
   const raw = record(value, 'global INCOME manifest')
   if (raw.schema !== FUND_GLOBAL_MANIFEST_SCHEMA) throw new Error('Unsupported initial INCOME manifest version.')
@@ -209,28 +192,11 @@ export function globalIncomeSnapshotParameters(manifest: FundGlobalManifest, man
   if (!/^ipfs:\/\/[^\s/?#]+(?:\/[^\s]*)?$/.test(manifestUri)) throw new Error('Publish the complete global snapshot to IPFS first.')
   return {
     sourceSetHash: verified.sourceSetHash, totalFundSupply: BigInt(verified.totalFundSupply), manifestHash: fundGlobalManifestHash(verified), manifestUri,
-    allocations: verified.allocations.map(allocation => ({ chainId: allocation.chainId, fundProjectId: BigInt(allocation.fundProjectId), snapshotBlockNumber: BigInt(allocation.snapshotBlockNumber), snapshotBlockHash: allocation.snapshotBlockHash, merkleRoot: allocation.merkleRoot, leafCount: BigInt(allocation.leafCount), incomeAmount: BigInt(allocation.incomeAmount) })),
+    allocations: verified.allocations.map(allocation => ({ chainId: allocation.chainId, fundProjectId: BigInt(allocation.fundProjectId), snapshotBlockNumber: BigInt(allocation.snapshotBlockNumber), snapshotBlockHash: allocation.snapshotBlockHash, incomeAmount: BigInt(allocation.incomeAmount) })),
   }
 }
 
-export type FundGlobalClaimBinding = {
-  chainId: number; deployer: Address; fundProjectId: bigint; snapshotBlockNumber: bigint; snapshotBlockHash: Hex
-  sourceSetHash: Hex; totalFundSupply: bigint; launchSalt: Hex; merkleRoot: Hex; leafCount: bigint
-  manifestHash: Hex; distributionId: Hex; initialIncomeSupply: bigint; localInitialIncomeSupply: bigint
-}
-export function getFundGlobalClaim(value: unknown, binding: FundGlobalClaimBinding, beneficiary: Address) {
-  const manifest = parseFundGlobalManifest(value)
-  const allocation = manifest.allocations.find(entry => entry.chainId === binding.chainId && BigInt(entry.fundProjectId) === binding.fundProjectId)
-  if (!allocation || !isAddressEqual(manifest.helper, binding.deployer) || manifest.sourceSetHash !== binding.sourceSetHash.toLowerCase() || manifest.launchSalt !== binding.launchSalt.toLowerCase()
-    || BigInt(manifest.totalFundSupply) !== binding.totalFundSupply || BigInt(allocation.snapshotBlockNumber) !== binding.snapshotBlockNumber || allocation.snapshotBlockHash !== binding.snapshotBlockHash.toLowerCase()
-    || allocation.merkleRoot !== binding.merkleRoot.toLowerCase() || BigInt(allocation.leafCount) !== binding.leafCount || allocation.distributionId !== binding.distributionId.toLowerCase()
-    || BigInt(allocation.incomeAmount) !== binding.localInitialIncomeSupply || binding.initialIncomeSupply !== INITIAL_INCOME_SUPPLY || fundGlobalManifestHash(manifest) !== binding.manifestHash.toLowerCase()) throw new Error('The global manifest does not match the verified initial INCOME vault on this chain.')
-  const normalized = address(beneficiary, 'claim beneficiary', true)
-  const entry = allocation.holders.find(holder => isAddressEqual(holder.beneficiary, normalized))
-  return { manifest, allocation, claim: entry?.claimable ? { index: BigInt(entry.index), beneficiary: entry.beneficiary, fundBalance: BigInt(entry.fundBalance), incomeAmount: BigInt(entry.incomeAmount), proof: [...entry.proof] } : null }
-}
-
-/** Reproduce every chain's finalized history before proposing an immutable root. */
+/** Reproduce every chain's finalized history before attesting to an allocation. */
 export async function verifyFundGlobalManifestHistory(clients: ReadonlyMap<number, PublicClient>, value: unknown, options: Pick<FundGlobalSnapshotInput, 'signal' | 'logBlockWindow' | 'logResponseLimit' | 'onProgress'> = {}): Promise<FundGlobalManifest> {
   const manifest = parseFundGlobalManifest(value)
   const descriptor = reportDescription(manifest.snapshot)

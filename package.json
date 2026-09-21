@@ -26,7 +26,7 @@
     "lint": "eslint src scripts --max-warnings=0",
     "dev:prototype": "node scripts/serve.mjs",
     "build:prototype": "node scripts/build.mjs",
-    "test:deployment": "node scripts/test-contracts.mjs --match-path \"test/deployment/*.t.sol\" && node --test test/deployment/*.test.cjs test/deployment/*.test.mjs",
+    "test:deployment": "FOUNDRY_PROFILE=deploy node scripts/test-contracts.mjs --match-path \"test/deployment/*.t.sol\" && node --test test/deployment/*.test.cjs test/deployment/*.test.mjs",
     "deploy:preflight:testnets": "sh script/deploy.sh preflight testnets",
     "deploy:rehearse:testnets": "sh script/deploy.sh rehearse testnets",
     "deploy:propose:testnets": "sh script/deploy.sh propose testnets",

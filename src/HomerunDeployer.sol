@@ -1,29 +1,23 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {IJB721TiersHook} from "@bananapus/721-hook-v6/src/interfaces/IJB721TiersHook.sol";
-import {JB721TiersHookDeployer} from "@bananapus/721-hook-v6/src/JB721TiersHookDeployer.sol";
 import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
 import {IJBProjects} from "@bananapus/core-v6/src/interfaces/IJBProjects.sol";
 import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {IJBTokens} from "@bananapus/core-v6/src/interfaces/IJBTokens.sol";
-import {JBTokens} from "@bananapus/core-v6/src/JBTokens.sol";
 import {JBConstants} from "@bananapus/core-v6/src/libraries/JBConstants.sol";
 import {JBCurrencyIds} from "@bananapus/core-v6/src/libraries/JBCurrencyIds.sol";
 import {JBPayerTrackerLib} from "@bananapus/core-v6/src/libraries/JBPayerTrackerLib.sol";
 import {JBAccountingContext} from "@bananapus/core-v6/src/structs/JBAccountingContext.sol";
 import {JBRuleset} from "@bananapus/core-v6/src/structs/JBRuleset.sol";
 import {JBRulesetConfig} from "@bananapus/core-v6/src/structs/JBRulesetConfig.sol";
-import {JBRulesetMetadata} from "@bananapus/core-v6/src/structs/JBRulesetMetadata.sol";
 import {JBSplit} from "@bananapus/core-v6/src/structs/JBSplit.sol";
 import {JBTerminalConfig} from "@bananapus/core-v6/src/structs/JBTerminalConfig.sol";
 import {IJBOmnichainDeployer} from "@bananapus/omnichain-deployers-v6/src/interfaces/IJBOmnichainDeployer.sol";
 import {JBOmnichainDeployer} from "@bananapus/omnichain-deployers-v6/src/JBOmnichainDeployer.sol";
-import {JBDeployerHookConfig} from "@bananapus/omnichain-deployers-v6/src/structs/JBDeployerHookConfig.sol";
 import {JBSuckerDeploymentConfig} from "@bananapus/omnichain-deployers-v6/src/structs/JBSuckerDeploymentConfig.sol";
-import {IJBOwnable} from "@bananapus/ownable-v6/src/interfaces/IJBOwnable.sol";
 import {IJBCCIPSuckerDeployer} from "@bananapus/suckers-v6/src/interfaces/IJBCCIPSuckerDeployer.sol";
 import {IJBSuckerDeployer} from "@bananapus/suckers-v6/src/interfaces/IJBSuckerDeployer.sol";
 import {IJBSuckerRegistry} from "@bananapus/suckers-v6/src/interfaces/IJBSuckerRegistry.sol";
@@ -31,8 +25,8 @@ import {JBSuckerDeployerConfig} from "@bananapus/suckers-v6/src/structs/JBSucker
 import {JBTokenMapping} from "@bananapus/suckers-v6/src/structs/JBTokenMapping.sol";
 import {ERC2771Context} from "@openzeppelin/contracts/metatx/ERC2771Context.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IREVDeployer} from "@rev-net/core-v6/src/interfaces/IREVDeployer.sol";
@@ -48,20 +42,20 @@ import {REVSuckerDeploymentConfig} from "@rev-net/core-v6/src/structs/REVSuckerD
 import {IArbSys} from "./interfaces/IArbSys.sol";
 import {IHomerunAllowlistHook} from "./interfaces/IHomerunAllowlistHook.sol";
 import {IHomerunDeployer} from "./interfaces/IHomerunDeployer.sol";
-import {HomerunDeployerLib} from "./libraries/HomerunDeployerLib.sol";
 import {HomerunChainConfig} from "./structs/HomerunChainConfig.sol";
 import {HomerunInitialIncomeAllocation} from "./structs/HomerunInitialIncomeAllocation.sol";
 import {HomerunInitialIncomeSnapshot} from "./structs/HomerunInitialIncomeSnapshot.sol";
 
-/// @notice Launches Homerun FUNDs with fixed campaign rules and, once a FUND closes, its INCOME revnet together with
-/// the atomic, bounded initial INCOME allocation.
+/// @notice Launches Homerun FUNDs with fixed campaign rules and, for a FUND, its INCOME revnet with the bounded
+/// initial INCOME allocation recorded for the FUND's owner.
 /// @dev FUND rules and INCOME economics are fixed here; callers choose names, tickers, timing, chains and the INCOME
-/// reserved percent. The FUND owner attests to a fixed, published snapshot root. Root completeness, historical
-/// balances, and allocation sums are NOT verified onchain; reproduce and reconcile the manifest before signing. The
-/// entire local allocation is minted before returning; every chain commits the same global allocation and deploys
-/// asynchronously. Vault claims transfer existing tokens and never change FUND balances. This contract retains no
-/// project ownership, tokens, or operator permissions. INCOME's reserved split is unlocked and routed to the owner,
-/// who redirects it later through the stock controller. UNAUDITED.
+/// reserved percent. The FUND owner attests to a fixed, published snapshot of who holds what. Its completeness,
+/// historical balances, allocation sums, and the FUND's state are NOT verified onchain; close the campaign, then
+/// reproduce and reconcile the manifest before signing. Each chain's share of the allocation is a stock revnet
+/// auto-issuance to this contract that anyone can mint to the FUND's current owner once INCOME's stage has started;
+/// the owner settles it to the snapshot's holders. Every chain commits the same global allocation and deploys
+/// asynchronously. This contract retains no project ownership, tokens, or operator permissions. INCOME's reserved split
+/// is unlocked and routed to the owner, who redirects it later through the stock controller. UNAUDITED.
 contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IHomerunDeployer {
     // A library that adds default safety checks to ERC20 transfers.
     using SafeERC20 for IERC20;
@@ -71,11 +65,11 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
     //*********************************************************************//
 
     error HomerunDeployer_AlreadyDeployed(uint256 fundProjectId, uint256 incomeProjectId);
-    error HomerunDeployer_FundNotClosed(uint256 fundProjectId);
     error HomerunDeployer_IncompleteIssuance(uint256 incomeProjectId);
     error HomerunDeployer_InvalidConfiguration();
     error HomerunDeployer_InvalidProtocolWiring();
     error HomerunDeployer_InvalidSnapshot();
+    error HomerunDeployer_NothingToMint(uint256 fundProjectId);
     error HomerunDeployer_Unauthorized(address caller);
     error HomerunDeployer_UnsupportedFund(uint256 fundProjectId);
     error HomerunDeployer_WrongCreationFee(uint256 sent, uint256 required);
@@ -83,11 +77,6 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
     //*********************************************************************//
     // ------------------------- public constants ------------------------ //
     //*********************************************************************//
-
-    /// @notice The EIP-712-style type hash committed in every initial allocation leaf.
-    bytes32 public constant override DISTRIBUTION_TYPEHASH = keccak256(
-        "HomerunInitialIncome(uint256 chainId,address deployer,uint256 fundProjectId,bytes32 sourceSetHash,uint256 totalFundSupply,bytes32 salt)"
-    );
 
     /// @notice The cash out tax rate a FUND launches with, out of `JBConstants.MAX_CASH_OUT_TAX_RATE`.
     /// @dev 10% while the campaign is open. The owner closes the campaign by raising it to the maximum.
@@ -156,9 +145,6 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
     /// @notice The directory of terminals and controllers.
     IJBDirectory public immutable override DIRECTORY;
 
-    /// @notice The code hash of a canonical `JBERC20` clone. Only FUNDs still using one can launch INCOME.
-    bytes32 public immutable override FUND_TOKEN_CODE_HASH;
-
     /// @notice The omnichain deployer every FUND is launched through.
     IJBOmnichainDeployer public immutable override OMNICHAIN_DEPLOYER;
 
@@ -199,10 +185,6 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
     /// @dev Holds `type(uint256).max` while a launch is in progress so external calls cannot reenter.
     /// @custom:param fundProjectId The ID of the FUND project.
     mapping(uint256 fundProjectId => uint256 incomeProjectId) public override incomeProjectIdOf;
-
-    /// @notice The vault holding this chain's initial INCOME allocation for a FUND, if any.
-    /// @custom:param fundProjectId The ID of the FUND project.
-    mapping(uint256 fundProjectId => address vault) public override initialAllocationVaultOf;
 
     /// @notice Whether a project was launched as a FUND through this deployer. INCOME only attaches to these.
     /// @custom:param projectId The ID of the project.
@@ -288,28 +270,31 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
                 || IERC20Metadata(USDC).decimals() != _USDC_DECIMALS
         ) revert HomerunDeployer_InvalidProtocolWiring();
 
-        // A FUND that swapped its token for a custom contract cannot enter an INCOME snapshot.
-        address implementation = address(JBTokens(address(TOKENS)).TOKEN());
-        if (implementation.code.length == 0) revert HomerunDeployer_InvalidProtocolWiring();
-        FUND_TOKEN_CODE_HASH =
-            keccak256(abi.encodePacked(hex"363d3d373d3d3d363d73", implementation, hex"5af43d82803e903d91602b57fd5bf3"));
+        // Relayed allowlist changes must resolve the same signer this contract does.
+        if (!ERC2771Context(address(ALLOWLIST_HOOK)).isTrustedForwarder(trustedForwarder())) {
+            revert HomerunDeployer_InvalidProtocolWiring();
+        }
     }
 
     //*********************************************************************//
     // ---------------------- external transactions ---------------------- //
     //*********************************************************************//
 
-    /// @notice Launches a closed FUND's INCOME revnet, mints this chain's share of the initial allocation and funds
-    /// its claim vault, all in one transaction.
-    /// @dev Only the FUND's owner can call this, and only once per FUND. The snapshot root is the owner's attestation;
-    /// its completeness is not proven onchain. The caller becomes the INCOME revnet's operator and holds its whole
-    /// reserved split.
+    /// @notice Launches a FUND's INCOME revnet with this chain's initial allocation recorded as an auto-issuance to
+    /// this contract, for `mintInitialAllocation` to pay to the FUND's owner.
+    /// @dev Only the FUND's owner can call this, and only once per FUND. The snapshot is the owner's attestation; its
+    /// completeness is not proven onchain, and neither is the FUND's state: close the FUND on every linked chain and
+    /// let bridged FUND settle before taking any chain's snapshot. The caller becomes the INCOME revnet's operator and
+    /// holds its whole reserved split. Launch the first chain with `startsAtOrAfter` a few minutes ahead so the revnet
+    /// deployer applies no cash out delay there; a chain launched after the shared start inherits the revnet deployer's
+    /// standard cash out delay.
     /// @param fundProjectId The ID of the FUND project.
     /// @param snapshot The global initial allocation snapshot, identical on every chain.
     /// @param description The INCOME name, ticker, metadata URI and launch salt.
     /// @param reservedBps The share of new INCOME reserved for the owner's split, out of
     /// `JBConstants.MAX_RESERVED_PERCENT`.
-    /// @param startsAtOrAfter The shared start of the INCOME issuance schedule. Must not be in the future.
+    /// @param startsAtOrAfter The shared start of the INCOME issuance schedule on every chain; the issuance cut
+    /// schedule counts from it.
     /// @param suckerDeploymentConfiguration The suckers linking INCOME across the snapshot's chains.
     /// @return incomeProjectId The ID of the new INCOME project.
     function deployIncome(
@@ -337,7 +322,7 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
             bytes(description.name).length == 0 || bytes(description.ticker).length == 0
                 || bytes(description.uri).length == 0 || description.salt == bytes32(0)
                 || reservedBps > JBConstants.MAX_RESERVED_PERCENT || block.chainid > type(uint32).max
-                || startsAtOrAfter == 0 || startsAtOrAfter > block.timestamp
+                || startsAtOrAfter == 0
         ) revert HomerunDeployer_InvalidConfiguration();
 
         HomerunInitialIncomeAllocation memory allocation =
@@ -345,7 +330,7 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
         _requireSuckers({
             snapshot: snapshot, configuration: suckerDeploymentConfiguration, launchSalt: description.salt
         });
-        address fundToken = _requireClosedFund(fundProjectId);
+        address fundToken = address(TOKENS.tokenOf(fundProjectId));
         REVConfig memory configuration = _configurationFor({
             description: description, snapshot: snapshot, reservedBps: reservedBps, startsAtOrAfter: startsAtOrAfter
         });
@@ -355,24 +340,53 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
 
         incomeProjectId =
             _launchIncome({configuration: configuration, suckerDeploymentConfiguration: suckerDeploymentConfiguration});
-        address vault = _issueAndFundVault({
-            incomeProjectId: incomeProjectId, allocation: allocation, snapshot: snapshot, salt: description.salt
-        });
+        // The revnet deployer keys its stage's auto-issuance by this block's timestamp, which is also the ID the
+        // rulesets registry gives a new project's first ruleset.
+        (JBRuleset memory ruleset,) = CONTROLLER.getRulesetOf({projectId: incomeProjectId, rulesetId: block.timestamp});
         if (
-            PROJECTS.ownerOf(incomeProjectId) != address(REV_OWNER)
+            ruleset.id != block.timestamp || PROJECTS.ownerOf(incomeProjectId) != address(REV_OWNER)
                 || !REV_OWNER.isOperatorOf({revnetId: incomeProjectId, addr: _msgSender()})
+                || REV_OWNER.amountToAutoIssue({
+                        revnetId: incomeProjectId, stageId: block.timestamp, beneficiary: address(this)
+                    }) != allocation.incomeAmount
         ) revert HomerunDeployer_IncompleteIssuance(incomeProjectId);
 
         incomeProjectIdOf[fundProjectId] = incomeProjectId;
-        initialAllocationVaultOf[fundProjectId] = vault;
 
         emit IncomeDeployed({
+            fundProjectId: fundProjectId, incomeProjectId: incomeProjectId, owner: _msgSender(), fundToken: fundToken
+        });
+    }
+
+    /// @notice Mints a FUND's initial INCOME allocation to whoever owns the FUND right now.
+    /// @dev Anyone can call this once INCOME's stage has started, and it pays out once. The owner settles the published
+    /// allocation to the snapshot's holders from their balance.
+    /// @param fundProjectId The ID of the FUND project.
+    function mintInitialAllocation(uint256 fundProjectId) external override nonReentrant {
+        uint256 incomeProjectId = incomeProjectIdOf[fundProjectId];
+        if (incomeProjectId == 0 || incomeProjectId == type(uint256).max) {
+            revert HomerunDeployer_UnsupportedFund(fundProjectId);
+        }
+        // INCOME has exactly one stage; the revnet deployer keyed its auto-issuance by that stage's ID.
+        (JBRuleset memory stage,,) = CONTROLLER.latestQueuedRulesetOf(incomeProjectId);
+        uint256 amount =
+            REV_OWNER.amountToAutoIssue({revnetId: incomeProjectId, stageId: stage.id, beneficiary: address(this)});
+        if (amount == 0) revert HomerunDeployer_NothingToMint(fundProjectId);
+        address owner = PROJECTS.ownerOf(fundProjectId);
+        IERC20 token = IERC20(address(TOKENS.tokenOf(incomeProjectId)));
+        // Balance deltas, not absolute balances, prove the mint, so tokens sent here by anyone else cannot block it.
+        uint256 heldBefore = token.balanceOf(address(this));
+        REV_OWNER.autoIssueFor({revnetId: incomeProjectId, stageId: stage.id, beneficiary: address(this)});
+        if (token.balanceOf(address(this)) - heldBefore != amount) {
+            revert HomerunDeployer_IncompleteIssuance(incomeProjectId);
+        }
+        token.safeTransfer({to: owner, value: amount});
+        emit InitialAllocationMinted({
             fundProjectId: fundProjectId,
             incomeProjectId: incomeProjectId,
-            owner: _msgSender(),
-            fundToken: fundToken,
-            initialAllocationVault: vault,
-            merkleRoot: allocation.merkleRoot
+            owner: owner,
+            incomeAmount: amount,
+            caller: _msgSender()
         });
     }
 
@@ -381,9 +395,9 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
     /// `FUND_CASH_OUT_TAX_RATE`, no reserved issuance, no owner minting, no payouts, the allowlist hook on payments,
     /// and no duration so the owner can change them at any time. Every FUND goes through the stock omnichain deployer,
     /// so it carries that deployer's data hook and a default 721 hook whether or not it links chains. Linked launches
-    /// must use the same `salt` and the same caller on every chain: the sucker salt is scoped to the caller so
-    /// unrelated launches cannot collide, and the token salt is scoped to this contract so a linked FUND's token
-    /// shares one address on every chain.
+    /// must use the same `salt`, the same caller and the same owner on every chain: the sucker and token salts are
+    /// scoped to the caller and the owner, so unrelated launches reusing a public salt cannot collide with, block, or
+    /// pair with each other, and a linked FUND's token still shares one address on every chain.
     /// @param owner The address that will own the FUND.
     /// @param projectUri The FUND's metadata URI.
     /// @param name The FUND token's name.
@@ -396,8 +410,8 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
     function launchFundFor(
         address owner,
         string calldata projectUri,
-        string calldata name,
-        string calldata ticker,
+        string memory name,
+        string memory ticker,
         uint48 mustStartAtOrAfter,
         bytes32 salt,
         address[] calldata peerSuckerDeployers
@@ -413,29 +427,22 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
         ) revert HomerunDeployer_InvalidConfiguration();
         uint256 creationFee = PROJECTS.creationFee();
         if (msg.value != creationFee) revert HomerunDeployer_WrongCreationFee(msg.value, creationFee);
-        bool linked = peerSuckerDeployers.length != 0;
-        if (linked != (salt != bytes32(0)) || (linked && mustStartAtOrAfter == 0)) {
+        // One salt for the suckers and the token, scoped so only the same caller launching for the same owner can
+        // reproduce it on another chain. Zero for a single-chain FUND.
+        bytes32 scopedSalt;
+        if (peerSuckerDeployers.length != 0) {
+            if (salt == bytes32(0) || mustStartAtOrAfter == 0) revert HomerunDeployer_InvalidConfiguration();
+            scopedSalt = _linkedSalt({owner: owner, salt: salt});
+        } else if (salt != bytes32(0)) {
             revert HomerunDeployer_InvalidConfiguration();
         }
 
-        JBRulesetConfig[] memory rulesetConfigurations = new JBRulesetConfig[](1);
-        rulesetConfigurations[0].mustStartAtOrAfter = mustStartAtOrAfter;
-        rulesetConfigurations[0].weight = FUND_WEIGHT;
-        rulesetConfigurations[0].metadata.cashOutTaxRate = FUND_CASH_OUT_TAX_RATE;
-        rulesetConfigurations[0].metadata.baseCurrency = JBCurrencyIds.USD;
-        // The omnichain deployer keeps this as the FUND's extra hook and consults it on every payment.
-        rulesetConfigurations[0].metadata.dataHook = address(ALLOWLIST_HOOK);
-        rulesetConfigurations[0].metadata.useDataHookForPay = true;
-
-        JBTerminalConfig[] memory terminalConfigurations = new JBTerminalConfig[](2);
-        terminalConfigurations[0].terminal = TERMINAL;
-        terminalConfigurations[0].accountingContextsToAccept = new JBAccountingContext[](1);
-        terminalConfigurations[0].accountingContextsToAccept[0] = _usdcAccountingContext();
-        terminalConfigurations[1].terminal = ROUTER_TERMINAL_REGISTRY;
+        (JBRulesetConfig[] memory rulesetConfigurations, JBTerminalConfig[] memory terminalConfigurations) =
+            _fundConfigurations(mustStartAtOrAfter);
 
         JBSuckerDeploymentConfig memory suckerDeploymentConfiguration;
-        if (linked) {
-            suckerDeploymentConfiguration.salt = keccak256(abi.encode(_msgSender(), salt));
+        if (scopedSalt != bytes32(0)) {
+            suckerDeploymentConfiguration.salt = scopedSalt;
             suckerDeploymentConfiguration.deployerConfigurations = _suckerDeployerConfigurationsFor(peerSuckerDeployers);
         }
 
@@ -451,7 +458,7 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
         });
         originalPayer = address(0);
 
-        token = address(CONTROLLER.deployERC20For({projectId: projectId, name: name, symbol: ticker, salt: salt}));
+        token = address(CONTROLLER.deployERC20For({projectId: projectId, name: name, symbol: ticker, salt: scopedSalt}));
         PROJECTS.safeTransferFrom({from: address(this), to: owner, tokenId: projectId});
         isFund[projectId] = true;
 
@@ -461,35 +468,6 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
     //*********************************************************************//
     // ------------------------- external views -------------------------- //
     //*********************************************************************//
-
-    /// @notice The domain every initial allocation leaf for a FUND is committed under on this chain.
-    /// @dev The one-per-FUND binding associates it with the resulting INCOME.
-    /// @param fundProjectId The ID of the FUND project.
-    /// @param snapshot The global initial allocation snapshot.
-    /// @param salt The salt the FUND owner launches INCOME with.
-    /// @return distributionId The distribution ID.
-    function distributionIdFor(
-        uint256 fundProjectId,
-        HomerunInitialIncomeSnapshot calldata snapshot,
-        bytes32 salt
-    )
-        external
-        view
-        override
-        returns (bytes32 distributionId)
-    {
-        return keccak256(
-            abi.encode(
-                DISTRIBUTION_TYPEHASH,
-                block.chainid,
-                address(this),
-                fundProjectId,
-                snapshot.sourceSetHash,
-                snapshot.totalFundSupply,
-                salt
-            )
-        );
-    }
 
     /// @notice Accepts the project NFTs this contract launches, on their way to the owner.
     /// @dev Only `PROJECTS` may deliver one.
@@ -514,7 +492,7 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
     //*********************************************************************//
 
     /// @notice The revnet description salt that commits a snapshot into INCOME's cross-chain identity.
-    /// @dev Uses the original launch salt so the leaf domain never references its own root or manifest hash.
+    /// @dev Every chain of a linked INCOME must launch with the same snapshot and launch salt to pair.
     /// @param snapshot The global initial allocation snapshot.
     /// @param launchSalt The salt the FUND owner launches INCOME with.
     /// @return salt The configuration salt.
@@ -541,64 +519,6 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
     //*********************************************************************//
     // ---------------------- internal transactions ---------------------- //
     //*********************************************************************//
-
-    /// @notice Mints this chain's initial allocation to a fresh vault and proves the vault holds exactly that much.
-    /// @param incomeProjectId The ID of the INCOME project.
-    /// @param allocation This chain's allocation from the snapshot.
-    /// @param snapshot The global initial allocation snapshot.
-    /// @param salt The salt the FUND owner launched INCOME with.
-    /// @return vault The funded vault.
-    function _issueAndFundVault(
-        uint256 incomeProjectId,
-        HomerunInitialIncomeAllocation memory allocation,
-        HomerunInitialIncomeSnapshot calldata snapshot,
-        bytes32 salt
-    )
-        internal
-        returns (address vault)
-    {
-        // The revnet deployer keys its first stage's auto-issuance by this deployment's block timestamp. The current
-        // stage may already be later on a late chain; the original stage's entitlement remains claimable.
-        uint256 stageId = block.timestamp;
-        (JBRuleset memory ruleset,) = CONTROLLER.getRulesetOf({projectId: incomeProjectId, rulesetId: stageId});
-        address token = address(TOKENS.tokenOf(incomeProjectId));
-        if (
-            ruleset.id != stageId || token.codehash != FUND_TOKEN_CODE_HASH
-                || REV_OWNER.amountToAutoIssue({
-                        revnetId: incomeProjectId, stageId: stageId, beneficiary: address(this)
-                    }) != allocation.incomeAmount
-        ) revert HomerunDeployer_IncompleteIssuance(incomeProjectId);
-
-        if (allocation.incomeAmount != 0) {
-            REV_OWNER.autoIssueFor({revnetId: incomeProjectId, stageId: stageId, beneficiary: address(this)});
-        }
-        if (
-            REV_OWNER.amountToAutoIssue({revnetId: incomeProjectId, stageId: stageId, beneficiary: address(this)}) != 0
-                || IERC20(token).balanceOf(address(this)) != allocation.incomeAmount
-                || TOKENS.totalSupplyOf(incomeProjectId) != allocation.incomeAmount
-                || CONTROLLER.pendingReservedTokenBalanceOf(incomeProjectId) != 0
-        ) revert HomerunDeployer_IncompleteIssuance(incomeProjectId);
-
-        vault = HomerunDeployerLib.deployVault({
-            incomeToken: token,
-            incomeProjectId: incomeProjectId,
-            fundProjectId: allocation.fundProjectId,
-            snapshotBlockNumber: allocation.snapshotBlockNumber,
-            snapshotBlockHash: allocation.snapshotBlockHash,
-            totalFundSupply: snapshot.totalFundSupply,
-            launchSalt: salt,
-            merkleRoot: allocation.merkleRoot,
-            leafCount: allocation.leafCount,
-            manifestHash: snapshot.manifestHash,
-            manifestUri: snapshot.manifestUri,
-            sourceSetHash: snapshot.sourceSetHash,
-            localInitialIncomeSupply: allocation.incomeAmount
-        });
-        if (allocation.incomeAmount != 0) IERC20(token).safeTransfer({to: vault, value: allocation.incomeAmount});
-        if (IERC20(token).balanceOf(vault) != allocation.incomeAmount || IERC20(token).balanceOf(address(this)) != 0) {
-            revert HomerunDeployer_IncompleteIssuance(incomeProjectId);
-        }
-    }
 
     /// @notice Launches the INCOME revnet through the stock revnet deployer with an empty, owner-managed shop.
     /// @param configuration The revnet configuration.
@@ -649,7 +569,8 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
 
     /// @notice The INCOME revnet configuration for a launch.
     /// @dev One stage: `INCOME_INITIAL_ISSUANCE` per USD, cut `INCOME_CUT_PERCENT` every `QUARTER` indefinitely,
-    /// `INCOME_CASH_OUT_TAX_RATE`, and one unlocked reserved split held by the caller until other recipients exist.
+    /// `INCOME_CASH_OUT_TAX_RATE`, one unlocked reserved split held by the caller until other recipients exist, and
+    /// every chain's initial allocation as an auto-issuance to this contract, paid to the FUND's owner on request.
     /// @param description The INCOME name, ticker, metadata URI and launch salt.
     /// @param snapshot The global initial allocation snapshot.
     /// @param reservedBps The share of new INCOME reserved for the owner's split.
@@ -705,6 +626,40 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
         });
     }
 
+    /// @notice The fixed FUND rules and terminals.
+    /// @param mustStartAtOrAfter The earliest the FUND's rules take effect.
+    /// @return rulesetConfigurations The FUND's single ruleset.
+    /// @return terminalConfigurations The USDC terminal and the router terminal registry.
+    function _fundConfigurations(uint48 mustStartAtOrAfter)
+        internal
+        view
+        returns (JBRulesetConfig[] memory rulesetConfigurations, JBTerminalConfig[] memory terminalConfigurations)
+    {
+        rulesetConfigurations = new JBRulesetConfig[](1);
+        rulesetConfigurations[0].mustStartAtOrAfter = mustStartAtOrAfter;
+        rulesetConfigurations[0].weight = FUND_WEIGHT;
+        rulesetConfigurations[0].metadata.cashOutTaxRate = FUND_CASH_OUT_TAX_RATE;
+        rulesetConfigurations[0].metadata.baseCurrency = JBCurrencyIds.USD;
+        // The omnichain deployer keeps this as the FUND's extra hook and consults it on every payment.
+        rulesetConfigurations[0].metadata.dataHook = address(ALLOWLIST_HOOK);
+        rulesetConfigurations[0].metadata.useDataHookForPay = true;
+
+        terminalConfigurations = new JBTerminalConfig[](2);
+        terminalConfigurations[0].terminal = TERMINAL;
+        terminalConfigurations[0].accountingContextsToAccept = new JBAccountingContext[](1);
+        terminalConfigurations[0].accountingContextsToAccept[0] = _usdcAccountingContext();
+        terminalConfigurations[1].terminal = ROUTER_TERMINAL_REGISTRY;
+    }
+
+    /// @notice The salt a linked launch's suckers and token share, scoped so only the same caller launching for the
+    /// same owner reproduces it on another chain.
+    /// @param owner The address that will own the FUND.
+    /// @param salt The caller's salt.
+    /// @return scopedSalt The scoped salt.
+    function _linkedSalt(address owner, bytes32 salt) internal view returns (bytes32 scopedSalt) {
+        return keccak256(abi.encode(_msgSender(), owner, salt));
+    }
+
     /// @notice The trusted forwarder of the omnichain deployer configured for this chain.
     /// @dev Called from the constructor's inheritance list, before any immutable is set.
     /// @param chains The per-chain configuration passed to the constructor.
@@ -722,68 +677,6 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
     /// @return deployer The omnichain deployer.
     function _omnichainDeployer() internal view returns (JBOmnichainDeployer deployer) {
         return JBOmnichainDeployer(address(OMNICHAIN_DEPLOYER));
-    }
-
-    /// @notice Reverts unless a FUND is closed with nothing pending and still uses its canonical token.
-    /// @dev Closed means payments are paused, cash outs are fully taxed, owner minting is off, no reserved tokens are
-    /// pending and no ruleset is queued. A closed FUND may keep its allowlist hook and a stock 721 shop that does not
-    /// handle cash outs; any other hook is foreign.
-    /// @param fundProjectId The ID of the FUND project.
-    /// @return token The FUND ERC-20.
-    function _requireClosedFund(uint256 fundProjectId) internal view returns (address token) {
-        if (address(DIRECTORY.controllerOf(fundProjectId)) != address(CONTROLLER)) {
-            revert HomerunDeployer_UnsupportedFund(fundProjectId);
-        }
-        (JBRuleset memory ruleset, JBRulesetMetadata memory metadata) = CONTROLLER.currentRulesetOf(fundProjectId);
-        (JBRuleset memory latest,,) = CONTROLLER.latestQueuedRulesetOf(fundProjectId);
-        (JBRuleset memory upcoming,) = CONTROLLER.upcomingRulesetOf(fundProjectId);
-        if (
-            ruleset.id == 0 || (latest.id != 0 && latest.id != ruleset.id)
-                || (upcoming.id != 0 && upcoming.id != ruleset.id) || !metadata.pausePay
-                || metadata.cashOutTaxRate != JBConstants.MAX_CASH_OUT_TAX_RATE || metadata.allowOwnerMinting
-                || CONTROLLER.pendingReservedTokenBalanceOf(fundProjectId) != 0
-        ) revert HomerunDeployer_FundNotClosed(fundProjectId);
-
-        if (metadata.dataHook == address(OMNICHAIN_DEPLOYER)) {
-            JBDeployerHookConfig memory extraHook =
-                OMNICHAIN_DEPLOYER.extraDataHookOf({projectId: fundProjectId, rulesetId: ruleset.id});
-            (IJB721TiersHook tieredHook, bool tieredCashOut) =
-                OMNICHAIN_DEPLOYER.tiered721HookOf({projectId: fundProjectId, rulesetId: ruleset.id});
-            if (
-                (address(extraHook.dataHook) != address(0) && address(extraHook.dataHook) != address(ALLOWLIST_HOOK))
-                    || extraHook.useDataHookForCashOut || tieredCashOut
-            ) revert HomerunDeployer_UnsupportedFund(fundProjectId);
-            if (address(tieredHook) != address(0)) {
-                _requireFundShop({fundProjectId: fundProjectId, hook: address(tieredHook)});
-            }
-        } else if (metadata.dataHook != address(0)) {
-            if (metadata.useDataHookForCashOut) revert HomerunDeployer_UnsupportedFund(fundProjectId);
-            _requireFundShop({fundProjectId: fundProjectId, hook: metadata.dataHook});
-        } else if (metadata.useDataHookForPay || metadata.useDataHookForCashOut) {
-            revert HomerunDeployer_UnsupportedFund(fundProjectId);
-        }
-
-        token = address(TOKENS.tokenOf(fundProjectId));
-        if (token.codehash != FUND_TOKEN_CODE_HASH) revert HomerunDeployer_UnsupportedFund(fundProjectId);
-    }
-
-    /// @notice Reverts unless a FUND's shop is a stock 721 hook owned by the FUND's current owner.
-    /// @dev With payments paused, no owner minting, and no hook cash outs, a shop cannot change the fixed FUND token
-    /// snapshot, so a closed FUND may keep one.
-    /// @param fundProjectId The ID of the FUND project.
-    /// @param hook The shop hook.
-    function _requireFundShop(uint256 fundProjectId, address hook) internal view {
-        if (hook.code.length == 0) revert HomerunDeployer_UnsupportedFund(fundProjectId);
-        JB721TiersHookDeployer hookDeployer = JB721TiersHookDeployer(address(_omnichainDeployer().HOOK_DEPLOYER()));
-        if (hookDeployer.ADDRESS_REGISTRY().deployerOf(hook) != address(hookDeployer)) {
-            revert HomerunDeployer_UnsupportedFund(fundProjectId);
-        }
-        (, uint88 ownerProjectId,) = IJBOwnable(hook).jbOwner();
-        if (
-            address(IJB721TiersHook(hook).STORE()) != address(hookDeployer.STORE())
-                || IJB721TiersHook(hook).projectId() != fundProjectId || ownerProjectId != fundProjectId
-                || IJBOwnable(hook).owner() != PROJECTS.ownerOf(fundProjectId)
-        ) revert HomerunDeployer_UnsupportedFund(fundProjectId);
     }
 
     /// @notice Validates a snapshot against this chain and returns this chain's allocation.
@@ -813,9 +706,7 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
             HomerunInitialIncomeAllocation calldata entry = snapshot.allocations[i];
             if (
                 entry.chainId <= previousChain || usdcOf[entry.chainId] == address(0) || entry.fundProjectId == 0
-                    || entry.snapshotBlockHash == bytes32(0) || entry.leafCount > uint256(1) << 160
-                    || (entry.leafCount == 0) != (entry.merkleRoot == bytes32(0))
-                    || (entry.leafCount == 0 && entry.incomeAmount != 0)
+                    || entry.snapshotBlockHash == bytes32(0)
             ) revert HomerunDeployer_InvalidSnapshot();
             previousChain = entry.chainId;
             totalIncome += entry.incomeAmount;
@@ -838,8 +729,8 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
     }
 
     /// @notice Reverts unless a sucker configuration mirrors the snapshot's chains with the stock USDC/CCIP topology.
-    /// @dev Both lists follow ascending remote chain ID. Explicit nonstandard peers are not accepted.
-    /// @param snapshot The global initial allocation snapshot.
+    /// @dev Both lists follow ascending remote chain ID. Explicit nonstandard peers and gas allowances are not
+    /// accepted. @param snapshot The global initial allocation snapshot.
     /// @param configuration The sucker configuration to check.
     /// @param launchSalt The salt the FUND owner launches INCOME with.
     function _requireSuckers(
@@ -865,6 +756,7 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
                     || IJBCCIPSuckerDeployer(address(deployerConfiguration.deployer)).ccipRemoteChainId() != remoteChain
                     || deployerConfiguration.mappings.length != 1
                     || deployerConfiguration.mappings[0].localToken != USDC
+                    || deployerConfiguration.mappings[0].minGas != FUND_SUCKER_MIN_GAS
                     || deployerConfiguration.mappings[0].remoteToken != bytes32(uint256(uint160(usdcOf[remoteChain])))
             ) revert HomerunDeployer_InvalidConfiguration();
             configIndex++;

@@ -3,14 +3,10 @@ import { jbProjectsAbi } from '@bananapus/nana-sdk-core'
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import { encodeAbiParameters, encodeEventTopics, zeroAddress, zeroHash, type Abi, type Address, type Hex, type PublicClient } from 'viem'
 import { homerunDeployerAbi, registeredHomerunDeployer } from '../src/lib/income-contracts'
-import { readInitialIncomeAllocation, type InitialIncomeAllocationState } from '../src/lib/income-allocation-state'
 import { readIncomeFundBinding } from '../src/lib/income-fund-binding'
 
 vi.mock('../src/lib/income-contracts', async importOriginal => ({
   ...await importOriginal<typeof import('../src/lib/income-contracts')>(), registeredHomerunDeployer: vi.fn(),
-}))
-vi.mock('../src/lib/income-allocation-state', async importOriginal => ({
-  ...await importOriginal<typeof import('../src/lib/income-allocation-state')>(), readInitialIncomeAllocation: vi.fn(),
 }))
 
 const CHAIN = 1
@@ -19,7 +15,6 @@ const FUND_ID = 7n
 const LATEST = 1_000_000n
 const CREATED = 712_345n
 const HELPER = '0x1111111111111111111111111111111111111111' as const
-const VAULT = '0x2222222222222222222222222222222222222222' as const
 const FUND_TOKEN = '0x3333333333333333333333333333333333333333' as const
 
 const OPERATOR = '0x5555555555555555555555555555555555555555' as const
@@ -30,7 +25,6 @@ const CREATION_HASH = `0x${'ab'.repeat(32)}` as Hex
 const LATEST_HASH = `0x${'bc'.repeat(32)}` as Hex
 const TX_HASH = `0x${'cd'.repeat(32)}` as Hex
 const OTHER_HASH = `0x${'de'.repeat(32)}` as Hex
-const ROOT = `0x${'ef'.repeat(32)}` as Hex
 const INPUT = { chainId: CHAIN, incomeProjectId: INCOME_ID }
 
 function rawLog(address: Address, abi: Abi, eventName: string, args: Record<string, unknown>, logIndex: number) {
@@ -48,8 +42,7 @@ function creationLog(args: Record<string, unknown> = {}) {
 }
 function deploymentLog(args: Record<string, unknown> = {}) {
   return rawLog(HELPER, homerunDeployerAbi, 'IncomeDeployed', {
-    fundProjectId: FUND_ID, incomeProjectId: INCOME_ID, owner: OPERATOR, fundToken: FUND_TOKEN,
-    initialAllocationVault: VAULT, merkleRoot: ROOT, ...args,
+    fundProjectId: FUND_ID, incomeProjectId: INCOME_ID, owner: OPERATOR, fundToken: FUND_TOKEN, ...args,
   }, 14)
 }
 type RawLog = ReturnType<typeof rawLog>
@@ -63,10 +56,7 @@ function fixture(options: { generic?: boolean; safe?: boolean } = {}) {
     transactionIndex: 1, from: OPERATOR, to: options.safe ? SAFE : HELPER, logs: [...createLogs, ...helperLogs] }
   const transaction = { hash: TX_HASH, blockNumber: CREATED, blockHash: CREATION_HASH, chainId: CHAIN,
     transactionIndex: 1, from: OPERATOR, to: options.safe ? SAFE : HELPER, input: '0x' as Hex }
-  const allocation = { chainId: CHAIN, incomeProjectId: INCOME_ID, fundProjectId: FUND_ID,
-    blockNumber: LATEST, blockHash: LATEST_HASH, deployer: HELPER, vault: VAULT, merkleRoot: ROOT,
-  } as InitialIncomeAllocationState
-  vi.mocked(readInitialIncomeAllocation).mockResolvedValue(allocation)
+  const binding = { value: INCOME_ID }
   const getChainId = vi.fn(async () => CHAIN)
   const getBlock = vi.fn(async (request: BlockRequest) => {
     const blockNumber = request.blockNumber ?? LATEST
@@ -79,10 +69,16 @@ function fixture(options: { generic?: boolean; safe?: boolean } = {}) {
     expect(request.blockNumber).toBeTypeOf('bigint')
     return request.address === PROJECTS && request.blockNumber < 100n ? '0x' : '0x6000'
   })
-  const readContract = vi.fn(async (request: { address: Address; functionName: string; blockNumber: bigint }) => {
+  const readContract = vi.fn(async (request: { address: Address; functionName: string; blockNumber: bigint; args?: readonly unknown[] }) => {
+    expect(request.blockNumber).toBeTypeOf('bigint')
+    if (request.functionName === 'incomeProjectIdOf') {
+      expect(request.address).toBe(HELPER)
+      expect(request.args).toEqual([FUND_ID])
+      expect(request.blockNumber).toBe(LATEST)
+      return binding.value
+    }
     expect(request.address).toBe(PROJECTS)
     expect(request.functionName).toBe('count')
-    expect(request.blockNumber).toBeTypeOf('bigint')
     expect(request.blockNumber).toBeGreaterThanOrEqual(100n)
     return request.blockNumber < CREATED ? INCOME_ID - 1n : INCOME_ID
   })
@@ -103,9 +99,10 @@ function fixture(options: { generic?: boolean; safe?: boolean } = {}) {
   const getTransaction = vi.fn(async (request: { hash: Hex }) => { expect(request.hash).toBe(TX_HASH); return transaction })
   const getTransactionReceipt = vi.fn(async (request: { hash: Hex }) => { expect(request.hash).toBe(TX_HASH); return receipt })
   const client = { getChainId, getBlock, getCode, readContract, getLogs, getTransaction, getTransactionReceipt } as unknown as PublicClient
-  return { client, createLogs, helperLogs, receipt, transaction, allocation,
+  return { client, createLogs, helperLogs, receipt, transaction, binding,
     getChainId, getBlock, getCode, readContract, getLogs, getTransaction, getTransactionReceipt }
 }
+function bindingReads(f: ReturnType<typeof fixture>) { return f.readContract.mock.calls.filter(([request]) => request.functionName === 'incomeProjectIdOf').length }
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -119,7 +116,7 @@ describe('INCOME to FUND discovery from canonical creation evidence', () => {
     expect(f.getLogs).toHaveBeenCalledTimes(2)
     expect(f.readContract.mock.calls.length).toBeLessThanOrEqual(24)
     expect(f.readContract.mock.calls.length).toBeGreaterThan(1)
-    expect(readInitialIncomeAllocation).toHaveBeenCalledWith(f.client, { ...INPUT, fundProjectId: FUND_ID })
+    expect(bindingReads(f)).toBe(1)
     expect(f.getBlock).toHaveBeenCalledWith({ blockNumber: CREATED })
     expect(f.getBlock).toHaveBeenCalledWith({ blockNumber: LATEST })
   })
@@ -134,7 +131,7 @@ describe('INCOME to FUND discovery from canonical creation evidence', () => {
     const f = fixture({ generic: true })
     expect(await readIncomeFundBinding(f.client, INPUT)).toBeNull()
     expect(f.getTransactionReceipt).toHaveBeenCalledTimes(1)
-    expect(readInitialIncomeAllocation).not.toHaveBeenCalled()
+    expect(bindingReads(f)).toBe(0)
     expect(f.getBlock).toHaveBeenCalledWith({ blockNumber: CREATED })
     expect(f.getBlock).toHaveBeenCalledWith({ blockNumber: LATEST })
   })
@@ -168,7 +165,7 @@ describe('INCOME to FUND discovery from canonical creation evidence', () => {
     const f = fixture()
     f.readContract.mockResolvedValue(INCOME_ID - 1n)
     await expect(readIncomeFundBinding(f.client, INPUT)).rejects.toThrow()
-    expect(readInitialIncomeAllocation).not.toHaveBeenCalled()
+    expect(bindingReads(f)).toBe(0)
   })
 
   it('treats historical registry absence as zero projects without reading a nonexistent contract', async () => {
@@ -197,7 +194,7 @@ describe('INCOME to FUND discovery from canonical creation evidence', () => {
     if (problem === 'missing hash') f.createLogs[0].blockHash = zeroHash
     if (problem === 'bad raw bytes') f.createLogs[0].data = '0x'
     await expect(readIncomeFundBinding(f.client, INPUT)).rejects.toThrow()
-    expect(readInitialIncomeAllocation).not.toHaveBeenCalled()
+    expect(bindingReads(f)).toBe(0)
   })
 
   it('uses ABI-decoded raw Create data instead of trusting a convenient args object', async () => {
@@ -206,14 +203,14 @@ describe('INCOME to FUND discovery from canonical creation evidence', () => {
     expect(await readIncomeFundBinding(f.client, INPUT)).toBe(FUND_ID)
   })
 
-  it.each(['duplicate', 'foreign', 'wrong income', 'same fund', 'zero fund', 'zero vault', 'different tx', 'removed', 'wrong block', 'bad raw bytes'])('rejects %s helper discovery evidence', async problem => {
+  it.each(['duplicate', 'foreign', 'wrong income', 'same fund', 'zero fund', 'zero owner', 'different tx', 'removed', 'wrong block', 'bad raw bytes'])('rejects %s helper discovery evidence', async problem => {
     const f = fixture()
     if (problem === 'duplicate') f.helperLogs.push(deploymentLog())
     if (problem === 'foreign') f.helperLogs[0].address = FOREIGN
     if (problem === 'wrong income') f.helperLogs[0] = deploymentLog({ incomeProjectId: FUND_ID })
     if (problem === 'same fund') f.helperLogs[0] = deploymentLog({ fundProjectId: INCOME_ID })
     if (problem === 'zero fund') f.helperLogs[0] = deploymentLog({ fundProjectId: 0n })
-    if (problem === 'zero vault') f.helperLogs[0] = deploymentLog({ initialAllocationVault: zeroAddress })
+    if (problem === 'zero owner') f.helperLogs[0] = deploymentLog({ owner: zeroAddress })
     if (problem === 'different tx') f.helperLogs[0].transactionHash = OTHER_HASH
     if (problem === 'removed') f.helperLogs[0].removed = true
     if (problem === 'wrong block') f.helperLogs[0].blockNumber = CREATED - 1n
@@ -225,7 +222,7 @@ describe('INCOME to FUND discovery from canonical creation evidence', () => {
     const f = fixture()
     f.helperLogs.length = 0
     await expect(readIncomeFundBinding(f.client, INPUT)).rejects.toThrow()
-    expect(readInitialIncomeAllocation).not.toHaveBeenCalled()
+    expect(bindingReads(f)).toBe(0)
   })
 
   it('requires the canonical Create log to appear in the transaction receipt too', async () => {
@@ -257,12 +254,12 @@ describe('INCOME to FUND discovery from canonical creation evidence', () => {
     f.helperLogs[0] = { ...deploymentLog(), logIndex: f.createLogs[0].logIndex - 1 }
     f.receipt.logs[1] = f.helperLogs[0]
     await expect(readIncomeFundBinding(f.client, INPUT)).rejects.toThrow()
-    expect(readInitialIncomeAllocation).not.toHaveBeenCalled()
+    expect(bindingReads(f)).toBe(0)
   })
 
-  it.each(['root', 'index', 'create bytes'])('rejects inconsistent getLogs and receipt %s evidence', async problem => {
+  it.each(['token', 'index', 'create bytes'])('rejects inconsistent getLogs and receipt %s evidence', async problem => {
     const f = fixture()
-    if (problem === 'root') f.receipt.logs[1] = deploymentLog({ merkleRoot: OTHER_HASH })
+    if (problem === 'token') f.receipt.logs[1] = deploymentLog({ fundToken: FOREIGN })
     if (problem === 'index') f.receipt.logs[1] = { ...deploymentLog(), logIndex: 16 }
     if (problem === 'create bytes') f.receipt.logs[0] = creationLog({ owner: FOREIGN })
     await expect(readIncomeFundBinding(f.client, INPUT)).rejects.toThrow()
@@ -280,25 +277,11 @@ describe('INCOME to FUND discovery from canonical creation evidence', () => {
     await expect(readIncomeFundBinding(f.client, INPUT)).rejects.toThrow()
   })
 
-  it.each(['none', 'deployer', 'vault', 'income', 'fund', 'chain', 'root', 'old block'])('rejects a mismatched immutable allocation binding: %s', async problem => {
+  it.each([0n, FUND_ID, INCOME_ID + 1n, (1n << 256n) - 1n])('rejects a launcher binding that names another INCOME: %s', async bound => {
     const f = fixture()
-    if (problem === 'none') vi.mocked(readInitialIncomeAllocation).mockResolvedValue(null)
-    if (problem === 'deployer') f.allocation.deployer = FOREIGN
-    if (problem === 'vault') f.allocation.vault = FOREIGN
-    if (problem === 'income') f.allocation.incomeProjectId = FUND_ID
-    if (problem === 'fund') f.allocation.fundProjectId = INCOME_ID
-    if (problem === 'chain') f.allocation.chainId = 10
-    if (problem === 'root') f.allocation.merkleRoot = OTHER_HASH
-    if (problem === 'old block') f.allocation.blockNumber = CREATED - 1n
-    await expect(readIncomeFundBinding(f.client, INPUT)).rejects.toThrow()
-  })
-
-  it('accepts a verified empty local allocation with a zero root', async () => {
-    const f = fixture()
-    f.helperLogs[0] = deploymentLog({ merkleRoot: zeroHash })
-    f.receipt.logs[1] = f.helperLogs[0]
-    f.allocation.merkleRoot = zeroHash
-    expect(await readIncomeFundBinding(f.client, INPUT)).toBe(FUND_ID)
+    f.binding.value = bound
+    await expect(readIncomeFundBinding(f.client, INPUT)).rejects.toThrow('not bound')
+    expect(bindingReads(f)).toBe(1)
   })
 
   it.each([CREATED, LATEST])('rejects a reorg of pinned block %s even after immutable binding verification', async blockNumber => {
@@ -311,12 +294,12 @@ describe('INCOME to FUND discovery from canonical creation evidence', () => {
       return { ...await canonical(request), ...(matching && reads >= (blockNumber === CREATED ? 2 : 1) ? { hash: OTHER_HASH } : {}) }
     })
     await expect(readIncomeFundBinding(f.client, INPUT)).rejects.toThrow()
-    expect(readInitialIncomeAllocation).toHaveBeenCalledTimes(1)
+    expect(bindingReads(f)).toBe(1)
   })
 
-  it.each(['getBlock', 'getCode', 'readContract', 'getLogs', 'getTransaction', 'getTransactionReceipt', 'allocation'])('propagates required %s failures instead of returning an unbound generic project', async method => {
+  it.each(['getBlock', 'getCode', 'readContract', 'getLogs', 'getTransaction', 'getTransactionReceipt', 'binding'])('propagates required %s failures instead of returning an unbound generic project', async method => {
     const f = fixture()
-    if (method === 'allocation') vi.mocked(readInitialIncomeAllocation).mockRejectedValueOnce(new Error('Required RPC failed'))
+    if (method === 'binding') f.readContract.mockImplementation(async request => { if (request.functionName === 'incomeProjectIdOf') throw new Error('Required RPC failed'); return INCOME_ID })
     else f[method as 'getBlock'].mockRejectedValueOnce(new Error('Required RPC failed'))
     await expect(readIncomeFundBinding(f.client, INPUT)).rejects.toThrow()
   })
