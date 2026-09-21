@@ -1,0 +1,23 @@
+{
+  "allowlistHook": "0x99cC605F86595c55AF5A7e734379c2546796d0f5",
+  "allowlistHookCodehash": "0x0b9a76e8bd6e9289de04cab2ed9a0133215b7be2a8fbfcd54953a8928a2bf885",
+  "chainId": 8453,
+  "create2Factory": "0x4e59b44847b379578588920cA78FbF26c0B4956C",
+  "create2FactoryCodehash": "0x2fa86add0aed31f33a762c9d88e807c475bd51d0f52bd0955754b2608f7e4989",
+  "deployer": "0xAC9250654ea223513FfEe25fDB647Dc016873905",
+  "deployerCodehash": "0x7930576b111de5cb31b50ed7e2e93b6aceb3dafc7f24b70a2fcf78727ae48a9a",
+  "evmBlockNumber": 51618441,
+  "evmParentBlockHash": "0xf5ef1d326c4f1e6d6a2356d7fbf74d904016b1d6f8303d440e64d673a4ae4b49",
+  "kind": "verified",
+  "omnichainDeployer": "0xB853758A70a6b4216c09f1d071eA2344AbA0a34f",
+  "omnichainDeployerCodehash": "0x2d7a2689733a2594c855a005061131d8bc1fb6b5ba6ff9c47cf56df062ca16d4",
+  "revDeployer": "0xb552eB94284f94b833837D4b2cBB237128415d4e",
+  "revDeployerCodehash": "0x77ce39d2ccc29161be4de9099d50905786f3bd6d8a65058aeeb270db3cc33dc0",
+  "revision": "5ac925925567324d9b2c6e846a8b196bd8c8c395",
+  "rpcBlockHash": "0x949d8c7d96b64a0f5624ebfd23a1d66f67e25ac93fff8ee46beafeba876a036f",
+  "rpcBlockNumber": 51618441,
+  "salt": "0x486f6d6572756e56360000000000000000000000000000000000000000000000",
+  "timestamp": 1790026229,
+  "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  "usdcCodehash": "0xa6705a10bb756b5dea144591118be77d7af0c3eee3bf2dfe2583dcb0364fefab"
+}

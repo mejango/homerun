@@ -1,0 +1,699 @@
+{
+	"format": "sphinx-sol-ct-artifact-1",
+	"address": "0x99cc605f86595c55af5a7e734379c2546796d0f5",
+	"sourceName": "src/HomerunAllowlistHook.sol",
+	"contractName": "HomerunAllowlistHook",
+	"chainId": "0x2105",
+	"abi": [
+		{
+			"type": "constructor",
+			"inputs": [
+				{
+					"name": "projects",
+					"type": "address",
+					"internalType": "contract IJBProjects"
+				},
+				{
+					"name": "trustedForwarder",
+					"type": "address",
+					"internalType": "address"
+				}
+			],
+			"stateMutability": "nonpayable"
+		},
+		{
+			"type": "function",
+			"name": "PROJECTS",
+			"inputs": [],
+			"outputs": [
+				{
+					"name": "",
+					"type": "address",
+					"internalType": "contract IJBProjects"
+				}
+			],
+			"stateMutability": "view"
+		},
+		{
+			"type": "function",
+			"name": "beforeCashOutRecordedWith",
+			"inputs": [
+				{
+					"name": "context",
+					"type": "tuple",
+					"internalType": "struct JBBeforeCashOutRecordedContext",
+					"components": [
+						{
+							"name": "terminal",
+							"type": "address",
+							"internalType": "address"
+						},
+						{
+							"name": "holder",
+							"type": "address",
+							"internalType": "address"
+						},
+						{
+							"name": "projectId",
+							"type": "uint256",
+							"internalType": "uint256"
+						},
+						{
+							"name": "rulesetId",
+							"type": "uint256",
+							"internalType": "uint256"
+						},
+						{
+							"name": "cashOutCount",
+							"type": "uint256",
+							"internalType": "uint256"
+						},
+						{
+							"name": "totalSupply",
+							"type": "uint256",
+							"internalType": "uint256"
+						},
+						{
+							"name": "surplus",
+							"type": "tuple",
+							"internalType": "struct JBTokenAmount",
+							"components": [
+								{
+									"name": "token",
+									"type": "address",
+									"internalType": "address"
+								},
+								{
+									"name": "decimals",
+									"type": "uint8",
+									"internalType": "uint8"
+								},
+								{
+									"name": "currency",
+									"type": "uint32",
+									"internalType": "uint32"
+								},
+								{
+									"name": "value",
+									"type": "uint256",
+									"internalType": "uint256"
+								}
+							]
+						},
+						{
+							"name": "scopeCashOutsToLocalBalances",
+							"type": "bool",
+							"internalType": "bool"
+						},
+						{
+							"name": "cashOutTaxRate",
+							"type": "uint256",
+							"internalType": "uint256"
+						},
+						{
+							"name": "beneficiaryIsFeeless",
+							"type": "bool",
+							"internalType": "bool"
+						},
+						{
+							"name": "metadata",
+							"type": "bytes",
+							"internalType": "bytes"
+						}
+					]
+				}
+			],
+			"outputs": [
+				{
+					"name": "cashOutTaxRate",
+					"type": "uint256",
+					"internalType": "uint256"
+				},
+				{
+					"name": "cashOutCount",
+					"type": "uint256",
+					"internalType": "uint256"
+				},
+				{
+					"name": "totalSupply",
+					"type": "uint256",
+					"internalType": "uint256"
+				},
+				{
+					"name": "surplusValue",
+					"type": "uint256",
+					"internalType": "uint256"
+				},
+				{
+					"name": "hookSpecifications",
+					"type": "tuple[]",
+					"internalType": "struct JBCashOutHookSpecification[]",
+					"components": [
+						{
+							"name": "hook",
+							"type": "address",
+							"internalType": "contract IJBCashOutHook"
+						},
+						{
+							"name": "noop",
+							"type": "bool",
+							"internalType": "bool"
+						},
+						{
+							"name": "amount",
+							"type": "uint256",
+							"internalType": "uint256"
+						},
+						{
+							"name": "metadata",
+							"type": "bytes",
+							"internalType": "bytes"
+						}
+					]
+				}
+			],
+			"stateMutability": "pure"
+		},
+		{
+			"type": "function",
+			"name": "beforePayRecordedWith",
+			"inputs": [
+				{
+					"name": "context",
+					"type": "tuple",
+					"internalType": "struct JBBeforePayRecordedContext",
+					"components": [
+						{
+							"name": "terminal",
+							"type": "address",
+							"internalType": "address"
+						},
+						{
+							"name": "payer",
+							"type": "address",
+							"internalType": "address"
+						},
+						{
+							"name": "amount",
+							"type": "tuple",
+							"internalType": "struct JBTokenAmount",
+							"components": [
+								{
+									"name": "token",
+									"type": "address",
+									"internalType": "address"
+								},
+								{
+									"name": "decimals",
+									"type": "uint8",
+									"internalType": "uint8"
+								},
+								{
+									"name": "currency",
+									"type": "uint32",
+									"internalType": "uint32"
+								},
+								{
+									"name": "value",
+									"type": "uint256",
+									"internalType": "uint256"
+								}
+							]
+						},
+						{
+							"name": "projectId",
+							"type": "uint256",
+							"internalType": "uint256"
+						},
+						{
+							"name": "rulesetId",
+							"type": "uint256",
+							"internalType": "uint256"
+						},
+						{
+							"name": "beneficiary",
+							"type": "address",
+							"internalType": "address"
+						},
+						{
+							"name": "weight",
+							"type": "uint256",
+							"internalType": "uint256"
+						},
+						{
+							"name": "reservedPercent",
+							"type": "uint256",
+							"internalType": "uint256"
+						},
+						{
+							"name": "metadata",
+							"type": "bytes",
+							"internalType": "bytes"
+						}
+					]
+				}
+			],
+			"outputs": [
+				{
+					"name": "weight",
+					"type": "uint256",
+					"internalType": "uint256"
+				},
+				{
+					"name": "hookSpecifications",
+					"type": "tuple[]",
+					"internalType": "struct JBPayHookSpecification[]",
+					"components": [
+						{
+							"name": "hook",
+							"type": "address",
+							"internalType": "contract IJBPayHook"
+						},
+						{
+							"name": "noop",
+							"type": "bool",
+							"internalType": "bool"
+						},
+						{
+							"name": "amount",
+							"type": "uint256",
+							"internalType": "uint256"
+						},
+						{
+							"name": "metadata",
+							"type": "bytes",
+							"internalType": "bytes"
+						}
+					]
+				}
+			],
+			"stateMutability": "view"
+		},
+		{
+			"type": "function",
+			"name": "canPay",
+			"inputs": [
+				{
+					"name": "projectId",
+					"type": "uint256",
+					"internalType": "uint256"
+				},
+				{
+					"name": "account",
+					"type": "address",
+					"internalType": "address"
+				}
+			],
+			"outputs": [
+				{
+					"name": "flag",
+					"type": "bool",
+					"internalType": "bool"
+				}
+			],
+			"stateMutability": "view"
+		},
+		{
+			"type": "function",
+			"name": "hasMintPermissionFor",
+			"inputs": [
+				{
+					"name": "",
+					"type": "uint256",
+					"internalType": "uint256"
+				},
+				{
+					"name": "",
+					"type": "tuple",
+					"internalType": "struct JBRuleset",
+					"components": [
+						{
+							"name": "cycleNumber",
+							"type": "uint48",
+							"internalType": "uint48"
+						},
+						{
+							"name": "id",
+							"type": "uint48",
+							"internalType": "uint48"
+						},
+						{
+							"name": "basedOnId",
+							"type": "uint48",
+							"internalType": "uint48"
+						},
+						{
+							"name": "start",
+							"type": "uint48",
+							"internalType": "uint48"
+						},
+						{
+							"name": "duration",
+							"type": "uint32",
+							"internalType": "uint32"
+						},
+						{
+							"name": "weight",
+							"type": "uint112",
+							"internalType": "uint112"
+						},
+						{
+							"name": "weightCutPercent",
+							"type": "uint32",
+							"internalType": "uint32"
+						},
+						{
+							"name": "approvalHook",
+							"type": "address",
+							"internalType": "contract IJBRulesetApprovalHook"
+						},
+						{
+							"name": "metadata",
+							"type": "uint256",
+							"internalType": "uint256"
+						}
+					]
+				},
+				{
+					"name": "",
+					"type": "address",
+					"internalType": "address"
+				}
+			],
+			"outputs": [
+				{
+					"name": "flag",
+					"type": "bool",
+					"internalType": "bool"
+				}
+			],
+			"stateMutability": "pure"
+		},
+		{
+			"type": "function",
+			"name": "isAllowed",
+			"inputs": [
+				{
+					"name": "projectId",
+					"type": "uint256",
+					"internalType": "uint256"
+				},
+				{
+					"name": "account",
+					"type": "address",
+					"internalType": "address"
+				}
+			],
+			"outputs": [
+				{
+					"name": "",
+					"type": "bool",
+					"internalType": "bool"
+				}
+			],
+			"stateMutability": "view"
+		},
+		{
+			"type": "function",
+			"name": "isOpen",
+			"inputs": [
+				{
+					"name": "projectId",
+					"type": "uint256",
+					"internalType": "uint256"
+				}
+			],
+			"outputs": [
+				{
+					"name": "",
+					"type": "bool",
+					"internalType": "bool"
+				}
+			],
+			"stateMutability": "view"
+		},
+		{
+			"type": "function",
+			"name": "isTrustedForwarder",
+			"inputs": [
+				{
+					"name": "forwarder",
+					"type": "address",
+					"internalType": "address"
+				}
+			],
+			"outputs": [
+				{
+					"name": "",
+					"type": "bool",
+					"internalType": "bool"
+				}
+			],
+			"stateMutability": "view"
+		},
+		{
+			"type": "function",
+			"name": "setAllowed",
+			"inputs": [
+				{
+					"name": "projectId",
+					"type": "uint256",
+					"internalType": "uint256"
+				},
+				{
+					"name": "accounts",
+					"type": "address[]",
+					"internalType": "address[]"
+				},
+				{
+					"name": "allowed",
+					"type": "bool",
+					"internalType": "bool"
+				}
+			],
+			"outputs": [],
+			"stateMutability": "nonpayable"
+		},
+		{
+			"type": "function",
+			"name": "setOpen",
+			"inputs": [
+				{
+					"name": "projectId",
+					"type": "uint256",
+					"internalType": "uint256"
+				},
+				{
+					"name": "open",
+					"type": "bool",
+					"internalType": "bool"
+				}
+			],
+			"outputs": [],
+			"stateMutability": "nonpayable"
+		},
+		{
+			"type": "function",
+			"name": "supportsInterface",
+			"inputs": [
+				{
+					"name": "interfaceId",
+					"type": "bytes4",
+					"internalType": "bytes4"
+				}
+			],
+			"outputs": [
+				{
+					"name": "flag",
+					"type": "bool",
+					"internalType": "bool"
+				}
+			],
+			"stateMutability": "pure"
+		},
+		{
+			"type": "function",
+			"name": "trustedForwarder",
+			"inputs": [],
+			"outputs": [
+				{
+					"name": "",
+					"type": "address",
+					"internalType": "address"
+				}
+			],
+			"stateMutability": "view"
+		},
+		{
+			"type": "event",
+			"name": "AllowedSet",
+			"inputs": [
+				{
+					"name": "projectId",
+					"type": "uint256",
+					"indexed": true,
+					"internalType": "uint256"
+				},
+				{
+					"name": "account",
+					"type": "address",
+					"indexed": true,
+					"internalType": "address"
+				},
+				{
+					"name": "allowed",
+					"type": "bool",
+					"indexed": false,
+					"internalType": "bool"
+				},
+				{
+					"name": "caller",
+					"type": "address",
+					"indexed": false,
+					"internalType": "address"
+				}
+			],
+			"anonymous": false
+		},
+		{
+			"type": "event",
+			"name": "OpenSet",
+			"inputs": [
+				{
+					"name": "projectId",
+					"type": "uint256",
+					"indexed": true,
+					"internalType": "uint256"
+				},
+				{
+					"name": "open",
+					"type": "bool",
+					"indexed": false,
+					"internalType": "bool"
+				},
+				{
+					"name": "caller",
+					"type": "address",
+					"indexed": false,
+					"internalType": "address"
+				}
+			],
+			"anonymous": false
+		},
+		{
+			"type": "error",
+			"name": "HomerunAllowlistHook_NotAllowed",
+			"inputs": [
+				{
+					"name": "projectId",
+					"type": "uint256",
+					"internalType": "uint256"
+				},
+				{
+					"name": "beneficiary",
+					"type": "address",
+					"internalType": "address"
+				}
+			]
+		},
+		{
+			"type": "error",
+			"name": "HomerunAllowlistHook_Unauthorized",
+			"inputs": [
+				{
+					"name": "projectId",
+					"type": "uint256",
+					"internalType": "uint256"
+				},
+				{
+					"name": "caller",
+					"type": "address",
+					"internalType": "address"
+				}
+			]
+		}
+	],
+	"args": [
+		"0x6017d1FBa9DC279BFA0B03fD931C22E242AB3691",
+		"0x3bA60b60933916a7C87D0860DcEE62a0CE34E3e2"
+	],
+	"solcInputHash": "9df43a8814815115d1c70210879aeaeb",
+	"receipt": {
+		"type": "0x2",
+		"status": "0x1",
+		"cumulativeGasUsed": "0x391c75",
+		"logs": [
+			{
+				"address": "0xa2ea7657440875bf916cbfc0cfa88f13e38ad463",
+				"topics": [
+					"0x572f161235911da04685a68c06adf558fc7e4a36909dca394650e0adc19cc93d",
+					"0x000000000000000000000000755ff2f75a0a586ecfa2b9a3c959cb662458a105",
+					"0x0000000000000000000000005302f9cbdd03815f8c7105f5030d8ef43601581e",
+					"0x21a9cb36bc8eff869769a2f2a94705dbb700b95c3b005bebf7fc63f8d250627a"
+				],
+				"data": "0x0000000000000000000000000000000000000000000000000000000000000000",
+				"blockHash": "0xfcee5f0618a1e85138fd3af2e7636f18173931c03106eb66f2461f6db9773afd",
+				"blockNumber": "0x313a093",
+				"blockTimestamp": "0x6ab19e09",
+				"transactionHash": "0xc0b470a61c1a42a84aea4bebd171f3307546aab035d9373c236b0d4cd8e5c1fd",
+				"transactionIndex": "0x16",
+				"logIndex": "0x55",
+				"removed": false
+			},
+			{
+				"address": "0xd5136c794ee43bef1ed4cf1eb6dee45b7f803437",
+				"topics": [
+					"0x6895c13664aa4f67288b25d7a21d7aaa34916e355fb9b6fae0a139a9085becb8",
+					"0x0000000000000000000000005302f9cbdd03815f8c7105f5030d8ef43601581e"
+				],
+				"data": "0x",
+				"blockHash": "0xfcee5f0618a1e85138fd3af2e7636f18173931c03106eb66f2461f6db9773afd",
+				"blockNumber": "0x313a093",
+				"blockTimestamp": "0x6ab19e09",
+				"transactionHash": "0xc0b470a61c1a42a84aea4bebd171f3307546aab035d9373c236b0d4cd8e5c1fd",
+				"transactionIndex": "0x16",
+				"logIndex": "0x56",
+				"removed": false
+			},
+			{
+				"address": "0x5302f9cbdd03815f8c7105f5030d8ef43601581e",
+				"topics": [
+					"0xa65fb05c5808f5f389d72edeaf719ce38f4cc55c1f69ca3cbfb31c21501caa07",
+					"0xaeb846cd1feaaa1eb83a17ef24230153148e0ba5ce28127147071644bad9866f"
+				],
+				"data": "0x0000000000000000000000000000000000000000000000000000000000000001",
+				"blockHash": "0xfcee5f0618a1e85138fd3af2e7636f18173931c03106eb66f2461f6db9773afd",
+				"blockNumber": "0x313a093",
+				"blockTimestamp": "0x6ab19e09",
+				"transactionHash": "0xc0b470a61c1a42a84aea4bebd171f3307546aab035d9373c236b0d4cd8e5c1fd",
+				"transactionIndex": "0x16",
+				"logIndex": "0x57",
+				"removed": false
+			}
+		],
+		"logsBloom": "0x00000000000110000000000000080000000000000000000000000000000000000000000000000000000000000040010002000000000000000800000000000000004000000000200000000000000000000000000000000000000000000001000000000000000000000000000000000800000000000000000000001000000000000800000100000000000104000000040000000000000000000000000100000000004000040000000000000000000000002200000000000000000000000004000000000002040000000000000000000000000000000000000000000000000000000000400000000000000000000040000200000000000080000000000000000100",
+		"transactionHash": "0xc0b470a61c1a42a84aea4bebd171f3307546aab035d9373c236b0d4cd8e5c1fd",
+		"transactionIndex": "0x16",
+		"blockHash": "0xfcee5f0618a1e85138fd3af2e7636f18173931c03106eb66f2461f6db9773afd",
+		"blockNumber": "0x313a093",
+		"gasUsed": "0xa83ae",
+		"effectiveGasPrice": "0x802c80",
+		"blobGasUsed": "0x4306c",
+		"from": "0x755ff2f75a0a586ecfa2b9a3c959cb662458a105",
+		"to": "0xa2ea7657440875bf916cbfc0cfa88f13e38ad463",
+		"contractAddress": null,
+		"l1GasPrice": "0x11918d46",
+		"l1GasUsed": "0x73f6",
+		"l1Fee": "0xcc1799040",
+		"l1BaseFeeScalar": "0x8dd",
+		"l1BlobBaseFee": "0x11018a3",
+		"l1BlobBaseFeeScalar": "0x101c12",
+		"daFootprintGasScalar": "0x94"
+	},
+	"bytecode": "0x60c0346100a057601f610a8a38819003918201601f19168301916001600160401b038311848410176100a45780849260409485528339810103126100a0578051906001600160a01b03821682036100a057602001516001600160a01b03811681036100a05760805260a0526040516109d190816100b982396080518181816104b1015281816106860152610996015260a0518181816106fc01526108800152f35b5f80fd5b634e487b7160e01b5f52604160045260245ffdfe6080806040526004361015610012575f80fd5b5f3560e01c90816301ffc9a71461072b57508063293c4999146106e75780634d6861a6146106b8578063572b6c051461065b5780635faa299a146106135780636e8727ea146104e05780637da0a8771461049c5780638cc358461461037e57806399f6d77f14610255578063a2811f1b14610225578063b40f19c4146101935763f672acac146100a0575f80fd5b3461018f57602036600319011261018f5760043567ffffffffffffffff811161018f576101c0600319823603011261018f57604051809161012460a083019161016481013584526084810135602085015260a481013560408501520135606083015260a0608083015260605180915260c0820160c08260051b840101916080915f905b82821061013257505050500390f35b9193600191939550602061017f819260bf198a8203018652608060608a51878060a01b038151168452858101511515868501526040810151604085015201519181606082015201906107c3565b9601920192018594939192610123565b5f80fd5b3461018f57604036600319011261018f57600435602435801515810361018f577f1823b76f926cb11aa6f9f2bd15145d9d3b60956d3ba2e28891b267f90692ef9c906101de83610864565b825f5260016020526101ff8160405f209060ff801983541691151516179055565b61020761096b565b6040805192151583526001600160a01b0391909116602083015290a2005b3461018f57604036600319011261018f57602061024b610243610796565b60043561081f565b6040519015158152f35b3461018f5761016036600319011261018f5761012036602319011261018f57604051610120810181811067ffffffffffffffff82111761036a5760405260243565ffffffffffff8116810361018f57815260443565ffffffffffff8116810361018f57602082015260643565ffffffffffff8116810361018f57604082015260843565ffffffffffff8116810361018f57606082015260a43563ffffffff8116810361018f57608082015260c4356dffffffffffffffffffffffffffff8116810361018f5760a082015260e43563ffffffff8116810361018f5760c0820152610104356001600160a01b038116810361018f5760e08201526101006101243591015261035f6107ac565b5060206040515f8152f35b634e487b7160e01b5f52604160045260245ffd5b3461018f57602036600319011261018f5760043567ffffffffffffffff811161018f57610180600319823603011261018f5760c481013561010482016103cc6103c68261080b565b8361081f565b1561047057826040518091610124604083019101358252604060208301526060518091526060820160608260051b840101916080915f905b82821061041357505050500390f35b919360019193955060206104608192605f198a8203018652608060608a51878060a01b038151168452858101511515868501526040810151604085015201519181606082015201906107c3565b9601920192018594939192610404565b6104799061080b565b63361d87c160e21b5f9081526004929092526001600160a01b0316602452604490fd5b3461018f575f36600319011261018f576040517f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03168152602090f35b3461018f57606036600319011261018f5760243560043567ffffffffffffffff821161018f573660238301121561018f5781600401359067ffffffffffffffff821161018f576024830192602436918460051b01011161018f5760443590811515820361018f5761055081610864565b5f5b83811061055b57005b600190825f525f60205260405f2061057c61057783888a6107e7565b61080b565b838060a01b03165f526020526105a18460405f209060ff801983541691151516179055565b6105af6105778287896107e7565b837f09506c1703333bcc2bf1a3973667ac3568b1586e39209aed72e0a25a5148d8f161060a6105dc61096b565b604080518a151581526001600160a01b03909216602083015260a088901b8890039095169490918291820190565b0390a301610552565b3461018f57604036600319011261018f5761062c610796565b6004355f525f60205260405f209060018060a01b03165f52602052602060ff60405f2054166040519015158152f35b3461018f57602036600319011261018f576004356001600160a01b0381169081900361018f576040517f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03169091148152602090f35b3461018f57602036600319011261018f576004355f526001602052602060ff60405f2054166040519015158152f35b3461018f575f36600319011261018f576040517f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03168152602090f35b3461018f57602036600319011261018f576004359063ffffffff60e01b821680920361018f5760209163043f720960e41b8114908115610785575b8115610774575b5015158152f35b6301ffc9a760e01b1490508361076d565b63e347239560e01b81149150610766565b602435906001600160a01b038216820361018f57565b61014435906001600160a01b038216820361018f57565b805180835260209291819084018484015e5f828201840152601f01601f1916010190565b91908110156107f75760051b0190565b634e487b7160e01b5f52603260045260245ffd5b356001600160a01b038116810361018f5790565b90815f52600160205260ff60405f20541691821561083c57505090565b5f908152602081815260408083206001600160a01b039094168352929052205460ff16919050565b6040516331a9108f60e11b8152600481018290526020816024817f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03165afa908115610960575f91610908575b506001600160a01b036108c961096b565b166001600160a01b03909116036108dd5750565b6108e561096b565b6369ca26fd60e01b5f9081526004929092526001600160a01b0316602452604490fd5b905060203d602011610959575b601f8101601f1916820167ffffffffffffffff81118382101761036a5760209183916040528101031261018f57516001600160a01b038116810361018f575f6108b8565b503d610915565b6040513d5f823e3d90fd5b601436101580610992575b1561098e57601319360136811161018f573560601c90565b3390565b50337f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03161461097656fea164736f6c634300081c000a",
+	"deployedBytecode": "0x6080806040526004361015610012575f80fd5b5f3560e01c90816301ffc9a71461072b57508063293c4999146106e75780634d6861a6146106b8578063572b6c051461065b5780635faa299a146106135780636e8727ea146104e05780637da0a8771461049c5780638cc358461461037e57806399f6d77f14610255578063a2811f1b14610225578063b40f19c4146101935763f672acac146100a0575f80fd5b3461018f57602036600319011261018f5760043567ffffffffffffffff811161018f576101c0600319823603011261018f57604051809161012460a083019161016481013584526084810135602085015260a481013560408501520135606083015260a0608083015260605180915260c0820160c08260051b840101916080915f905b82821061013257505050500390f35b9193600191939550602061017f819260bf198a8203018652608060608a51878060a01b038151168452858101511515868501526040810151604085015201519181606082015201906107c3565b9601920192018594939192610123565b5f80fd5b3461018f57604036600319011261018f57600435602435801515810361018f577f1823b76f926cb11aa6f9f2bd15145d9d3b60956d3ba2e28891b267f90692ef9c906101de83610864565b825f5260016020526101ff8160405f209060ff801983541691151516179055565b61020761096b565b6040805192151583526001600160a01b0391909116602083015290a2005b3461018f57604036600319011261018f57602061024b610243610796565b60043561081f565b6040519015158152f35b3461018f5761016036600319011261018f5761012036602319011261018f57604051610120810181811067ffffffffffffffff82111761036a5760405260243565ffffffffffff8116810361018f57815260443565ffffffffffff8116810361018f57602082015260643565ffffffffffff8116810361018f57604082015260843565ffffffffffff8116810361018f57606082015260a43563ffffffff8116810361018f57608082015260c4356dffffffffffffffffffffffffffff8116810361018f5760a082015260e43563ffffffff8116810361018f5760c0820152610104356001600160a01b038116810361018f5760e08201526101006101243591015261035f6107ac565b5060206040515f8152f35b634e487b7160e01b5f52604160045260245ffd5b3461018f57602036600319011261018f5760043567ffffffffffffffff811161018f57610180600319823603011261018f5760c481013561010482016103cc6103c68261080b565b8361081f565b1561047057826040518091610124604083019101358252604060208301526060518091526060820160608260051b840101916080915f905b82821061041357505050500390f35b919360019193955060206104608192605f198a8203018652608060608a51878060a01b038151168452858101511515868501526040810151604085015201519181606082015201906107c3565b9601920192018594939192610404565b6104799061080b565b63361d87c160e21b5f9081526004929092526001600160a01b0316602452604490fd5b3461018f575f36600319011261018f576040517f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03168152602090f35b3461018f57606036600319011261018f5760243560043567ffffffffffffffff821161018f573660238301121561018f5781600401359067ffffffffffffffff821161018f576024830192602436918460051b01011161018f5760443590811515820361018f5761055081610864565b5f5b83811061055b57005b600190825f525f60205260405f2061057c61057783888a6107e7565b61080b565b838060a01b03165f526020526105a18460405f209060ff801983541691151516179055565b6105af6105778287896107e7565b837f09506c1703333bcc2bf1a3973667ac3568b1586e39209aed72e0a25a5148d8f161060a6105dc61096b565b604080518a151581526001600160a01b03909216602083015260a088901b8890039095169490918291820190565b0390a301610552565b3461018f57604036600319011261018f5761062c610796565b6004355f525f60205260405f209060018060a01b03165f52602052602060ff60405f2054166040519015158152f35b3461018f57602036600319011261018f576004356001600160a01b0381169081900361018f576040517f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03169091148152602090f35b3461018f57602036600319011261018f576004355f526001602052602060ff60405f2054166040519015158152f35b3461018f575f36600319011261018f576040517f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03168152602090f35b3461018f57602036600319011261018f576004359063ffffffff60e01b821680920361018f5760209163043f720960e41b8114908115610785575b8115610774575b5015158152f35b6301ffc9a760e01b1490508361076d565b63e347239560e01b81149150610766565b602435906001600160a01b038216820361018f57565b61014435906001600160a01b038216820361018f57565b805180835260209291819084018484015e5f828201840152601f01601f1916010190565b91908110156107f75760051b0190565b634e487b7160e01b5f52603260045260245ffd5b356001600160a01b038116810361018f5790565b90815f52600160205260ff60405f20541691821561083c57505090565b5f908152602081815260408083206001600160a01b039094168352929052205460ff16919050565b6040516331a9108f60e11b8152600481018290526020816024817f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03165afa908115610960575f91610908575b506001600160a01b036108c961096b565b166001600160a01b03909116036108dd5750565b6108e561096b565b6369ca26fd60e01b5f9081526004929092526001600160a01b0316602452604490fd5b905060203d602011610959575b601f8101601f1916820167ffffffffffffffff81118382101761036a5760209183916040528101031261018f57516001600160a01b038116810361018f575f6108b8565b503d610915565b6040513d5f823e3d90fd5b601436101580610992575b1561098e57601319360136811161018f573560601c90565b3390565b50337f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03161461097656fea164736f6c634300081c000a",
+	"metadata": "{\"compiler\":{\"version\":\"0.8.28+commit.7893614a\"},\"language\":\"Solidity\",\"output\":{\"abi\":[{\"inputs\":[{\"internalType\":\"contract IJBProjects\",\"name\":\"projects\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"trustedForwarder\",\"type\":\"address\"}],\"stateMutability\":\"nonpayable\",\"type\":\"constructor\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"projectId\",\"type\":\"uint256\"},{\"internalType\":\"address\",\"name\":\"beneficiary\",\"type\":\"address\"}],\"name\":\"HomerunAllowlistHook_NotAllowed\",\"type\":\"error\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"projectId\",\"type\":\"uint256\"},{\"internalType\":\"address\",\"name\":\"caller\",\"type\":\"address\"}],\"name\":\"HomerunAllowlistHook_Unauthorized\",\"type\":\"error\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"uint256\",\"name\":\"projectId\",\"type\":\"uint256\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"account\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"bool\",\"name\":\"allowed\",\"type\":\"bool\"},{\"indexed\":false,\"internalType\":\"address\",\"name\":\"caller\",\"type\":\"address\"}],\"name\":\"AllowedSet\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"uint256\",\"name\":\"projectId\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"bool\",\"name\":\"open\",\"type\":\"bool\"},{\"indexed\":false,\"internalType\":\"address\",\"name\":\"caller\",\"type\":\"address\"}],\"name\":\"OpenSet\",\"type\":\"event\"},{\"inputs\":[],\"name\":\"PROJECTS\",\"outputs\":[{\"internalType\":\"contract IJBProjects\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"components\":[{\"internalType\":\"address\",\"name\":\"terminal\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"holder\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"projectId\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"rulesetId\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"cashOutCount\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"totalSupply\",\"type\":\"uint256\"},{\"components\":[{\"internalType\":\"address\",\"name\":\"token\",\"type\":\"address\"},{\"internalType\":\"uint8\",\"name\":\"decimals\",\"type\":\"uint8\"},{\"internalType\":\"uint32\",\"name\":\"currency\",\"type\":\"uint32\"},{\"internalType\":\"uint256\",\"name\":\"value\",\"type\":\"uint256\"}],\"internalType\":\"struct JBTokenAmount\",\"name\":\"surplus\",\"type\":\"tuple\"},{\"internalType\":\"bool\",\"name\":\"scopeCashOutsToLocalBalances\",\"type\":\"bool\"},{\"internalType\":\"uint256\",\"name\":\"cashOutTaxRate\",\"type\":\"uint256\"},{\"internalType\":\"bool\",\"name\":\"beneficiaryIsFeeless\",\"type\":\"bool\"},{\"internalType\":\"bytes\",\"name\":\"metadata\",\"type\":\"bytes\"}],\"internalType\":\"struct JBBeforeCashOutRecordedContext\",\"name\":\"context\",\"type\":\"tuple\"}],\"name\":\"beforeCashOutRecordedWith\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"cashOutTaxRate\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"cashOutCount\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"totalSupply\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"surplusValue\",\"type\":\"uint256\"},{\"components\":[{\"internalType\":\"contract IJBCashOutHook\",\"name\":\"hook\",\"type\":\"address\"},{\"internalType\":\"bool\",\"name\":\"noop\",\"type\":\"bool\"},{\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"},{\"internalType\":\"bytes\",\"name\":\"metadata\",\"type\":\"bytes\"}],\"internalType\":\"struct JBCashOutHookSpecification[]\",\"name\":\"hookSpecifications\",\"type\":\"tuple[]\"}],\"stateMutability\":\"pure\",\"type\":\"function\"},{\"inputs\":[{\"components\":[{\"internalType\":\"address\",\"name\":\"terminal\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"payer\",\"type\":\"address\"},{\"components\":[{\"internalType\":\"address\",\"name\":\"token\",\"type\":\"address\"},{\"internalType\":\"uint8\",\"name\":\"decimals\",\"type\":\"uint8\"},{\"internalType\":\"uint32\",\"name\":\"currency\",\"type\":\"uint32\"},{\"internalType\":\"uint256\",\"name\":\"value\",\"type\":\"uint256\"}],\"internalType\":\"struct JBTokenAmount\",\"name\":\"amount\",\"type\":\"tuple\"},{\"internalType\":\"uint256\",\"name\":\"projectId\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"rulesetId\",\"type\":\"uint256\"},{\"internalType\":\"address\",\"name\":\"beneficiary\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"weight\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"reservedPercent\",\"type\":\"uint256\"},{\"internalType\":\"bytes\",\"name\":\"metadata\",\"type\":\"bytes\"}],\"internalType\":\"struct JBBeforePayRecordedContext\",\"name\":\"context\",\"type\":\"tuple\"}],\"name\":\"beforePayRecordedWith\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"weight\",\"type\":\"uint256\"},{\"components\":[{\"internalType\":\"contract IJBPayHook\",\"name\":\"hook\",\"type\":\"address\"},{\"internalType\":\"bool\",\"name\":\"noop\",\"type\":\"bool\"},{\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"},{\"internalType\":\"bytes\",\"name\":\"metadata\",\"type\":\"bytes\"}],\"internalType\":\"struct JBPayHookSpecification[]\",\"name\":\"hookSpecifications\",\"type\":\"tuple[]\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"projectId\",\"type\":\"uint256\"},{\"internalType\":\"address\",\"name\":\"account\",\"type\":\"address\"}],\"name\":\"canPay\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"flag\",\"type\":\"bool\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"},{\"components\":[{\"internalType\":\"uint48\",\"name\":\"cycleNumber\",\"type\":\"uint48\"},{\"internalType\":\"uint48\",\"name\":\"id\",\"type\":\"uint48\"},{\"internalType\":\"uint48\",\"name\":\"basedOnId\",\"type\":\"uint48\"},{\"internalType\":\"uint48\",\"name\":\"start\",\"type\":\"uint48\"},{\"internalType\":\"uint32\",\"name\":\"duration\",\"type\":\"uint32\"},{\"internalType\":\"uint112\",\"name\":\"weight\",\"type\":\"uint112\"},{\"internalType\":\"uint32\",\"name\":\"weightCutPercent\",\"type\":\"uint32\"},{\"internalType\":\"contract IJBRulesetApprovalHook\",\"name\":\"approvalHook\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"metadata\",\"type\":\"uint256\"}],\"internalType\":\"struct JBRuleset\",\"name\":\"\",\"type\":\"tuple\"},{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"name\":\"hasMintPermissionFor\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"flag\",\"type\":\"bool\"}],\"stateMutability\":\"pure\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"projectId\",\"type\":\"uint256\"},{\"internalType\":\"address\",\"name\":\"account\",\"type\":\"address\"}],\"name\":\"isAllowed\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"projectId\",\"type\":\"uint256\"}],\"name\":\"isOpen\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"forwarder\",\"type\":\"address\"}],\"name\":\"isTrustedForwarder\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"projectId\",\"type\":\"uint256\"},{\"internalType\":\"address[]\",\"name\":\"accounts\",\"type\":\"address[]\"},{\"internalType\":\"bool\",\"name\":\"allowed\",\"type\":\"bool\"}],\"name\":\"setAllowed\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"projectId\",\"type\":\"uint256\"},{\"internalType\":\"bool\",\"name\":\"open\",\"type\":\"bool\"}],\"name\":\"setOpen\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes4\",\"name\":\"interfaceId\",\"type\":\"bytes4\"}],\"name\":\"supportsInterface\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"flag\",\"type\":\"bool\"}],\"stateMutability\":\"pure\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"trustedForwarder\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"}],\"devdoc\":{\"details\":\"One deployment serves every FUND; `HomerunDeployer` installs it as each FUND's extra pay hook. It gates the beneficiary rather than the payer, since swap-routed payments arrive from the router. It gates payments only: FUND is a transferable ERC-20, and a linked FUND's suckers mint bridged FUND to whoever the sender named. A new FUND starts closed with an empty list. Cash outs are never gated.\",\"events\":{\"AllowedSet(uint256,address,bool,address)\":{\"params\":{\"account\":\"The beneficiary whose status changed.\",\"allowed\":\"Whether the beneficiary may now receive tokens from payments.\",\"caller\":\"The address that made the change.\",\"projectId\":\"The ID of the project the change applies to.\"}},\"OpenSet(uint256,bool,address)\":{\"params\":{\"caller\":\"The address that made the change.\",\"open\":\"Whether any beneficiary may now receive tokens from payments.\",\"projectId\":\"The ID of the project the change applies to.\"}}},\"kind\":\"dev\",\"methods\":{\"beforeCashOutRecordedWith((address,address,uint256,uint256,uint256,uint256,(address,uint8,uint32,uint256),bool,uint256,bool,bytes))\":{\"params\":{\"context\":\"The cash out context passed to this hook by the terminal.\"},\"returns\":{\"cashOutCount\":\"The number of tokens being cashed out, unchanged.\",\"cashOutTaxRate\":\"The ruleset's cash out tax rate, unchanged.\",\"hookSpecifications\":\"No cash out hooks.\",\"surplusValue\":\"The surplus the cash out is measured against, unchanged.\",\"totalSupply\":\"The total supply the cash out is measured against, unchanged.\"}},\"beforePayRecordedWith((address,address,(address,uint8,uint32,uint256),uint256,uint256,address,uint256,uint256,bytes))\":{\"details\":\"Reverts for any beneficiary that is not allowed while the project is closed, so the terminal records nothing for it.\",\"params\":{\"context\":\"The payment context passed to this hook by the terminal.\"},\"returns\":{\"hookSpecifications\":\"No pay hooks.\",\"weight\":\"The ruleset's weight, unchanged.\"}},\"canPay(uint256,address)\":{\"params\":{\"account\":\"The beneficiary of the payment.\",\"projectId\":\"The ID of the project being paid.\"},\"returns\":{\"flag\":\"Whether the payment would be accepted.\"}},\"constructor\":{\"params\":{\"projects\":\"The project registry whose owners manage each project's list.\",\"trustedForwarder\":\"The trusted forwarder for the ERC2771Context.\"}},\"hasMintPermissionFor(uint256,(uint48,uint48,uint48,uint48,uint32,uint112,uint32,address,uint256),address)\":{\"returns\":{\"flag\":\"Always false.\"}},\"isTrustedForwarder(address)\":{\"details\":\"Indicates whether any particular address is the trusted forwarder.\"},\"setAllowed(uint256,address[],bool)\":{\"details\":\"Only the project's owner can call this.\",\"params\":{\"accounts\":\"The beneficiaries to change.\",\"allowed\":\"Whether the beneficiaries may receive tokens from payments.\",\"projectId\":\"The ID of the project.\"}},\"setOpen(uint256,bool)\":{\"details\":\"Only the project's owner can call this. Closing keeps the list, so allowed beneficiaries stay allowed.\",\"params\":{\"open\":\"Whether any beneficiary may receive tokens from payments.\",\"projectId\":\"The ID of the project.\"}},\"supportsInterface(bytes4)\":{\"details\":\"See {IERC165-supportsInterface}.\",\"params\":{\"interfaceId\":\"The ID of the interface to check for adherence to.\"},\"returns\":{\"flag\":\"A flag indicating if the provided interface ID is supported.\"}},\"trustedForwarder()\":{\"details\":\"Returns the address of the trusted forwarder.\"}},\"stateVariables\":{\"isAllowed\":{\"custom:param\":\"projectId The ID of the project.account The beneficiary.\"},\"isOpen\":{\"custom:param\":\"projectId The ID of the project.\"}},\"version\":1},\"userdoc\":{\"errors\":{\"HomerunAllowlistHook_NotAllowed(uint256,address)\":[{\"notice\":\"Thrown when a payment names a beneficiary the project's owner has not allowed while the project is closed, so the payment is refused rather than minting FUND to them.\"}],\"HomerunAllowlistHook_Unauthorized(uint256,address)\":[{\"notice\":\"Thrown when someone other than the project's owner tries to change its list.\"}]},\"events\":{\"AllowedSet(uint256,address,bool,address)\":{\"notice\":\"Emitted when an owner allows or disallows a beneficiary.\"},\"OpenSet(uint256,bool,address)\":{\"notice\":\"Emitted when an owner opens or closes a project to every beneficiary.\"}},\"kind\":\"user\",\"methods\":{\"PROJECTS()\":{\"notice\":\"The project registry whose owners manage each project's list.\"},\"beforeCashOutRecordedWith((address,address,uint256,uint256,uint256,uint256,(address,uint8,uint32,uint256),bool,uint256,bool,bytes))\":{\"notice\":\"Passes cash outs through untouched. Cash outs are never gated.\"},\"beforePayRecordedWith((address,address,(address,uint8,uint32,uint256),uint256,uint256,address,uint256,uint256,bytes))\":{\"notice\":\"Accepts a payment only if its beneficiary may receive the project's tokens.\"},\"canPay(uint256,address)\":{\"notice\":\"Whether a payment for a beneficiary would be accepted right now.\"},\"hasMintPermissionFor(uint256,(uint48,uint48,uint48,uint48,uint32,uint112,uint32,address,uint256),address)\":{\"notice\":\"This hook never grants mint permission.\"},\"isAllowed(uint256,address)\":{\"notice\":\"Whether a beneficiary may receive tokens from payments to a project while it is not open.\"},\"isOpen(uint256)\":{\"notice\":\"Whether a project accepts payments for any beneficiary.\"},\"setAllowed(uint256,address[],bool)\":{\"notice\":\"Allows or disallows beneficiaries for a project.\"},\"setOpen(uint256,bool)\":{\"notice\":\"Opens or closes a project to every beneficiary.\"},\"supportsInterface(bytes4)\":{\"notice\":\"Indicates whether this contract adheres to the specified interface.\"}},\"notice\":\"A pay hook that accepts FUND payments only for beneficiaries a project's owner has allowed, or for anyone once the owner opens the project.\",\"version\":1}},\"settings\":{\"compilationTarget\":{\"src/HomerunAllowlistHook.sol\":\"HomerunAllowlistHook\"},\"evmVersion\":\"cancun\",\"libraries\":{},\"metadata\":{\"bytecodeHash\":\"none\"},\"optimizer\":{\"enabled\":true,\"runs\":200},\"remappings\":[\":@arbitrum/=/Users/jango/Documents/jb/v6/evm/nana-core-v6/node_modules/@arbitrum/\",\":@bananapus/721-hook-v6/=/Users/jango/Documents/jb/v6/evm/nana-721-hook-v6/\",\":@bananapus/address-registry-v6/=/Users/jango/Documents/jb/v6/evm/nana-address-registry-v6/\",\":@bananapus/buyback-hook-v6/=/Users/jango/Documents/jb/v6/evm/nana-buyback-hook-v6/\",\":@bananapus/core-v6/=/Users/jango/Documents/jb/v6/evm/nana-core-v6/\",\":@bananapus/omnichain-deployers-v6/=/Users/jango/Documents/jb/v6/evm/nana-omnichain-deployers-v6/\",\":@bananapus/ownable-v6/=/Users/jango/Documents/jb/v6/evm/nana-ownable-v6/\",\":@bananapus/permission-ids-v6/=/Users/jango/Documents/jb/v6/evm/nana-permission-ids-v6/\",\":@bananapus/router-terminal-v6/=/Users/jango/Documents/jb/v6/evm/nana-router-terminal-v6/\",\":@bananapus/suckers-v6/=/Users/jango/Documents/jb/v6/evm/nana-suckers-v6/\",\":@chainlink/contracts-ccip/=/Users/jango/Documents/jb/v6/evm/nana-suckers-v6/node_modules/@chainlink/contracts-ccip/\",\":@croptop/core-v6/=/Users/jango/Documents/jb/v6/evm/croptop-core-v6/\",\":@eth-optimism/=node_modules/@eth-optimism/\",\":@offchainlabs/=/Users/jango/Documents/jb/v6/evm/nana-core-v6/node_modules/@offchainlabs/\",\":@openzeppelin/contracts/=/Users/jango/Documents/jb/v6/evm/nana-core-v6/node_modules/@openzeppelin/contracts/\",\":@prb/math/=/Users/jango/Documents/jb/v6/evm/revnet-core-v6/node_modules/@prb/math/\",\":@rev-net/core-v6/=/Users/jango/Documents/jb/v6/evm/revnet-core-v6/\",\":@scroll-tech/=/Users/jango/Documents/jb/v6/evm/nana-core-v6/node_modules/@scroll-tech/\",\":@sphinx-labs/contracts/=node_modules/@sphinx-labs/contracts/\",\":@uniswap/permit2/=/Users/jango/Documents/jb/v6/evm/nana-core-v6/node_modules/@uniswap/permit2/\",\":@uniswap/v4-core/=/Users/jango/Documents/jb/v6/evm/revnet-core-v6/node_modules/@uniswap/v4-core/\",\":@zksync/=/Users/jango/Documents/jb/v6/evm/nana-core-v6/node_modules/@zksync/\",\":forge-std/=/Users/jango/Documents/jb/v6/evm/nana-core-v6/lib/forge-std/src/\",\":hardhat/=node_modules/hardhat/\",\":lib/forge-std/=/Users/jango/Documents/jb/v6/evm/nana-core-v6/lib/forge-std/\",\":solady/=/Users/jango/Documents/jb/v6/evm/revnet-core-v6/node_modules/solady/\",\":solmate/=node_modules/solmate/\"],\"viaIR\":true},\"sources\":{\"/Users/jango/Documents/jb/v6/evm/nana-core-v6/node_modules/@openzeppelin/contracts/metatx/ERC2771Context.sol\":{\"keccak256\":\"0x9695d220b99dcf62910533bdf5d40d4cf6a4e04d5b106b6803a80586486dc7f7\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://83b7aecd65882d8953643dce144efe91367082cc01830c9c4ed3c8a4837fb558\",\"dweb:/ipfs/QmQ5HxGavcCKjuhd8buv177qjG6A4kvxx4pZviceKdspdM\"]},\"/Users/jango/Documents/jb/v6/evm/nana-core-v6/node_modules/@openzeppelin/contracts/token/ERC721/IERC721.sol\":{\"keccak256\":\"0xf78f05f3b8c9f75570e85300d7b4600d7f6f6a198449273f31d44c1641adb46f\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://e28b872613b45e0e801d4995aa4380be2531147bfe2d85c1d6275f1de514fba3\",\"dweb:/ipfs/QmeeFcfShHYaS3BdgVj78nxR28ZaVUwbvr66ud8bT6kzw9\"]},\"/Users/jango/Documents/jb/v6/evm/nana-core-v6/node_modules/@openzeppelin/contracts/utils/Context.sol\":{\"keccak256\":\"0x493033a8d1b176a037b2cc6a04dad01a5c157722049bbecf632ca876224dd4b2\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://6a708e8a5bdb1011c2c381c9a5cfd8a9a956d7d0a9dc1bd8bcdaf52f76ef2f12\",\"dweb:/ipfs/Qmax9WHBnVsZP46ZxEMNRQpLQnrdE4dK8LehML1Py8FowF\"]},\"/Users/jango/Documents/jb/v6/evm/nana-core-v6/node_modules/@openzeppelin/contracts/utils/introspection/IERC165.sol\":{\"keccak256\":\"0x8891738ffe910f0cf2da09566928589bf5d63f4524dd734fd9cedbac3274dd5c\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://971f954442df5c2ef5b5ebf1eb245d7105d9fbacc7386ee5c796df1d45b21617\",\"dweb:/ipfs/QmadRjHbkicwqwwh61raUEapaVEtaLMcYbQZWs9gUkgj3u\"]},\"/Users/jango/Documents/jb/v6/evm/nana-core-v6/src/enums/JBApprovalStatus.sol\":{\"keccak256\":\"0x266153a67cfe69b2228b31e57ad4dd2765956dc829c6d8e85dd7269cbbc2acee\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://491a6195100dfde923d2eff77fadfa18ab7155ff6e50026cf52e64b26d85e348\",\"dweb:/ipfs/QmTsqnBfN8bXSBtY1JfwsVP8Wu7yemnajyu2pNqRW5yEfT\"]},\"/Users/jango/Documents/jb/v6/evm/nana-core-v6/src/interfaces/IJBCashOutHook.sol\":{\"keccak256\":\"0x2a6d327092775fdbeaf922b8364403102cae437f765f662fe142bf97e87c2ef1\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://5f9a23971860b907569917fe14cbcc85993d83fb32e5342dd5338a1721e540f7\",\"dweb:/ipfs/Qmamt2n7HaWo2cUDn8K2FhrZPHBVxuaCWh9jf8V3WYPXMN\"]},\"/Users/jango/Documents/jb/v6/evm/nana-core-v6/src/interfaces/IJBPayHook.sol\":{\"keccak256\":\"0x08599d439d898566b311bc4bedf7f0050ce25c86e246c43f673f3ab4d2457f21\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://db19e95707920262c79197be9296fe381782220bfaf00b71df3a4271da83832f\",\"dweb:/ipfs/QmYzdomQzXNSk46U5vkiEnDErJJdR17deL4S6hPundstZd\"]},\"/Users/jango/Documents/jb/v6/evm/nana-core-v6/src/interfaces/IJBProjects.sol\":{\"keccak256\":\"0x72c6cbda5a93593e3cc49ef6c4e0848a4b6daa88c188c4192776af86c49911dc\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://448ed5d7a704b5f4dd759514dbcb78160b82732ac6bd7bc368a9f8822045e6de\",\"dweb:/ipfs/QmbnpCPxQLDvQx5ymEy1Ty3aks7bjonydops1CsjCACJBN\"]},\"/Users/jango/Documents/jb/v6/evm/nana-core-v6/src/interfaces/IJBRulesetApprovalHook.sol\":{\"keccak256\":\"0x4c6fdc68e73bfb9eec7f448406d3169f9114c6752982620b77fd1f79cea1152a\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://15f774cddab359d684ef1253bff37bca9cf50114798540bfbb0b97dcc62326e6\",\"dweb:/ipfs/QmaDU9L1k1g5okCVymnUtXwSsYhqnTZbDiu6JhusoM72bM\"]},\"/Users/jango/Documents/jb/v6/evm/nana-core-v6/src/interfaces/IJBRulesetDataHook.sol\":{\"keccak256\":\"0xf9aad7d3c7de29e020af4fea893bbaa6a1c0e9a8ae5860331c9f4d68d1a5a99f\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://e10b6ed0827ac155153544b8018d2fa812628016e8a168f7df771616f92fd6f4\",\"dweb:/ipfs/QmUB3zuj8B2MAdgSYEMPh7ovXuM1fBb7jN6gLVxstjcAE7\"]},\"/Users/jango/Documents/jb/v6/evm/nana-core-v6/src/interfaces/IJBTokenUriResolver.sol\":{\"keccak256\":\"0xcbdb1448260ebea5937411516957ef199099e34ff997e7f2a617c2898f921994\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://d1cbf97e5684c987be6703c096e8230d870fab25a23eec8d209cd082e3f2637b\",\"dweb:/ipfs/QmNmzeuQoFiaUTQAcV1tyJyjUYEJ3t7386zTw4ofT7HoZM\"]},\"/Users/jango/Documents/jb/v6/evm/nana-core-v6/src/structs/JBAfterCashOutRecordedContext.sol\":{\"keccak256\":\"0x8cd6d13c98bd825d7e61cb3b2f5cbf56e77f9a2f85eaa0e27d82f1fb8d5af4f7\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://0e4ff9a254147cc6728b3bdc3862b77d15b518b49375e400b5f0b78552f14c62\",\"dweb:/ipfs/Qmd25R3LDrnRHiSdrNSdfqk8746A3J3VH44C5HDfHkFvU2\"]},\"/Users/jango/Documents/jb/v6/evm/nana-core-v6/src/structs/JBAfterPayRecordedContext.sol\":{\"keccak256\":\"0xcf1761f48e4cbd6eeeb64bb19e434eff50a7f666b2116657f88f63d19620c6de\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://842fe47a4ad56c830040864b458de398efd0cf82eb0add9349e792d0c8b0c275\",\"dweb:/ipfs/QmXBj6EVnzvVX8ZYa2ndyjoSZDGjpXxaoy7dBuoGMaAmRX\"]},\"/Users/jango/Documents/jb/v6/evm/nana-core-v6/src/structs/JBBeforeCashOutRecordedContext.sol\":{\"keccak256\":\"0xd3af6ce6d8ef731aa746e08de846f0422b34a568a3d1000fb8f85a32ba5701b0\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://237e31d3ee24305c1ff4ffb9f829a4159fbd6bb8b4ecb5b557aa16e7eb924bcd\",\"dweb:/ipfs/QmeW4zTaM2J8DDxdC7zLwaHryBLcC3ydbHNSTHcmyETGvG\"]},\"/Users/jango/Documents/jb/v6/evm/nana-core-v6/src/structs/JBBeforePayRecordedContext.sol\":{\"keccak256\":\"0xa5e4dd0ffa54c8e56f3bb6a437b2e13ef8728ee15aee3d7cb1d0dc96317e75dd\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://fcd2113962a3f34e782090a553f1ba5ace6653bd5d5f932e8bb5279f42bbcb5b\",\"dweb:/ipfs/QmWLhDEprdQsNFmPhmNojRHDhqwG2QMx58AV5j4o56P4mx\"]},\"/Users/jango/Documents/jb/v6/evm/nana-core-v6/src/structs/JBCashOutHookSpecification.sol\":{\"keccak256\":\"0x1579c160a19e68eb06158f56120acf06b8aa4bbbc9836c80fabbb3d2e57ccf3d\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://a81f5e0c384caf0ac11814825ce07e6c6cee97d28f60dcd65dfe8d529b6135fe\",\"dweb:/ipfs/QmY2q7oMFDMN1PoQ8zp7PUQu4K5dYKhYLKBKqrTy42YU6N\"]},\"/Users/jango/Documents/jb/v6/evm/nana-core-v6/src/structs/JBPayHookSpecification.sol\":{\"keccak256\":\"0x28f565b626774c36a990ac999f268fbaf9d7f7861e862fab1fb8301f2534e8d1\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://a5d7375934179178febd3b412099b1a5ff42a154ce8b949df2c11b5f3cb3b80e\",\"dweb:/ipfs/QmXP5vVq8Z6HntiuMcPWfQURCKejyiyHLKYuMmzCuUJJtV\"]},\"/Users/jango/Documents/jb/v6/evm/nana-core-v6/src/structs/JBRuleset.sol\":{\"keccak256\":\"0xd03f45345597fca43effe3bc593572c989f4294d909505e331cbd2640a801d23\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://2cc09b335549f4982c16c1109f3078f09fb81c32370baff007633a38badb7a83\",\"dweb:/ipfs/QmYJHBvXscvokRqzdGdTCRQtHUpnePS2uaCDfgHLuuMo56\"]},\"/Users/jango/Documents/jb/v6/evm/nana-core-v6/src/structs/JBTokenAmount.sol\":{\"keccak256\":\"0xc61593d33d5ec30e695d382948a1b944d01e29a8f2bfd29f75ecebcdbc7816de\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://8992c1e5fca0c2342ecc0e734dfba6a2a752e4c29184784931d0971e44305051\",\"dweb:/ipfs/QmYNcaW3qeCkgAExUaFTq238fgfJuoYCTwjCn7jm94U4dJ\"]},\"src/HomerunAllowlistHook.sol\":{\"keccak256\":\"0x0a4350f5abc257390db5ded9d3397031e2c3a28950e770fee2cd8e484b22908e\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://ec6b8c250d81ae4426695608150c30333eef8947e67e3e26410becf8527ef007\",\"dweb:/ipfs/QmbA6GSYVSvqD6KEEDgRMV8drDfpL6SxtMyq1JU87DtDcM\"]},\"src/interfaces/IHomerunAllowlistHook.sol\":{\"keccak256\":\"0x18a05461a0869196b89a0439552a0ae4caa0ae0b109c8e3bf4d65597317ececf\",\"license\":\"MIT\",\"urls\":[\"bzz-raw://6334779e1636eeb8d9853242e812053bd4e4e37561f453bbd37acdaa06aa5b34\",\"dweb:/ipfs/QmRmxkCjFMtAJPiVY5sLd9YpsfvqP4TdwvRzuuG25ZWut6\"]}},\"version\":1}",
+	"gitCommit": "5ac925925567324d9b2c6e846a8b196bd8c8c395",
+	"gitDirty": false,
+	"history": []
+}
