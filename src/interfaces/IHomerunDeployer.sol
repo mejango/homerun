@@ -16,8 +16,8 @@ import {REVSuckerDeploymentConfig} from "@rev-net/core-v6/src/structs/REVSuckerD
 import {IHomerunAllowlistHook} from "./IHomerunAllowlistHook.sol";
 import {HomerunInitialIncomeSnapshot} from "../structs/HomerunInitialIncomeSnapshot.sol";
 
-/// @notice Launches Homerun FUNDs with fixed campaign rules and, once a FUND closes, its INCOME revnet together with
-/// the atomic, bounded initial INCOME allocation.
+/// @notice Launches Homerun FUNDs with fixed campaign rules, and launches each FUND's INCOME revnet with the initial
+/// INCOME allocation recorded for the FUND's owner.
 interface IHomerunDeployer is IJBPayerTracker {
     /// @notice Emitted when a FUND is launched.
     /// @param projectId The ID of the new FUND project.
@@ -64,7 +64,7 @@ interface IHomerunDeployer is IJBPayerTracker {
     /// @return rate The tax rate.
     function FUND_CASH_OUT_TAX_RATE() external view returns (uint16 rate);
 
-    /// @notice The CCIP gas allowance every FUND sucker mapping uses.
+    /// @notice The CCIP gas allowance every FUND and INCOME sucker mapping uses.
     /// @return minGas The gas allowance.
     function FUND_SUCKER_MIN_GAS() external view returns (uint32 minGas);
 
@@ -89,10 +89,6 @@ interface IHomerunDeployer is IJBPayerTracker {
     /// @return supply The global initial supply.
     function INITIAL_INCOME_SUPPLY() external view returns (uint256 supply);
 
-    /// @notice The version of the launch semantics this deployer implements.
-    /// @return version The launch version.
-    function LAUNCH_VERSION() external view returns (uint256 version);
-
     /// @notice The omnichain deployer every FUND is launched through.
     /// @return deployer The omnichain deployer.
     function OMNICHAIN_DEPLOYER() external view returns (IJBOmnichainDeployer deployer);
@@ -101,7 +97,7 @@ interface IHomerunDeployer is IJBPayerTracker {
     /// @return projects The project registry.
     function PROJECTS() external view returns (IJBProjects projects);
 
-    /// @notice The hash of the complete per-chain configuration this deployer was constructed with.
+    /// @notice The hash of the complete per-chain configuration the deployer was constructed with.
     /// @dev Identical on every chain, since the same array is passed everywhere.
     /// @return hash The configuration hash.
     function PROTOCOL_CONFIG_HASH() external view returns (bytes32 hash);
@@ -155,7 +151,7 @@ interface IHomerunDeployer is IJBPayerTracker {
     /// @custom:param fundProjectId The ID of the FUND project.
     function incomeProjectIdOf(uint256 fundProjectId) external view returns (uint256);
 
-    /// @notice Whether a project was launched as a FUND through this deployer. INCOME only attaches to these.
+    /// @notice Whether a project was launched as a FUND through the deployer. INCOME only attaches to these.
     /// @custom:param projectId The ID of the project.
     function isFund(uint256 projectId) external view returns (bool);
 
@@ -163,16 +159,16 @@ interface IHomerunDeployer is IJBPayerTracker {
     /// @custom:param chainId The ID of the chain.
     function usdcOf(uint32 chainId) external view returns (address);
 
-    /// @notice Launches a closed FUND's INCOME revnet, mints this chain's share of the initial allocation and funds
-    /// its claim vault, all in one transaction.
-    /// @dev Only the FUND's owner can call this, and only once per FUND. The snapshot root is the owner's attestation;
-    /// its completeness is not proven onchain.
+    /// @notice Launches a FUND's INCOME revnet, with this chain's share of the initial allocation recorded as an
+    /// auto-issuance to the deployer for `mintInitialAllocation` to pay to the FUND's owner.
+    /// @dev Only the FUND's owner can call this, and only once per FUND. The snapshot is the owner's attestation; its
+    /// completeness is not proven onchain.
     /// @param fundProjectId The ID of the FUND project.
     /// @param snapshot The global initial allocation snapshot, identical on every chain.
     /// @param description The INCOME name, ticker, metadata URI and launch salt.
     /// @param reservedBps The share of new INCOME reserved for the owner's split, out of
     /// `JBConstants.MAX_RESERVED_PERCENT`.
-    /// @param startsAtOrAfter The shared start of the INCOME issuance schedule. Must not be in the future.
+    /// @param startsAtOrAfter The shared start of the INCOME issuance schedule on every chain.
     /// @param suckerDeploymentConfiguration The suckers linking INCOME across the snapshot's chains.
     /// @return incomeProjectId The ID of the new INCOME project.
     function deployIncome(
@@ -188,11 +184,12 @@ interface IHomerunDeployer is IJBPayerTracker {
         returns (uint256 incomeProjectId);
 
     /// @notice Mints a FUND's initial INCOME allocation to whoever owns the FUND right now.
+    /// @dev Anyone can call this once INCOME's stage has started.
     /// @param fundProjectId The ID of the FUND project.
     function mintInitialAllocation(uint256 fundProjectId) external;
 
     /// @notice Launches a FUND with Homerun's fixed campaign rules and deploys its ERC-20.
-    /// @dev Linked launches must use the same `salt` and the same caller on every chain.
+    /// @dev Linked launches must use the same `salt`, the same caller and the same owner on every chain.
     /// @param owner The address that will own the FUND.
     /// @param projectUri The FUND's metadata URI.
     /// @param name The FUND token's name.

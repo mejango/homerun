@@ -22,22 +22,21 @@
     "payHook": "HomerunAllowlistHook as the omnichain extra pay hook; owner-managed beneficiary allowlist, closed by default; cash outs ungated",
     "identity": "isFund(projectId) + FundLaunched event"
   },
-  "capturedAt": "2026-09-21T18:39:06.185Z",
+  "capturedAt": "2026-09-21T18:52:48.284Z",
   "liveRpcCalls": 0,
   "walletCalls": 0,
-  "helperSourceKeccak256": "0x67c7d9b04cb761a95ac271c2fc4ee91342b4a18924a38efe26ddc1cff791c317",
+  "helperSourceKeccak256": "0x6efdd0c4075f84c440a4346fc50e61b4ae02e14e64c32dc78c2936aee94fa3d1",
   "profileChecks": {
     "recursiveConstructorShape": true,
     "sourceAssertions": [
       "constructor(HomerunChainConfig[] memory chains)",
-      "uint256 public constant override LAUNCH_VERSION = 4;",
       "PROTOCOL_CONFIG_HASH = keccak256(abi.encode(chains));",
       "if (!isFund[fundProjectId]) revert HomerunDeployer_UnsupportedFund(fundProjectId);",
       "if (PROJECTS.ownerOf(fundProjectId) != _msgSender()) revert HomerunDeployer_Unauthorized(_msgSender());",
       "configuration.operator = _msgSender();",
       "uint112 public constant override FUND_WEIGHT = 10_000e18;",
       "uint16 public constant override FUND_CASH_OUT_TAX_RATE = 1000;",
-      "uint112 public constant override INCOME_INITIAL_ISSUANCE = 10 ether;",
+      "uint112 public constant override INCOME_INITIAL_ISSUANCE = 10e18;",
       "uint32 public constant override INCOME_CUT_PERCENT = 20_000_000;",
       "uint16 public constant override INCOME_CASH_OUT_TAX_RATE = 1000;",
       "suckerDeploymentConfiguration.salt = scopedSalt;",
@@ -71,7 +70,6 @@
     "fullInitcodeIncludesConstructor": true
   },
   "semantics": {
-    "launchVersion": 4,
     "roles": {
       "controlWallet": "FUND owner; the signer becomes the stock Revnet operator and holds the whole unlocked reserved split"
     },
@@ -90,20 +88,6 @@
     "allocationScope": "one global allocation; each chain's share is recorded for the owner on that chain",
     "sourceSetHash": "keccak256 of canonical full global snapshot report",
     "allocationAuthority": "FUND-owner-attested published manifest; each chain's share is a stock revnet auto-issuance to the helper that anyone mints to the current FUND owner, who settles it offchain; no claim contract, root or proof",
-    "snapshotClock": {
-      "arbitrumChainIds": [
-        42161,
-        421614
-      ],
-      "arbitrumPrecompile": "0x0000000000000000000000000000000000000064",
-      "arbitrumMethods": [
-        "arbBlockNumber()",
-        "arbBlockHash(uint256)"
-      ],
-      "otherChains": "EVM NUMBER/BLOCKHASH",
-      "recentHashWindow": 256,
-      "olderHashes": "explicit FUND-owner attestation; independently reconstructed and finalized by the client"
-    },
     "deployment": "stock asynchronous cross-chain deployment; each chain records its allocation at launch and anyone mints it to the current FUND owner once the shared stage starts",
     "revnet": {
       "initialIssuance": "10000000000000000000",
@@ -132,17 +116,22 @@
     {
       "name": "homerun",
       "path": "extensions/homerun",
-      "commit": "8b167e0221343d25fdecf9369468390698f5672f",
+      "commit": "920c150e4cf16fa3c62495f4f0046524ea6943d3",
       "trackedChanges": [
-        "M docs/INCOME_RELEASE_MANIFEST.json",
+        "M docs/INCOME_INTEGRATION.md",
+        " M docs/INCOME_RELEASE.md",
+        " M docs/INCOME_RELEASE_MANIFEST.json",
+        " M docs/TRANSACTIONS.md",
+        " M scripts/prepare-income-release.mts",
         " M src/HomerunDeployer.sol",
-        " M src/lib/income-initial-allocation.ts",
-        " M test/HomerunDeployer.integration.t.sol",
+        " M src/components/IncomeLaunch.tsx",
+        "D  src/interfaces/IArbSys.sol",
+        " M src/interfaces/IHomerunDeployer.sol",
+        " M src/lib/income-contracts.ts",
+        " M src/lib/income-launch.ts",
         " M test/HomerunDeployer.t.sol",
-        " M test/income-initial-allocation.test.ts",
-        " M test/income-launch-ui.test.tsx",
         " M test/income-launch.test.ts",
-        " M test/initial-income-mint-ui.test.tsx"
+        " M test/income-release-policy.test.ts"
       ]
     },
     {
@@ -182,7 +171,7 @@
     {
       "name": "HomerunDeployer",
       "artifact": "extensions/homerun/out/HomerunDeployer.sol/HomerunDeployer.json",
-      "artifactSha256": "92ee61f793ed3430f85fb866932553c7377c59a727b90a73731a9379b064cd0c",
+      "artifactSha256": "3a4f4c9433a3a981f8e8f08575c6da70c3a85ff936b906f17688565ec655f129",
       "status": "unavailable-or-invalid",
       "issue": "HomerunDeployer: compilation settings differ from the reviewed profile."
     },
@@ -749,7 +738,7 @@
   ],
   "requiredPostDeploymentEvidence": [
     "Executed deployment receipts with chain/block/transaction identity, identical shared helper constructor inputs, factory and salt.",
-    "Full executable-runtime and every immutable-word verification against the exact reviewed artifacts on each chain; template hashes above are not live runtime hashes. Verify LAUNCH_VERSION = 4, shared PROTOCOL_CONFIG_HASH, TERMINAL, ROUTER_TERMINAL_REGISTRY and every usdcOf entry.",
+    "Full executable-runtime and every immutable-word verification against the exact reviewed artifacts on each chain; template hashes above are not live runtime hashes. Verify the shared PROTOCOL_CONFIG_HASH, TERMINAL, ROUTER_TERMINAL_REGISTRY and every usdcOf entry.",
     "Verify the FUND owner becomes the INCOME operator and holds one unlocked reserved split, and the Owner-managed stock 721 inventory with the reviewed USD denomination and restricted tier flags.",
     "For every directed SDK CCIP route, verify registry allowlisting, directory/tokens, singleton runtime, ccipRemoteChainId, ccipRemoteChainSelector, ccipRouter and reciprocal default-peer predictions. A merely approved alternative deployer is not proof of cross-chain compatibility.",
     "Explorer/Sourcify source verification for the helper using the exact compiler input and metadata settings.",
@@ -758,8 +747,8 @@
   "blockers": [
     "No executed helper deployment receipts or per-chain runtime/immutable verification are established by this offline packet.",
     "The new helper source must be frozen with its reviewed compiler inputs before a production release.",
-    "HomerunDeployer: compilation settings differ from the reviewed profile.",
     "HomerunAllowlistHook: compilation settings differ from the reviewed profile.",
+    "HomerunDeployer: compilation settings differ from the reviewed profile.",
     "Chain 1: missing SDK registry entries HomerunAllowlistHook, HomerunDeployer.",
     "Chain 10: missing SDK registry entries HomerunAllowlistHook, HomerunDeployer.",
     "Chain 8453: missing SDK registry entries HomerunAllowlistHook, HomerunDeployer.",

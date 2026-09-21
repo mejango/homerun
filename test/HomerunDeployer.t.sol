@@ -595,7 +595,6 @@ contract HomerunDeployerTest is Test {
     }
 
     function testLaunchRecordsTheInitialAllocationForTheOwnerAndPreservesOwnership() public {
-        assertEq(helper.LAUNCH_VERSION(), 4);
         uint256 id = _deploy();
         assertEq(id, 2);
         assertEq(helper.incomeProjectIdOf(1), id);
@@ -1025,78 +1024,6 @@ contract HomerunDeployerTest is Test {
         // The FUND transfer after the snapshot block does not change the attested allocation.
         assertEq(revOwner.amountToAutoIssue(id, block.timestamp, address(helper)), 500_000 ether);
         assertEq(tokens.totalBalanceOf(ALICE, 1), 250 ether);
-    }
-
-    function testOldAttestedSnapshotCanExecuteAfterBlockhashWindow() public {
-        vm.roll(1000);
-        assertEq(_deploy(), 2);
-    }
-
-    function testRecentSnapshotHashMustMatchCanonicalBlock() public {
-        vm.setBlockhash(99, keccak256("reorg"));
-        vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidSnapshot.selector);
-        _deploy();
-        _assertRollback();
-    }
-
-    function _useArbitrumSnapshot(uint32 chainId, uint256 snapshotHeight) private {
-        vm.chainId(chainId);
-        HomerunChainConfig[] memory chains = new HomerunChainConfig[](1);
-        chains[0] = _chains()[0];
-        chains[0].chainId = chainId;
-        helper = new HomerunDeployer(chains);
-        // The FUND was launched through the previous helper; a fresh deployment only trusts its own launches.
-        stdstore.target(address(helper)).sig("isFund(uint256)").with_key(uint256(1)).checked_write(true);
-        // Model a real precompile address with separate L2 height and hash, while EVM block.number remains 100.
-        vm.etch(address(100), hex"00");
-        vm.mockCall(address(100), abi.encodeWithSignature("arbBlockNumber()"), abi.encode(uint256(1001)));
-        _snapshot.allocations[0].chainId = chainId;
-        _snapshot.allocations[0].snapshotBlockNumber = snapshotHeight;
-        vm.mockCall(
-            address(100),
-            abi.encodeWithSignature("arbBlockHash(uint256)", snapshotHeight),
-            abi.encode(_snapshot.allocations[0].snapshotBlockHash)
-        );
-    }
-
-    function testArbitrumUsesL2SnapshotHeightAndHashInsteadOfL1Opcodes() public {
-        _useArbitrumSnapshot(42_161, 1000);
-        assertEq(_deploy(), 2);
-    }
-
-    function testArbitrumSepoliaUsesL2SnapshotHeightAndHash() public {
-        _useArbitrumSnapshot(421_614, 1000);
-        assertEq(_deploy(), 2);
-    }
-
-    function testArbitrumRecentSnapshotHashMismatchRejectsLaunch() public {
-        _useArbitrumSnapshot(42_161, 1000);
-        vm.mockCall(
-            address(100),
-            abi.encodeWithSignature("arbBlockHash(uint256)", uint256(1000)),
-            abi.encode(bytes32(uint256(9)))
-        );
-        vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidSnapshot.selector);
-        _deploy();
-        _assertRollback();
-    }
-
-    function testArbitrumFutureL2SnapshotRejected() public {
-        _useArbitrumSnapshot(42_161, 1001);
-        vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidSnapshot.selector);
-        _deploy();
-    }
-
-    function testArbitrumOldAttestedSnapshotSkipsExpiredPrecompileHistory() public {
-        _useArbitrumSnapshot(42_161, 700);
-        vm.mockCallRevert(address(100), abi.encodeWithSignature("arbBlockHash(uint256)", uint256(700)), "expired");
-        assertEq(_deploy(), 2);
-    }
-
-    function testFutureSnapshotRejected() public {
-        _snapshot.allocations[0].snapshotBlockNumber = 100;
-        vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidSnapshot.selector);
-        _deploy();
     }
 
     function testIncorrectCreationFeeDoesNotReserveFund() public {

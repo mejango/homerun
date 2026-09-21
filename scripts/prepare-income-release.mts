@@ -15,7 +15,6 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const workspace = resolve(root, '../..')
 export const incomeReleasePolicy = {
   profile: 'homerun-deployer-global-v4-candidate',
-  launchVersion: 4,
   helperSaltText: 'homerun.deployer.global.v4',
   splitLockedUntil: '0',
   roles: { controlWallet: 'FUND owner; the signer becomes the stock Revnet operator and holds the whole unlocked reserved split' },
@@ -165,13 +164,12 @@ export function assertIncomeReleaseSource(helperSource: string) {
   const normalized = helperSource.replace(/\s+/g, ' ')
   const sourceAssertions = [
     'constructor(HomerunChainConfig[] memory chains)',
-    `uint256 public constant override LAUNCH_VERSION = ${incomeReleasePolicy.launchVersion};`,
     'PROTOCOL_CONFIG_HASH = keccak256(abi.encode(chains));',
     'if (!isFund[fundProjectId]) revert HomerunDeployer_UnsupportedFund(fundProjectId);',
     'if (PROJECTS.ownerOf(fundProjectId) != _msgSender()) revert HomerunDeployer_Unauthorized(_msgSender());',
     'configuration.operator = _msgSender();',
     'uint112 public constant override FUND_WEIGHT = 10_000e18;', 'uint16 public constant override FUND_CASH_OUT_TAX_RATE = 1000;',
-    'uint112 public constant override INCOME_INITIAL_ISSUANCE = 10 ether;', 'uint32 public constant override INCOME_CUT_PERCENT = 20_000_000;', 'uint16 public constant override INCOME_CASH_OUT_TAX_RATE = 1000;',
+    'uint112 public constant override INCOME_INITIAL_ISSUANCE = 10e18;', 'uint32 public constant override INCOME_CUT_PERCENT = 20_000_000;', 'uint16 public constant override INCOME_CASH_OUT_TAX_RATE = 1000;',
     'suckerDeploymentConfiguration.salt = scopedSalt;', 'return keccak256(abi.encode(_msgSender(), owner, salt));', 'originalPayer = JBPayerTrackerLib.resolve(_msgSender());', 'beneficiary: payable(_msgSender()),',
     'configuration.stageConfigurations = new REVStageConfig[](1);', 'address(REV_DEPLOYER.ROUTER_TERMINAL_REGISTRY()) != address(ROUTER_TERMINAL_REGISTRY)',
     'token = address(CONTROLLER.deployERC20For({projectId: projectId, name: name, symbol: ticker, salt: scopedSalt}));',
@@ -249,11 +247,10 @@ export async function prepareIncomeRelease() {
     helperSourceKeccak256: keccak256(toHex(helperSource)),
     profileChecks: { recursiveConstructorShape: true, sourceAssertions, sourceAssertionsAreFormalVerification: false, metadataHash: { Homerun: 'ipfs' }, fullInitcodeIncludesConstructor: true },
     semantics: {
-      launchVersion: incomeReleasePolicy.launchVersion, roles: incomeReleasePolicy.roles, shop: incomeReleasePolicy.shop,
+      roles: incomeReleasePolicy.roles, shop: incomeReleasePolicy.shop,
       initialIncomeSupply: '500000000000000000000000', allocationScope: 'one global allocation; each chain\'s share is recorded for the owner on that chain',
       sourceSetHash: 'keccak256 of canonical full global snapshot report',
       allocationAuthority: 'FUND-owner-attested published manifest; each chain\'s share is a stock revnet auto-issuance to the helper that anyone mints to the current FUND owner, who settles it offchain; no claim contract, root or proof',
-      snapshotClock: { arbitrumChainIds: [42_161, 421_614], arbitrumPrecompile: '0x0000000000000000000000000000000000000064', arbitrumMethods: ['arbBlockNumber()', 'arbBlockHash(uint256)'], otherChains: 'EVM NUMBER/BLOCKHASH', recentHashWindow: 256, olderHashes: 'explicit FUND-owner attestation; independently reconstructed and finalized by the client' },
       deployment: 'stock asynchronous cross-chain deployment; each chain records its allocation at launch and anyone mints it to the current FUND owner once the shared stage starts',
       revnet: { initialIssuance: '10000000000000000000', quarterSeconds: 7_884_000, cutPercent: 20_000_000, cutsForever: true, stages: 1, cashOutTaxRate: 1000, splitPercent: 'caller-supplied reservedBps (0..10000)', splits: 'one unlocked split, 100% to the FUND owner', splitLockedUntil: incomeReleasePolicy.splitLockedUntil, extraMetadata: 4, scopeCashOutsToLocalBalances: false, ticker: 'caller-supplied' },
       ongoingRewards: { status: 'deferred; the owner redirects the reserved split once Sticky or other recipients exist' },
@@ -269,7 +266,7 @@ export async function prepareIncomeRelease() {
       runtimePolicy: 'same initcode/address and PROTOCOL_CONFIG_HASH across chains; local immutable dependencies can make deployed runtime hashes different',
     },
     networks,
-    requiredPostDeploymentEvidence: ['Executed deployment receipts with chain/block/transaction identity, identical shared helper constructor inputs, factory and salt.', 'Full executable-runtime and every immutable-word verification against the exact reviewed artifacts on each chain; template hashes above are not live runtime hashes. Verify LAUNCH_VERSION = 4, shared PROTOCOL_CONFIG_HASH, TERMINAL, ROUTER_TERMINAL_REGISTRY and every usdcOf entry.', 'Verify the FUND owner becomes the INCOME operator and holds one unlocked reserved split, and the Owner-managed stock 721 inventory with the reviewed USD denomination and restricted tier flags.', 'For every directed SDK CCIP route, verify registry allowlisting, directory/tokens, singleton runtime, ccipRemoteChainId, ccipRemoteChainSelector, ccipRouter and reciprocal default-peer predictions. A merely approved alternative deployer is not proof of cross-chain compatibility.', 'Explorer/Sourcify source verification for the helper using the exact compiler input and metadata settings.', 'Published V6 SDK registry/artifact update for executed chains only, then pin that SDK release in Homerun and re-run onchain wiring/transaction smoke checks.'],
+    requiredPostDeploymentEvidence: ['Executed deployment receipts with chain/block/transaction identity, identical shared helper constructor inputs, factory and salt.', 'Full executable-runtime and every immutable-word verification against the exact reviewed artifacts on each chain; template hashes above are not live runtime hashes. Verify the shared PROTOCOL_CONFIG_HASH, TERMINAL, ROUTER_TERMINAL_REGISTRY and every usdcOf entry.', 'Verify the FUND owner becomes the INCOME operator and holds one unlocked reserved split, and the Owner-managed stock 721 inventory with the reviewed USD denomination and restricted tier flags.', 'For every directed SDK CCIP route, verify registry allowlisting, directory/tokens, singleton runtime, ccipRemoteChainId, ccipRemoteChainSelector, ccipRouter and reciprocal default-peer predictions. A merely approved alternative deployer is not proof of cross-chain compatibility.', 'Explorer/Sourcify source verification for the helper using the exact compiler input and metadata settings.', 'Published V6 SDK registry/artifact update for executed chains only, then pin that SDK release in Homerun and re-run onchain wiring/transaction smoke checks.'],
     blockers,
   }
 }

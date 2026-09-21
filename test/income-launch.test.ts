@@ -76,7 +76,7 @@ function client(overrides: Record<string, unknown> = {}, chainId: JBChainId = 84
     CONTROLLER: v6Address('JBController', chainId), DIRECTORY: v6Address('JBDirectory', chainId), PROJECTS: v6Address('JBProjects', chainId), TOKENS: v6Address('JBTokens', chainId),
     REV_DEPLOYER: v6Address('REVDeployer', chainId), REV_OWNER: v6Address('REVOwner', chainId), SUCKER_REGISTRY: v6Address('JBSuckerRegistry', chainId),
     OMNICHAIN_DEPLOYER: v6Address('JBOmnichainDeployer', chainId), TERMINAL: v6Address('JBMultiTerminal', chainId), ROUTER_TERMINAL_REGISTRY: v6Address('JBRouterTerminalRegistry', chainId), ALLOWLIST_HOOK: runtime.allowlist, PROTOCOL_CONFIG_HASH: protocolHash,
-    LAUNCH_VERSION: 4n, USDC: USDC_ADDRESSES[chainId], incomeProjectIdOf: 0n, creationFee: 15n,
+    USDC: USDC_ADDRESSES[chainId], incomeProjectIdOf: 0n, creationFee: 15n,
     currentRulesetOf: [{ id: 80n }, {}], splitsOf: defaultSplits,
   }
   return {
@@ -362,23 +362,6 @@ describe('global atomic INCOME launch preparation', () => {
     const rpc = client(); rpc.getCode.mockResolvedValue('0x')
     await expect(prepareIncomeLaunch(rpc as unknown as PublicClient, input)).rejects.toThrow(/no deployed code/)
   })
-  it.each([1n, 2n, 3n, new Error('Function selector was not recognized')])('rejects an incompatible registered launcher version %s before returning a transaction', async version => {
-    const rpc = client({ LAUNCH_VERSION: version })
-    await expect(prepareIncomeLaunch(rpc as unknown as PublicClient, input)).rejects.toThrow(/verified launcher that launched this FUND and supports separate Owner and Operator wallets is required/)
-    expect(rpc.readContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'LAUNCH_VERSION', blockNumber: 100n }))
-    expect(rpc.readContract.mock.calls.some(([args]) => args.functionName === 'creationFee')).toBe(false)
-  })
-  it('requires compatible launchers on every peer still waiting to launch', async () => {
-    const f = linkedFixture({ remoteOverrides: { LAUNCH_VERSION: 1n } })
-    await expect(prepareIncomeLaunch(f.rpc as unknown as PublicClient, f.input)).rejects.toThrow(/Chain 10: A verified launcher that launched this FUND and supports separate Owner and Operator wallets is required/)
-  })
-  it('keeps completed legacy peers usable while requiring the current launcher for a new local launch', async () => {
-    const f = launchedPeerFixture()
-    const legacyRemote = client({ incomeProjectIdOf: 18n, hashedEncodedConfigurationOf: f.expectedHash, LAUNCH_VERSION: new Error('Unknown selector') }, 10)
-    f.input.clients.set(10, legacyRemote as unknown as PublicClient)
-    await expect(prepareIncomeLaunch(f.rpc as unknown as PublicClient, f.input)).resolves.toBeDefined()
-    expect(legacyRemote.readContract.mock.calls.some(([args]) => args.functionName === 'LAUNCH_VERSION')).toBe(false)
-  })
   it('rejects a reorganization after preparing the allocation', async () => {
     const rpc = client(); rpc.getBlock.mockResolvedValue({ number: 100n, hash: salt, timestamp: 1_800_000_000n })
     await expect(prepareIncomeLaunch(rpc as unknown as PublicClient, input)).rejects.toThrow(/reorganized/)
@@ -413,11 +396,6 @@ describe('global atomic INCOME launch preparation', () => {
   it('reads the canonical INCOME binding from the contract', async () => {
     expect(await readIncomeLaunchBinding(client({ incomeProjectIdOf: 8n }) as unknown as PublicClient, 8453, 7n)).toBe(8n)
     expect(await readIncomeLaunchBinding(client() as unknown as PublicClient, 8453, 7n)).toBeNull()
-  })
-  it('continues reading legacy project bindings without requiring the new launch selector', async () => {
-    const rpc = client({ incomeProjectIdOf: 8n, LAUNCH_VERSION: new Error('Unknown selector') })
-    await expect(readIncomeLaunchBinding(rpc as unknown as PublicClient, 8453, 7n)).resolves.toBe(8n)
-    expect(rpc.readContract.mock.calls.some(([args]) => args.functionName === 'LAUNCH_VERSION')).toBe(false)
   })
   it('rejects reserved or wrong-chain binding', async () => {
     await expect(readIncomeLaunchBinding(client({ incomeProjectIdOf: (1n << 256n) - 1n }) as unknown as PublicClient, 8453, 7n)).rejects.toThrow(/progress/)

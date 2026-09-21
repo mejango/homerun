@@ -24,7 +24,11 @@ contract HomerunAllowlistHook is ERC2771Context, IHomerunAllowlistHook {
     // --------------------------- custom errors ------------------------- //
     //*********************************************************************//
 
+    /// @notice Thrown when a payment names a beneficiary the project's owner has not allowed while the project is
+    /// closed, so the payment is refused rather than minting FUND to them.
     error HomerunAllowlistHook_NotAllowed(uint256 projectId, address beneficiary);
+
+    /// @notice Thrown when someone other than the project's owner tries to change its list.
     error HomerunAllowlistHook_Unauthorized(uint256 projectId, address caller);
 
     //*********************************************************************//
@@ -67,20 +71,28 @@ contract HomerunAllowlistHook is ERC2771Context, IHomerunAllowlistHook {
     /// @param accounts The beneficiaries to change.
     /// @param allowed Whether the beneficiaries may receive tokens from payments.
     function setAllowed(uint256 projectId, address[] calldata accounts, bool allowed) external override {
+        // Enforce permissions.
         _requireOwner(projectId);
+
         for (uint256 i; i < accounts.length; i++) {
+            // Set the beneficiary's status.
             isAllowed[projectId][accounts[i]] = allowed;
+
             emit AllowedSet({projectId: projectId, account: accounts[i], allowed: allowed, caller: _msgSender()});
         }
     }
 
     /// @notice Opens or closes a project to every beneficiary.
-    /// @dev Only the project's owner can call this.
+    /// @dev Only the project's owner can call this. Closing keeps the list, so allowed beneficiaries stay allowed.
     /// @param projectId The ID of the project.
     /// @param open Whether any beneficiary may receive tokens from payments.
     function setOpen(uint256 projectId, bool open) external override {
+        // Enforce permissions.
         _requireOwner(projectId);
+
+        // Set the project's status.
         isOpen[projectId] = open;
+
         emit OpenSet({projectId: projectId, open: open, caller: _msgSender()});
     }
 
@@ -113,7 +125,8 @@ contract HomerunAllowlistHook is ERC2771Context, IHomerunAllowlistHook {
     }
 
     /// @notice Accepts a payment only if its beneficiary may receive the project's tokens.
-    /// @dev Reverts for any beneficiary that is not allowed while the project is closed.
+    /// @dev Reverts for any beneficiary that is not allowed while the project is closed, so the terminal records
+    /// nothing for it.
     /// @param context The payment context passed to this hook by the terminal.
     /// @return weight The ruleset's weight, unchanged.
     /// @return hookSpecifications No pay hooks.
@@ -123,9 +136,11 @@ contract HomerunAllowlistHook is ERC2771Context, IHomerunAllowlistHook {
         override
         returns (uint256 weight, JBPayHookSpecification[] memory hookSpecifications)
     {
+        // Make sure the beneficiary may receive the project's tokens.
         if (!canPay({projectId: context.projectId, account: context.beneficiary})) {
-            revert HomerunAllowlistHook_NotAllowed(context.projectId, context.beneficiary);
+            revert HomerunAllowlistHook_NotAllowed({projectId: context.projectId, beneficiary: context.beneficiary});
         }
+
         return (context.weight, hookSpecifications);
     }
 
@@ -164,7 +179,7 @@ contract HomerunAllowlistHook is ERC2771Context, IHomerunAllowlistHook {
     /// @param projectId The ID of the project.
     function _requireOwner(uint256 projectId) internal view {
         if (PROJECTS.ownerOf(projectId) != _msgSender()) {
-            revert HomerunAllowlistHook_Unauthorized(projectId, _msgSender());
+            revert HomerunAllowlistHook_Unauthorized({projectId: projectId, caller: _msgSender()});
         }
     }
 }

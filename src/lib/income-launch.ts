@@ -67,17 +67,6 @@ export async function verifyIncomeLaunchWiring(client: PublicClient, chainId: JB
   return deployer
 }
 
-/** New launches require the deployer that launched the FUND; old bindings remain readable. */
-export async function assertIncomeLaunchVersion(client: PublicClient, chainId: JBChainId, blockNumber: bigint): Promise<void> {
-  const deployer = registeredHomerunDeployer(chainId)
-  let version: bigint | undefined
-  if (deployer) {
-    try { version = await client.readContract({ address: deployer, abi: homerunDeployerAbi, functionName: 'LAUNCH_VERSION', blockNumber }) }
-    catch { /* Legacy launchers do not expose a compatible version. */ }
-  }
-  if (version !== 4n) throw new Error(`Chain ${chainId}: A verified launcher that launched this FUND and supports separate Owner and Operator wallets is required before launching INCOME.`)
-}
-
 export type InitialIncomeSnapshot = ReturnType<typeof globalIncomeSnapshotParameters>
 
 export type PreparedIncomeLaunch = {
@@ -172,7 +161,6 @@ export async function prepareIncomeLaunch(client: PublicClient, input: {
     // A completed peer may already be distributing asset-sale proceeds or burning FUND. Its frozen
     // initial rights remain authoritative; only projects still awaiting launch must remain closed raises.
     if (existing === 0n) {
-      await assertIncomeLaunchVersion(source, allocation.chainId, fund.blockNumber)
       const blockers = incomeLaunchBlockers(fund)
       if (blockers.length) throw new Error(`Chain ${allocation.chainId}: ${blockers.join(' ')}`)
     }

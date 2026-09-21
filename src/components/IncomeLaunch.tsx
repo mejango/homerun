@@ -17,7 +17,7 @@ import { buildFundGlobalManifest, canonicalSnapshotJson, fundGlobalManifestHash,
 import { homerunDeployerAbi, registeredHomerunDeployer } from '@/lib/income-contracts'
 import { assertInitialIncomeAllocation, readInitialIncomeAllocation } from '@/lib/income-initial-allocation'
 import { INCOME_START_LEAD_SECONDS } from '@/lib/income-launch'
-import { assertIncomeLaunchVersion, incomeLaunchBlockers, prepareIncomeLaunch, readIncomeLaunchBinding, type PreparedIncomeLaunch } from '@/lib/income-launch'
+import { incomeLaunchBlockers, prepareIncomeLaunch, readIncomeLaunchBinding, type PreparedIncomeLaunch } from '@/lib/income-launch'
 import { beginIncomeLaunchSubmission, clearIncomeLaunchPending, importIncomeLaunchPending, incomeLaunchSessionKey, readIncomeLaunchPending, recordIncomeLaunchHash, verifyIncomeLaunchExecution, withIncomeLaunchLock, type IncomeLaunchPending } from '@/lib/income-launch-session'
 import { parseIncomeGlobalDraft, readIncomeGlobalDraft, saveIncomeGlobalDraft, serializeIncomeGlobalDraft, verifyIncomeGlobalDraftManifest, withIncomeGlobalDraftLock, type IncomeGlobalChainDraft, type IncomeGlobalLaunchDraft } from '@/lib/income-global-launch-draft'
 import { jbCenterIpfs } from '@/lib/jbcenter-ipfs'
@@ -97,7 +97,7 @@ function GlobalIncomeLaunch({ state, client, name = 'Homerun INCOME', launchUnav
     const incomeName = tokenName.trim(), incomeTicker = ticker.trim().toUpperCase()
     if (!incomeName || incomeName.length > 160 || !incomeTicker || incomeTicker.length > 32) throw new Error('Enter the INCOME token name and ticker.')
     const checked = await verifyFundGlobalManifestHistory(clients, manifest)
-    const blocks = await Promise.all(checked.allocations.map(async local => { const rpc = clients.get(local.chainId); if (!rpc) throw new Error(`A client for ${displayChainName(local.chainId)} is required.`); const block = await rpc.getBlock({ blockTag: 'latest' }); if (block.number === null || !block.hash || block.timestamp <= 0n) throw new Error('Every linked chain must provide a mined block.'); await assertIncomeLaunchVersion(rpc, local.chainId, block.number); return Number(block.timestamp) }))
+    const blocks = await Promise.all(checked.allocations.map(async local => { const rpc = clients.get(local.chainId); if (!rpc) throw new Error(`A client for ${displayChainName(local.chainId)} is required.`); const block = await rpc.getBlock({ blockTag: 'latest' }); if (block.number === null || !block.hash || block.timestamp <= 0n) throw new Error('Every linked chain must provide a mined block.'); return Number(block.timestamp) }))
     // INCOME's shared stage starts ten minutes ahead of the latest chain clock: REVDeployer applies no cash out delay
     // to a stage that has not started, and the first chain's allocation is minted once it has.
     const startsAtOrAfter = Math.max(...blocks) + INCOME_START_LEAD_SECONDS

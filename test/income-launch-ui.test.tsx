@@ -11,7 +11,7 @@ const runtime = vi.hoisted(() => ({
   clients: new Map<number, PublicClient>(), funds: new Map<number, FundProjectState>(), bindings: new Map<number, bigint>(),
   bindingError: false, blockers: [] as string[], safe: false, manifest: null as FundGlobalManifest | null,
   send: vi.fn(), snapshot: vi.fn(), history: vi.fn(), prepare: vi.fn(), pinMedia: vi.fn(), pinJson: vi.fn(),
-  readBinding: vi.fn(), allocation: vi.fn(), verify: vi.fn(), waitSafe: vi.fn(), invalidate: vi.fn(), fetch: vi.fn(), version: vi.fn(),
+  readBinding: vi.fn(), allocation: vi.fn(), verify: vi.fn(), waitSafe: vi.fn(), invalidate: vi.fn(), fetch: vi.fn(),
 }))
 vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: runtime.account }), getPublicClient: (_config: unknown, options: {chainId: number}) => runtime.clients.get(options.chainId) }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.account }) }))
@@ -19,7 +19,7 @@ vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({ phase: 'idle', busy: f
 vi.mock('@tanstack/react-query', () => { const cache = { invalidateQueries: runtime.invalidate }; return { keepPreviousData: (data: unknown) => data, useQuery: ({ queryKey }: {queryKey: [string, number, string]}) => ({ data: queryKey[0] === 'income-launch-fund' ? runtime.funds.get(queryKey[1]) : runtime.bindings.get(queryKey[1]) ?? null, isError: queryKey[0] === 'income-binding' && runtime.bindingError, isPending: false }), useQueryClient: () => cache } })
 vi.mock('@/components/IncomeProject', () => ({ IncomeProject: ({ chainId, projectId }: {chainId: number; projectId: bigint}) => <div>Existing INCOME {chainId}/{projectId.toString()}</div> }))
 vi.mock('@/lib/income-contracts', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/income-contracts')>(), registeredHomerunDeployer: () => runtime.helper }))
-vi.mock('@/lib/income-launch', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/income-launch')>(), assertIncomeLaunchVersion: runtime.version, incomeLaunchBlockers: () => runtime.blockers, prepareIncomeLaunch: runtime.prepare, readIncomeLaunchBinding: runtime.readBinding }))
+vi.mock('@/lib/income-launch', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/income-launch')>(), incomeLaunchBlockers: () => runtime.blockers, prepareIncomeLaunch: runtime.prepare, readIncomeLaunchBinding: runtime.readBinding }))
 vi.mock('@/lib/fund-global-snapshot', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/fund-global-snapshot')>(), readFundGlobalSnapshot: runtime.snapshot }))
 vi.mock('@/lib/fund-global-manifest', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/fund-global-manifest')>(), verifyFundGlobalManifestHistory: runtime.history }))
 vi.mock('@/lib/income-initial-allocation', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/income-initial-allocation')>(), readInitialIncomeAllocation: runtime.allocation }))
@@ -59,7 +59,6 @@ describe('global INCOME launch flow', () => {
     runtime.send.mockResolvedValue(null); runtime.snapshot.mockResolvedValue(globalSnapshot()); runtime.history.mockImplementation(async (_clients, value) => value)
     runtime.prepare.mockImplementation(async (_client, input) => launchPlan(input)); runtime.pinMedia.mockImplementation(async file => { runtime.manifest = JSON.parse(await readFile(file)); return { cid: 'global-snapshot' } }); runtime.pinJson.mockResolvedValue({ cid: 'global-metadata' })
     runtime.verify.mockResolvedValue('confirmed'); runtime.readBinding.mockResolvedValue(10n); runtime.allocation.mockImplementation(async (_client, {chainId}) => allocation(chainId)); runtime.waitSafe.mockResolvedValue(hashFor(8453)); runtime.invalidate.mockResolvedValue(undefined)
-    runtime.version.mockResolvedValue(undefined)
     runtime.fetch.mockImplementation(async () => ({ ok: true, json: async () => runtime.manifest })); vi.stubGlobal('fetch', runtime.fetch)
     Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: async (_name: string, _options: unknown, callback: (lock: object) => Promise<void>) => callback({}) } })
     Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:test') }); Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
@@ -132,15 +131,6 @@ describe('global INCOME launch flow', () => {
     expect(readIncomeGlobalDraft(localStorage, 8453, 7n)).toBeNull()
     expect(host.textContent).toContain('Enter the INCOME token name and ticker')
     expect(runtime.pinJson).not.toHaveBeenCalled()
-  })
-
-  it('checks compatible launchers on every network before freezing the plan', async () => {
-    runtime.version.mockImplementation(async (_client, chainId) => { if (chainId === 10) throw new Error('A verified INCOME launcher supporting separate owner and operator wallets is required.') })
-    await render(); await click('Create global ownership snapshot'); await click('Publish snapshot'); await click('Save shared launch plan')
-    expect(runtime.version.mock.calls.map(([, chainId]) => chainId).sort((left, right) => left - right)).toEqual([...CHAIN_IDS])
-    expect(readIncomeGlobalDraft(localStorage, 8453, 7n)).toBeNull()
-    expect(host.textContent).toContain('supporting separate owner and operator')
-    expect(runtime.pinJson).not.toHaveBeenCalled(); expect(runtime.prepare).not.toHaveBeenCalled(); expect(runtime.send).not.toHaveBeenCalled()
   })
 
   it('seeds late metadata while the displayed shared terms are still untouched', async () => {

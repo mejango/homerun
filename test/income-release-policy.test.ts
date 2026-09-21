@@ -9,7 +9,6 @@ describe('offline INCOME release policy', () => {
   it('accepts the current owner-managed shop source and records the new release identity', () => {
     expect(() => assertIncomeReleaseSource(helper)).not.toThrow()
     expect(incomeReleasePolicy).toMatchObject({
-      launchVersion: 4,
       helperSaltText: 'homerun.deployer.global.v4',
       splitLockedUntil: '0',
       economics: { incomeCutPercentPerQuarter: 2, incomeCashOutTaxBps: 1000, stages: 1 },
@@ -18,7 +17,6 @@ describe('offline INCOME release policy', () => {
   })
 
   it.each([
-    ['old helper version', 'LAUNCH_VERSION = 4;', 'LAUNCH_VERSION = 3;'],
     ['incentive recipient gaining authority', 'configuration.operator = _msgSender();', 'configuration.operator = operator;'],
     ['owner check removed', 'if (PROJECTS.ownerOf(fundProjectId) != _msgSender()) revert HomerunDeployer_Unauthorized(_msgSender());', ''],
     ['FUND gate removed', 'if (!isFund[fundProjectId]) revert HomerunDeployer_UnsupportedFund(fundProjectId);', ''],

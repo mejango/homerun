@@ -22,7 +22,6 @@ export const homerunDeployerAbi = parseAbi([
   'struct SuckerMapping { address localToken; uint32 minGas; bytes32 remoteToken; }',
   'struct SuckerDeployerConfig { address deployer; bytes32 peer; SuckerMapping[] mappings; }',
   'struct SuckerConfiguration { SuckerDeployerConfig[] deployerConfigurations; bytes32 salt; }',
-  'function LAUNCH_VERSION() view returns (uint256)',
   'function FUND_WEIGHT() view returns (uint112)',
   'function FUND_CASH_OUT_TAX_RATE() view returns (uint16)',
   'function INCOME_INITIAL_ISSUANCE() view returns (uint112)',
