@@ -22,8 +22,10 @@ export async function emit(group, { env = process.env, spawn = spawnSync, fetchJ
   if (!networks[group]) throw new Error('Network group must be testnets or mainnets.');
   const key = env.ETHERSCAN_API_KEY?.trim();
   if (!key) throw new Error('Missing ETHERSCAN_API_KEY');
-  // Verification rebuilds from the committed relative remappings, so the explorer sees paths it can resolve.
-  const childEnv = { ...env, FOUNDRY_PROFILE: 'deploy' };
+  // Verification rebuilds from the committed relative remappings, so the explorer sees paths it can resolve; the
+  // runner's absolute remappings would put unresolvable paths into the standard JSON.
+  const { FOUNDRY_REMAPPINGS: _absolute, ...inherited } = env;
+  const childEnv = { ...inherited, FOUNDRY_PROFILE: 'deploy' };
   for (const [alias, chainId, , folder] of networks[group]) {
     const manifest = JSON.parse(readFileSync(`deployments/${folder}/verified.json`, 'utf8'));
     for (const contract of contracts) {
