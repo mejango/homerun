@@ -125,8 +125,8 @@ export function requireOneAddressPerGroup(group, kind, read = readFileSync) {
 export async function run(action, group, {
   env = process.env, spawn = spawnSync, read = readFileSync, remappings = absoluteRemappings, registry,
 } = {}) {
-  if (!['preflight', 'rehearse', 'propose', 'broadcast', 'verify'].includes(action)) {
-    throw new Error('Usage: deploy.sh <preflight|rehearse|propose|broadcast|verify> <testnets|mainnets>');
+  if (!['preflight', 'rehearse', 'propose', 'broadcast', 'verify', 'artifacts'].includes(action)) {
+    throw new Error('Usage: deploy.sh <preflight|rehearse|propose|broadcast|verify|artifacts> <testnets|mainnets>');
   }
   preflight(group, env, read, registry ?? await sdkRegistry());
   if (action === 'propose') {
@@ -153,7 +153,8 @@ export async function run(action, group, {
   if (revision.status !== 0) throw new Error('Cannot record the source revision.');
   const status = spawn('git', ['status', '--porcelain', '--untracked-files=normal'], { encoding: 'utf8' });
   if (status.status !== 0) throw new Error('Cannot inspect the source checkout.');
-  const dirty = Boolean(status.stdout.trim());
+  // The runner's own outputs under deployments/ do not make the reviewed source dirty.
+  const dirty = status.stdout.split('\n').some(line => line.trim() && !/^.{3}deployments\//.test(line));
   // Only a committed checkout may reach the Safe or certify a live deployment; rehearsals may carry development changes.
   if (dirty && action !== 'rehearse') throw new Error(`Commit the reviewed checkout before ${action}; it has uncommitted changes.`);
   // A broadcast sends from a funded key instead of collecting a Safe proposal; the factory makes the addresses equal.
@@ -170,6 +171,11 @@ export async function run(action, group, {
     }, stdio: 'inherit' });
     if (result.error || result.status !== 0) throw new Error(`${command} failed; stopping ${group} ${action}.`);
   };
+  // Explorer verification and per-contract artifacts read the verified manifests, so they follow a verify.
+  if (action === 'artifacts') {
+    execute('node', ['script/artifacts.mjs', group]);
+    return;
+  }
   if (action === 'broadcast') {
     for (const [alias, chainId] of networks[group]) {
       console.log(`broadcast: ${alias}`);
@@ -206,7 +212,7 @@ export async function run(action, group, {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try {
-    if (process.argv.length !== 4) throw new Error('Usage: deploy.sh <preflight|rehearse|propose|broadcast|verify> <testnets|mainnets>');
+    if (process.argv.length !== 4) throw new Error('Usage: deploy.sh <preflight|rehearse|propose|broadcast|verify|artifacts> <testnets|mainnets>');
     await run(process.argv[2], process.argv[3]);
     console.log(`Homerun ${process.argv[2]} completed for ${process.argv[3]}.`);
   } catch (error) {

@@ -202,6 +202,17 @@ test('an uncommitted checkout can rehearse but neither propose, broadcast nor ve
       assert.fail(`${action} must not execute anything from a dirty checkout`);
     } }), /uncommitted/);
   }
+  // Manifests the runner itself wrote are not source changes.
+  let verifyRuns = 0;
+  await run('verify', 'testnets', { ...fixture('testnets'), spawn(command, args, options) {
+    if (command === 'git' && args[0] === 'status') return { status: 0, stdout: '?? deployments/sepolia/verified.json\n' };
+    const tool = readOnlyTool(command, args);
+    if (tool) return tool;
+    verifyRuns++;
+    assert.equal(options.env.HOMERUN_REVISION, 'abc123');
+    return { status: 0 };
+  } });
+  assert.equal(verifyRuns, 4);
   let forgeRuns = 0;
   await run('rehearse', 'testnets', { ...fixture('testnets'), spawn(command, args, options) {
     const tool = dirtyGit(command, args);

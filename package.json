@@ -38,9 +38,11 @@
     "deploy:broadcast:mainnets": "sh script/deploy.sh broadcast mainnets",
     "deploy:verify:mainnets": "sh script/deploy.sh verify mainnets",
     "deploy:testnets": "npm run deploy:propose:testnets",
-    "deploy:post:testnets": "npm run deploy:verify:testnets",
+    "deploy:artifacts:testnets": "sh script/deploy.sh artifacts testnets",
+    "deploy:post:testnets": "npm run deploy:verify:testnets && npm run deploy:artifacts:testnets",
     "deploy:mainnets": "npm run deploy:propose:mainnets",
-    "deploy:post:mainnets": "npm run deploy:verify:mainnets"
+    "deploy:artifacts:mainnets": "sh script/deploy.sh artifacts mainnets",
+    "deploy:post:mainnets": "npm run deploy:verify:mainnets && npm run deploy:artifacts:mainnets"
   },
   "dependencies": {
     "@bananapus/nana-sdk-connect": "^0.5.6",
