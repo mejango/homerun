@@ -319,9 +319,9 @@ try {
     step: 4,
     incomeDefaultsVersion: 3,
   })
-  // The IPFS gateway constant points at production Juicebox Center; serve the pinned
-  // metadata from here so this run reaches no network but the modeled Center.
-  await context.route('https://juicebox.center/ipfs/**', route => route.fulfill({ json: metadata }))
+  // The gateway follows the configured Center, so the pinned metadata is served
+  // from here and this run reaches no network but the modeled Center.
+  await context.route(`${centerOrigin}/ipfs/**`, route => route.fulfill({ json: metadata }))
 
   const page = await context.newPage()
   page.setDefaultTimeout(30_000)
