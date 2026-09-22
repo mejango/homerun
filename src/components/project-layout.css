@@ -40,6 +40,12 @@
 .homerun-project-layout .hpl-columns { display: flex; gap: 40px; align-items: flex-start; }
 .homerun-project-layout .hpl-sidebar { flex: 0 0 320px; width: 320px; min-width: 0; }
 .homerun-project-layout .hpl-payment { min-width: 0; }
+/* What a project that is not created yet offers, above its pay card. */
+.homerun-project-layout .planned-bar { margin-bottom: 20px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--soft); color: var(--ink); font: 400 14px/1.6 var(--sans); }
+.homerun-project-layout .planned-bar p { margin: 0; color: inherit; font-size: 14px; }
+.homerun-project-layout .planned-bar p + p { margin-top: 8px; }
+.homerun-project-layout .planned-bar .planned-bar-terms { overflow-wrap: anywhere; color: var(--muted); }
+.homerun-project-layout .planned-bar-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
 .homerun-project-layout .hpl-activity { margin-top: 28px; min-width: 0; }
 .homerun-project-layout .hpl-main { flex: 1 1 0; min-width: 0; }
 .homerun-project-layout .hpl-navigation-main { min-width: 0; border-bottom: 1px solid var(--line); }

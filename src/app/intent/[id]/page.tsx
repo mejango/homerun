@@ -1,7 +1,5 @@
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
-import { Brand } from '@/components/Brand'
-import { WalletButton } from '@/components/WalletButton'
 import { IntentProject } from '@/components/IntentProject'
 
 const INTENT_ID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i
@@ -17,11 +15,5 @@ export const metadata: Metadata = {
 export default async function IntentPage({ params }: IntentRouteProps) {
   const { id } = await params
   if (!INTENT_ID.test(id)) notFound()
-  return <div className="project-page live-contract-page">
-    <a className="skip-link" href="#main">Skip to content</a>
-    <header className="site-header"><Brand /><WalletButton /></header>
-    <main id="main" className="mx-auto max-w-[1220px] px-5 py-8 sm:px-8 sm:py-10" tabIndex={-1}>
-      <IntentProject key={id} intentId={id} />
-    </main>
-  </div>
+  return <IntentProject key={id} intentId={id} />
 }

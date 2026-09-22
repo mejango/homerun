@@ -352,6 +352,12 @@ export function loadCreatedProject(id, storage) {
   return listCreatedProjects(storage).find(entry => entry.id === id) || null;
 }
 
+/** The project entry a stored preview holds, for a setup that is not stored. */
+export function modelCreatedProject(raw, id) {
+  const { values } = creationSummary(raw);
+  return { id, values, createdAt: new Date(0).toISOString(), deployment: deploymentDraft(values) };
+}
+
 export function saveCreatedProject(raw, storage) {
   const { values } = creationSummary(raw);
   let target;
@@ -363,12 +369,7 @@ export function saveCreatedProject(raw, storage) {
   } catch {
     throw new Error('Browser storage is unavailable. Download the deployment preview to keep these details.');
   }
-  const entry = {
-    id: globalThis.crypto.randomUUID(),
-    values,
-    createdAt: new Date().toISOString(),
-    deployment: deploymentDraft(values),
-  };
+  const entry = { ...modelCreatedProject(values, globalThis.crypto.randomUUID()), createdAt: new Date().toISOString() };
   // Preserve earlier previews. Malformed entries are discarded by the read helper.
   let existing;
   try { existing = parseStoredProjects(serialized); } catch { existing = []; }

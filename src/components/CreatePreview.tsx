@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { getAccount, getPublicClient, signMessage } from '@wagmi/core'
 import { jbProjectsAbi, type JBChainId } from '@bananapus/nana-sdk-core'
@@ -9,7 +9,9 @@ import { isAddressEqual, toHex, type PublicClient } from 'viem'
 import { JBCenterRequestError, describeCenterRefusal, intentPath } from '@bananapus/nana-sdk-core/jbcenter'
 import { useWallet } from '@/hooks/useWallet'
 import { wagmiConfig } from '@/providers/Providers'
-import { PlannedProjectView } from '@/components/PlannedProject'
+import { Brand } from '@/components/Brand'
+import { WalletButton } from '@/components/WalletButton'
+import { DemoProjectPage, type CreatedProject } from '@/components/ProjectPage'
 import { jbCenterClient } from '@/lib/jbcenter-client'
 import { loadCreateValues } from '@/lib/create-preview'
 import { displayChainName } from '@/lib/chainDisplay'
@@ -19,16 +21,38 @@ import { buildFundLaunch } from '@/lib/fund-contracts'
 import { buildFundIntent, fundIntentEligibleChains, publishFundIntent, UNSUPPORTED_CHAINS_MESSAGE } from '@/lib/fund-intent'
 import { FUND_LAUNCH_KEY, decodeLaunchSession, discardUnsignedLaunch, sameSender, saveLaunch } from '@/lib/fund-launch-session'
 import { checkLaunchDeployment } from '@/lib/fund-launch-verification'
-import { previewFundProjectMetadata } from '@/lib/fund-project-metadata'
 import { publishFundProjectMetadata } from '@/lib/publish-fund-project-metadata'
 import { requireTransactionReview } from '@/lib/transaction-review'
 import type { CreateValues } from '@/components/CreateFlow'
 import { plannedNetworks } from '../../web/create-networks.mjs'
+import { modelCreatedProject } from '../../web/create-model.mjs'
 
 const NO_SETUP = 'This project’s setup could not be read in this browser.'
 const BANNER = 'Preview. Nothing is created yet.'
 const CONNECT_MESSAGE = 'Connect a wallet to create this project.'
 const WALLET_NEEDS_TRANSACTION_MESSAGE = 'Juicebox Center accepts a signature from a wallet address only. Connect a different wallet, or create with a transaction.'
+
+/** One key per setup, so each preview reads and writes only its own model. */
+function setupKey(values: CreateValues): string {
+  let hash = 0x811c9dc5
+  const text = JSON.stringify(values)
+  for (let index = 0; index < text.length; index++) {
+    hash = Math.imul(hash ^ text.charCodeAt(index), 0x01000193) >>> 0
+  }
+  return hash.toString(16)
+}
+/** The Safes a creation plans, named by the role, policy and owners they are fixed by. */
+function plannedMultisigs(values: CreateValues): string {
+  return (['owner', 'operator'] as const)
+    .filter(role => (role === 'owner' || !values.ownerIsOperator) && values[`${role}Mode`] === 'create')
+    .map(role => `${role === 'owner' ? 'Owner' : 'Operator'}: create Safe, ${values[`${role}Threshold`]}/${(values[`${role}Signers`] ?? []).length} approvals. Owners: ${(values[`${role}Signers`] ?? []).join(', ')}.`)
+    .join('\n')
+}
+const shell = (children: ReactNode) => <>
+  <a className="skip-link" href="#main">Skip to content</a>
+  <header className="site-header"><Brand /><WalletButton /></header>
+  <main id="main" className="mx-auto max-w-[1220px] px-5 py-10 sm:py-14" tabIndex={-1}>{children}</main>
+</>
 
 const message = (error: unknown) => error instanceof Error ? error.message : 'The request could not be completed.'
 /** Center's own wording for a refusal, then this app's, so no server text reaches the page. */
@@ -59,6 +83,12 @@ export default function CreatePreview() {
   const [progress, setProgress] = useState('')
   const [error, setError] = useState('')
   useEffect(() => { setValues(loadCreateValues()); setLoaded(true) }, [])
+  // A setup keys its own preview, so an edited setup never inherits the shop or
+  // the details a previous preview of this browser saved.
+  const model = useMemo<CreatedProject | null>(() => {
+    if (!values) return null
+    try { return modelCreatedProject(values, `preview-${setupKey(values)}`) as CreatedProject } catch { return null }
+  }, [values])
 
   async function create(values: CreateValues) {
     if (publishing) return
@@ -154,45 +184,26 @@ export default function CreatePreview() {
     finally { setPublishing(false) }
   }
 
-  if (!loaded) return <p role="status">Reading your setup…</p>
-  if (!values) return <div className="grid justify-items-start gap-4" role="alert">
+  if (!loaded) return shell(<p role="status">Reading your setup…</p>)
+  if (!values || !model) return shell(<div className="grid justify-items-start gap-4" role="alert">
     <p>{NO_SETUP}</p>
     <a className="btn-secondary" href="/create">Back to the form</a>
-  </div>
+  </div>)
 
-  const chainIds = plannedNetworks(values).map((chain: { chainId: number }) => chain.chainId)
-  const planned = (['owner', 'operator'] as const)
-    .filter(role => (role === 'owner' || !values.ownerIsOperator) && values[`${role}Mode`] === 'create')
-    .map(role => `${role === 'owner' ? 'Owner' : 'Operator'}: create Safe, ${values[`${role}Threshold`]}/${(values[`${role}Signers`] ?? []).length} approvals. Owners: ${(values[`${role}Signers`] ?? []).join(', ')}.`)
-    .join('\n')
-
-  const details = previewFundProjectMetadata(values)
-  const operatorMode = values.ownerIsOperator ? values.ownerMode : values.operatorMode
-
-  return <PlannedProjectView
-    planIntro="The estimates this setup publishes. These values do not set withdrawal rights, mint permissions, or confirm an asset purchase."
-    banner={<p role="status" className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7">{BANNER}</p>}
-    display={{
-      name: details.name ?? values.name, location: details.location, logoUrl: details.logoUrl,
-      coverUrl: details.coverUrl, description: details.description,
-      owner: values.ownerMode === 'create' ? 'A multisig this project creates' : values.ownerWallet,
-      ownerAddress: values.ownerMode === 'create' ? null : values.ownerWallet || null,
-      operatorAddress: operatorMode === 'create' ? null : values.operatorWallet || null,
-      ownerProfile: details.owner ?? undefined,
-      operatorProfile: details.operator ?? undefined,
-      chainIds, tokenName: values.fundTokenName, ticker: values.fundTicker,
-      mustStartAtOrAfter: 0, status: 'Not created yet',
-      multisigs: planned || undefined,
-      plan: details.plan,
-    }}
-    actions={<section className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7">
-      <p>Creating publishes these exact project creations to Juicebox Center and gives you a link anyone can open. You send no transaction and pay no creation fee here.</p>
-      <div className="mt-5 flex flex-wrap gap-3">
+  const planned = plannedMultisigs(values)
+  const setup = values
+  return <DemoProjectPage project={model} planned={{
+    payLabel: 'Available once created',
+    panel: <section className="planned-bar" aria-label="Preview">
+      <p role="status">{BANNER}</p>
+      <p className="planned-bar-terms">FUND token: {values.fundTokenName} ({values.fundTicker})</p>
+      {planned && <p className="planned-bar-terms">{planned}</p>}
+      <div className="planned-bar-actions">
         <button type="button" className="quiet-button" disabled={publishing} onClick={() => router.push('/create')}>Edit</button>
-        <button type="button" className="create-primary" disabled={publishing} onClick={() => void create(values)}>{publishing ? 'Publishing your project…' : 'Create'}</button>
+        <button type="button" className="create-primary" disabled={publishing} onClick={() => void create(setup)}>{publishing ? 'Publishing your project…' : 'Create'}</button>
       </div>
-      {progress && <p role="status" className="mt-5 text-sm">{progress}</p>}
-      {error && <p role="alert" className="mt-5 text-sm">{error}</p>}
-    </section>}
-  />
+      {progress && <p role="status">{progress}</p>}
+      {error && <p role="alert">{error}</p>}
+    </section>,
+  }} />
 }
