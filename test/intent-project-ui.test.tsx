@@ -56,6 +56,14 @@ const deployRow = (chainId: number, status: string) => ({
 })
 const deployment = (chainId: number, projectId: string) => ({ chainId, projectId, transactionHash: hash, createdAt: new Date(0).toISOString() })
 
+import { SAFE_PROXY_CREATION_CODE } from '@bananapus/nana-sdk-core/safe'
+import { SAFE_FACTORY, multisigCreationData, predictMultisig } from '../src/lib/create-multisig'
+
+const safeOwners = ['0x000000000000000000000000000000000000dEaD', '0x2222222222222222222222222222222222222222'] as const
+const safePolicy = { owners: [...safeOwners] as `0x${string}`[], threshold: 2, saltNonce: `0x${'ab'.repeat(32)}` as Hex, proxyCreationCode: SAFE_PROXY_CREATION_CODE }
+const safeAddress = predictMultisig(safePolicy)
+const setupCall = (chainId: number) => ({ chainId, to: SAFE_FACTORY, data: multisigCreationData(safePolicy) })
+
 describe('a published project page', () => {
   let host: HTMLDivElement
   let root: Root
@@ -94,6 +102,33 @@ describe('a published project page', () => {
     expect(host.textContent).toContain(wallet)
     expect(host.querySelector('img[alt*="cover"]')).toBeTruthy()
     expect(button('Deploy')).toBeTruthy()
+  })
+
+  it('names every multisig the project creates, with its role, approvals and owners', async () => {
+    const launch = {
+      chainId: 8453, to: HOMERUN_DEPLOYER,
+      data: encodeFunctionData({
+        abi: homerunDeployerAbi, functionName: 'launchFundFor',
+        args: [safeAddress, 'ipfs://bafkreimetadata', 'Neighborhood Workshop FUND', 'FUND', 0, zeroHash, []],
+      }),
+    }
+    runtime.getIntent.mockResolvedValue(intent({
+      envelope: {
+        ...intent().envelope,
+        deploymentCalls: [setupCall(8453), launch],
+        jb: {
+          ...intent().envelope.jb, owner: safeAddress,
+          safes: [{ role: 'owner', address: safeAddress, owners: [...safeOwners], threshold: 2, saltNonce: safePolicy.saltNonce }],
+        },
+      },
+    }))
+    await render()
+    expect(host.textContent).toContain('Owner: create Safe')
+    expect(host.textContent).toContain('along with the project')
+    expect(host.textContent).toContain('whether the Safe exists yet or not')
+    expect(host.textContent).toContain('2/2 approvals')
+    expect(host.textContent).toContain(safeOwners[0])
+    expect(host.textContent).toContain(safeOwners[1])
   })
 
   it('deploys through Center, reports each chain, and opens the created project', async () => {

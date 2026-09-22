@@ -136,7 +136,7 @@ describe('account project discovery', () => {
     expect(mocks.byRefs).toHaveBeenCalledWith([
       { chainId: 1, projectId: 7, version: 6 }, { chainId: 8453, projectId: 8, version: 6 },
     ], { network: 'mainnet' })
-    expect(section('Owned by this account').textContent).not.toContain('Somebody else')
+    expect(section('Owned or published').textContent).not.toContain('Somebody else')
     expect(section('Token holdings').querySelector('a[href="/project/1/7"]')).not.toBeNull()
     expect(section('Token holdings').querySelector('a[href="/income/8453/8"]')).not.toBeNull()
     expect(section('Token holdings').textContent).toContain('5 project tokens')
@@ -171,8 +171,8 @@ describe('account project discovery', () => {
     mocks.holdings.mockRejectedValue(new Error('Index offline'))
     await act(async () => { await client.invalidateQueries({ queryKey: ['account-projects'] }) })
     await settle()
-    expect(section('Owned by this account').textContent).toContain('Showing the last indexed data')
-    expect(section('Owned by this account').querySelector('a[href="/project/1/7"]')).not.toBeNull()
+    expect(section('Owned or published').textContent).toContain('Showing the last indexed data')
+    expect(section('Owned or published').querySelector('a[href="/project/1/7"]')).not.toBeNull()
     expect(section('Token holdings').textContent).toContain('Showing the last indexed data')
     expect(section('Token holdings').textContent).toContain('5 project tokens')
   })
@@ -221,7 +221,7 @@ describe('account project discovery', () => {
     mocks.intents.mockResolvedValue({ items: [intentItem()], totalCount: 1, nextCursor: null })
     await render(ACCOUNT_A)
     expect(mocks.intents).toHaveBeenCalledWith({ owner: ACCOUNT_A, limit: 24 })
-    const owned = section('Owned by this account')
+    const owned = section('Owned or published')
     const rows = [...owned.querySelectorAll('li')]
     expect(rows[0].textContent).toContain('Published Workshop')
     expect(rows[0].textContent).toContain('Deploys on first use')
@@ -229,11 +229,30 @@ describe('account project discovery', () => {
     expect(rows[1].textContent).toContain('Neighborhood FUND')
   })
 
+  it('shows a published project whose owner is a multisig, because this account published it', async () => {
+    mocks.wallet = { address: ACCOUNT_A, isConnected: true }
+    mocks.intents.mockImplementation(async (params: { owner?: string; publisher?: string }) => ({
+      items: params.publisher ? [intentItem({ owner: ACCOUNT_B, name: 'Multisig Workshop' })] : [],
+      totalCount: params.publisher ? 1 : 0, nextCursor: null,
+    }))
+    await render(ACCOUNT_A)
+    expect(mocks.intents).toHaveBeenCalledWith({ owner: ACCOUNT_A, limit: 24 })
+    expect(mocks.intents).toHaveBeenCalledWith({ publisher: ACCOUNT_A, limit: 24 })
+    expect(host.textContent).toContain('Multisig Workshop')
+  })
+
+  it('lists a project once when this account both owns and published it', async () => {
+    mocks.wallet = { address: ACCOUNT_A, isConnected: true }
+    mocks.intents.mockResolvedValue({ items: [intentItem()], totalCount: 1, nextCursor: null })
+    await render(ACCOUNT_A)
+    expect([...host.querySelectorAll('a[href^="/intent/"]')]).toHaveLength(1)
+  })
+
   it('keeps testnet published projects out of the mainnet list', async () => {
     mocks.wallet = { address: ACCOUNT_A, isConnected: true }
     mocks.intents.mockResolvedValue({ items: [intentItem({ chainIds: [84532] })], totalCount: 1, nextCursor: null })
     await render(ACCOUNT_A)
-    expect(section('Owned by this account').textContent).not.toContain('Published Workshop')
+    expect(section('Owned or published').textContent).not.toContain('Published Workshop')
   })
 
   it('finds published projects in search and keeps indexed results when Center fails', async () => {

@@ -9,6 +9,7 @@ import {
   type EnsureDeployedStep,
 } from '@bananapus/nana-sdk-core/jbcenter'
 import { jbCenterClient } from '@/lib/jbcenter-client'
+import { multisigReview } from '@/lib/create-multisig'
 import { decodeFundIntent, watchDeployRefusal } from '@/lib/fund-intent'
 import { fetchFundProjectMetadata } from '@/lib/fund-project-metadata'
 import { displayChainName } from '@/lib/chainDisplay'
@@ -144,6 +145,12 @@ export function IntentProject({ intentId }: { intentId: string }) {
         {stopped && deployment && <p className="mt-3 text-sm"><a className="underline" href={`/project/${deployment.chainId}/${deployment.projectId}`}>Open the project created on {displayChainName(deployment.chainId)}</a></p>}
       </section>
       : <p className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7">{UNSPONSORED}</p>}
+
+    {terms.safes.length > 0 && <section className="rounded-md border border-[#c4cdbb] bg-[#fffefa] p-5 sm:p-7">
+      <h2 className="mb-5 text-3xl">Multisigs</h2>
+      <p>Juicebox Center’s sponsor creates these Safes on {terms.chainIds.map(displayChainName).join(', ')} along with the project. Each address is fixed by its owners, its approval policy and its salt, so the project is theirs whether the Safe exists yet or not.</p>
+      <p className="mt-5 whitespace-pre-line break-all text-sm">{multisigReview(terms.safes)}</p>
+    </section>}
 
     <section className="rounded-md border border-[#c4cdbb] bg-[#fffefa] p-5 sm:p-7">
       <h2 className="mb-5 text-3xl">About</h2>

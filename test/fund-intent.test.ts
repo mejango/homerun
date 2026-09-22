@@ -2,14 +2,17 @@ import assert from 'node:assert/strict'
 import { expect, test, vi } from 'vitest'
 vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fixtures/homerun-deployer')).withHomerunDeployer(await importOriginal()))
 
-import { encodeFunctionData, zeroHash, type Hex } from 'viem'
+import { encodeFunctionData, zeroHash, type Address, type Hex } from 'viem'
+import { SAFE_PROXY_CREATION_CODE } from '@bananapus/nana-sdk-core/safe'
+import { SAFE_FACTORY, multisigCreationData, predictMultisig } from '../src/lib/create-multisig'
+import type { CreateMultisig } from '../src/lib/create-multisig'
 import { JBCenterRequestError, type JBCenterClient, type JBCenterIntent } from '@bananapus/nana-sdk-core/jbcenter'
 import { HOMERUN_DEPLOYER } from './fixtures/homerun-deployer'
 import { homerunDeployerAbi } from '../src/lib/income-contracts'
 import type { FundLaunchInput } from '../src/lib/fund-contracts'
 import {
-  FUND_INTENT_FORMAT, buildFundIntent, decodeFundIntent, fundIntentEligibleChains,
-  publishFundIntent, watchDeployRefusal,
+  FUND_INTENT_FORMAT, SAFES_UNREADABLE_MESSAGE, buildFundIntent, decodeFundIntent,
+  fundIntentEligibleChains, publishFundIntent, watchDeployRefusal,
 } from '../src/lib/fund-intent'
 
 const owner = '0x1111111111111111111111111111111111111111' as const
@@ -21,6 +24,23 @@ const input: FundLaunchInput = {
 }
 const launchData = (args: readonly unknown[]) =>
   encodeFunctionData({ abi: homerunDeployerAbi, functionName: 'launchFundFor', args })
+
+const signers = ['0x000000000000000000000000000000000000dEaD', '0x2222222222222222222222222222222222222222'] as const
+const ownerPlan: CreateMultisig = {
+  role: 'owner',
+  owners: [...signers] as Address[],
+  threshold: 2,
+  saltNonce: `0x${'ab'.repeat(32)}` as Hex,
+  proxyCreationCode: SAFE_PROXY_CREATION_CODE,
+  address: '0x0000000000000000000000000000000000000000' as Address,
+}
+const operatorPlan: CreateMultisig = { ...ownerPlan, role: 'operator', saltNonce: `0x${'cd'.repeat(32)}` as Hex }
+const planned = (plan: CreateMultisig) => ({ ...plan, address: predictMultisig(plan) })
+const withSafes = (plans: CreateMultisig[]): FundLaunchInput => {
+  const resolved = plans.map(planned)
+  const owner = resolved.find(plan => plan.role === 'owner')?.address ?? input.owner
+  return { ...input, owner, operator: resolved.find(plan => plan.role === 'operator')?.address ?? owner, multisigs: resolved }
+}
 
 test('the envelope carries the exact launch calldata, no creation fee, and the jb form clients read', () => {
   const intent = buildFundIntent(input, '  Neighborhood Workshop  ')
@@ -67,16 +87,12 @@ test('linked chains keep one salt, one start and each chain its own peer deploye
   for (const call of intent.deploymentCalls) assert.equal(call.to, HOMERUN_DEPLOYER)
 })
 
-test('mainnet and new multisigs cannot be created without a transaction', () => {
+test('mainnet cannot be created without a transaction, and a nameless project cannot either', () => {
   assert.equal(fundIntentEligibleChains([8453]), true)
   assert.equal(fundIntentEligibleChains([1, 8453]), false)
   assert.equal(fundIntentEligibleChains([]), false)
   assert.equal(fundIntentEligibleChains([8453, 8453]), false)
   assert.throws(() => buildFundIntent({ ...input, chainIds: [1], creationFees: { 1: 0n } }, 'Neighborhood Workshop'), /Optimism, Base, Arbitrum/)
-  assert.throws(() => buildFundIntent({
-    ...input,
-    multisigs: [{ role: 'owner', address: owner, owners: [owner], threshold: 1, saltNonce: salt, proxyCreationCode: '0x60' }],
-  } as FundLaunchInput, 'Neighborhood Workshop'), /multisig/)
   assert.throws(() => buildFundIntent(input, '   '), /project name/)
 })
 
@@ -118,7 +134,7 @@ test('the FUND terms are read back out of the signed calls', () => {
   const decoded = decodeFundIntent({ envelope } as unknown as JBCenterIntent)
   assert.deepEqual(decoded, {
     owner, projectUri, tokenName: 'House FUND', ticker: 'HOUSE',
-    mustStartAtOrAfter: 1_800_000_000, chainIds: [10, 8453],
+    mustStartAtOrAfter: 1_800_000_000, chainIds: [10, 8453], safes: [],
   })
 })
 
@@ -126,6 +142,74 @@ test('a call Homerun did not build is refused rather than displayed', () => {
   const envelope = buildFundIntent(input, 'Neighborhood Workshop')
   const foreign = { ...envelope, deploymentCalls: [{ ...envelope.deploymentCalls[0], data: '0xdeadbeef' as Hex }] }
   assert.throws(() => decodeFundIntent({ envelope: foreign } as unknown as JBCenterIntent), /not created by Homerun/)
+})
+
+test('a planned owner Safe is created by the intent, before the launch, on every chain', () => {
+  const linked = { ...withSafes([ownerPlan]), chainIds: [10, 8453], mustStartAtOrAfter: 1_800_000_000 }
+  const intent = buildFundIntent(linked, 'Neighborhood Workshop')
+  assert.equal(intent.deploymentCalls.length, 4)
+  assert.deepEqual(intent.deploymentCalls.map(call => call.chainId), [10, 10, 8453, 8453])
+  for (const index of [0, 2]) {
+    assert.equal(intent.deploymentCalls[index].to, SAFE_FACTORY)
+    assert.equal(intent.deploymentCalls[index].data, multisigCreationData(planned(ownerPlan)))
+  }
+  for (const index of [1, 3]) assert.equal(intent.deploymentCalls[index].to, HOMERUN_DEPLOYER)
+  assert.equal(intent.jb.owner, planned(ownerPlan).address)
+  assert.deepEqual(intent.jb.safes, [{
+    role: 'owner', address: planned(ownerPlan).address, owners: [...signers],
+    threshold: 2, saltNonce: ownerPlan.saltNonce,
+  }])
+})
+
+test('a launch with no planned Safe keeps the single-call envelope and no safes form', () => {
+  const intent = buildFundIntent(input, 'Neighborhood Workshop')
+  assert.equal(intent.deploymentCalls.length, 1)
+  assert.equal(Object.hasOwn(intent.jb, 'safes'), false)
+})
+
+test('an owner Safe and an operator Safe are two setup calls, the launch last', () => {
+  const intent = buildFundIntent(withSafes([ownerPlan, operatorPlan]), 'Neighborhood Workshop')
+  assert.equal(intent.deploymentCalls.length, 3)
+  assert.deepEqual(intent.deploymentCalls.map(call => call.to), [SAFE_FACTORY, SAFE_FACTORY, HOMERUN_DEPLOYER])
+  assert.deepEqual(intent.jb.safes?.map(safe => safe.role), ['owner', 'operator'])
+})
+
+test('the Safes are read back out of the signed setup calls, with their roles', () => {
+  const envelope = buildFundIntent(withSafes([ownerPlan, operatorPlan]), 'Neighborhood Workshop')
+  const decoded = decodeFundIntent({ envelope } as unknown as JBCenterIntent)
+  assert.deepEqual(decoded.chainIds, [8453])
+  assert.deepEqual(decoded.safes, [
+    { role: 'owner', address: planned(ownerPlan).address, owners: [...signers], threshold: 2, saltNonce: ownerPlan.saltNonce },
+    { role: 'operator', address: planned(operatorPlan).address, owners: [...signers], threshold: 2, saltNonce: operatorPlan.saltNonce },
+  ])
+  assert.equal(decoded.owner, planned(ownerPlan).address)
+})
+
+test('an owner Safe that does not own the project makes the intent unreadable', () => {
+  const envelope = buildFundIntent(withSafes([ownerPlan]), 'Neighborhood Workshop')
+  const foreign = { ...envelope, jb: { ...envelope.jb, safes: [{ ...envelope.jb.safes![0], role: 'owner' as const, address: owner }] } }
+  assert.throws(() => decodeFundIntent({ envelope: foreign } as unknown as JBCenterIntent), new RegExp(SAFES_UNREADABLE_MESSAGE))
+})
+
+test('a setup call whose bytes do not create the Safe it decodes to is refused', () => {
+  const envelope = buildFundIntent(withSafes([ownerPlan]), 'Neighborhood Workshop')
+  const tampered = {
+    ...envelope,
+    deploymentCalls: [
+      { ...envelope.deploymentCalls[0], data: multisigCreationData({ ...planned(ownerPlan), threshold: 1 }) },
+      envelope.deploymentCalls[1],
+    ],
+  }
+  assert.throws(() => decodeFundIntent({ envelope: tampered } as unknown as JBCenterIntent), new RegExp(SAFES_UNREADABLE_MESSAGE))
+})
+
+test('a jb form that hides or invents a Safe is refused', () => {
+  const envelope = buildFundIntent(withSafes([ownerPlan]), 'Neighborhood Workshop')
+  const hidden = { ...envelope, jb: { ...envelope.jb, safes: [] } }
+  assert.throws(() => decodeFundIntent({ envelope: hidden } as unknown as JBCenterIntent), new RegExp(SAFES_UNREADABLE_MESSAGE))
+  const plain = buildFundIntent(input, 'Neighborhood Workshop')
+  const invented = { ...plain, jb: { ...plain.jb, safes: [{ role: 'owner' as const, address: owner, owners: [...signers], threshold: 2, saltNonce: ownerPlan.saltNonce }] } }
+  assert.throws(() => decodeFundIntent({ envelope: invented } as unknown as JBCenterIntent), new RegExp(SAFES_UNREADABLE_MESSAGE))
 })
 
 test('every watched call runs on the client itself, so its own fields keep working', async () => {

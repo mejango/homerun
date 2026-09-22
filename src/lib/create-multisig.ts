@@ -1,6 +1,8 @@
-import { encodePacked, getAddress, isAddressEqual, keccak256, type Address, type Hex, type PublicClient } from 'viem'
+import { encodeFunctionData, encodePacked, getAddress, isAddressEqual, keccak256, type Address, type Hex, type PublicClient } from 'viem'
 import {
   MULTICALL3,
+  SAFE_CREATE_ABI,
+  SAFE_SINGLETON,
   buildSafeInitializer,
   predictSafeAddress,
   resolveSafeAddress,
@@ -25,6 +27,15 @@ export type CreateMultisig = SafeDeploymentPlan & { role: 'owner' | 'operator' }
 export function multisigInitializer(plan: Pick<CreateMultisig, 'owners' | 'threshold'>): Hex {
   if (!Array.isArray(plan.owners) || plan.owners.length < 2 || plan.owners.length > 20) throw new Error('A multisig needs 2–20 unique nonzero owner addresses.')
   return buildSafeInitializer(plan)
+}
+/** The exact `createProxyWithNonce` calldata a policy's Safe is created by. */
+export function multisigCreationData(policy: Pick<CreateMultisig, 'owners' | 'threshold' | 'saltNonce'>): Hex {
+  if (!/^0x[\da-f]{64}$/i.test(policy.saltNonce)) throw new Error('Invalid Safe deployment salt.')
+  return encodeFunctionData({
+    abi: SAFE_CREATE_ABI,
+    functionName: 'createProxyWithNonce',
+    args: [SAFE_SINGLETON, multisigInitializer(policy), BigInt(policy.saltNonce)],
+  })
 }
 export function predictMultisig(plan: Omit<CreateMultisig, 'address' | 'role'>): Address {
   multisigInitializer(plan)
@@ -91,7 +102,7 @@ export function unbundleMultisigLaunch(entry: RelayrEntry, plans: readonly Creat
   const call = unbundleSafeLaunch({ to: entry.target, data: entry.data, value: BigInt(entry.value) }, plans)
   return { ...entry, target: call.to, data: call.data }
 }
-export function multisigReview(plans: readonly CreateMultisig[] = []): string {
+export function multisigReview(plans: readonly Pick<CreateMultisig, 'role' | 'address' | 'owners' | 'threshold'>[] = []): string {
   return plans.map(plan => `${plan.role === 'owner' ? 'Owner' : 'Operator'}: create Safe ${plan.address}, ${plan.threshold}/${plan.owners.length} approvals. Owners: ${plan.owners.join(', ')}.`).join('\n')
 }
 export async function verifyMultisigLaunchSimulation(client: PublicClient, plans: readonly CreateMultisig[] = [], data?: Hex): Promise<void> {
