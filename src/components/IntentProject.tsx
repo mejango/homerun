@@ -141,6 +141,7 @@ export function IntentProject({ intentId }: { intentId: string }) {
         <button type="button" className="btn-primary mt-5" disabled={deploying || stopped} onClick={() => void deploy()}>{deploying ? 'Deploying…' : 'Deploy'}</button>
         {steps.length > 0 && <ul className="m-0 mt-5 grid list-none gap-2 p-0 text-sm" aria-label="Deployment progress">{steps.map((step, index) => <li key={`${step}:${index}`} role="status">{step}</li>)}</ul>}
         {error && <p role="alert" className="mt-5 text-sm">{error}</p>}
+        {stopped && deployment && <p className="mt-3 text-sm"><a className="underline" href={`/project/${deployment.chainId}/${deployment.projectId}`}>Open the project created on {displayChainName(deployment.chainId)}</a></p>}
       </section>
       : <p className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7">{UNSPONSORED}</p>}
 

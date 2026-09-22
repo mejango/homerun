@@ -173,6 +173,21 @@ describe('a published project page', () => {
     expect(button('Deploy')!.disabled).toBe(true)
   })
 
+  it('links the chain that was created when another chain ended the project', async () => {
+    const envelope = envelopeFor([call(8453), call(10)])
+    runtime.getIntent.mockResolvedValueOnce(intent({ envelope }))
+    runtime.getIntent.mockResolvedValue(intent({ envelope, deployments: [deployment(8453, '42')] }))
+    runtime.requestDeploy.mockResolvedValue({ deploys: [deployRow(8453, 'confirmed'), deployRow(10, 'failed')] })
+    await render()
+    await act(async () => { button('Deploy')!.click() })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 60)) })
+    const alert = host.querySelector('[role="alert"]')
+    expect(alert?.textContent).toBe('Juicebox Center could not create this project on Optimism. It cannot be deployed from here; create it again.')
+    const link = Array.from(host.querySelectorAll('a')).find(a => a.getAttribute('href') === '/project/8453/42')
+    expect(link?.textContent).toBe('Open the project created on Base')
+    expect(navigate.replace).not.toHaveBeenCalled()
+  })
+
   it('keeps Deploy offered when no chain was recorded as failed', async () => {
     const { JBCenterRequestError } = await import('@bananapus/nana-sdk-core/jbcenter')
     runtime.requestDeploy.mockRejectedValue(new JBCenterRequestError('sender reverted: nonce too low', 400, 'bad_request'))
