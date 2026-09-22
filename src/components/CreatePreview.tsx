@@ -9,7 +9,6 @@ import { isAddressEqual, toHex, type PublicClient } from 'viem'
 import { JBCenterRequestError, describeCenterRefusal, intentPath } from '@bananapus/nana-sdk-core/jbcenter'
 import { useWallet } from '@/hooks/useWallet'
 import { wagmiConfig } from '@/providers/Providers'
-import { WalletButton } from '@/components/WalletButton'
 import { PlannedProjectView } from '@/components/PlannedProject'
 import { jbCenterClient } from '@/lib/jbcenter-client'
 import { loadCreateValues } from '@/lib/create-preview'
@@ -28,6 +27,7 @@ import { plannedNetworks } from '../../web/create-networks.mjs'
 
 const NO_SETUP = 'This project’s setup could not be read in this browser.'
 const BANNER = 'Preview. Nothing is created yet.'
+const CONNECT_MESSAGE = 'Connect a wallet to create this project.'
 const WALLET_NEEDS_TRANSACTION_MESSAGE = 'Juicebox Center accepts a signature from a wallet address only. Connect a different wallet, or create with a transaction.'
 
 const message = (error: unknown) => error instanceof Error ? error.message : 'The request could not be completed.'
@@ -52,7 +52,7 @@ function publicClient(chainId: number): PublicClient {
 
 export default function CreatePreview() {
   const router = useRouter()
-  const { address, openSignIn } = useWallet()
+  const { openSignIn } = useWallet()
   const [values, setValues] = useState<CreateValues | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [publishing, setPublishing] = useState(false)
@@ -62,13 +62,21 @@ export default function CreatePreview() {
 
   async function create(values: CreateValues) {
     if (publishing) return
-    if (!address) { openSignIn(); return }
     setPublishing(true); setError(''); setProgress('')
     try {
-      // Re-read the wallet here: the connection can change between the render
-      // that offered this path and the click that takes it. Everything this
-      // publication needs is checked before a prepared plan is let go, so a
-      // refused click leaves that plan where it was.
+      // One press creates: a visitor with no wallet connects in place, and this
+      // publication carries on with the address they chose. A chooser closed
+      // without one leaves the setup exactly as it was.
+      let sender = getAccount(wagmiConfig).address
+      if (!sender) {
+        setProgress(CONNECT_MESSAGE)
+        await openSignIn()
+        setProgress('')
+        sender = getAccount(wagmiConfig).address
+        if (!sender) return
+      }
+      // Everything this publication needs is checked before a prepared plan is
+      // let go, so a refused click leaves that plan where it was.
       if (!walletCanPublish()) throw new Error(WALLET_NEEDS_TRANSACTION_MESSAGE)
       const chainIds = plannedNetworks(values).map((chain: { chainId: number }) => chain.chainId)
       if (!fundIntentEligibleChains(chainIds)) throw new Error(UNSUPPORTED_CHAINS_MESSAGE)
@@ -76,7 +84,6 @@ export default function CreatePreview() {
       // of its own, and only once an unauthorized plan has been let go.
       const saved = localStorage.getItem(FUND_LAUNCH_KEY)
       if (saved && !discardUnsignedLaunch(decodeLaunchSession(saved).input.salt)) throw new Error('A saved launch already exists. Reload to resume it.')
-      const sender = address
       const salt = toHex(crypto.getRandomValues(new Uint8Array(32)))
       const resolved = await resolveCreateMultisigs(values, chainIds.map(publicClient), salt)
       setProgress('Saving your project details…')
@@ -183,7 +190,6 @@ export default function CreatePreview() {
       <div className="mt-5 flex flex-wrap gap-3">
         <button type="button" className="quiet-button" disabled={publishing} onClick={() => router.push('/create')}>Edit</button>
         <button type="button" className="create-primary" disabled={publishing} onClick={() => void create(values)}>{publishing ? 'Publishing your project…' : 'Create'}</button>
-        {!address && <WalletButton />}
       </div>
       {progress && <p role="status" className="mt-5 text-sm">{progress}</p>}
       {error && <p role="alert" className="mt-5 text-sm">{error}</p>}
