@@ -379,6 +379,8 @@ try {
 
   // The Safe this project owns does not exist on Ethereum yet, so the visitor
   // creates it before the project, and both are sent from their own wallet.
+  // A project Center recorded is no longer held by this browser.
+  assert.equal(await page.evaluate(() => localStorage.getItem('homerun:relay-held:v1')), null)
   const sends = await page.evaluate(() => window.__homerunSends ?? [])
   assert.equal(sends.length, 2)
   assert.equal(getAddress(sends[0]), SAFE_FACTORY)

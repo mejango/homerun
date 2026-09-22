@@ -116,6 +116,7 @@ describe('choosing the chains a published project is deployed on', () => {
   let root: Root
   let client: QueryClient
   beforeEach(() => {
+    localStorage.clear()
     runtime.address = wallet
     runtime.requestDeploy.mockReset().mockResolvedValue({ deploys: [] })
     runtime.requestRelay.mockReset().mockImplementation(async (_id: string, chainId: number) => relayRequest(chainId))
@@ -298,6 +299,46 @@ describe('choosing the chains a published project is deployed on', () => {
     expect(runtime.recordDeployment).toHaveBeenCalledTimes(2)
     expect(runtime.recordDeployment.mock.calls[1].slice(0, 2)).toEqual([intentId, { chainId: 1, projectId: '9', transactionHash: relayHash }])
     expect(alert()).toBeUndefined()
+  })
+
+  it('holds a created project through a reload, and records it there without the wallet', async () => {
+    runtime.recordDeployment.mockRejectedValueOnce(new Error('center gateway 503'))
+    await render(intent([1]))
+    await act(async () => { rowFor(1)!.click() })
+    await act(async () => { button('Deploy selected')!.click() })
+    await settle()
+    expect(JSON.parse(localStorage.getItem('homerun:relay-held:v1')!)).toEqual([
+      { intentId, chainId: 1, projectId: '9', transactionHash: relayHash },
+    ])
+    // The reader reloads before Center has recorded the project.
+    await act(async () => root.unmount())
+    runtime.send.mockClear(); runtime.review.mockClear(); runtime.recordDeployment.mockClear()
+    root = createRoot(host)
+    await render(intent([1]))
+    expect(host.textContent).toContain('Deployed on Ethereum, not yet recorded')
+    expect(rowFor(1)!.checked).toBe(true)
+    await act(async () => { button('Deploy selected')!.click() })
+    await settle()
+    expect(runtime.send).not.toHaveBeenCalled()
+    expect(runtime.review).not.toHaveBeenCalled()
+    expect(runtime.recordDeployment.mock.calls[0].slice(0, 2)).toEqual([intentId, { chainId: 1, projectId: '9', transactionHash: relayHash }])
+    expect(localStorage.getItem('homerun:relay-held:v1')).toBeNull()
+  })
+
+  it('records a held project for a reader who has no wallet connected', async () => {
+    runtime.recordDeployment.mockRejectedValueOnce(new Error('center gateway 503'))
+    await render(intent([1]))
+    await act(async () => { rowFor(1)!.click() })
+    await act(async () => { button('Deploy selected')!.click() })
+    await settle()
+    await act(async () => root.unmount())
+    runtime.address = undefined
+    root = createRoot(host)
+    await render(intent([1]))
+    await act(async () => { button('Deploy selected')!.click() })
+    await settle()
+    expect(runtime.openSignIn).not.toHaveBeenCalled()
+    expect(runtime.recordDeployment).toHaveBeenCalledTimes(2)
   })
 
   it('keeps the other chains deployable when Center fails one', async () => {

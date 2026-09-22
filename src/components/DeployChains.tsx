@@ -17,6 +17,7 @@ import {
   NO_LAUNCH_MESSAGE, RELAY_EXPIRED_MESSAGE, RELAY_UNREADABLE_MESSAGE, SAFES_UNREADABLE_MESSAGE,
   checkRelayRequest, readLaunchedProjectId, relayCostLabel, relaySetupSafes, watchDeployRefusal, type FundRelayRequest,
 } from '@/lib/fund-intent'
+import { holdDeployment, loadHeldDeployments, releaseDeployment } from '@/lib/relay-held'
 import { requireTransactionReview } from '@/lib/transaction-review'
 import { displayChainName } from '@/lib/chainDisplay'
 
@@ -98,7 +99,17 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
   const run = useRef<AbortController | null>(null)
   /** A created project Center has not recorded: the next run records it alone. */
   const unrecorded = useRef(new Map<number, JBCenterDeploymentInput>())
+  const [held, setHeld] = useState<number[]>([])
+  const syncHeld = () => setHeld([...unrecorded.current.keys()])
   useEffect(() => () => run.current?.abort(), [])
+  // A project this browser created and Center did not record outlives the page
+  // that created it, so a reload records it instead of creating a second one.
+  useEffect(() => {
+    unrecorded.current = loadHeldDeployments(intent.id)
+    const created = [...unrecorded.current.keys()]
+    setHeld(created)
+    if (created.length) setSelected(current => [...new Set([...current, ...created])])
+  }, [intent.id])
   // A refetch can create a chain this panel still offers; the selection follows.
   const offered = remaining.join(',')
   useEffect(() => {
@@ -171,12 +182,17 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
       transactionHash,
     }
     unrecorded.current.set(request.chainId, deployment)
+    holdDeployment(intent.id, deployment)
+    syncHeld()
     return deployment
   }
 
   async function deploy() {
     if (!selected.length) return
-    if (!address && selected.some(chainId => paid.includes(chainId))) { openSignIn(); setError(CONNECT_MESSAGE); return }
+    // A chain whose project is already created needs no wallet: it needs Center.
+    if (!address && selected.some(chainId => paid.includes(chainId) && !unrecorded.current.has(chainId))) {
+      openSignIn(); setError(CONNECT_MESSAGE); return
+    }
     setDeploying(true); onRunningChange?.(true); setError(''); setSteps([])
     const watcher = watchDeployRefusal(jbCenterClient)
     const controller = new AbortController()
@@ -191,7 +207,10 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
         timeoutMs: 600_000,
         signal: controller.signal,
         onStep: step => {
-          if (step.status === 'relay-paid') unrecorded.current.delete(step.chainId)
+          if (step.status === 'relay-paid' && unrecorded.current.delete(step.chainId)) {
+            releaseDeployment(intent.id, step.chainId)
+            syncHeld()
+          }
           setSteps(current => [...current, `${displayChainName(step.chainId)}: ${STEP_LABELS[step.status]}`])
           onDeployed?.()
         },
@@ -227,9 +246,9 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
         return <li key={chainId} className="flex flex-wrap items-center gap-3">
           <label className="flex items-center gap-2">
             <input type="checkbox" value={chainId} checked={selected.includes(chainId)} disabled={deploying || stopped.includes(chainId)} onChange={() => toggle(chainId)} />
-            {displayChainName(chainId)}
+            {held.includes(chainId) ? `Deployed on ${displayChainName(chainId)}, not yet recorded` : displayChainName(chainId)}
           </label>
-          {free.includes(chainId) ? <span className="text-sm">free</span> : <RelayCost intentId={intent.id} chainId={chainId} />}
+          {held.includes(chainId) ? null : free.includes(chainId) ? <span className="text-sm">free</span> : <RelayCost intentId={intent.id} chainId={chainId} />}
         </li>
       })}
     </ul>
