@@ -8,6 +8,7 @@ import { erc20Abi, formatUnits, getAddress, isAddress, isAddressEqual, zeroAddre
 import Image from 'next/image'
 import { usePublicClient } from 'wagmi'
 import { Brand } from '@/components/Brand'
+import { DeployRemainingChains } from '@/components/DeployRemainingChains'
 import { WalletButton } from '@/components/WalletButton'
 import { FundOperatorActions } from '@/components/FundOperatorActions'
 import { IncomeLaunch } from '@/components/IncomeLaunch'
@@ -79,7 +80,7 @@ function Input({ label, value, onChange, placeholder, inputMode = 'decimal' }: {
 }
 
 /** Every displayed balance and every permission is resolved from this chain. */
-export function FundProject({ chainId, projectId }: { chainId: JBChainId; projectId: string }) {
+export function FundProject({ chainId, projectId, intentId }: { chainId: JBChainId; projectId: string; intentId?: string }) {
   const id = BigInt(projectId)
   const client = usePublicClient({ chainId }) as PublicClient | undefined
   const { address } = useWallet()
@@ -124,7 +125,7 @@ export function FundProject({ chainId, projectId }: { chainId: JBChainId; projec
     <a className="skip-link" href="#main">Skip to content</a>
     <header className="site-header flex items-center justify-between gap-5"><Brand /><WalletButton /></header>
     <main id="main" className="mx-auto max-w-[1220px] px-5 py-8 sm:px-8 sm:py-10" tabIndex={-1}>
-      <ProjectActions key={`${chainId}:${projectId}`} chainId={chainId} projectId={id} state={displayState ?? undefined} client={client} details={details.data} notice={<>{notice}{income.notice}</>} income={income} refreshing={query.isFetching} readsUnavailable={readsUnavailable} writesUnavailable={writesUnavailable} refresh={() => void query.refetch()} />
+      <ProjectActions key={`${chainId}:${projectId}`} chainId={chainId} projectId={id} intentId={intentId} state={displayState ?? undefined} client={client} details={details.data} notice={<>{notice}{income.notice}</>} income={income} refreshing={query.isFetching} readsUnavailable={readsUnavailable} writesUnavailable={writesUnavailable} refresh={() => void query.refetch()} />
     </main>
   </div>}</IncomeProjectRuntime>
 }
@@ -144,10 +145,11 @@ function PlannedIncome({ plan }: { plan: NonNullable<FundProjectMetadata['plan']
   </section>
 }
 
-function ProjectActions({ chainId, projectId, state, client, details, notice, income, refreshing, readsUnavailable, writesUnavailable, refresh }: {
-  chainId: JBChainId; projectId: bigint; state?: FundProjectState; client?: PublicClient; details?: FundProjectMetadata; notice: ReactNode; income: IncomeProjectSlots
+function ProjectActions({ chainId, projectId, intentId, state, client, details, notice, income, refreshing, readsUnavailable, writesUnavailable, refresh }: {
+  chainId: JBChainId; projectId: bigint; intentId?: string; state?: FundProjectState; client?: PublicClient; details?: FundProjectMetadata; notice: ReactNode; income: IncomeProjectSlots
   refreshing: boolean; readsUnavailable: boolean; writesUnavailable: boolean; refresh: () => void
 }) {
+  const alsoDeploy = <DeployRemainingChains chainId={chainId} projectId={projectId.toString()} owner={state?.owner} intentId={intentId} />
   const { address, isConnected } = useWallet()
   const [contextIndex, setContextIndex] = useState(0)
   const [paymentToken, setPaymentToken] = useState<'fund' | 'income'>('fund')
@@ -159,7 +161,7 @@ function ProjectActions({ chainId, projectId, state, client, details, notice, in
       location={details?.location}
       logo={details?.logoUrl && <Image unoptimized src={details.logoUrl} width={112} height={112} alt="Project logo" />}
       metadata={[`Network: ${displayChainName(chainId)}`, `FUND: #${projectId}`, 'Status: Verifying contracts']}
-      notice={notice}
+      notice={<>{alsoDeploy}{notice}</>}
       payment={<ActionSection title="Pay">{pending}</ActionSection>}
       activity={<ProjectActivity chainId={chainId} projectId={projectId} />}
       overview={<div className="grid gap-7"><ActionSection title="About"><p>{details?.description ?? 'Fund the asset, manage its treasury, and use your FUND tokens.'}</p>{pending}</ActionSection><CurrentOwnerProfile chainId={chainId} owner={undefined} details={details} /><CurrentOperatorProfile chainId={chainId} incomeProjectId={income.projectId} fundDetails={details} bindingUnavailable={income.bindingUnavailable} /></div>}
@@ -191,7 +193,7 @@ function ProjectActions({ chainId, projectId, state, client, details, notice, in
     location={details?.location}
     logo={details?.logoUrl && <Image unoptimized src={details.logoUrl} width={112} height={112} alt={name ? `${name} logo` : 'Project logo'} />}
     metadata={[`Network: ${displayChainName(state.chainId)}`, `FUND: #${state.projectId}`, income.projectId && `INCOME: #${income.projectId}`, `Status: ${!supported ? 'Unsupported FUND configuration' : state.metadata.pausePay ? 'Contributions paused' : 'Raising funds'}`, supported && context && <span>FUND treasury: <DisplayTokenAmount value={context.balance} decimals={context.decimals} /> {context.symbol}</span>, supported && <span>FUND supply: <DisplayTokenAmount value={state.totalSupply} /></span>, income.treasuryMetric].filter(Boolean)}
-    notice={<>{notice}{!supported && <p role="alert">This project uses contract settings outside Homerun’s verified FUND integration. Transactions are unavailable here. {state.issues.join(' ')}</p>}{!isConnected && <p>Connect your wallet to contribute, use your tokens, or access operator actions.</p>}{writesUnavailable && <p role="status">New transactions are paused while current project permissions and balances are being verified. Submitted transactions continue to be tracked below.</p>}</>}
+    notice={<>{alsoDeploy}{notice}{!supported && <p role="alert">This project uses contract settings outside Homerun’s verified FUND integration. Transactions are unavailable here. {state.issues.join(' ')}</p>}{!isConnected && <p>Connect your wallet to contribute, use your tokens, or access operator actions.</p>}{writesUnavailable && <p role="status">New transactions are paused while current project permissions and balances are being verified. Submitted transactions continue to be tracked below.</p>}</>}
     payment={<>
       {income.projectId && <div className="mb-5 flex gap-3" role="group" aria-label="Payment token"><button type="button" className={paymentToken === 'fund' ? 'btn-primary' : 'btn-secondary'} aria-pressed={paymentToken === 'fund'} onClick={() => { paymentChoice.current = true; setPaymentToken('fund') }}>FUND</button><button type="button" className={paymentToken === 'income' ? 'btn-primary' : 'btn-secondary'} aria-pressed={paymentToken === 'income'} onClick={() => { paymentChoice.current = true; setPaymentToken('income') }}>INCOME</button></div>}
       <div hidden={paymentToken !== 'fund'} onFocusCapture={() => { paymentChoice.current = true }}>{gate(<>{context ? <FundPaymentNetworks state={state}>{(paymentState, paymentClient, selector, onBusyChange) => <PaymentPanel state={paymentState} client={paymentClient} contextIndex={paymentState.chainId === state.chainId ? contextIndex : 0} chainSelector={selector} onBusyChange={onBusyChange} />}</FundPaymentNetworks> : <p>No supported payment terminal was verified for this project.</p>}</>)}</div>
