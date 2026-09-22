@@ -23,7 +23,7 @@ import { plannedNetworks } from '../../web/create-networks.mjs'
 import { isSafeConnection, waitForSafeExecutionHash } from '@/lib/safe-connector'
 import { JBCenterRequestError, describeCenterRefusal, intentPath } from '@bananapus/nana-sdk-core/jbcenter'
 import { jbCenterClient } from '@/lib/jbcenter-client'
-import { buildFundIntent, fundIntentEligibleChains, publishFundIntent, MULTISIG_NEEDS_TRANSACTION_MESSAGE, UNSPONSORED_CHAINS_MESSAGE } from '@/lib/fund-intent'
+import { buildFundIntent, fundIntentEligibleChains, publishFundIntent, UNSPONSORED_CHAINS_MESSAGE } from '@/lib/fund-intent'
 import { requireTransactionReview } from '@/lib/transaction-review'
 
 const message = (error: unknown) => error instanceof Error ? error.message : 'The request could not be completed.'
@@ -297,7 +297,6 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
       const sender = address
       const salt = toHex(crypto.getRandomValues(new Uint8Array(32)))
       const resolved = await resolveCreateMultisigs(values, chainIds.map(publicClient), salt)
-      if (resolved.plans.length) throw new Error(MULTISIG_NEEDS_TRANSACTION_MESSAGE)
       setProgress('Saving your project details…')
       const pin = await publishFundProjectMetadata(resolved.values)
       const fees = await Promise.all(chainIds.map(async (id: number) => {
