@@ -110,6 +110,17 @@ describe('a published project page', () => {
     expect(navigate.replace).toHaveBeenCalledWith('/project/84532/7')
   })
 
+  it('keeps the signed terms and the Deploy action when the pinned details cannot be read', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('gateway trouble', { status: 500 })))
+    await render()
+    expect(host.textContent).toContain('The project details could not be loaded.')
+    expect(host.textContent).toContain('Neighborhood Workshop FUND')
+    expect(host.textContent).toContain('Deploys on first use')
+    expect(host.textContent).toContain('Base')
+    expect(host.textContent).not.toContain('gateway trouble')
+    expect(button('Deploy')).toBeTruthy()
+  })
+
   it('says why Center refused, in Center’s words, without raw provider text', async () => {
     const { JBCenterRequestError } = await import('@bananapus/nana-sdk-core/jbcenter')
     runtime.requestDeploy.mockRejectedValue(new JBCenterRequestError('upstream 503 from provider', 503, 'unavailable'))
@@ -119,5 +130,28 @@ describe('a published project page', () => {
     const alert = host.querySelector('[role="alert"]')
     expect(alert?.textContent?.length).toBeGreaterThan(0)
     expect(alert?.textContent).not.toContain('upstream 503 from provider')
+  })
+
+  it('gives a refusal Center does not word one sentence of its own, never the server’s', async () => {
+    const { JBCenterRequestError } = await import('@bananapus/nana-sdk-core/jbcenter')
+    runtime.requestDeploy.mockRejectedValue(new JBCenterRequestError('sender 0xabc reverted: nonce too low', 500, 'internal_error'))
+    await render()
+    await act(async () => { button('Deploy')!.click() })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 60)) })
+    const alert = host.querySelector('[role="alert"]')
+    expect(alert?.textContent).toBe('Center could not start this deploy right now. Try again shortly.')
+    expect(host.textContent).not.toContain('nonce too low')
+    expect(button('Deploy')!.disabled).toBe(false)
+  })
+
+  it('abandons the deploy when the reader leaves the page', async () => {
+    runtime.requestDeploy.mockResolvedValue({ deploys: [{ chainId: 8453, status: 'queued', transactionHash: null, bundleUuid: null, error: null, createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() }] })
+    await render()
+    await act(async () => { button('Deploy')!.click() })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 60)) })
+    const [, options] = runtime.requestDeploy.mock.calls[0] as [string, { signal?: AbortSignal }]
+    expect(options.signal?.aborted).toBe(false)
+    await act(async () => root.unmount())
+    expect(options.signal?.aborted).toBe(true)
   })
 })

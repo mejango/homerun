@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   EnsureDeployedError, describeCenterRefusal, ensureDeployed, type EnsureDeployedStep,
 } from '@bananapus/nana-sdk-core/jbcenter'
@@ -20,9 +20,9 @@ const STEP_LABELS: Record<EnsureDeployedStep['status'], string> = {
   'self-paid': 'recorded',
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'This project could not be deployed. Try again in a few minutes.'
-}
+/** Neither a provider, a gateway nor Center's own request text reaches a reader. */
+const DEPLOY_UNAVAILABLE = 'Center could not start this deploy right now. Try again shortly.'
+const DEPLOY_FAILED = 'Juicebox Center could not deploy this project. Try again in a few minutes.'
 
 /** Everything shown here comes from the signed calls and the pinned metadata; no chain is read. */
 export function IntentProject({ intentId }: { intentId: string }) {
@@ -36,15 +36,19 @@ export function IntentProject({ intentId }: { intentId: string }) {
     staleTime: 30_000,
     retry: 1,
   })
+  const run = useRef<AbortController | null>(null)
+  useEffect(() => () => run.current?.abort(), [])
   const deployment = intent.data?.deployments[0]
   useEffect(() => {
-    if (deployment) router.replace(`/project/${deployment.chainId}/${deployment.projectId}`)
+    if (!deployment) return
+    run.current?.abort()
+    router.replace(`/project/${deployment.chainId}/${deployment.projectId}`)
   }, [deployment, router])
 
   let terms: ReturnType<typeof decodeFundIntent> | null = null
   let undecodable = ''
   if (intent.data) {
-    try { terms = decodeFundIntent(intent.data) } catch (cause) { undecodable = errorMessage(cause) }
+    try { terms = decodeFundIntent(intent.data) } catch (cause) { undecodable = cause instanceof Error ? cause.message : '' }
   }
   const details = useQuery({
     queryKey: ['intent-metadata', terms?.projectUri],
@@ -58,11 +62,15 @@ export function IntentProject({ intentId }: { intentId: string }) {
     if (!intent.data) return
     setDeploying(true); setError(''); setSteps([])
     const watcher = watchDeployRefusal(jbCenterClient)
+    const controller = new AbortController()
+    run.current?.abort()
+    run.current = controller
     try {
       await ensureDeployed({
         client: watcher.client,
         intent: intent.data,
         timeoutMs: 600_000,
+        signal: controller.signal,
         // Read the intent back on every reported step, so the created project
         // opens as soon as Center records it rather than a poll interval later.
         onStep: step => {
@@ -72,12 +80,15 @@ export function IntentProject({ intentId }: { intentId: string }) {
       })
       await intent.refetch()
     } catch (cause) {
+      // A run this page abandoned, by unmounting or by opening the created
+      // project, is not a failure to report.
+      if (controller.signal.aborted) return
       const refused = describeCenterRefusal(watcher.refusal())
-      setError(refused?.message
-        ?? (cause instanceof EnsureDeployedError
-          ? 'Juicebox Center could not deploy this project. Try again in a few minutes.'
-          : errorMessage(cause)))
-    } finally { setDeploying(false) }
+      setError(refused?.message ?? (cause instanceof EnsureDeployedError ? DEPLOY_FAILED : DEPLOY_UNAVAILABLE))
+    } finally {
+      if (run.current === controller) run.current = null
+      setDeploying(false)
+    }
   }
 
   if (intent.isPending) return <p role="status">Reading this project from Juicebox Center…</p>
