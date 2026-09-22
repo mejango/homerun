@@ -246,7 +246,7 @@ try {
     assert.match(await page.locator('#create-review').textContent(), /\$1,025\.65/);
     assert.equal(await page.locator('#create-next').count(), 0);
     await page.getByRole('heading', { name: 'Create your project', exact: true }).waitFor();
-    assert.equal(await page.getByRole('button', { name: 'Create project', exact: true }).isDisabled(), true);
+    assert.equal(await page.getByRole('button', { name: 'Show preview', exact: true }).isDisabled(), false);
     assert.equal(await environment().inputValue(), 'production');
     assert.deepEqual(await environment().locator('option').allTextContents(), ['Mainnets', 'Testnets']);
     assert.deepEqual(await selectedNetworks(), networkIDs);
@@ -355,8 +355,9 @@ try {
     assert.equal(setup.income.minimumRevenue.consequences, consequences);
   });
   await check('Live entry requires a wallet and sign-in cannot create a fake deployment', async () => {
-    const prepare = page.getByRole('button', { name: 'Create project', exact: true });
-    assert.equal(await prepare.isDisabled(), true);
+    const prepare = page.getByRole('button', { name: 'Show preview', exact: true });
+    assert.equal(await prepare.isDisabled(), false);
+    assert.equal(await page.getByRole('button', { name: 'Create with a transaction', exact: true }).count(), 0);
     assert.match(await page.locator('#create-contract-actions').textContent(), /INCOME.*separate later actions/);
     assert.equal(await page.locator('#create-next').count(), 0);
     assert.equal(await page.locator('#create-success').count(), 0);
@@ -366,7 +367,7 @@ try {
     assert.match(await dialog.textContent(), /Connect your wallet|Sign in/);
     await page.keyboard.press('Escape');
     await dialog.waitFor({ state: 'hidden' });
-    assert.equal(await prepare.isDisabled(), true);
+    assert.equal(await prepare.isDisabled(), false);
     assert.equal(await page.evaluate(() => localStorage.getItem('homerun:fund-launch:v1')), null);
     assert.equal(await page.evaluate(() => localStorage.getItem('homerun:created-projects:v1')), null);
   });

@@ -8,7 +8,9 @@ import { createServer } from 'node:http'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
-import { decodeFunctionData, encodeFunctionData, encodeFunctionResult, getAddress, multicall3Abi } from 'viem'
+import { decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodeFunctionData, encodeFunctionResult, getAddress, multicall3Abi } from 'viem'
+import { erc2771ForwarderAbi } from '@bananapus/nana-sdk-core'
+import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import { SAFE_CREATE_ABI, SAFE_FACTORY } from '@bananapus/nana-sdk-core/safe'
 import safeCode from './fixtures/safe-canonical-code.json' with { type: 'json' }
 import { privateKeyToAccount } from 'viem/accounts'
@@ -28,7 +30,10 @@ const cid = 'bafkreiabcdefghijklmnopqrstuvwxyz234567'
 const contentHash = `0x${'ab'.repeat(32)}`
 const transactionHash = `0x${'ef'.repeat(32)}`
 const intentId = randomUUID()
-const projectId = '42'
+// Center's sponsor in this model. It signs nothing here; the forward request is a fixture.
+const SPONSOR = '0x0000000000000000000000000000000000005e0d'
+const projectIds = { 1: '7', 10: '41', 8453: '42' }
+const relayHash = `0x${'cd'.repeat(32)}`
 const pin = { cid, status: 'queued', uri: `ipfs://${cid}`, gatewayUrl: `/ipfs/${cid}` }
 const metadata = {
   name: 'Neighborhood Workshop',
@@ -48,22 +53,59 @@ const answerCall = (to, data) => to && getAddress(to) === SAFE_FACTORY && data =
   ? encodeFunctionResult({ abi: SAFE_CREATE_ABI, functionName: 'proxyCreationCode', result: safeCode.proxyCreationCode })
   : uint256(10n ** 18n)
 
+/** The receipt the visitor's own relay transaction produces, with one FundLaunched event. */
+const launchReceipt = chainId => {
+  const calls = stored.envelope.deploymentCalls.filter(call => call.chainId === chainId)
+  const launch = calls[calls.length - 1]
+  return {
+    status: '0x1', blockNumber: uint256(1_000n), blockHash: `0x${'11'.repeat(32)}`,
+    transactionHash: relayHash, transactionIndex: '0x0', from: account.address, to: launch.to,
+    cumulativeGasUsed: uint256(500_000n), gasUsed: uint256(500_000n), effectiveGasPrice: uint256(2_000_000_000n),
+    contractAddress: null, logsBloom: `0x${'00'.repeat(256)}`, type: '0x2',
+    logs: [{
+      address: launch.to, blockHash: `0x${'11'.repeat(32)}`, blockNumber: uint256(1_000n),
+      transactionHash: relayHash, transactionIndex: '0x0', logIndex: '0x0', removed: false,
+      topics: encodeEventTopics({
+        abi: FUND_LAUNCHED_ABI, eventName: 'FundLaunched',
+        args: { projectId: BigInt(projectIds[chainId]), owner: stored.envelope.jb.owner },
+      }),
+      data: encodeAbiParameters([{ type: 'address' }], [SPONSOR]),
+    }],
+  }
+}
+
 let stored = null
 let deployRequests = 0
+let relayRequests = 0
 let intentReads = 0
+let queued = []
+let recorded = []
+
+// HomerunDeployer's own event, as `src/lib/income-contracts.ts` declares it.
+const FUND_LAUNCHED_ABI = [{
+  type: 'event', name: 'FundLaunched', inputs: [
+    { name: 'projectId', type: 'uint256', indexed: true },
+    { name: 'owner', type: 'address', indexed: true },
+    { name: 'caller', type: 'address', indexed: false },
+  ],
+}]
 
 function intentRecord() {
-  const deployed = deployRequests > 0 && intentReads > 1
+  const chains = [...new Set([...queued, ...recorded])]
   return {
-    id: intentId, status: deployed ? 'deployed' : 'undeployed', contentHash,
+    id: intentId, status: chains.length === 3 ? 'deployed' : 'undeployed', contentHash,
     envelope: stored.envelope, publisher: stored.publisher, signature: stored.signature,
     createdAt: timestamp,
-    deployments: deployed ? [{ chainId: 8453, projectId, transactionHash, createdAt: timestamp }] : [],
-    deploys: deployRequests === 0 ? [] : [{
-      chainId: 8453, status: deployed ? 'confirmed' : 'queued',
-      transactionHash: deployed ? transactionHash : null, bundleUuid: null, error: null,
-      createdAt: timestamp, updatedAt: timestamp,
-    }],
+    deployments: chains.map(chainId => ({
+      chainId, projectId: projectIds[chainId],
+      transactionHash: chainId === 1 ? relayHash : transactionHash, createdAt: timestamp,
+      forwarded: true,
+    })),
+    deploys: chains.map(chainId => ({
+      chainId, status: 'confirmed',
+      transactionHash: chainId === 1 ? relayHash : transactionHash,
+      bundleUuid: null, error: null, createdAt: timestamp, updatedAt: timestamp,
+    })),
     name: 'Neighborhood Workshop', description: null, tagline: null, tags: [], logoUri: null,
     owner: account.address,
   }
@@ -112,7 +154,40 @@ const center = createServer((request, response) => {
   }
   if (url.pathname === `/v1/intents/${intentId}/deploy` && request.method === 'POST') {
     deployRequests++
-    return withBody(() => json(202, { deploys: intentRecord().deploys }))
+    return withBody(body => {
+      const requested = JSON.parse(body.toString() || '{}').chainIds ?? [10, 8453]
+      queued = [...new Set([...queued, ...requested])]
+      return json(202, { deploys: intentRecord().deploys })
+    })
+  }
+  if (url.pathname === `/v1/intents/${intentId}/relay` && request.method === 'POST') {
+    relayRequests++
+    return withBody(body => {
+      const { chainId } = JSON.parse(body.toString())
+      const calls = stored.envelope.deploymentCalls.filter(call => call.chainId === chainId)
+      const launch = calls[calls.length - 1]
+      const deadline = Math.floor(Date.now() / 1000) + 1_800
+      return json(200, {
+        chainId,
+        to: v6Address('ERC2771Forwarder', chainId),
+        value: '0',
+        gas: '900000',
+        deadline,
+        data: encodeFunctionData({
+          abi: erc2771ForwarderAbi,
+          functionName: 'execute',
+          args: [{ from: SPONSOR, to: launch.to, value: 0n, gas: 900_000n, deadline, data: launch.data, signature: `0x${'ab'.repeat(65)}` }],
+        }),
+        setup: calls.slice(0, -1).map(call => ({ to: call.to, data: call.data, value: '0' })),
+      })
+    })
+  }
+  if (url.pathname === `/v1/intents/${intentId}/deployments` && request.method === 'POST') {
+    return withBody(body => {
+      const deployment = JSON.parse(body.toString())
+      recorded = [...new Set([...recorded, deployment.chainId])]
+      return json(201, { ...deployment, createdAt: timestamp })
+    })
   }
   if (url.pathname === '/v1/search') {
     return json(200, { items: [], totalCount: 0, nextCursor: null })
@@ -124,6 +199,9 @@ const center = createServer((request, response) => {
       const answer = call => {
         if (call.method === 'eth_chainId') return uint256(BigInt(chainId))
         if (call.method === 'eth_blockNumber') return uint256(1_000n)
+        if (call.method === 'eth_gasPrice') return uint256(2_000_000_000n)
+        if (call.method === 'eth_getTransactionCount') return uint256(0n)
+        if (call.method === 'eth_getTransactionReceipt') return launchReceipt(chainId)
         if (call.method === 'eth_getCode') {
           const address = call.params?.[0]
           return address ? CANONICAL_CODE[getAddress(address)] ?? '0x60006000' : '0x60006000'
@@ -188,23 +266,34 @@ try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' })
   const errors = []
   await context.exposeFunction('__homerunTestSign', hexMessage => account.signMessage({ message: { raw: hexMessage } }))
-  await context.addInitScript(({ address, chainId }) => {
+  await context.addInitScript(({ address, chainId, relayHashForWallet }) => {
+    // The wallet reports the chain it was last switched to, as a real one does:
+    // a switch that never lands leaves every chain-scoped request waiting.
+    let current = chainId
+    const listeners = new Map()
     const provider = {
       async request({ method, params }) {
         if (method === 'eth_requestAccounts' || method === 'eth_accounts') return [address]
-        if (method === 'eth_chainId') return chainId
-        if (method === 'net_version') return String(Number.parseInt(chainId, 16))
+        if (method === 'eth_chainId') return current
+        if (method === 'net_version') return String(Number.parseInt(current, 16))
         if (method === 'personal_sign') return window.__homerunTestSign(params[0])
-        if (method === 'wallet_switchEthereumChain') return null
+        if (method === 'wallet_switchEthereumChain') {
+          current = params[0].chainId
+          for (const handler of listeners.get('chainChanged') ?? []) handler(current)
+          return null
+        }
+        if (method === 'eth_sendTransaction') return relayHashForWallet
+        if (method === 'eth_estimateGas') return '0xdbba0'
         throw Object.assign(new Error(`Unsupported method ${method}`), { code: 4200 })
       },
-      on() {}, removeListener() {},
+      on(event, handler) { listeners.set(event, [...listeners.get(event) ?? [], handler]) },
+      removeListener(event, handler) { listeners.set(event, (listeners.get(event) ?? []).filter(item => item !== handler)) },
     }
     const info = { uuid: '7f0c1c3a-0000-4000-8000-000000000001', name: 'Test Wallet', rdns: 'test.homerun.money', icon: 'data:image/svg+xml;base64,PHN2Zy8+' }
     const announce = () => window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail: Object.freeze({ info, provider }) }))
     window.addEventListener('eip6963:requestProvider', announce)
     announce()
-  }, { address: account.address, chainId: '0x2105' })
+  }, { address: account.address, chainId: '0x2105', relayHashForWallet: relayHash })
   await context.addInitScript(saved => {
     try { localStorage.setItem('homerun:create-draft:v1', JSON.stringify(saved)) } catch { /* storage is unavailable on about:blank */ }
   }, {
@@ -218,7 +307,7 @@ try {
       fundTicker: 'FUND',
       ownerMode: 'create', ownerSigners: [account.address, SECOND_SIGNER], ownerThreshold: 2, ownerIsOperator: true,
       operatorMode: 'existing', operatorWallet: account.address,
-      networks: ['base'], networkEnvironment: 'production',
+      networks: ['ethereum', 'optimism', 'base'], networkEnvironment: 'production',
     },
     step: 4,
     incomeDefaultsVersion: 3,
@@ -238,11 +327,24 @@ try {
   // on mount and the header reports the account without opening the chooser.
   await page.locator('.site-header').getByRole('button', { name: /^Signed in/ }).waitFor()
 
-  const create = page.getByRole('button', { name: 'Create without a transaction', exact: true })
-  await create.waitFor()
-  assert.equal(await page.getByRole('button', { name: 'Create with a transaction instead', exact: true }).count(), 1)
-  await create.click()
+  const preview = page.getByRole('button', { name: 'Show preview', exact: true })
+  await preview.waitFor()
+  assert.equal(await page.getByRole('button', { name: 'Create with a transaction', exact: true }).count(), 0)
+  await preview.click()
 
+  await page.waitForURL(`${appOrigin}/create/preview`)
+  await page.getByText('Preview. Nothing is created yet.', { exact: true }).waitFor()
+  assert.match(await page.locator('main').textContent(), /Neighborhood Workshop/)
+  assert.match(await page.locator('main').textContent(), /Ethereum, Optimism, Base/)
+  assert.equal(await page.evaluate(() => localStorage.getItem('homerun:fund-launch:v1')), null)
+
+  await page.getByRole('button', { name: 'Edit', exact: true }).click()
+  await page.waitForURL(`${appOrigin}/create`)
+  await page.getByRole('heading', { name: 'Create your project', exact: true }).waitFor()
+  await page.getByRole('button', { name: 'Show preview', exact: true }).click()
+  await page.waitForURL(`${appOrigin}/create/preview`)
+
+  await page.getByRole('button', { name: 'Create', exact: true }).click()
   const review = page.getByRole('dialog')
   await review.getByText('Create your project', { exact: false }).first().waitFor()
   await review.getByText('2/2 approvals', { exact: false }).first().waitFor()
@@ -251,26 +353,34 @@ try {
 
   await page.waitForURL(`${appOrigin}/intent/${intentId}`)
   await page.getByText('Deploys on first use', { exact: false }).first().waitFor()
-  assert.match(await page.locator('main').textContent(), /Neighborhood Workshop/)
-  assert.match(await page.locator('main').textContent(), /Base/)
-  const page_text = await page.locator('main').textContent()
-  assert.match(page_text, /Owner: create Safe/)
-  assert.match(page_text, /2\/2 approvals/)
-  assert.match(page_text, new RegExp(SECOND_SIGNER, 'i'))
+  const intentText = await page.locator('main').textContent()
+  assert.match(intentText, /Neighborhood Workshop/)
+  assert.match(intentText, /free/)
+  assert.match(intentText, /Owner: create Safe/)
+  assert.match(intentText, new RegExp(SECOND_SIGNER, 'i'))
+  await page.getByText(/costs ~[\d.]+ ETH/).first().waitFor()
   assert.deepEqual(errors, [])
 
-  await page.getByRole('button', { name: 'Deploy', exact: true }).click()
-  await page.waitForURL(`${appOrigin}/project/8453/${projectId}`, { timeout: 60_000 })
+  await page.locator('input[type="checkbox"][value="1"]').check()
+  await page.getByRole('button', { name: 'Deploy selected', exact: true }).click()
+  const relayReview = page.getByRole('dialog')
+  await relayReview.getByText('Create this project on Ethereum', { exact: false }).first().waitFor()
+  await relayReview.getByRole('checkbox').check()
+  await relayReview.getByRole('button', { name: 'Continue to wallet', exact: true }).click()
+
+  await page.waitForURL(new RegExp(`${appOrigin}/project/1/7\\?intent=${intentId}$`), { timeout: 60_000 })
 
   assert.equal(deployRequests, 1)
+  assert.equal(relayRequests >= 1, true)
+  assert.deepEqual(queued.sort((a, b) => a - b), [10, 8453])
+  assert.deepEqual(recorded, [1])
   assert.equal(stored.envelope.format, 'homerun.money/fund.v1')
   assert.equal(stored.envelope.deploymentVersion, '6')
-  assert.deepEqual(stored.envelope.chainIds, [8453])
-  assert.equal(stored.envelope.deploymentCalls.length, 2)
+  assert.deepEqual(stored.envelope.chainIds, [1, 10, 8453])
+  assert.equal(stored.envelope.deploymentCalls.length, 6)
+  assert.deepEqual(stored.envelope.deploymentCalls.map(call => call.chainId), [1, 1, 10, 10, 8453, 8453])
   assert.equal(getAddress(stored.envelope.deploymentCalls[0].to), SAFE_FACTORY)
-  assert.equal(stored.envelope.deploymentCalls[0].chainId, 8453)
   assert.equal(Object.hasOwn(stored.envelope.deploymentCalls[0], 'value'), false)
-  assert.equal(stored.envelope.deploymentCalls[1].chainId, 8453)
   assert.equal(Object.hasOwn(stored.envelope.deploymentCalls[1], 'value'), false)
   assert.equal(stored.envelope.jb.safes.length, 1)
   assert.equal(stored.envelope.jb.safes[0].role, 'owner')
@@ -290,10 +400,10 @@ try {
   await writeFile('test-results/intent/summary.json', JSON.stringify({
     passed: true, browser: browser.version(),
     evidence: 'real Next.js application and packaged SDK; modeled Center responses and injected test wallet',
-    intentId, deployRequests, intentReads, pageErrors: errors,
-    safes: stored.envelope.jb.safes,
+    intentId, deployRequests, relayRequests, intentReads, pageErrors: errors,
+    safes: stored.envelope.jb.safes, queued, recorded,
   }, null, 2))
-  console.log('PASS Homerun: published a FUND that creates its 2-of-2 owner multisig, deployed it through Center, opened the created project')
+  console.log('PASS Homerun: previewed a FUND, published it, deployed two sponsored chains and paid for Ethereum')
 } finally {
   await browser?.close()
   app.kill('SIGTERM')
