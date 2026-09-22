@@ -4,7 +4,6 @@
  * This module has no wallet, browser storage, RPC or lifecycle-state authority.
  */
 import {
-  JBCENTER_SPONSORED_CHAIN_IDS,
   createJBCenterDeploymentCall,
   intentCalls,
   publishSignedIntent,
@@ -16,14 +15,22 @@ import {
   type JBCenterIntent,
   type JBCenterRequestOptions,
 } from '@bananapus/nana-sdk-core/jbcenter'
-import { getAddress, isAddress, isAddressEqual, type Address, type Hex } from 'viem'
-import { buildFundLaunch, type FundLaunchInput, type FundTransaction } from './fund-contracts'
+import {
+  decodeEventLog, decodeFunctionData, formatEther, getAddress, isAddress, isAddressEqual,
+  type Address, type Hex, type TransactionReceipt,
+} from 'viem'
+import { erc2771ForwarderAbi, type JBChainId } from '@bananapus/nana-sdk-core'
+import { v6Address } from '@bananapus/nana-sdk-core/v6'
+import { FUND_CHAIN_IDS, buildFundLaunch, type FundLaunchInput, type FundTransaction } from './fund-contracts'
+import { homerunDeployerAbi } from './income-contracts'
 import { SAFE_FACTORY, multisigCreationData, multisigDeploymentCalls } from './create-multisig'
 
 export const FUND_INTENT_FORMAT = 'homerun.money/fund.v1'
 
-export const UNSPONSORED_CHAINS_MESSAGE =
-  'Juicebox Center creates projects without a transaction on Optimism, Base, Arbitrum and their test networks. Remove the other networks, or create with a transaction.'
+export const UNSUPPORTED_CHAINS_MESSAGE =
+  'Homerun creates projects on Ethereum, Optimism, Base, Arbitrum and their test networks. Remove the other networks.'
+export const RELAY_UNREADABLE_MESSAGE =
+  'This deployment request does not match the project this link publishes.'
 export const SAFES_UNREADABLE_MESSAGE =
   'This project’s multisig creations do not match the project they create.'
 
@@ -59,7 +66,7 @@ export type FundIntent = {
 
 export function fundIntentEligibleChains(chainIds: readonly number[]): boolean {
   return chainIds.length > 0 && new Set(chainIds).size === chainIds.length
-    && chainIds.every(chainId => JBCENTER_SPONSORED_CHAIN_IDS.includes(chainId))
+    && chainIds.every(chainId => (FUND_CHAIN_IDS as readonly number[]).includes(chainId))
 }
 
 /** The reviewed launch call without its creation fee: Center's sender pays that. */
@@ -71,7 +78,7 @@ function deploymentCall(request: FundTransaction): JBCenterDeploymentCall {
 export function buildFundIntent(input: FundLaunchInput, name: string): FundIntent {
   const { requests, review } = buildFundLaunch(input)
   const chainIds = requests.map(request => request.chainId)
-  if (!fundIntentEligibleChains(chainIds)) throw new Error(UNSPONSORED_CHAINS_MESSAGE)
+  if (!fundIntentEligibleChains(chainIds)) throw new Error(UNSUPPORTED_CHAINS_MESSAGE)
   const projectName = name.trim()
   if (!projectName || projectName.length > 160) throw new Error('A project name of 160 characters or fewer is required.')
   const plans = input.multisigs ?? []
@@ -218,7 +225,7 @@ export function decodeFundIntent(intent: JBCenterIntent): DecodedFundIntent {
  * `ensureDeployed` turns a sponsorship refusal into its own error, so keep the
  * refusal Center returned for `describeCenterRefusal` to word.
  *
- * Only the three methods a deploy reaches are forwarded, each onto the client
+ * Only the four methods a deploy reaches are forwarded, each onto the client
  * itself: nothing here copies or inherits the client's own fields.
  */
 export function watchDeployRefusal(client: JBCenterClient): { client: JBCenterClient; refusal: () => unknown } {
@@ -227,6 +234,8 @@ export function watchDeployRefusal(client: JBCenterClient): { client: JBCenterCl
     getIntent: (intentId: string, options?: JBCenterRequestOptions) => client.getIntent(intentId, options),
     recordDeployment: (intentId: string, deployment: JBCenterDeploymentInput, options?: JBCenterRequestOptions) =>
       client.recordDeployment(intentId, deployment, options),
+    requestRelay: (intentId: string, chainId: number, options?: JBCenterRequestOptions) =>
+      client.requestRelay(intentId, chainId, options),
     requestDeploy: (intentId: string, options?: JBCenterRequestOptions) =>
       client.requestDeploy(intentId, options).catch((error: unknown) => {
         refusal = error
@@ -234,4 +243,92 @@ export function watchDeployRefusal(client: JBCenterClient): { client: JBCenterCl
       }),
   }
   return { client: watched as unknown as JBCenterClient, refusal: () => refusal }
+}
+
+export type FundRelayRequest = {
+  chainId: number
+  to: Address
+  data: Hex
+  value: bigint
+  gas: bigint
+  deadline: number
+  setup: readonly { to: Address; data: Hex; value: bigint }[]
+}
+
+/** The forwarder's own `ForwardRequestData`, as `erc2771ForwarderAbi` declares it. */
+export type FundForwardedLaunch = {
+  from: Address
+  to: Address
+  value: bigint
+  gas: bigint
+  deadline: number
+  data: Hex
+  signature: Hex
+}
+
+/** One chain's signed calls, launch last, exactly as `buildFundIntent` emitted them. */
+export function intentLaunchCalls(intent: JBCenterIntent, chainId: number): { setup: JBCenterDeploymentCall[]; launch: JBCenterDeploymentCall } {
+  const calls = intent.envelope.deploymentCalls.filter(call => call.chainId === chainId)
+  if (!calls.length) throw new Error(RELAY_UNREADABLE_MESSAGE)
+  return { setup: calls.slice(0, -1), launch: calls[calls.length - 1] }
+}
+
+const sameBytes = (left: Hex, right: Hex) => left.toLowerCase() === right.toLowerCase()
+/** A relay request arrives over the network, so anything that is not an address is simply not a match. */
+const sameAddress = (left: string, right: Address) => isAddress(left) && isAddressEqual(left, right)
+
+/**
+ * A visitor pays for this transaction, so it is sent only when it forwards the
+ * calls this intent signed and nothing else. Center's sponsor stays the
+ * forwarded sender, which is what keeps the token and sucker addresses paired.
+ */
+export function checkRelayRequest(intent: JBCenterIntent, request: FundRelayRequest): FundForwardedLaunch {
+  const { setup, launch } = intentLaunchCalls(intent, request.chainId)
+  if (!sameAddress(request.to, v6Address('ERC2771Forwarder', request.chainId as JBChainId))) throw new Error(RELAY_UNREADABLE_MESSAGE)
+  let decoded
+  try { decoded = decodeFunctionData({ abi: erc2771ForwarderAbi, data: request.data }) }
+  catch { throw new Error(RELAY_UNREADABLE_MESSAGE) }
+  if (decoded.functionName !== 'execute') throw new Error(RELAY_UNREADABLE_MESSAGE)
+  const forwarded = decoded.args[0] as FundForwardedLaunch
+  if (!sameAddress(forwarded.to, launch.to) || !sameBytes(forwarded.data, launch.data)
+    || forwarded.value !== request.value
+    || request.setup.length !== setup.length
+    || request.setup.some((entry, index) => !sameAddress(entry.to, setup[index].to)
+      || !sameBytes(entry.data, setup[index].data) || entry.value !== 0n)) throw new Error(RELAY_UNREADABLE_MESSAGE)
+  if (Number(request.deadline) * 1000 <= Date.now() || Number(forwarded.deadline) * 1000 <= Date.now()) {
+    throw new Error('This deployment request has expired. Try again.')
+  }
+  return forwarded
+}
+
+export const NO_LAUNCH_MESSAGE = 'This transaction did not create this project. Check it in your wallet history before trying again.'
+
+/**
+ * The project a paid deployment created, read from the deployer's own event.
+ * The transaction that produced this receipt is the one `checkRelayRequest`
+ * matched against the signed launch, so the owner and the deployer address are
+ * what identify the launch here.
+ */
+export function readLaunchedProjectId(intent: JBCenterIntent, chainId: number, receipt: Pick<TransactionReceipt, 'status' | 'logs'>): string {
+  if (receipt.status !== 'success') throw new Error(NO_LAUNCH_MESSAGE)
+  const { launch } = intentLaunchCalls(intent, chainId)
+  const owner = decodeFundIntent(intent).owner
+  const launched = receipt.logs.flatMap(log => {
+    if (!isAddressEqual(log.address, launch.to)) return []
+    try {
+      const { args } = decodeEventLog({ abi: homerunDeployerAbi, eventName: 'FundLaunched', data: log.data, topics: log.topics })
+      return isAddressEqual(args.owner, owner) ? [args.projectId] : []
+    } catch { return [] }
+  })
+  if (launched.length !== 1) throw new Error(NO_LAUNCH_MESSAGE)
+  return launched[0].toString()
+}
+
+/** Enough digits to read a gas estimate, never so many that it reads as a quote. */
+export function relayCostLabel(wei: bigint): string {
+  const eth = Number(formatEther(wei))
+  const amount = eth === 0 || eth >= 0.0001
+    ? Number(eth.toFixed(4)).toString()
+    : new Intl.NumberFormat('en-US', { maximumSignificantDigits: 1 }).format(eth)
+  return `costs ~${amount} ETH`
 }

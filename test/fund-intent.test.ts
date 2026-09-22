@@ -2,7 +2,9 @@ import assert from 'node:assert/strict'
 import { expect, test, vi } from 'vitest'
 vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fixtures/homerun-deployer')).withHomerunDeployer(await importOriginal()))
 
-import { encodeFunctionData, zeroHash, type Address, type Hex } from 'viem'
+import { encodeAbiParameters, encodeEventTopics, encodeFunctionData, zeroHash, type Address, type Hex, type TransactionReceipt } from 'viem'
+import { erc2771ForwarderAbi } from '@bananapus/nana-sdk-core'
+import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import { SAFE_PROXY_CREATION_CODE } from '@bananapus/nana-sdk-core/safe'
 import { SAFE_FACTORY, multisigCreationData, predictMultisig } from '../src/lib/create-multisig'
 import type { CreateMultisig } from '../src/lib/create-multisig'
@@ -11,8 +13,9 @@ import { HOMERUN_DEPLOYER } from './fixtures/homerun-deployer'
 import { homerunDeployerAbi } from '../src/lib/income-contracts'
 import type { FundLaunchInput } from '../src/lib/fund-contracts'
 import {
-  FUND_INTENT_FORMAT, SAFES_UNREADABLE_MESSAGE, buildFundIntent, decodeFundIntent,
-  fundIntentEligibleChains, publishFundIntent, watchDeployRefusal,
+  FUND_INTENT_FORMAT, RELAY_UNREADABLE_MESSAGE, SAFES_UNREADABLE_MESSAGE, buildFundIntent, checkRelayRequest,
+  decodeFundIntent, fundIntentEligibleChains, intentLaunchCalls, publishFundIntent, readLaunchedProjectId,
+  relayCostLabel, watchDeployRefusal, type FundRelayRequest,
 } from '../src/lib/fund-intent'
 
 const owner = '0x1111111111111111111111111111111111111111' as const
@@ -87,13 +90,75 @@ test('linked chains keep one salt, one start and each chain its own peer deploye
   for (const call of intent.deploymentCalls) assert.equal(call.to, HOMERUN_DEPLOYER)
 })
 
-test('mainnet cannot be created without a transaction, and a nameless project cannot either', () => {
+const forwarderOn = (chainId: number) => v6Address('ERC2771Forwarder', chainId as never)
+const forwardedData = (to: Address, data: Hex, value: bigint) => encodeFunctionData({
+  abi: erc2771ForwarderAbi,
+  functionName: 'execute',
+  args: [{ from: owner, to, value, gas: 900_000n, deadline: 2_000_000_000, data, signature: `0x${'ab'.repeat(65)}` as Hex }],
+})
+const relayFor = (intent: JBCenterIntent, chainId: number, overrides: Partial<FundRelayRequest> = {}): FundRelayRequest => {
+  const calls = intentLaunchCalls(intent, chainId)
+  return {
+    chainId, to: forwarderOn(chainId), value: 0n, gas: 900_000n, deadline: 2_000_000_000,
+    data: forwardedData(calls.launch.to, calls.launch.data, 0n),
+    setup: calls.setup.map(call => ({ to: call.to, data: call.data, value: 0n })),
+    ...overrides,
+  }
+}
+
+test('an intent may name any supported chain, and no other', () => {
   assert.equal(fundIntentEligibleChains([8453]), true)
-  assert.equal(fundIntentEligibleChains([1, 8453]), false)
+  assert.equal(fundIntentEligibleChains([1, 8453]), true)
   assert.equal(fundIntentEligibleChains([]), false)
   assert.equal(fundIntentEligibleChains([8453, 8453]), false)
-  assert.throws(() => buildFundIntent({ ...input, chainIds: [1], creationFees: { 1: 0n } }, 'Neighborhood Workshop'), /Optimism, Base, Arbitrum/)
+  assert.equal(fundIntentEligibleChains([137]), false)
+  const intent = buildFundIntent({ ...input, chainIds: [1, 8453], creationFees: { 1: 0n, 8453: 0n }, mustStartAtOrAfter: 1_800_000_000 }, 'Neighborhood Workshop')
+  assert.deepEqual(intent.chainIds, [1, 8453])
+  assert.throws(() => buildFundIntent({ ...input, chainIds: [137], creationFees: { 137: 0n } }, 'Neighborhood Workshop'), /Unsupported FUND chain 137/)
   assert.throws(() => buildFundIntent(input, '   '), /project name/)
+})
+
+test('a relay request that forwards this intent\u2019s own launch is readable', () => {
+  const intent = { envelope: buildFundIntent({ ...input, chainIds: [1], creationFees: { 1: 0n } }, 'Neighborhood Workshop') } as unknown as JBCenterIntent
+  const forwarded = checkRelayRequest(intent, relayFor(intent, 1))
+  assert.equal(forwarded.to, intentLaunchCalls(intent, 1).launch.to)
+  assert.equal(forwarded.data, intentLaunchCalls(intent, 1).launch.data)
+})
+
+test('a relay request that forwards anything else is refused', () => {
+  const intent = { envelope: buildFundIntent({ ...input, chainIds: [1], creationFees: { 1: 0n } }, 'Neighborhood Workshop') } as unknown as JBCenterIntent
+  const other = `0x${'11'.repeat(20)}` as Address
+  const refusal = new RegExp(RELAY_UNREADABLE_MESSAGE)
+  assert.throws(() => checkRelayRequest(intent, relayFor(intent, 1, { to: other })), refusal)
+  assert.throws(() => checkRelayRequest(intent, relayFor(intent, 1, { to: '0x11' as Address })), refusal)
+  assert.throws(() => checkRelayRequest(intent, relayFor(intent, 1, { data: forwardedData(other, intentLaunchCalls(intent, 1).launch.data, 0n) })), refusal)
+  assert.throws(() => checkRelayRequest(intent, relayFor(intent, 1, { data: forwardedData(intentLaunchCalls(intent, 1).launch.to, '0xdeadbeef', 0n) })), refusal)
+  assert.throws(() => checkRelayRequest(intent, relayFor(intent, 1, { value: 1n })), refusal)
+  assert.throws(() => checkRelayRequest(intent, relayFor(intent, 1, { setup: [{ to: other, data: '0xdead', value: 0n }] })), refusal)
+  assert.throws(() => checkRelayRequest(intent, relayFor(intent, 1, { deadline: 1_600_000_000 })), /expired/)
+  assert.throws(() => checkRelayRequest(intent, { ...relayFor(intent, 1), chainId: 10 }), refusal)
+})
+
+test('the project a paid deployment created is read out of its receipt', () => {
+  const intent = { envelope: buildFundIntent({ ...input, chainIds: [1], creationFees: { 1: 0n } }, 'Neighborhood Workshop') } as unknown as JBCenterIntent
+  const deployer = intentLaunchCalls(intent, 1).launch.to
+  const launched = (projectId: bigint, logOwner: Address, address = deployer) => ({
+    address,
+    topics: encodeEventTopics({ abi: homerunDeployerAbi, eventName: 'FundLaunched', args: { projectId, owner: logOwner } }),
+    data: encodeAbiParameters([{ type: 'address' }], [`0x${'5e'.repeat(20)}` as Address]),
+  })
+  const receipt = (logs: unknown[]) => ({ status: 'success', logs } as unknown as Pick<TransactionReceipt, 'status' | 'logs'>)
+  assert.equal(readLaunchedProjectId(intent, 1, receipt([launched(7n, owner)])), '7')
+  assert.throws(() => readLaunchedProjectId(intent, 1, receipt([])), /did not create/)
+  assert.throws(() => readLaunchedProjectId(intent, 1, receipt([launched(7n, `0x${'99'.repeat(20)}` as Address)])), /did not create/)
+  assert.throws(() => readLaunchedProjectId(intent, 1, receipt([launched(7n, owner, `0x${'88'.repeat(20)}` as Address)])), /did not create/)
+  assert.throws(() => readLaunchedProjectId(intent, 1, receipt([launched(7n, owner), launched(8n, owner)])), /did not create/)
+})
+
+test('a relay cost reads as one short amount of ETH', () => {
+  assert.equal(relayCostLabel(4_200_000_000_000_000n), 'costs ~0.0042 ETH')
+  assert.equal(relayCostLabel(0n), 'costs ~0 ETH')
+  assert.equal(relayCostLabel(20_000_000_000_000n), 'costs ~0.00002 ETH')
 })
 
 test('publishing signs Center’s prepared message and sends the envelope with the publisher', async () => {

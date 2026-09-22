@@ -23,7 +23,7 @@ import { plannedNetworks } from '../../web/create-networks.mjs'
 import { isSafeConnection, waitForSafeExecutionHash } from '@/lib/safe-connector'
 import { JBCenterRequestError, describeCenterRefusal, intentPath } from '@bananapus/nana-sdk-core/jbcenter'
 import { jbCenterClient } from '@/lib/jbcenter-client'
-import { buildFundIntent, fundIntentEligibleChains, publishFundIntent, UNSPONSORED_CHAINS_MESSAGE } from '@/lib/fund-intent'
+import { buildFundIntent, fundIntentEligibleChains, publishFundIntent, UNSUPPORTED_CHAINS_MESSAGE } from '@/lib/fund-intent'
 import { requireTransactionReview } from '@/lib/transaction-review'
 
 const message = (error: unknown) => error instanceof Error ? error.message : 'The request could not be completed.'
@@ -288,7 +288,7 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
       // refused click leaves that plan where it was.
       if (!walletCanPublish()) throw new Error(WALLET_NEEDS_TRANSACTION_MESSAGE)
       const chainIds = plannedNetworks(values).map((chain: { chainId: number }) => chain.chainId)
-      if (!fundIntentEligibleChains(chainIds)) throw new Error(UNSPONSORED_CHAINS_MESSAGE)
+      if (!fundIntentEligibleChains(chainIds)) throw new Error(UNSUPPORTED_CHAINS_MESSAGE)
       // A saved plan keeps the transport it was saved with. Publish from a record
       // of its own, and only once an unauthorized plan has been let go.
       const saved = localStorage.getItem(FUND_LAUNCH_KEY)

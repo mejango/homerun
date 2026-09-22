@@ -20,6 +20,7 @@ const STEP_LABELS: Record<EnsureDeployedStep['status'], string> = {
   confirmed: 'created',
   failed: 'could not be created',
   'self-paid': 'recorded',
+  'relay-paid': 'recorded',
 }
 
 /** Neither a provider, a gateway nor Center's own request text reaches a reader. */
