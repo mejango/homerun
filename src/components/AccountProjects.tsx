@@ -3,7 +3,8 @@
 import { useQuery } from '@tanstack/react-query'
 import Link from 'next/link'
 import { useEffect, useId, useState, type ReactNode } from 'react'
-import { formatUnits, isAddress } from 'viem'
+import { formatUnits, isAddress, type Address } from 'viem'
+import { intentPath, mergeSearch, type JBCenterIntentRow, type JBCenterSearchItem, type JBCenterSearchPage } from '@bananapus/nana-sdk-core/jbcenter'
 import { WalletButton } from '@/components/WalletButton'
 import { useWallet } from '@/hooks/useWallet'
 import {
@@ -15,10 +16,26 @@ import {
   type BsProject,
 } from '@/lib/bendystraw'
 import { displayChainName, displayChainSlug } from '@/lib/chainDisplay'
+import { jbCenterClient } from '@/lib/jbcenter-client'
 
 type Network = 'mainnet' | 'testnet'
 const PAGE_SIZE = 24
 const INDEX_QUERY = { staleTime: 30_000, refetchInterval: 60_000, retry: 1 } as const
+
+const NETWORK_CHAIN_IDS: Record<Network, readonly number[]> = {
+  mainnet: [1, 10, 8453, 42161],
+  testnet: [11155111, 11155420, 84532, 421614],
+}
+
+/** A published project belongs to the network whose chains it names, and to no other. */
+function intentItems(page: JBCenterSearchPage | undefined, network: Network): JBCenterSearchItem[] {
+  return (page?.items ?? []).filter(item => item.chainIds.length > 0
+    && item.chainIds.every(chainId => NETWORK_CHAIN_IDS[network].includes(chainId)))
+}
+
+function isIntentRow(row: BsProject | JBCenterIntentRow): row is JBCenterIntentRow {
+  return 'undeployed' in row
+}
 
 function refKey(ref: { chainId: number; projectId: number }) {
   return `${ref.chainId}:${ref.projectId}`
@@ -64,6 +81,23 @@ function ProjectRow({ project, holding }: { project?: BsProject; holding?: BsAcc
   </li>
 }
 
+function IntentRow({ row }: { row: JBCenterIntentRow }) {
+  return <li className="grid min-w-0 gap-2 rounded-md border border-[#c4cdbb] bg-[#fffefa] p-4">
+    <div className="flex flex-wrap items-baseline justify-between gap-2">
+      <Link href={intentPath(row.intentId)} prefetch={false} className="min-w-0 break-words text-lg underline underline-offset-4">{row.name?.trim() || 'Untitled project'}</Link>
+      <span className="text-xs">Deploys on first use</span>
+    </div>
+    <p className="text-sm">{row.chainIds.map(displayChainName).join(', ')}</p>
+    {row.tagline && <p className="break-words text-sm">{row.tagline}</p>}
+  </li>
+}
+
+function listRow(row: BsProject | JBCenterIntentRow) {
+  return isIntentRow(row)
+    ? <IntentRow key={`intent:${row.intentId}`} row={row} />
+    : <ProjectRow key={refKey(row)} project={row} />
+}
+
 function QueryNotice({ failed, hasData, loading, noun, refresh }: {
   failed: boolean; hasData: boolean; loading: boolean; noun: string; refresh: () => void
 }) {
@@ -98,6 +132,12 @@ export function AccountProjectSections({ account, network, section = 'both' }: {
     queryFn: () => getAccountTokenHoldings(account, { network }),
     enabled: section !== 'projects',
   })
+  const intents = useQuery({
+    ...INDEX_QUERY,
+    queryKey: ['account-projects', 'intents', network, account],
+    queryFn: () => jbCenterClient.searchIntents({ owner: account as Address, limit: PAGE_SIZE }),
+    enabled: section !== 'holdings',
+  })
   const heldRows = (holdings.data?.items ?? []).filter(row => validRef(row) && tokenBalance(row.balance) > 0n)
   const refs = heldRows.map(row => ({ chainId: row.chainId, projectId: row.projectId, version: 6 }))
   const heldProjects = useQuery({
@@ -107,13 +147,16 @@ export function AccountProjectSections({ account, network, section = 'both' }: {
     enabled: refs.length > 0,
   })
   // Index ownership is only discovery. Action permissions are read from contracts on the project page.
-  const ownedRows = projectRows(owned.data).filter(project => project.owner?.toLowerCase() === account)
+  const indexedOwned = projectRows(owned.data).filter(project => project.owner?.toLowerCase() === account)
+  const publishedOwned = intentItems(intents.data, network).filter(item => item.owner?.toLowerCase() === account)
+  const ownedRows = mergeSearch(indexedOwned, publishedOwned)
   const byRef = new Map(projectRows(heldProjects.data).map(project => [refKey(project), project]))
   return <div className={`grid min-w-0 gap-7${section === 'both' ? ' lg:grid-cols-2' : ''}`}>
     {section !== 'holdings' && <ProjectSection title="Owned by this account">
       <QueryNotice failed={owned.isError} hasData={owned.data !== undefined} loading={owned.isPending} noun="owned projects" refresh={() => void owned.refetch()} />
       {owned.data !== undefined && !ownedRows.length && <p className="text-sm">No owned projects indexed for this account on {network}.</p>}
-      {ownedRows.length > 0 && <ul className="m-0 grid list-none gap-3 p-0">{ownedRows.slice(0, ownedLimit).map(project => <ProjectRow key={refKey(project)} project={project} />)}</ul>}
+      {ownedRows.length > 0 && <ul className="m-0 grid list-none gap-3 p-0">{ownedRows.slice(0, ownedLimit).map(listRow)}</ul>}
+      {intents.isError && <p className="text-sm">Projects awaiting deployment could not be loaded.</p>}
       {ownedRows.length > ownedLimit && <button type="button" className="btn-secondary" onClick={() => setOwnedLimit(value => value + PAGE_SIZE)}>Show more owned projects</button>}
     </ProjectSection>}
     {section !== 'projects' && <ProjectSection title="Token holdings">
@@ -147,7 +190,14 @@ function ProjectSearch({ network }: { network: Network }) {
     staleTime: 30_000,
     retry: 1,
   })
-  const rows = projectRows(search.data).slice(0, PAGE_SIZE)
+  const publishedSearch = useQuery({
+    queryKey: ['account-projects', 'intent-search', network, debouncedText],
+    queryFn: () => jbCenterClient.searchIntents({ query: debouncedText, limit: PAGE_SIZE }),
+    enabled: ready,
+    staleTime: 30_000,
+    retry: 1,
+  })
+  const rows = mergeSearch(projectRows(search.data), intentItems(publishedSearch.data, network)).slice(0, PAGE_SIZE)
   return <ProjectSection title="Find a project">
     <div className="grid gap-2">
       <label htmlFor={inputId}>Project name, token ticker, or ID</label>
@@ -158,7 +208,8 @@ function ProjectSearch({ network }: { network: Network }) {
     {current && ready && <>
       <QueryNotice failed={search.isError} hasData={search.data !== undefined} loading={search.isPending} noun="search results" refresh={() => void search.refetch()} />
       {search.data !== undefined && !rows.length && <p className="text-sm">No matching projects indexed on {network}.</p>}
-      {rows.length > 0 && <ul className="m-0 grid list-none gap-3 p-0 sm:grid-cols-2">{rows.map(project => <ProjectRow key={refKey(project)} project={project} />)}</ul>}
+      {rows.length > 0 && <ul className="m-0 grid list-none gap-3 p-0 sm:grid-cols-2">{rows.map(listRow)}</ul>}
+      {publishedSearch.isError && <p className="text-sm">Projects awaiting deployment could not be searched.</p>}
       {rows.length === PAGE_SIZE && <p className="text-sm">Showing up to {PAGE_SIZE} matches. Refine your search to find a specific project.</p>}
     </>}
   </ProjectSection>

@@ -39,7 +39,9 @@
     ".next-dev/types/**/*.ts",
     ".next-dev/dev/types/**/*.ts",
     ".next-center-test/types/**/*.ts",
-    ".next-center-test/dev/types/**/*.ts"
+    ".next-center-test/dev/types/**/*.ts",
+    ".next-intent-test/types/**/*.ts",
+    ".next-intent-test/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

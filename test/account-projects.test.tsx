@@ -8,7 +8,7 @@ const ACCOUNT_A = '0x1111111111111111111111111111111111111111'
 const ACCOUNT_B = '0x2222222222222222222222222222222222222222'
 const mocks = vi.hoisted(() => ({
   wallet: { address: undefined as string | undefined, isConnected: false },
-  owned: vi.fn(), holdings: vi.fn(), byRefs: vi.fn(), search: vi.fn(),
+  owned: vi.fn(), holdings: vi.fn(), byRefs: vi.fn(), search: vi.fn(), intents: vi.fn(),
 }))
 
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => mocks.wallet }))
@@ -20,6 +20,7 @@ vi.mock('@/lib/bendystraw', () => ({
   getProjectsByRefs: mocks.byRefs,
   searchProjects: mocks.search,
 }))
+vi.mock('@/lib/jbcenter-client', () => ({ jbCenterClient: { searchIntents: mocks.intents } }))
 
 import { AccountProjects } from '../src/components/AccountProjects'
 
@@ -35,6 +36,17 @@ function project(overrides: Partial<BsProject> = {}): BsProject {
 
 function holding(overrides: Partial<BsAccountTokenHolding> = {}): BsAccountTokenHolding {
   return { chainId: 1, projectId: 7, balance: '5000000000000000000', creditBalance: '3000000000000000000', erc20Balance: '2000000000000000000', ...overrides }
+}
+
+function intentItem(overrides: Record<string, unknown> = {}) {
+  return {
+    source: 'jbcenter', status: 'undeployed',
+    intentId: '3f0f2f4c-0f3f-4f2f-8f1f-0f2f3f4f5f6f',
+    contentHash: `0x${'ab'.repeat(32)}`, format: 'homerun.money/fund.v1', deploymentVersion: '6',
+    chainIds: [8453], publisher: ACCOUNT_A, createdAt: new Date(2_000_000).toISOString(),
+    name: 'Published Workshop', description: null, tagline: null, tags: [], logoUri: null, owner: ACCOUNT_A,
+    ...overrides,
+  }
 }
 
 function deferred<T>() {
@@ -54,6 +66,7 @@ describe('account project discovery', () => {
     mocks.holdings.mockReset().mockResolvedValue({ items: [], totalCount: 0 })
     mocks.byRefs.mockReset().mockResolvedValue([])
     mocks.search.mockReset().mockResolvedValue([])
+    mocks.intents.mockReset().mockResolvedValue({ items: [], totalCount: 0, nextCursor: null })
     client = new QueryClient({ defaultOptions: { queries: { retry: false, retryDelay: 0, gcTime: Infinity } } })
     host = document.createElement('div')
     document.body.append(host)
@@ -200,5 +213,45 @@ describe('account project discovery', () => {
     expect(host.textContent).toContain('This account address is invalid')
     expect(mocks.owned).not.toHaveBeenCalled()
     expect(mocks.holdings).not.toHaveBeenCalled()
+  })
+
+  it('lists a published project the account owns alongside its indexed projects', async () => {
+    mocks.wallet = { address: ACCOUNT_A, isConnected: true }
+    mocks.owned.mockResolvedValue([project({ createdAt: 1 })])
+    mocks.intents.mockResolvedValue({ items: [intentItem()], totalCount: 1, nextCursor: null })
+    await render(ACCOUNT_A)
+    expect(mocks.intents).toHaveBeenCalledWith({ owner: ACCOUNT_A, limit: 24 })
+    const owned = section('Owned by this account')
+    const rows = [...owned.querySelectorAll('li')]
+    expect(rows[0].textContent).toContain('Published Workshop')
+    expect(rows[0].textContent).toContain('Deploys on first use')
+    expect(rows[0].querySelector('a')?.getAttribute('href')).toBe('/intent/3f0f2f4c-0f3f-4f2f-8f1f-0f2f3f4f5f6f')
+    expect(rows[1].textContent).toContain('Neighborhood FUND')
+  })
+
+  it('keeps testnet published projects out of the mainnet list', async () => {
+    mocks.wallet = { address: ACCOUNT_A, isConnected: true }
+    mocks.intents.mockResolvedValue({ items: [intentItem({ chainIds: [84532] })], totalCount: 1, nextCursor: null })
+    await render(ACCOUNT_A)
+    expect(section('Owned by this account').textContent).not.toContain('Published Workshop')
+  })
+
+  it('finds published projects in search and keeps indexed results when Center fails', async () => {
+    mocks.search.mockResolvedValue([project({ name: 'Neighborhood FUND', createdAt: 1 })])
+    mocks.intents.mockResolvedValue({ items: [intentItem({ name: 'Neighborhood Workshop' })], totalCount: 1, nextCursor: null })
+    await render(null)
+    await search('neighborhood')
+    for (let i = 0; i < 16; i++) await settle()
+    expect(mocks.intents).toHaveBeenCalledWith({ query: 'neighborhood', limit: 24 })
+    const found = section('Find a project')
+    expect(found.textContent).toContain('Neighborhood Workshop')
+    expect(found.textContent).toContain('Neighborhood FUND')
+
+    mocks.intents.mockRejectedValue(new Error('center down'))
+    client.clear()
+    await render(null)
+    await search('neighborhood')
+    for (let i = 0; i < 16; i++) await settle()
+    expect(section('Find a project').textContent).toContain('Neighborhood FUND')
   })
 })

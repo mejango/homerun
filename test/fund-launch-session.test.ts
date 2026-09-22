@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fixtures/homerun-deployer')).withHomerunDeployer(await importOriginal()))
 
 import { zeroAddress, zeroHash, type Hex } from 'viem'
-import { FUND_LAUNCH_KEY, archiveLaunch, decodeLaunchSession, encodeLaunchSession, refreshLaunchCreationFee, saveLaunch, sameSender, updateLaunchStatus, type FundLaunchSession } from '../src/lib/fund-launch-session'
+import { FUND_LAUNCH_KEY, archiveLaunch, canCancelLaunch, decodeLaunchSession, discardUnsignedLaunch, encodeLaunchSession, refreshLaunchCreationFee, saveLaunch, sameSender, updateLaunchStatus, type FundLaunchSession } from '../src/lib/fund-launch-session'
 
 const owner = '0x1111111111111111111111111111111111111111' as const
 const salt = `0x${'12'.repeat(32)}` as Hex
@@ -85,5 +85,47 @@ describe('durable FUND deployment journal', () => {
     expect(() => sameSender(undefined, owner)).toThrow(/Reconnect/)
     expect(() => sameSender('0x2222222222222222222222222222222222222222', owner)).toThrow(/Reconnect/)
     expect(() => sameSender(owner, owner)).not.toThrow()
+  })
+
+  const intentId = '3f0f2f4c-0f3f-4f2f-8f1f-0f2f3f4f5f6f'
+  function publishedSession(): FundLaunchSession {
+    return { ...session(), transport: 'intent', intentId }
+  }
+
+  it('stores a published project as an intent transport with no wallet progress', () => {
+    const saved = saveLaunch(publishedSession())
+    expect(saved.transport).toBe('intent')
+    expect(saved.intentId).toBe(intentId)
+    expect(decodeLaunchSession(encodeLaunchSession(saved))).toEqual(publishedSession())
+  })
+
+  it('rejects an intent record that claims a transaction, a relay, or an invalid id', () => {
+    const withStatus = JSON.parse(encodeLaunchSession(publishedSession()))
+    withStatus.statuses[8453] = { phase: 'pending', hash }
+    expect(() => decodeLaunchSession(JSON.stringify(withStatus))).toThrow()
+    const withRelayr = JSON.parse(encodeLaunchSession(publishedSession()))
+    withRelayr.relayr = { phase: 'signing', signed: [], records: [] }
+    expect(() => decodeLaunchSession(JSON.stringify(withRelayr))).toThrow()
+    const badId = JSON.parse(encodeLaunchSession(publishedSession()))
+    badId.intentId = 'not-a-uuid'
+    expect(() => decodeLaunchSession(JSON.stringify(badId))).toThrow()
+    const strayId = JSON.parse(encodeLaunchSession(session()))
+    strayId.intentId = intentId
+    expect(() => decodeLaunchSession(JSON.stringify(strayId))).toThrow()
+  })
+
+  it('never replaces or cancels a published project, and never follows edited networks', () => {
+    const saved = saveLaunch(publishedSession())
+    expect(() => saveLaunch({ ...saved, intentId: '0f0f2f4c-0f3f-4f2f-8f1f-0f2f3f4f5f6f' })).toThrow(/cannot be replaced/)
+    expect(canCancelLaunch(saved)).toBe(false)
+    expect(discardUnsignedLaunch(saved.input.salt)).toBe(false)
+    expect(localStorage.getItem(FUND_LAUNCH_KEY)).not.toBeNull()
+  })
+
+  it('archives a published project so another can be prepared', () => {
+    const saved = saveLaunch(publishedSession())
+    archiveLaunch(saved.input.salt)
+    expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()
+    expect(JSON.parse(localStorage.getItem(`${FUND_LAUNCH_KEY}:history`)!)).toHaveLength(1)
   })
 })
