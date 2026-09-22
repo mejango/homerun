@@ -33,6 +33,7 @@ export const RELAY_UNREADABLE_MESSAGE =
   'This deployment request does not match the project this link publishes.'
 export const SAFES_UNREADABLE_MESSAGE =
   'This project’s multisig creations do not match the project they create.'
+export const RELAY_EXPIRED_MESSAGE = 'This deployment request has expired. Try again.'
 
 export type FundIntentSafe = {
   role: 'owner' | 'operator'
@@ -296,9 +297,21 @@ export function checkRelayRequest(intent: JBCenterIntent, request: FundRelayRequ
     || request.setup.some((entry, index) => !sameAddress(entry.to, setup[index].to)
       || !sameBytes(entry.data, setup[index].data) || entry.value !== 0n)) throw new Error(RELAY_UNREADABLE_MESSAGE)
   if (Number(request.deadline) * 1000 <= Date.now() || Number(forwarded.deadline) * 1000 <= Date.now()) {
-    throw new Error('This deployment request has expired. Try again.')
+    throw new Error(RELAY_EXPIRED_MESSAGE)
   }
   return forwarded
+}
+
+/**
+ * The Safe each of this chain's setup calls creates, in the order the calls are
+ * sent. A sender can then leave out the ones the chain already has instead of
+ * reverting on a factory that has already run.
+ */
+export function relaySetupSafes(intent: JBCenterIntent, chainId: number): Address[] {
+  const { safes } = decodeFundIntent(intent)
+  const { setup } = intentLaunchCalls(intent, chainId)
+  if (safes.length !== setup.length) throw new Error(SAFES_UNREADABLE_MESSAGE)
+  return safes.map(safe => safe.address)
 }
 
 export const NO_LAUNCH_MESSAGE = 'This transaction did not create this project. Check it in your wallet history before trying again.'

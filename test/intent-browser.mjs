@@ -204,7 +204,11 @@ const center = createServer((request, response) => {
         if (call.method === 'eth_getTransactionReceipt') return launchReceipt(chainId)
         if (call.method === 'eth_getCode') {
           const address = call.params?.[0]
-          return address ? CANONICAL_CODE[getAddress(address)] ?? '0x60006000' : '0x60006000'
+          if (!address) return '0x60006000'
+          // A Safe this envelope creates exists only once its setup call is sent.
+          const safes = stored?.envelope.jb.safes ?? []
+          if (safes.some(safe => getAddress(safe.address) === getAddress(address))) return '0x'
+          return CANONICAL_CODE[getAddress(address)] ?? '0x60006000'
         }
         if (call.method === 'eth_call') {
           const { to, data = '0x' } = call.params?.[0] ?? {}
@@ -282,7 +286,10 @@ try {
           for (const handler of listeners.get('chainChanged') ?? []) handler(current)
           return null
         }
-        if (method === 'eth_sendTransaction') return relayHashForWallet
+        if (method === 'eth_sendTransaction') {
+          window.__homerunSends = [...window.__homerunSends ?? [], params[0].to]
+          return relayHashForWallet
+        }
         if (method === 'eth_estimateGas') return '0xdbba0'
         throw Object.assign(new Error(`Unsupported method ${method}`), { code: 4200 })
       },
@@ -369,6 +376,13 @@ try {
   await relayReview.getByRole('button', { name: 'Continue to wallet', exact: true }).click()
 
   await page.waitForURL(new RegExp(`${appOrigin}/project/1/7\\?intent=${intentId}$`), { timeout: 60_000 })
+
+  // The Safe this project owns does not exist on Ethereum yet, so the visitor
+  // creates it before the project, and both are sent from their own wallet.
+  const sends = await page.evaluate(() => window.__homerunSends ?? [])
+  assert.equal(sends.length, 2)
+  assert.equal(getAddress(sends[0]), SAFE_FACTORY)
+  assert.equal(getAddress(sends[1]), getAddress(v6Address('ERC2771Forwarder', 1)))
 
   assert.equal(deployRequests, 1)
   assert.equal(relayRequests >= 1, true)

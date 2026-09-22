@@ -15,7 +15,7 @@ import type { FundLaunchInput } from '../src/lib/fund-contracts'
 import {
   FUND_INTENT_FORMAT, RELAY_UNREADABLE_MESSAGE, SAFES_UNREADABLE_MESSAGE, buildFundIntent, checkRelayRequest,
   decodeFundIntent, fundIntentEligibleChains, intentLaunchCalls, publishFundIntent, readLaunchedProjectId,
-  relayCostLabel, watchDeployRefusal, type FundRelayRequest,
+  relayCostLabel, relaySetupSafes, watchDeployRefusal, type FundRelayRequest,
 } from '../src/lib/fund-intent'
 
 const owner = '0x1111111111111111111111111111111111111111' as const
@@ -137,6 +137,13 @@ test('a relay request that forwards anything else is refused', () => {
   assert.throws(() => checkRelayRequest(intent, relayFor(intent, 1, { setup: [{ to: other, data: '0xdead', value: 0n }] })), refusal)
   assert.throws(() => checkRelayRequest(intent, relayFor(intent, 1, { deadline: 1_600_000_000 })), /expired/)
   assert.throws(() => checkRelayRequest(intent, { ...relayFor(intent, 1), chainId: 10 }), refusal)
+})
+
+test('the Safes a chain’s setup calls create are named in the order those calls are sent', () => {
+  const plans = [planned(ownerPlan), planned(operatorPlan)]
+  const intent = { envelope: buildFundIntent({ ...withSafes([ownerPlan, operatorPlan]), chainIds: [1], creationFees: { 1: 0n } }, 'Neighborhood Workshop') } as unknown as JBCenterIntent
+  assert.equal(intentLaunchCalls(intent, 1).setup.length, 2)
+  assert.deepEqual(relaySetupSafes(intent, 1), plans.map(plan => plan.address))
 })
 
 test('the project a paid deployment created is read out of its receipt', () => {
