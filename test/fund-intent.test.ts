@@ -128,6 +128,21 @@ test('a call Homerun did not build is refused rather than displayed', () => {
   assert.throws(() => decodeFundIntent({ envelope: foreign } as unknown as JBCenterIntent), /not created by Homerun/)
 })
 
+test('every watched call runs on the client itself, so its own fields keep working', async () => {
+  class Center {
+    #reads = 0
+    async getIntent(intentId: string) { this.#reads++; return { id: intentId, reads: this.#reads } }
+    async recordDeployment(intentId: string, deployment: { chainId: number }) { return { intentId, ...deployment, reads: this.#reads } }
+    async requestDeploy() { return { deploys: [] } }
+  }
+  const watcher = watchDeployRefusal(new Center() as unknown as JBCenterClient)
+  assert.deepEqual(await watcher.client.getIntent('3f0f2f4c-0f3f-4f2f-8f1f-0f2f3f4f5f6f'), { id: '3f0f2f4c-0f3f-4f2f-8f1f-0f2f3f4f5f6f', reads: 1 })
+  assert.deepEqual(
+    await watcher.client.recordDeployment('3f0f2f4c-0f3f-4f2f-8f1f-0f2f3f4f5f6f', { chainId: 8453, projectId: '42', transactionHash: `0x${'ef'.repeat(32)}` }),
+    { intentId: '3f0f2f4c-0f3f-4f2f-8f1f-0f2f3f4f5f6f', chainId: 8453, projectId: '42', transactionHash: `0x${'ef'.repeat(32)}`, reads: 1 },
+  )
+})
+
 test('a sponsorship refusal stays readable after ensureDeployed replaces it', async () => {
   const refusal = new JBCenterRequestError('quota reached', 429, 'sponsor_quota')
   const base = { requestDeploy: vi.fn(async () => { throw refusal }) } as unknown as JBCenterClient

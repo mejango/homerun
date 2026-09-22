@@ -5,7 +5,8 @@ import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import {
-  EnsureDeployedError, describeCenterRefusal, ensureDeployed, type EnsureDeployedStep,
+  EnsureDeployedError, describeCenterRefusal, ensureDeployed, isFullyDeployed, isSponsorable,
+  type EnsureDeployedStep,
 } from '@bananapus/nana-sdk-core/jbcenter'
 import { jbCenterClient } from '@/lib/jbcenter-client'
 import { decodeFundIntent, watchDeployRefusal } from '@/lib/fund-intent'
@@ -23,6 +24,10 @@ const STEP_LABELS: Record<EnsureDeployedStep['status'], string> = {
 /** Neither a provider, a gateway nor Center's own request text reaches a reader. */
 const DEPLOY_UNAVAILABLE = 'Center could not start this deploy right now. Try again shortly.'
 const DEPLOY_FAILED = 'Juicebox Center could not deploy this project. Try again in a few minutes.'
+const UNSPONSORED = 'This project’s networks are not sponsored. It has to be created with a transaction.'
+/** Center keeps a failed chain as a failed chain: this page cannot send it again. */
+const deployStopped = (chainId: number) =>
+  `Juicebox Center could not create this project on ${displayChainName(chainId)}. It cannot be deployed from here; create it again.`
 
 /** Everything shown here comes from the signed calls and the pinned metadata; no chain is read. */
 export function IntentProject({ intentId }: { intentId: string }) {
@@ -30,6 +35,8 @@ export function IntentProject({ intentId }: { intentId: string }) {
   const [deploying, setDeploying] = useState(false)
   const [steps, setSteps] = useState<string[]>([])
   const [error, setError] = useState('')
+  const [stopped, setStopped] = useState(false)
+  const [startedHere, setStartedHere] = useState(false)
   const intent = useQuery({
     queryKey: ['intent', intentId],
     queryFn: () => jbCenterClient.getIntent(intentId),
@@ -39,11 +46,16 @@ export function IntentProject({ intentId }: { intentId: string }) {
   const run = useRef<AbortController | null>(null)
   useEffect(() => () => run.current?.abort(), [])
   const deployment = intent.data?.deployments[0]
+  const everyChainCreated = !!intent.data && isFullyDeployed(intent.data)
   useEffect(() => {
     if (!deployment) return
+    // A reader who arrives at a project that already exists opens it. A deploy
+    // started on this page keeps its per-chain progress until the last chain
+    // is created, so a linked project never opens on half of itself.
+    if (startedHere && !everyChainCreated) return
     run.current?.abort()
     router.replace(`/project/${deployment.chainId}/${deployment.projectId}`)
-  }, [deployment, router])
+  }, [deployment, everyChainCreated, startedHere, router])
 
   let terms: ReturnType<typeof decodeFundIntent> | null = null
   let undecodable = ''
@@ -60,7 +72,7 @@ export function IntentProject({ intentId }: { intentId: string }) {
 
   async function deploy() {
     if (!intent.data) return
-    setDeploying(true); setError(''); setSteps([])
+    setDeploying(true); setStartedHere(true); setError(''); setSteps([])
     const watcher = watchDeployRefusal(jbCenterClient)
     const controller = new AbortController()
     run.current?.abort()
@@ -83,6 +95,11 @@ export function IntentProject({ intentId }: { intentId: string }) {
       // A run this page abandoned, by unmounting or by opening the created
       // project, is not a failure to report.
       if (controller.signal.aborted) return
+      // Center recorded a failed chain. That row is the end of this project's
+      // sponsored creation, so say so and stop offering Deploy.
+      if (cause instanceof EnsureDeployedError && cause.chainId !== undefined) {
+        setStopped(true); setError(deployStopped(cause.chainId)); return
+      }
       const refused = describeCenterRefusal(watcher.refusal())
       setError(refused?.message ?? (cause instanceof EnsureDeployedError ? DEPLOY_FAILED : DEPLOY_UNAVAILABLE))
     } finally {
@@ -112,18 +129,20 @@ export function IntentProject({ intentId }: { intentId: string }) {
         <li>Status: Deploys on first use</li>
         <li>Networks: {terms.chainIds.map(displayChainName).join(', ')}</li>
         <li>FUND token: {terms.tokenName} ({terms.ticker})</li>
-        <li>Contributions open: {terms.mustStartAtOrAfter ? new Date(terms.mustStartAtOrAfter * 1000).toLocaleString() : 'as soon as it is created'}</li>
+        <li>Contributions open: {terms.mustStartAtOrAfter * 1000 > Date.now() ? new Date(terms.mustStartAtOrAfter * 1000).toLocaleString() : 'as soon as it is created'}</li>
       </ul>
       <p className="break-all text-sm">Owner: {terms.owner}</p>
     </section>
 
-    <section className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7">
-      <h2 className="mb-5 text-3xl">Deploy this project</h2>
-      <p>Juicebox Center sends the creation on {terms.chainIds.map(displayChainName).join(', ')} and pays its creation fee. Anyone can start it, and the terms above cannot change.</p>
-      <button type="button" className="btn-primary mt-5" disabled={deploying} onClick={() => void deploy()}>{deploying ? 'Deploying…' : 'Deploy'}</button>
-      {steps.length > 0 && <ul className="m-0 mt-5 grid list-none gap-2 p-0 text-sm" aria-label="Deployment progress">{steps.map((step, index) => <li key={`${step}:${index}`} role="status">{step}</li>)}</ul>}
-      {error && <p role="alert" className="mt-5 text-sm">{error}</p>}
-    </section>
+    {isSponsorable(terms.chainIds)
+      ? <section className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7">
+        <h2 className="mb-5 text-3xl">Deploy this project</h2>
+        <p>Juicebox Center sends the creation on {terms.chainIds.map(displayChainName).join(', ')} and pays its creation fee. Anyone can start it, and the terms above cannot change.</p>
+        <button type="button" className="btn-primary mt-5" disabled={deploying || stopped} onClick={() => void deploy()}>{deploying ? 'Deploying…' : 'Deploy'}</button>
+        {steps.length > 0 && <ul className="m-0 mt-5 grid list-none gap-2 p-0 text-sm" aria-label="Deployment progress">{steps.map((step, index) => <li key={`${step}:${index}`} role="status">{step}</li>)}</ul>}
+        {error && <p role="alert" className="mt-5 text-sm">{error}</p>}
+      </section>
+      : <p className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7">{UNSPONSORED}</p>}
 
     <section className="rounded-md border border-[#c4cdbb] bg-[#fffefa] p-5 sm:p-7">
       <h2 className="mb-5 text-3xl">About</h2>

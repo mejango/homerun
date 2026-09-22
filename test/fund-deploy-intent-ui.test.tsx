@@ -125,6 +125,8 @@ describe('creating a FUND without a transaction', () => {
     // Center's sponsor is `_msgSender()` on every chain, so the merchant must not read their own address as the sender.
     expect(review.calls[0].from).toBeUndefined()
     expect(review.calls[0].label).toContain('Center’s sponsor')
+    // Center takes a plain signed message, so the review says message, not typed data.
+    expect(review.authorization.kind).toBe('message')
     expect(review.authorization.format).toBe('homerun.money/fund.v1')
     expect(review.authorization.jb.app).toBe('homerun')
     expect(review.authorization.jb.name).toBe('Neighborhood Workshop')
@@ -200,6 +202,35 @@ describe('creating a FUND without a transaction', () => {
     expect(runtime.signMessage).not.toHaveBeenCalled()
     const alert = [...host.querySelectorAll('[role="alert"]')].find(node => !node.closest('details'))
     expect(alert?.textContent).toContain('A saved launch already exists')
+  })
+
+  it('says a published project must be finished before its networks change', async () => {
+    await render()
+    await act(async () => button('Create without a transaction')!.click())
+    await act(async () => root.render(<FundDeploy values={values({ networks: ['optimism'] })} />))
+    const alert = [...host.querySelectorAll('[role="alert"]')].find(node => !node.closest('details'))
+    expect(alert?.textContent).toBe('This project is already published on Base. Finish it before changing networks.')
+    expect(host.textContent).not.toContain('wallet authorizations')
+  })
+
+  it('keeps a prepared plan when the click is refused', async () => {
+    await render()
+    const unsigned = {
+      version: 1 as const, name: 'Neighborhood Workshop', transport: 'direct' as const,
+      input: {
+        owner: wallet as `0x${string}`, sender: wallet as `0x${string}`, chainIds: [8453],
+        projectUri: 'ipfs://bafkreimetadata', tokenName: 'Neighborhood Workshop FUND', ticker: 'FUND',
+        salt: `0x${'56'.repeat(32)}` as Hex, mustStartAtOrAfter: 0, creationFees: { 8453: 0n },
+      },
+      statuses: { 8453: { phase: 'ready' as const } },
+    }
+    localStorage.setItem(FUND_LAUNCH_KEY, encodeLaunchSession(unsigned))
+    runtime.safe = true
+    await act(async () => button('Create without a transaction')!.click())
+    expect(decodeLaunchSession(localStorage.getItem(FUND_LAUNCH_KEY)!).input.salt).toBe(unsigned.input.salt)
+    expect(runtime.signMessage).not.toHaveBeenCalled()
+    const alert = [...host.querySelectorAll('[role="alert"]')].find(node => !node.closest('details'))
+    expect(alert?.textContent).toContain('signature from a wallet address only')
   })
 
   it('refuses to publish when the wallet becomes a Safe after the choice was offered', async () => {

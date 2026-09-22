@@ -10,6 +10,7 @@ import {
   publishSignedIntent,
   type JBCenterClient,
   type JBCenterDeploymentCall,
+  type JBCenterDeploymentInput,
   type JBCenterIntent,
   type JBCenterRequestOptions,
 } from '@bananapus/nana-sdk-core/jbcenter'
@@ -139,16 +140,21 @@ export function decodeFundIntent(intent: JBCenterIntent): DecodedFundIntent {
 /**
  * `ensureDeployed` turns a sponsorship refusal into its own error, so keep the
  * refusal Center returned for `describeCenterRefusal` to word.
+ *
+ * Only the three methods a deploy reaches are forwarded, each onto the client
+ * itself: nothing here copies or inherits the client's own fields.
  */
 export function watchDeployRefusal(client: JBCenterClient): { client: JBCenterClient; refusal: () => unknown } {
   let refusal: unknown
-  const watched = Object.assign(Object.create(client) as JBCenterClient, {
-    requestDeploy(intentId: string, options?: JBCenterRequestOptions) {
-      return client.requestDeploy(intentId, options).catch((error: unknown) => {
+  const watched = {
+    getIntent: (intentId: string, options?: JBCenterRequestOptions) => client.getIntent(intentId, options),
+    recordDeployment: (intentId: string, deployment: JBCenterDeploymentInput, options?: JBCenterRequestOptions) =>
+      client.recordDeployment(intentId, deployment, options),
+    requestDeploy: (intentId: string, options?: JBCenterRequestOptions) =>
+      client.requestDeploy(intentId, options).catch((error: unknown) => {
         refusal = error
         throw error
-      })
-    },
-  })
-  return { client: watched, refusal: () => refusal }
+      }),
+  }
+  return { client: watched as unknown as JBCenterClient, refusal: () => refusal }
 }

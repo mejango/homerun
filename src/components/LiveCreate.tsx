@@ -283,15 +283,17 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
     if (!address || !values || preparing || busyRef.current) return
     setPreparing(true); setError(''); setProgress('')
     try {
+      // Re-read the wallet here: the connection can change between the render
+      // that offered this path and the click that takes it. Everything this
+      // publication needs is checked before a prepared plan is let go, so a
+      // refused click leaves that plan where it was.
+      if (!walletCanPublish()) throw new Error(WALLET_NEEDS_TRANSACTION_MESSAGE)
+      const chainIds = plannedNetworks(values).map((chain: { chainId: number }) => chain.chainId)
+      if (!fundIntentEligibleChains(chainIds)) throw new Error(UNSPONSORED_CHAINS_MESSAGE)
       // A saved plan keeps the transport it was saved with. Publish from a record
       // of its own, and only once an unauthorized plan has been let go.
       const saved = localStorage.getItem(FUND_LAUNCH_KEY)
       if (saved && !discardUnsignedLaunch(decodeLaunchSession(saved).input.salt)) throw new Error('A saved launch already exists. Reload to resume it.')
-      // Re-read the wallet here: the connection can change between the render
-      // that offered this path and the click that takes it.
-      if (!walletCanPublish()) throw new Error(WALLET_NEEDS_TRANSACTION_MESSAGE)
-      const chainIds = plannedNetworks(values).map((chain: { chainId: number }) => chain.chainId)
-      if (!fundIntentEligibleChains(chainIds)) throw new Error(UNSPONSORED_CHAINS_MESSAGE)
       const sender = address
       const salt = toHex(crypto.getRandomValues(new Uint8Array(32)))
       const resolved = await resolveCreateMultisigs(values, chainIds.map(publicClient), salt)
@@ -332,7 +334,9 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
             label: `Center’s sponsor creates the FUND on ${displayChainName(call.chainId)}`, contractName: 'HomerunDeployer',
           }
         }),
-        authorization: { type: 'Juicebox Center project intent', format: intent.format, deploymentVersion: intent.deploymentVersion, chainIds: intent.chainIds, jb: intent.jb },
+        // Center takes a plain signed message, not typed data, so the review
+        // reads the envelope that message commits to.
+        authorization: { kind: 'message', type: 'Juicebox Center project intent', format: intent.format, deploymentVersion: intent.deploymentVersion, chainIds: intent.chainIds, jb: intent.jb },
       })
       setProgress('Sign the publication message in your wallet.')
       sameSender(getAccount(wagmiConfig).address, sender)
@@ -380,7 +384,9 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
     <h2 className="text-xl">Create your project</h2>
     <p>Create your multisigs and the FUND raise on your selected chains. INCOME and the Owner’s success allocation are separate later actions.</p>
     {!address && <WalletButton />}
-    {selectionChanged && <p role="alert">This launch already has wallet authorizations for {session!.input.chainIds.map(displayChainName).join(', ')}. Continue completes that saved launch; changing the selection above cannot replace signed requests.</p>}
+    {selectionChanged && (session!.transport === 'intent'
+      ? <p role="alert">This project is already published on {session!.input.chainIds.map(displayChainName).join(', ')}. Finish it before changing networks.</p>
+      : <p role="alert">This launch already has wallet authorizations for {session!.input.chainIds.map(displayChainName).join(', ')}. Continue completes that saved launch; changing the selection above cannot replace signed requests.</p>)}
     {!session ? intentEligible ? <>
       <button type="button" className="create-primary" disabled={preparing || !loaded || !!error} onClick={() => void prepareIntent()}>{preparing ? 'Publishing your project…' : 'Create without a transaction'}</button>
       <p className="text-sm">Juicebox Center publishes your project now, and Center’s sponsor deploys it on {plannedChainNames(values)} the first time it is used. Your wallet signs a message; it sends no transaction and pays no creation fee.</p>

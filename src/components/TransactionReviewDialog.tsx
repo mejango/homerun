@@ -1485,6 +1485,9 @@ function ReviewModal({
   const titleId = `transaction-review-title-${pending.id}`
   const descriptionId = `transaction-review-description-${pending.id}`
   const isAuthorization = request.kind === 'authorization'
+  /** Some authorizations are signed as a plain message rather than typed data. */
+  const signsMessage =
+    (request.authorization as { kind?: string } | undefined)?.kind === 'message'
   const defaultDescription = isAuthorization
     ? 'This authorization commits to the exact destination, native value, and calldata below. A Safe or relayer can submit that call onchain after you continue.'
     : 'This is the exact destination, native value, and calldata the app will ask your wallet to send. Your wallet adds the nonce, gas limit, and network fees.'
@@ -1530,8 +1533,9 @@ function ReviewModal({
           </div>
           {request.authorization ? (
             <div className="mt-3 rounded-xl border border-bluebs-100 bg-bluebs-25 px-4 py-3 text-xs leading-relaxed text-bluebs-700">
-              The Raw view also includes the exact typed-data domain and message
-              your signature commits to.
+              {signsMessage
+                ? 'The Raw view also includes the exact message your signature commits to.'
+                : 'The Raw view also includes the exact typed-data domain and message your signature commits to.'}
             </div>
           ) : null}
 
@@ -1567,7 +1571,9 @@ function ReviewModal({
             <div className="border-t border-smoke-200 p-4">
               <p className="mb-2 text-xs leading-relaxed text-smoke-600">
                 {request.authorization
-                  ? 'Exact typed data plus the resulting app-controlled call. Hex value is the native token amount; data is the complete calldata.'
+                  ? signsMessage
+                    ? 'The exact message your signature commits to, plus the resulting app-controlled call. Hex value is the native token amount; data is the complete calldata.'
+                    : 'Exact typed data plus the resulting app-controlled call. Hex value is the native token amount; data is the complete calldata.'
                   : 'Exact app-controlled JSON-RPC call fields. Hex value is the native token amount; data is the complete calldata.'}
               </p>
               <pre className="max-h-[28rem] overflow-auto rounded-xl border border-smoke-200 bg-grey-900 p-4 font-mono text-[11px] leading-relaxed text-grey-25">
@@ -1587,7 +1593,11 @@ function ReviewModal({
             />
             <span>
               I reviewed the chain, destination, native value, and calldata
-              {request.authorization ? ', plus the exact typed data' : ''}. I
+              {request.authorization
+                ? signsMessage
+                  ? ', plus the exact message your signature commits to'
+                  : ', plus the exact typed data'
+                : ''}. I
               agree to {isAuthorization ? 'authorize' : 'send'} this exact call.
             </span>
           </label>
