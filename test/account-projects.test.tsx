@@ -229,6 +229,25 @@ describe('account project discovery', () => {
     expect(rows[1].textContent).toContain('Neighborhood FUND')
   })
 
+  it('shows a published project whose owner is a multisig, because this account published it', async () => {
+    mocks.wallet = { address: ACCOUNT_A, isConnected: true }
+    mocks.intents.mockImplementation(async (params: { owner?: string; publisher?: string }) => ({
+      items: params.publisher ? [intentItem({ owner: ACCOUNT_B, name: 'Multisig Workshop' })] : [],
+      totalCount: params.publisher ? 1 : 0, nextCursor: null,
+    }))
+    await render(ACCOUNT_A)
+    expect(mocks.intents).toHaveBeenCalledWith({ owner: ACCOUNT_A, limit: 24 })
+    expect(mocks.intents).toHaveBeenCalledWith({ publisher: ACCOUNT_A, limit: 24 })
+    expect(host.textContent).toContain('Multisig Workshop')
+  })
+
+  it('lists a project once when this account both owns and published it', async () => {
+    mocks.wallet = { address: ACCOUNT_A, isConnected: true }
+    mocks.intents.mockResolvedValue({ items: [intentItem()], totalCount: 1, nextCursor: null })
+    await render(ACCOUNT_A)
+    expect([...host.querySelectorAll('a[href^="/intent/"]')]).toHaveLength(1)
+  })
+
   it('keeps testnet published projects out of the mainnet list', async () => {
     mocks.wallet = { address: ACCOUNT_A, isConnected: true }
     mocks.intents.mockResolvedValue({ items: [intentItem({ chainIds: [84532] })], totalCount: 1, nextCursor: null })

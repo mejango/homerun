@@ -116,6 +116,22 @@ function ProjectSection({ title, children }: { title: string; children: ReactNod
   </section>
 }
 
+/** A project this account published is theirs to see even when a multisig owns it. */
+async function accountIntents(account: string): Promise<JBCenterSearchPage> {
+  const [owned, published] = await Promise.all([
+    jbCenterClient.searchIntents({ owner: account as Address, limit: PAGE_SIZE }),
+    jbCenterClient.searchIntents({ publisher: account as Address, limit: PAGE_SIZE }),
+  ])
+  const items: JBCenterSearchItem[] = []
+  const seen = new Set<string>()
+  for (const item of [...owned.items, ...published.items]) {
+    if (seen.has(item.intentId)) continue
+    seen.add(item.intentId)
+    items.push(item)
+  }
+  return { items, totalCount: items.length, nextCursor: null }
+}
+
 /** Shared account data for discovery and the public account dashboard. */
 export function AccountProjectSections({ account, network, section = 'both' }: { account: string; network: Network; section?: 'projects' | 'holdings' | 'both' }) {
   const [ownedLimit, setOwnedLimit] = useState(PAGE_SIZE)
@@ -135,7 +151,7 @@ export function AccountProjectSections({ account, network, section = 'both' }: {
   const intents = useQuery({
     ...INDEX_QUERY,
     queryKey: ['account-projects', 'intents', network, account],
-    queryFn: () => jbCenterClient.searchIntents({ owner: account as Address, limit: PAGE_SIZE }),
+    queryFn: () => accountIntents(account),
     enabled: section !== 'holdings',
   })
   const heldRows = (holdings.data?.items ?? []).filter(row => validRef(row) && tokenBalance(row.balance) > 0n)
@@ -148,7 +164,7 @@ export function AccountProjectSections({ account, network, section = 'both' }: {
   })
   // Index ownership is only discovery. Action permissions are read from contracts on the project page.
   const indexedOwned = projectRows(owned.data).filter(project => project.owner?.toLowerCase() === account)
-  const publishedOwned = intentItems(intents.data, network).filter(item => item.owner?.toLowerCase() === account)
+  const publishedOwned = intentItems(intents.data, network)
   const ownedRows = mergeSearch(indexedOwned, publishedOwned)
   const byRef = new Map(projectRows(heldProjects.data).map(project => [refKey(project), project]))
   return <div className={`grid min-w-0 gap-7${section === 'both' ? ' lg:grid-cols-2' : ''}`}>
