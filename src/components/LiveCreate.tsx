@@ -21,14 +21,26 @@ import { displayChainName } from '@/lib/chainDisplay'
 import { SUPPORTED_CHAINS } from '@/lib/chains'
 import { plannedNetworks } from '../../web/create-networks.mjs'
 import { isSafeConnection, waitForSafeExecutionHash } from '@/lib/safe-connector'
-import { describeCenterRefusal, intentPath } from '@bananapus/nana-sdk-core/jbcenter'
+import { JBCenterRequestError, describeCenterRefusal, intentPath } from '@bananapus/nana-sdk-core/jbcenter'
 import { jbCenterClient } from '@/lib/jbcenter-client'
 import { buildFundIntent, fundIntentEligibleChains, publishFundIntent, MULTISIG_NEEDS_TRANSACTION_MESSAGE, UNSPONSORED_CHAINS_MESSAGE } from '@/lib/fund-intent'
 import { requireTransactionReview } from '@/lib/transaction-review'
 
 const message = (error: unknown) => error instanceof Error ? error.message : 'The request could not be completed.'
-const failure = (error: unknown) => describeCenterRefusal(error)?.message ?? message(error)
+/** Center's own wording for a refusal, then this app's, so no server text reaches the page. */
+const failure = (error: unknown) => {
+  const refusal = describeCenterRefusal(error)
+  if (refusal) return refusal.message
+  if (!(error instanceof JBCenterRequestError)) return message(error)
+  return error.code === 'publish_limit' || error.status === 429
+    ? 'Center’s publish limit is reached. Try again later.'
+    : 'Center could not accept this project right now. Try again shortly.'
+}
 const WALLET_NEEDS_TRANSACTION_MESSAGE = 'Juicebox Center accepts a signature from a wallet address only. Connect a different wallet, or create with a transaction.'
+/** Center recovers the publisher from the signature, so a passkey or Safe connection cannot publish. */
+function walletCanPublish(): boolean {
+  return getAccount(wagmiConfig).connector?.id !== 'juicebox-center' && !isSafeConnection(wagmiConfig)
+}
 function publicClient(chainId: number): PublicClient {
   const client = getPublicClient(wagmiConfig, { chainId: chainId as JBChainId })
   if (!client) throw new Error('No RPC client is configured for this chain.')
@@ -186,8 +198,7 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
   // Juicebox Center recovers the publisher from the signature itself, so only an
   // external EOA can publish: a passkey or Safe signature is refused. A new
   // multisig needs a transaction, and mainnet is never sponsored.
-  // The connector is read on every render, not held in state: `loaded` keeps the
-  // first client render equal to the server's, and a wallet change re-renders here.
+  // `loaded` keeps this first client render equal to the server's.
   const safeConnected = loaded && isSafeConnection(wagmiConfig)
   const multisigPlanned = !!values && (values.ownerMode === 'create' || (!values.ownerIsOperator && values.operatorMode === 'create'))
   const intentEligible = !!address && !isCenterWallet && !safeConnected && !multisigPlanned
@@ -278,7 +289,7 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
       if (saved && !discardUnsignedLaunch(decodeLaunchSession(saved).input.salt)) throw new Error('A saved launch already exists. Reload to resume it.')
       // Re-read the wallet here: the connection can change between the render
       // that offered this path and the click that takes it.
-      if (isCenterWallet || isSafeConnection(wagmiConfig)) throw new Error(WALLET_NEEDS_TRANSACTION_MESSAGE)
+      if (!walletCanPublish()) throw new Error(WALLET_NEEDS_TRANSACTION_MESSAGE)
       const chainIds = plannedNetworks(values).map((chain: { chainId: number }) => chain.chainId)
       if (!fundIntentEligibleChains(chainIds)) throw new Error(UNSPONSORED_CHAINS_MESSAGE)
       const sender = address
@@ -308,13 +319,19 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
       await requireTransactionReview({
         kind: 'authorization',
         title: 'Create your project',
-        description: 'Your signature publishes these exact project creations to Juicebox Center. Center sends them on every selected chain when the project is first deployed. You send no transaction and pay no creation fee here.',
+        description: 'Your signature publishes these exact project creations to Juicebox Center. Center’s sponsor sends them on every selected chain the first time the project is used. You send no transaction and pay no creation fee here.',
         confirmLabel: 'Continue to wallet',
-        calls: intent.deploymentCalls.map((call, index) => ({
-          chainId: call.chainId, to: call.to, data: call.data, from: sender,
-          abi: built.requests[index].abi, functionName: built.requests[index].functionName, args: built.requests[index].args,
-          label: `Create the FUND on ${displayChainName(call.chainId)}`, contractName: 'HomerunDeployer',
-        })),
+        calls: intent.deploymentCalls.map(call => {
+          // Center's sponsor is the sender of every one of these calls, and
+          // HomerunDeployer scopes its salt to that sender, so no `from` is shown.
+          const request = built.requests.find(item => item.chainId === call.chainId)
+          if (!request) throw new Error('The reviewed calls do not match the launch plan.')
+          return {
+            chainId: call.chainId, to: call.to, data: call.data,
+            abi: request.abi, functionName: request.functionName, args: request.args,
+            label: `Center’s sponsor creates the FUND on ${displayChainName(call.chainId)}`, contractName: 'HomerunDeployer',
+          }
+        }),
         authorization: { type: 'Juicebox Center project intent', format: intent.format, deploymentVersion: intent.deploymentVersion, chainIds: intent.chainIds, jb: intent.jb },
       })
       setProgress('Sign the publication message in your wallet.')
@@ -323,7 +340,11 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
         client: jbCenterClient, input, name: values.name, publisher: sender,
         sign: publicationMessage => signMessage(wagmiConfig, { account: sender, message: publicationMessage }),
       })
-      persist({ version: 1, name: values.name, input, transport: 'intent', intentId: published.id, statuses: Object.fromEntries(chainIds.map((id: number) => [id, { phase: 'ready' as const }])) })
+      try {
+        persist({ version: 1, name: values.name, input, transport: 'intent', intentId: published.id, statuses: Object.fromEntries(chainIds.map((id: number) => [id, { phase: 'ready' as const }])) })
+      } catch (cause) {
+        throw new Error(`${message(cause)} Your project is published at ${intentPath(published.id)}.`)
+      }
       setProgress('')
       router.push(intentPath(published.id))
     } catch (cause) { setError(failure(cause)) }
@@ -362,13 +383,19 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
     {selectionChanged && <p role="alert">This launch already has wallet authorizations for {session!.input.chainIds.map(displayChainName).join(', ')}. Continue completes that saved launch; changing the selection above cannot replace signed requests.</p>}
     {!session ? intentEligible ? <>
       <button type="button" className="create-primary" disabled={preparing || !loaded || !!error} onClick={() => void prepareIntent()}>{preparing ? 'Publishing your project…' : 'Create without a transaction'}</button>
-      <p className="text-sm">Juicebox Center publishes your project now and sends the creation on {plannedChainNames(values)} when it is first used. Your wallet signs a message; it sends no transaction and pays no creation fee.</p>
-      <button type="button" className="quiet-button" disabled={preparing || !loaded || !!error} onClick={() => void prepare()}>Create with a transaction instead</button>
+      <p className="text-sm">Juicebox Center publishes your project now, and Center’s sponsor deploys it on {plannedChainNames(values)} the first time it is used. Your wallet signs a message; it sends no transaction and pays no creation fee.</p>
+      <button type="button" className="quiet-button" disabled={preparing || !loaded} onClick={() => void prepare()}>Create with a transaction instead</button>
     </> : <button type="button" className="create-primary" disabled={!address || preparing || !loaded || !!error} onClick={() => void prepare()}>{preparing ? 'Preparing your project…' : 'Create project'}</button>
-      : session.transport === 'intent' ? <>
-        <p role="status">This project is published. Open its page to deploy it on {session.input.chainIds.map(displayChainName).join(', ')}.</p>
-        <a className="create-primary" href={intentPath(session.intentId!)}>Open project ↗</a>
+      : session.transport === 'intent' ? typeof session.intentId === 'string' ? <>
+        <p role="status">This project is published. Center’s sponsor deploys it on {session.input.chainIds.map(displayChainName).join(', ')} the first time it is used, and its page offers Deploy.</p>
+        <a className="create-primary" href={intentPath(session.intentId)}>Open project ↗</a>
         <button type="button" className="quiet-button" onClick={() => { try { archiveLaunch(session.input.salt); setSession(null); setProgress('') } catch (cause) { setError(message(cause)) } }}>Finish this project and start another</button>
+      </>
+      : <>
+        <p role="alert">This saved record has no published project to open. Cancel it and create the project again.</p>
+        <button type="button" className="quiet-button" disabled={running || preparing} onClick={() => {
+          void cancelUnsubmittedLaunch(session.input.salt).then(() => { setSession(null); setError(''); setProgress(''); onLockChange?.(null) }).catch(cause => setError(message(cause)))
+        }}>Cancel creation and edit details</button>
       </>
       : <>
         {signingChain !== undefined && <div className="fund-launch-action" role="status"><span>Confirm the {displayChainName(signingChain)} request in your wallet.</span></div>}

@@ -122,6 +122,9 @@ describe('creating a FUND without a transaction', () => {
     expect(review.calls).toHaveLength(1)
     expect(review.calls[0].chainId).toBe(8453)
     expect(review.calls[0].functionName).toBe('launchFundFor')
+    // Center's sponsor is `_msgSender()` on every chain, so the merchant must not read their own address as the sender.
+    expect(review.calls[0].from).toBeUndefined()
+    expect(review.calls[0].label).toContain('Center’s sponsor')
     expect(review.authorization.format).toBe('homerun.money/fund.v1')
     expect(review.authorization.jb.app).toBe('homerun')
     expect(review.authorization.jb.name).toBe('Neighborhood Workshop')
@@ -143,6 +146,22 @@ describe('creating a FUND without a transaction', () => {
     expect(host.textContent).toContain('This project is published')
     expect(host.querySelector<HTMLAnchorElement>(`a[href="/intent/${intentId}"]`)).toBeTruthy()
     expect(button('Review and deploy FUND')).toBeUndefined()
+  })
+
+  it('offers no project page for a restored record that was never published', async () => {
+    localStorage.setItem(FUND_LAUNCH_KEY, encodeLaunchSession({
+      version: 1, name: 'Neighborhood Workshop', transport: 'intent',
+      input: {
+        owner: wallet as `0x${string}`, sender: wallet as `0x${string}`, chainIds: [8453],
+        projectUri: 'ipfs://bafkreimetadata', tokenName: 'Neighborhood Workshop FUND', ticker: 'FUND',
+        salt: `0x${'34'.repeat(32)}` as Hex, mustStartAtOrAfter: 0, creationFees: { 8453: 0n },
+      },
+      statuses: { 8453: { phase: 'ready' } },
+    }))
+    await act(async () => root.render(<FundDeploy />))
+    expect(host.querySelector('a[href^="/intent/"]')).toBeNull()
+    expect(host.textContent).not.toContain('This project is published')
+    expect(button('Cancel creation and edit details')).toBeTruthy()
   })
 
   it('starts its own record instead of converting a saved transaction plan', async () => {
