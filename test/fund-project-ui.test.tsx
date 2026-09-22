@@ -45,6 +45,8 @@ vi.mock('@/components/WalletButton', () => ({ WalletButton: () => <span>Wallet</
 vi.mock('@/components/FundOperatorActions', () => ({ FundOperatorActions: () => <span>Operator actions</span> }))
 vi.mock('@/components/IncomeLaunch', () => ({ IncomeLaunch: ({ launchUnavailable }: { launchUnavailable?: boolean }) => <section data-testid="income"><button disabled={launchUnavailable}>INCOME launch</button><button>Existing INCOME action</button></section> }))
 vi.mock('@/components/FundBridgeActions', () => ({ FundBridgeActions: () => <span>FUND bridge</span> }))
+vi.mock('@/components/DeployRemainingChains', () => ({ DeployRemainingChains: ({ chainId, projectId, intentId, owner }: { chainId: number; projectId: string; intentId?: string; owner?: string }) =>
+  <span data-testid="also-deploy" data-chain-id={chainId} data-project-id={projectId} data-intent-id={intentId} data-owner={owner}>Also deploy</span> }))
 vi.mock('@tanstack/react-query', () => ({
   keepPreviousData: (value: unknown) => value,
   useQueryClient: () => ({ invalidateQueries: runtime.invalidateQueries }),
@@ -125,10 +127,17 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     }
     expect(target, `Missing ${label} tab`).toBeDefined(); await act(async () => target!.click())
   }
-  async function render() {
-    await act(async () => root.render(<FundProject chainId={1} projectId="7" />))
+  async function render(props: { intentId?: string } = {}) {
+    await act(async () => root.render(<FundProject chainId={1} projectId="7" {...props} />))
     for (const label of ['Owners', 'Market', 'Settlement', 'Operators', 'Overview']) await tab(label)
   }
+
+  it('offers the remaining networks of the intent this project came from', async () => {
+    await render({ intentId: '3f0f2f4c-0f3f-4f2f-8f1f-0f2f3f4f5f6f' })
+    const panel = host.querySelector('[data-testid="also-deploy"]')
+    expect(panel?.getAttribute('data-intent-id')).toBe('3f0f2f4c-0f3f-4f2f-8f1f-0f2f3f4f5f6f')
+    expect(panel?.getAttribute('data-project-id')).toBe('7')
+  })
 
   it('shows verified Owner and Operator wallets without assigning an old Owner identity to a new wallet', async () => {
     runtime.details = parseFundProjectMetadata({

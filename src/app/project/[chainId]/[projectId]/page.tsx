@@ -5,7 +5,12 @@ import { FundProject } from '@/components/FundProject'
 import { displayChainName } from '@/lib/chainDisplay'
 import { FUND_CHAIN_IDS } from '@/lib/fund-contracts'
 
-type ProjectRouteProps = { params: Promise<{ chainId: string; projectId: string }> }
+const INTENT_ID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i
+
+type ProjectRouteProps = {
+  params: Promise<{ chainId: string; projectId: string }>
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}
 
 function projectRoute(chainId: string, projectId: string) {
   if (!/^[1-9]\d*$/.test(chainId) || !/^[1-9]\d*$/.test(projectId) || projectId.length > 78) notFound()
@@ -14,7 +19,7 @@ function projectRoute(chainId: string, projectId: string) {
   return { chainId: chain as JBChainId, projectId }
 }
 
-export async function generateMetadata({ params }: ProjectRouteProps): Promise<Metadata> {
+export async function generateMetadata({ params }: Pick<ProjectRouteProps, 'params'>): Promise<Metadata> {
   const route = await params
   const { chainId, projectId } = projectRoute(route.chainId, route.projectId)
   return {
@@ -24,7 +29,9 @@ export async function generateMetadata({ params }: ProjectRouteProps): Promise<M
   }
 }
 
-export default async function ProjectPage({ params }: ProjectRouteProps) {
+export default async function ProjectPage({ params, searchParams }: ProjectRouteProps) {
   const route = await params
-  return <FundProject key={`${route.chainId}:${route.projectId}`} {...projectRoute(route.chainId, route.projectId)} />
+  const query = await searchParams
+  const intent = typeof query.intent === 'string' && INTENT_ID.test(query.intent) ? query.intent : undefined
+  return <FundProject key={`${route.chainId}:${route.projectId}`} {...projectRoute(route.chainId, route.projectId)} intentId={intent} />
 }

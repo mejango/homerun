@@ -14,7 +14,7 @@ const owner = '0x1111111111111111111111111111111111111111' as const
 const salt = `0x${'12'.repeat(32)}` as Hex
 vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: '0x1111111111111111111111111111111111111111' }), getPublicClient: () => ({ readContract: runtime.readContract, getBlock: runtime.getBlock }) }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
-vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: '0x1111111111111111111111111111111111111111' }) }))
+vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: '0x1111111111111111111111111111111111111111', isCenterWallet: true }) }))
 vi.mock('@/components/WalletButton', () => ({ WalletButton: () => <span>Wallet</span> }))
 vi.mock('@/components/CreateFlow', () => ({ default: () => null }))
 vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => false, waitForSafeExecutionHash: vi.fn() }))
@@ -55,7 +55,7 @@ describe('Create submission recovery', () => {
     await act(async () => cancel.click())
     expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()
     expect(localStorage.getItem('homerun:create-draft:v1')).toBe('keep this draft')
-    expect(host.textContent).toContain('Create project')
+    expect(host.textContent).toContain('Show preview')
   })
 
   it('shows pre-wallet errors outside the collapsed recovery controls', async () => {
@@ -87,7 +87,7 @@ describe('Create submission recovery', () => {
     await act(async () => root.render(<FundDeploy values={{ networkEnvironment: 'production', networks: ['base'] } as CreateValues} />))
     expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()
     expect(host.textContent).not.toContain('Continue creation')
-    expect(host.textContent).toContain('Create with a transaction instead')
+    expect(host.textContent).toContain('Create with a transaction')
   })
 
   it('cancelling review leaves the saved launch ready without claiming a wallet submission', async () => {
@@ -152,7 +152,7 @@ describe('Create submission recovery', () => {
     localStorage.clear()
     const values = { name: 'Owned asset', fundTokenName: 'Owned asset FUND', fundTicker: 'OWNED', ownerName: 'Asset trust', ownerIntroduction: 'We steward the asset.', ownerWallet: '0x2222222222222222222222222222222222222222', operatorWallet: '0x3333333333333333333333333333333333333333', networks: ['base'], networkEnvironment: 'production' } as CreateValues
     await act(async () => root.render(<FundDeploy values={values} />))
-    const prepare = [...host.querySelectorAll('button')].find(item => item.textContent === 'Create with a transaction instead')!
+    const prepare = [...host.querySelectorAll('button')].find(item => item.textContent === 'Create with a transaction')!
     await act(async () => prepare.click())
     expect(saved().input.owner).toBe(values.ownerWallet)
     expect(saved().input.sender).toBe(owner)
@@ -163,7 +163,7 @@ describe('Create submission recovery', () => {
   it('does not assign Owner authority to Operator when Owner is missing', async () => {
     localStorage.clear()
     await act(async () => root.render(<FundDeploy values={{ name: 'Missing owner', fundTokenName: 'Missing owner FUND', fundTicker: 'MISSING', ownerWallet: '', operatorWallet: owner, networks: ['base'], networkEnvironment: 'production' } as CreateValues} />))
-    const prepare = [...host.querySelectorAll('button')].find(item => item.textContent === 'Create with a transaction instead')!
+    const prepare = [...host.querySelectorAll('button')].find(item => item.textContent === 'Create with a transaction')!
     await act(async () => prepare.click())
     expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()
     expect(host.querySelector('[role="alert"]')).not.toBeNull()
