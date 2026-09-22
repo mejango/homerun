@@ -38,3 +38,16 @@ export function plannedNetworks({ networks, networkEnvironment }) {
   return NETWORK_FAMILIES.filter(family => networks.includes(family.id))
     .map(family => ({ ...family[networkEnvironment] }));
 }
+
+/** The family selection that produces exactly these chains, for a project whose
+ *  networks are already fixed by the calls it was signed with. */
+export function networkSelectionForChainIds(chainIds) {
+  const wanted = [...new Set(chainIds)];
+  for (const networkEnvironment of NETWORK_ENVIRONMENTS) {
+    const networks = NETWORK_FAMILIES
+      .filter(family => wanted.includes(family[networkEnvironment].chainId))
+      .map(family => family.id);
+    if (networks.length === wanted.length) return { networks, networkEnvironment };
+  }
+  return null;
+}

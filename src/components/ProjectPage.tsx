@@ -50,7 +50,7 @@ type NetworkInputs = {
     Key in keyof typeof DEFAULT_NETWORK
   ]: (typeof DEFAULT_NETWORK)[Key] extends number ? number : (typeof DEFAULT_NETWORK)[Key] extends boolean ? boolean : string;
 };
-type CreatedProject = NonNullable<ReturnType<typeof loadCreatedProject>>;
+export type CreatedProject = NonNullable<ReturnType<typeof loadCreatedProject>>;
 type OwnerDraft = Omit<ReturnType<typeof modelOwnerActionDraft>, "steps"> & {
   steps: { id: string; title: string; description: string }[];
 };
@@ -1310,6 +1310,7 @@ function PayPreview({
   contributionError,
   fundAmount,
   onFundAmount,
+  unavailableLabel,
 }: {
   chains: { chainId: number; name: string }[];
   p: Projection | null;
@@ -1318,6 +1319,8 @@ function PayPreview({
   contributionError: string;
   fundAmount: number;
   onFundAmount: (value: number) => void;
+  /** Names the action a project that is not created yet cannot offer. */
+  unavailableLabel?: string;
 }) {
   const [selectedChain, setSelectedChain] = useState(chains[0].chainId);
   const [currency, setCurrency] = useState("USDC");
@@ -1465,7 +1468,7 @@ function PayPreview({
             {error}
           </p>
         )}
-        {!paymentStage && <button
+        {!paymentStage && !unavailableLabel && <button
           id="pay-review"
           className="pay-review"
           type="submit"
@@ -1474,6 +1477,7 @@ function PayPreview({
         >
           {quote.actionLabel}
         </button>}
+        {unavailableLabel && <button id="pay-review" className="pay-review" type="button" disabled>{unavailableLabel}</button>}
       </form>
       {review && cashStage && (
         <Modal
@@ -2131,7 +2135,17 @@ function DemoOwners({
   );
 }
 
-export function DemoProjectPage({ project }: { project?: CreatedProject }) {
+/** A project that is not created yet renders this page from its own terms. */
+export type PlannedProjectSlots = {
+  /** What this page offers instead of a contribution, above the pay card. */
+  panel: ReactNode;
+  /** The pay card's own action, disabled: nothing can be funded yet. */
+  payLabel: string;
+  /** Pictures a publication pinned, which a setup's own fields never carry. */
+  pictures?: { photo?: string; ownerPhoto?: string; operatorPhoto?: string };
+};
+
+export function DemoProjectPage({ project, planned }: { project?: CreatedProject; planned?: PlannedProjectSlots }) {
   const [ready, setReady] = useState(false);
   useEffect(() => {
     setReady(true);
@@ -2159,19 +2173,19 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
       description: project?.values.description || (project
         ? "An asset funded together, with FUND ownership and a separate INCOME revenue project."
         : "A founders’ clubhouse in Jurerê Internacional, Florianópolis. Workspaces, events, a pool and wellness activities bring people together and give the property a way to earn revenue."),
-      photo: project?.values.photo || "",
+      photo: planned?.pictures?.photo || project?.values.photo || "",
       ownerName: project ? project.values.ownerName : "paloma.eth",
       ownerIntroduction: project ? project.values.ownerIntroduction : "The Owner manages the project and its asset, including the purchase, treasury, and eventual sale.",
-      ownerPhoto: project?.values.ownerPhoto || "",
+      ownerPhoto: planned?.pictures?.ownerPhoto || project?.values.ownerPhoto || "",
       operatorName: project ? project.values.operatorName : "Founder Haus team",
       operatorIntroduction: project ? project.values.operatorIntroduction : "We’re a small team of founders and local hosts turning this house into a place to work, gather, and recharge. We handle day-to-day operations, welcome members and guests, and keep the community updated on income and expenses.",
-      operatorPhoto: project?.values.operatorPhoto || "",
+      operatorPhoto: planned?.pictures?.operatorPhoto || project?.values.operatorPhoto || "",
     },
     ownerAddress: project ? project.values.ownerWallet || "" : founderHausAccount,
     operatorAddress: project ? project.values.operatorWallet || "" : founderHausAccount,
     delegates: [],
     splits: { fund: [], income: [] },
-  }), [project]);
+  }), [project, planned?.pictures]);
   const management = useDemoProjectManagement(project?.id ?? "founderhaus", managementInitial, reset);
   const managementProps = { state: management.state, ready: management.ready, onSave: management.save };
   const [invalidFields, setInvalidFields] = useState<Record<string, boolean>>(
@@ -2337,7 +2351,8 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
               ...demoStateMetadata(overview, phase),
             ].filter(Boolean)}
             headerProgress={overview && !overview.purchaseCompleted && <FundingProgress raised={overview.raised} goal={overview.raiseGoal} historical={phase !== "raising"} compact />}
-            payment={
+            payment={<>
+              {planned?.panel}
               <aside
                 id="pay-panel"
                 className="pay-panel"
@@ -2352,16 +2367,17 @@ export function DemoProjectPage({ project }: { project?: CreatedProject }) {
                   contributionError={derived.personalError || derived.error}
                   fundAmount={inputs.investment}
                   onFundAmount={(value) => change("investment", value)}
+                  unavailableLabel={planned?.payLabel}
                 />
               </aside>
-            }
+            </>}
             activity={<DemoActivity projection={overview} />}
             overview={
               <DemoOverview
                 name={name}
                 project={project}
                 management={management.state}
-                editDetails={<div className="mt-5 space-y-3"><DemoProjectDetailsEditor {...managementProps} />{management.error && <p role="alert">{management.error}</p>}</div>}
+                editDetails={planned ? null : <div className="mt-5 space-y-3"><DemoProjectDetailsEditor {...managementProps} />{management.error && <p role="alert">{management.error}</p>}</div>}
                 phase={phase}
                 p={overview}
               />

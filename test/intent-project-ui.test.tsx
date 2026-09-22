@@ -84,6 +84,7 @@ describe('a published project page', () => {
     runtime.getIntent.mockReset().mockResolvedValue(intent())
     vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
     HTMLElement.prototype.scrollIntoView = vi.fn()
+    vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
     runtime.requestDeploy.mockReset()
     runtime.requestRelay.mockReset().mockRejectedValue(new Error('no relay in this test'))
     runtime.recordDeployment.mockReset()
@@ -152,20 +153,22 @@ describe('a published project page', () => {
     expect(host.textContent).toContain(safeOwners[1])
   })
 
-  it('reads the published plan into the stages, and the raise into the header', async () => {
+  it('models the published setup, with nothing raised against its goal', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
       name: 'Neighborhood Workshop',
       homerun: { version: 1, kind: 'fund', setup: {
-        location: 'Florianópolis', purchaseBudget: 500_000, opsReserve: 100_000,
-        monthlyRent: 10_000, monthlyCosts: 6_000, revenueDescription: 'Members pay for tool hire and repairs.',
+        name: 'Neighborhood Workshop', location: 'Florianópolis',
+        purchaseBudget: 250_000, opsReserve: 50_000, monthlyRent: 10_000, monthlyCosts: 6_000,
       } },
     }), { headers: { 'content-type': 'application/json' } })))
     await render()
-    expect(host.textContent).toContain('Raised: $0 of $615,384.62')
+    expect(host.textContent).toContain('Goal: $307.7K')
     expect(host.textContent).toContain('Funded: 0%')
+    expect(host.querySelector('#pay-panel')).toBeTruthy()
+    expect(button('Deploy first')?.disabled).toBe(true)
     await openTab('Stages')
-    expect(host.textContent).toContain('Members pay for tool hire and repairs.')
-    expect(host.textContent).toContain('Published estimates from the project metadata.')
+    expect(host.textContent).toContain('$307,692.31')
+    expect(host.textContent).toContain('$250,000')
   })
 
   it('deploys through Center, reports each chain, and opens the created project', async () => {

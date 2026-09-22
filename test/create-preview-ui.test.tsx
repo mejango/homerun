@@ -75,6 +75,7 @@ describe('the preview of a project that is not created yet', () => {
     localStorage.clear()
     vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
     HTMLElement.prototype.scrollIntoView = vi.fn()
+    vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
     localStorage.setItem(CREATE_DRAFT_KEY, JSON.stringify(saved()))
     runtime.address = wallet
     runtime.centerWallet = false
@@ -146,24 +147,35 @@ describe('the preview of a project that is not created yet', () => {
 
   it('renders the raise the setup adds up to, with nothing raised against it', async () => {
     await render()
-    expect(host.textContent).toContain('Raised: $0 of $615,384.62')
+    expect(host.textContent).toContain('Goal: $615.4K')
     expect(host.textContent).toContain('Funded: 0%')
     expect(host.textContent).toContain('Raise goal')
     expect(host.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('0')
   })
 
-  it('reads the stages off the setup, without claiming anything is published', async () => {
-    localStorage.setItem(CREATE_DRAFT_KEY, JSON.stringify(saved({
-      revenueDescription: 'Members pay for tool hire and repairs.',
-      minimumRevenue: 4_000, minimumRevenueConsequences: 'The Owner reviews operating costs.',
-    })))
+  it('offers the pay card the created project offers, without an action', async () => {
+    await render()
+    const pay = host.querySelector('#pay-panel')!
+    expect(pay).toBeTruthy()
+    expect(pay.textContent).toContain('Fund')
+    expect(pay.textContent).toContain('You get')
+    expect(pay.textContent).toContain('Your new share')
+    expect(pay.querySelector<HTMLSelectElement>('#pay-currency')?.value).toBe('USDC')
+    expect(button('Available once created')?.disabled).toBe(true)
+  })
+
+  it('reads the stages off the setup', async () => {
+    localStorage.setItem(CREATE_DRAFT_KEY, JSON.stringify(saved({ purchaseBudget: 250_000, opsReserve: 50_000 })))
     await render()
     await openTab('Stages')
-    expect(host.textContent).toContain('Contributions open as soon as this project is created.')
-    expect(host.textContent).toContain('Members pay for tool hire and repairs.')
-    expect(host.textContent).toContain('The Owner reviews operating costs.')
-    expect(host.textContent).toContain('The estimates this setup publishes.')
-    expect(host.textContent).not.toContain('Published estimates from the project metadata.')
+    expect(host.textContent).toContain('$307,692.31')
+    expect(host.textContent).toContain('$250,000')
+    expect(host.textContent).toContain('$50,000')
+  })
+
+  it('offers no editor for details a project does not have yet', async () => {
+    await render()
+    expect(host.textContent).not.toContain('Edit project details')
   })
 
   it('goes back to the setup without changing it', async () => {
@@ -219,8 +231,7 @@ describe('the preview of a project that is not created yet', () => {
     runtime.address = undefined
     runtime.openSignIn.mockImplementation(async () => { runtime.address = wallet })
     await render()
-    expect([...host.querySelectorAll('button')].some(item => item.textContent === 'Sign in')).toBe(false)
-    expect(host.textContent).not.toContain('Wallet')
+    expect([...host.querySelector('.planned-bar')!.querySelectorAll('button')].map(item => item.textContent)).toEqual(['Edit', 'Create'])
     await act(async () => { button('Create')!.click() })
     expect(runtime.openSignIn).toHaveBeenCalledTimes(1)
     expect(runtime.publishIntent).toHaveBeenCalled()

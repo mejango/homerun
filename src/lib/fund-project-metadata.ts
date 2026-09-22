@@ -1,6 +1,7 @@
 import type { JBProjectMetadata } from '@bananapus/nana-sdk-core'
 import { getAddress, isAddress, zeroAddress, type Address } from 'viem'
 import type { CreateValues } from '@/components/CreateFlow'
+import { normalizeCreateDraft } from '../../web/create-model.mjs'
 import { JBCENTER_IPFS_GATEWAY } from './jbcenter-ipfs'
 
 /** Standard Juicebox display metadata with Homerun's descriptive plan extension. */
@@ -62,6 +63,9 @@ export type FundProjectMetadata = {
   operator: ProjectProfileMetadata | null
   /** The published initial INCOME allocation an INCOME launch pointed at; informational, the launch commits its hash. */
   incomeManifestUri: string | null
+  /** The whole published setup, read back through the form's own validation, so
+   *  a published project models the same page the setup previewed. */
+  setup: CreateValues | null
   plan: {
     ownerWallet: Address | null
     operatorWallet: Address | null
@@ -71,7 +75,6 @@ export type FundProjectMetadata = {
     monthlyCosts: number | null
     minimumRevenue: number | null
     minimumRevenueConsequences: string | null
-    revenueDescription: string | null
     operatorFundPercent: number | null
     operatorSplitPercent: number | null
     fundHolderSplitPercent: number | null
@@ -121,14 +124,16 @@ export function parseFundProjectMetadata(value: unknown): FundProjectMetadata {
     }
     return parsed.name || parsed.introduction || parsed.photoUrl ? parsed : null
   }
+  const coverUrl = fundIpfsUrl(metadata.coverImageUri) ?? fundIpfsUrl(metadata.logoUri)
   return {
     name: text(metadata.name, 160),
     description: text(metadata.description, 4_000),
     location: setup ? text(setup.location, 200) : null,
-    coverUrl: fundIpfsUrl(metadata.coverImageUri) ?? fundIpfsUrl(metadata.logoUri),
+    coverUrl,
     logoUrl: fundIpfsUrl(metadata.logoUri),
     owner: profile('owner'),
     operator: profile('operator'),
+    setup: publishedSetup(setup, coverUrl, profile('owner'), profile('operator')),
     incomeManifestUri: homerun?.type === 'income' && typeof homerun.manifestUri === 'string' && fundIpfsUrl(homerun.manifestUri) ? homerun.manifestUri : null,
     plan: setup ? {
       ownerWallet: wallet(Object.hasOwn(setup, 'ownerWallet') ? setup.ownerWallet : setup.operatorWallet),
@@ -139,11 +144,32 @@ export function parseFundProjectMetadata(value: unknown): FundProjectMetadata {
       monthlyCosts: number(setup.monthlyCosts),
       minimumRevenue: number(setup.minimumRevenue),
       minimumRevenueConsequences: text(setup.minimumRevenueConsequences, 2_000),
-      revenueDescription: text(setup.revenueDescription, 1_000),
       operatorFundPercent: number(setup.operatorFundPercent, 100),
       operatorSplitPercent: number(setup.operatorSplitPercent, 100),
       fundHolderSplitPercent: number(setup.stickySplitPercent, 100),
     } : null,
+  }
+}
+
+/**
+ * A published setup is a stranger's JSON, so it is read through the same
+ * validation the form applies to its own fields. Pictures come from the
+ * publication's pins, which a setup never carries.
+ */
+function publishedSetup(
+  setup: Record<string, unknown> | null,
+  coverUrl: string | null,
+  owner: ProjectProfileMetadata | null,
+  operator: ProjectProfileMetadata | null,
+): CreateValues | null {
+  if (!setup) return null
+  const normalized = normalizeCreateDraft({ ...setup, photo: '', ownerPhoto: '', operatorPhoto: '' }) as unknown as { valid: boolean; values: CreateValues }
+  if (!normalized.valid) return null
+  return {
+    ...normalized.values,
+    photo: coverUrl ?? '',
+    ownerPhoto: owner?.photoUrl ?? '',
+    operatorPhoto: operator?.photoUrl ?? '',
   }
 }
 

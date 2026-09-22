@@ -342,7 +342,9 @@ try {
   await page.waitForURL(`${appOrigin}/create/preview`)
   await page.getByText('Preview. Nothing is created yet.', { exact: true }).waitFor()
   assert.match(await page.locator('main').textContent(), /Neighborhood Workshop/)
-  assert.match(await page.locator('main').textContent(), /Ethereum, Optimism, Base/)
+  // The pay card the created project offers, over the chains this setup selected.
+  assert.deepEqual(await page.locator('#pay-panel .payment-chain-select option').allTextContents(), ['Ethereum', 'Optimism', 'Base'])
+  assert.equal(await page.getByRole('button', { name: 'Available once created', exact: true }).isDisabled(), true)
   assert.equal(await page.evaluate(() => localStorage.getItem('homerun:fund-launch:v1')), null)
 
   await page.getByRole('button', { name: 'Edit', exact: true }).click()
@@ -363,10 +365,9 @@ try {
   const intentText = await page.locator('main').textContent()
   assert.match(intentText, /Neighborhood Workshop/)
   assert.match(intentText, /free/)
-  await page.getByRole('tab', { name: 'Owners', exact: true }).click()
-  const ownersText = await page.locator('main').textContent()
-  assert.match(ownersText, /Owner: create Safe/)
-  assert.match(ownersText, new RegExp(SECOND_SIGNER, 'i'))
+  assert.match(intentText, /Owner: create Safe/)
+  assert.match(intentText, new RegExp(SECOND_SIGNER, 'i'))
+  assert.equal(await page.getByRole('button', { name: 'Deploy first', exact: true }).isDisabled(), true)
   await page.getByText(/costs ~[\d.]+ ETH/).first().waitFor()
   assert.deepEqual(errors, [])
 
