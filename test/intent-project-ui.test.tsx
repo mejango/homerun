@@ -82,6 +82,8 @@ describe('a published project page', () => {
   let client: QueryClient
   beforeEach(() => {
     runtime.getIntent.mockReset().mockResolvedValue(intent())
+    vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
+    HTMLElement.prototype.scrollIntoView = vi.fn()
     runtime.requestDeploy.mockReset()
     runtime.requestRelay.mockReset().mockRejectedValue(new Error('no relay in this test'))
     runtime.recordDeployment.mockReset()
@@ -104,6 +106,10 @@ describe('a published project page', () => {
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)) })
   }
   const button = (label: string) => [...host.querySelectorAll('button')].find(item => item.textContent?.startsWith(label))
+  const openTab = async (label: string) => {
+    const tab = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(item => item.textContent?.trim() === label)
+    await act(async () => { tab!.click() })
+  }
 
   it('renders the FUND from the signed calls and the pinned details', async () => {
     await render()
@@ -137,12 +143,29 @@ describe('a published project page', () => {
       },
     }))
     await render()
+    await openTab('Owners')
     expect(host.textContent).toContain('Owner: create Safe')
     expect(host.textContent).toContain('along with the project')
     expect(host.textContent).toContain('whether the Safe exists yet or not')
     expect(host.textContent).toContain('2/2 approvals')
     expect(host.textContent).toContain(safeOwners[0])
     expect(host.textContent).toContain(safeOwners[1])
+  })
+
+  it('reads the published plan into the stages, and the raise into the header', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      name: 'Neighborhood Workshop',
+      homerun: { version: 1, kind: 'fund', setup: {
+        location: 'Florianópolis', purchaseBudget: 500_000, opsReserve: 100_000,
+        monthlyRent: 10_000, monthlyCosts: 6_000, revenueDescription: 'Members pay for tool hire and repairs.',
+      } },
+    }), { headers: { 'content-type': 'application/json' } })))
+    await render()
+    expect(host.textContent).toContain('Raised: $0 of $615,384.62')
+    expect(host.textContent).toContain('Funded: 0%')
+    await openTab('Stages')
+    expect(host.textContent).toContain('Members pay for tool hire and repairs.')
+    expect(host.textContent).toContain('Published estimates from the project metadata.')
   })
 
   it('deploys through Center, reports each chain, and opens the created project', async () => {

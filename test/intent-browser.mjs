@@ -363,8 +363,10 @@ try {
   const intentText = await page.locator('main').textContent()
   assert.match(intentText, /Neighborhood Workshop/)
   assert.match(intentText, /free/)
-  assert.match(intentText, /Owner: create Safe/)
-  assert.match(intentText, new RegExp(SECOND_SIGNER, 'i'))
+  await page.getByRole('tab', { name: 'Owners', exact: true }).click()
+  const ownersText = await page.locator('main').textContent()
+  assert.match(ownersText, /Owner: create Safe/)
+  assert.match(ownersText, new RegExp(SECOND_SIGNER, 'i'))
   await page.getByText(/costs ~[\d.]+ ETH/).first().waitFor()
   assert.deepEqual(errors, [])
 

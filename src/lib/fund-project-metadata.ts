@@ -71,6 +71,7 @@ export type FundProjectMetadata = {
     monthlyCosts: number | null
     minimumRevenue: number | null
     minimumRevenueConsequences: string | null
+    revenueDescription: string | null
     operatorFundPercent: number | null
     operatorSplitPercent: number | null
     fundHolderSplitPercent: number | null
@@ -138,6 +139,7 @@ export function parseFundProjectMetadata(value: unknown): FundProjectMetadata {
       monthlyCosts: number(setup.monthlyCosts),
       minimumRevenue: number(setup.minimumRevenue),
       minimumRevenueConsequences: text(setup.minimumRevenueConsequences, 2_000),
+      revenueDescription: text(setup.revenueDescription, 1_000),
       operatorFundPercent: number(setup.operatorFundPercent, 100),
       operatorSplitPercent: number(setup.operatorSplitPercent, 100),
       fundHolderSplitPercent: number(setup.stickySplitPercent, 100),

@@ -10,7 +10,7 @@ import { JBCenterRequestError, describeCenterRefusal, intentPath } from '@banana
 import { useWallet } from '@/hooks/useWallet'
 import { wagmiConfig } from '@/providers/Providers'
 import { WalletButton } from '@/components/WalletButton'
-import { IntentProjectView } from '@/components/IntentProjectView'
+import { PlannedProjectView } from '@/components/PlannedProject'
 import { jbCenterClient } from '@/lib/jbcenter-client'
 import { loadCreateValues } from '@/lib/create-preview'
 import { displayChainName } from '@/lib/chainDisplay'
@@ -160,17 +160,23 @@ export default function CreatePreview() {
     .join('\n')
 
   const details = previewFundProjectMetadata(values)
+  const operatorMode = values.ownerIsOperator ? values.ownerMode : values.operatorMode
 
-  return <IntentProjectView
+  return <PlannedProjectView
+    planIntro="The estimates this setup publishes. These values do not set withdrawal rights, mint permissions, or confirm an asset purchase."
     banner={<p role="status" className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7">{BANNER}</p>}
     display={{
       name: details.name ?? values.name, location: details.location, logoUrl: details.logoUrl,
       coverUrl: details.coverUrl, description: details.description,
       owner: values.ownerMode === 'create' ? 'A multisig this project creates' : values.ownerWallet,
+      ownerAddress: values.ownerMode === 'create' ? null : values.ownerWallet || null,
+      operatorAddress: operatorMode === 'create' ? null : values.operatorWallet || null,
       ownerProfile: details.owner ?? undefined,
+      operatorProfile: details.operator ?? undefined,
       chainIds, tokenName: values.fundTokenName, ticker: values.fundTicker,
       mustStartAtOrAfter: 0, status: 'Not created yet',
       multisigs: planned || undefined,
+      plan: details.plan,
     }}
     actions={<section className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7">
       <p>Creating publishes these exact project creations to Juicebox Center and gives you a link anyone can open. You send no transaction and pay no creation fee here.</p>
