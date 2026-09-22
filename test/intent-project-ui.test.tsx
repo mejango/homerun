@@ -166,10 +166,18 @@ describe('a published project page', () => {
   it('opens the created project immediately when one already exists', async () => {
     runtime.getIntent.mockResolvedValue(intent({
       status: 'deployed',
+      deployments: [{ chainId: 8453, projectId: '7', transactionHash: hash, createdAt: new Date(0).toISOString() }],
+    }))
+    await render()
+    expect(navigate.replace).toHaveBeenCalledWith(`/project/8453/7?intent=${intentId}`)
+  })
+
+  it('opens nothing for a deployment on a chain this intent does not carry', async () => {
+    runtime.getIntent.mockResolvedValue(intent({
       deployments: [{ chainId: 84532, projectId: '7', transactionHash: hash, createdAt: new Date(0).toISOString() }],
     }))
     await render()
-    expect(navigate.replace).toHaveBeenCalledWith(`/project/84532/7?intent=${intentId}`)
+    expect(navigate.replace).not.toHaveBeenCalled()
   })
 
   it('keeps the signed terms and the Deploy action when the pinned details cannot be read', async () => {

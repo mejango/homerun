@@ -28,7 +28,7 @@ export function IntentProject({ intentId }: { intentId: string }) {
   }
 
   const deployment = terms ? intent.data?.deployments.find(item => item.chainId === terms.chainIds.find(chainId =>
-    intent.data?.deployments.some(row => row.chainId === chainId))) ?? intent.data?.deployments[0] : undefined
+    intent.data?.deployments.some(row => row.chainId === chainId))) : undefined
   useEffect(() => {
     // A reader who arrives at a project that already exists opens it. A deploy
     // started here keeps its per-chain progress until that run resolves, so a
