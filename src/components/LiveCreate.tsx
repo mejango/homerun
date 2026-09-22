@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { getPublicClient, getAccount, signMessage } from '@wagmi/core'
 import { jbProjectsAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
-import { toHex, type Hex, type PublicClient } from 'viem'
+import { isAddressEqual, toHex, type Hex, type PublicClient } from 'viem'
 import { useWallet } from '@/hooks/useWallet'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { wagmiConfig } from '@/providers/Providers'
@@ -15,7 +15,7 @@ import { buildFundLaunch, type FundTransaction } from '@/lib/fund-contracts'
 import { FUND_LAUNCH_KEY, canCancelLaunch, cancelUnsubmittedLaunch, discardUnsignedLaunch, decodeLaunchSession, encodeLaunchSession, saveLaunch, updateLaunchStatus, refreshLaunchCreationFee, archiveLaunch, loadLaunchSession, sameSender, type FundLaunchSession, type LaunchStatus } from '@/lib/fund-launch-session'
 import { checkLaunchDeployment, verifyFundLaunch, verifyFailedFundLaunch } from '@/lib/fund-launch-verification'
 import { publishFundProjectMetadata } from '@/lib/publish-fund-project-metadata'
-import { resolveCreateMultisigs, checkCreateMultisigs, verifyCreatedMultisigs, multisigDeploymentRequest, multisigReview } from '@/lib/create-multisig'
+import { SAFE_CREATE_ABI, SAFE_SINGLETON, resolveCreateMultisigs, checkCreateMultisigs, verifyCreatedMultisigs, multisigCreationData, multisigDeploymentRequest, multisigInitializer, multisigReview } from '@/lib/create-multisig'
 import { runRelayrLaunch } from '@/lib/fund-launch-relayr'
 import { displayChainName } from '@/lib/chainDisplay'
 import { SUPPORTED_CHAINS } from '@/lib/chains'
@@ -195,13 +195,12 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
 
   const selectionKey = values?.networkEnvironment && values?.networks?.length
     ? plannedNetworks(values).map((chain: { chainId: number }) => chain.chainId).join(',') : ''
-  // Juicebox Center recovers the publisher from the signature itself, so only an
-  // external EOA can publish: a passkey or Safe signature is refused. A new
-  // multisig needs a transaction, and mainnet is never sponsored.
+  // Juicebox Center recovers the publisher from the signature, so only an external
+  // wallet can publish: a passkey or Safe connection is refused. Mainnet is never
+  // sponsored. A planned multisig travels with the intent as its own setup call.
   // `loaded` keeps this first client render equal to the server's.
   const safeConnected = loaded && isSafeConnection(wagmiConfig)
-  const multisigPlanned = !!values && (values.ownerMode === 'create' || (!values.ownerIsOperator && values.operatorMode === 'create'))
-  const intentEligible = !!address && !isCenterWallet && !safeConnected && !multisigPlanned
+  const intentEligible = !!address && !isCenterWallet && !safeConnected
     && fundIntentEligibleChains(selectionKey ? selectionKey.split(',').map(Number) : [])
   useEffect(() => {
     onLockChange?.(session?.input.chainIds ?? (preparing && selectionKey ? selectionKey.split(',').map(Number) : null))
@@ -317,16 +316,27 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
       await Promise.all(built.requests.map(request => checkLaunchDeployment(publicClient(request.chainId), request)))
       const intent = buildFundIntent(input, values.name)
       setProgress('')
+      const plans = resolved.plans
       await requireTransactionReview({
         kind: 'authorization',
         title: 'Create your project',
-        description: 'Your signature publishes these exact project creations to Juicebox Center. Center’s sponsor sends them on every selected chain the first time the project is used. You send no transaction and pay no creation fee here.',
+        description: plans.length
+          ? `Your signature publishes these exact creations to Juicebox Center. Center’s sponsor creates your multisigs and then the project on every selected chain the first time it is used. You send no transaction and pay no creation fee here.\n${multisigReview(plans)}`
+          : 'Your signature publishes these exact project creations to Juicebox Center. Center’s sponsor sends them on every selected chain the first time the project is used. You send no transaction and pay no creation fee here.',
         confirmLabel: 'Continue to wallet',
         calls: intent.deploymentCalls.map(call => {
           // Center's sponsor is the sender of every one of these calls, and
           // HomerunDeployer scopes its salt to that sender, so no `from` is shown.
+          const plan = plans.find(item => call.data === multisigCreationData(item))
+          if (plan) return {
+            chainId: call.chainId, to: call.to, data: call.data,
+            abi: SAFE_CREATE_ABI, functionName: 'createProxyWithNonce',
+            args: [SAFE_SINGLETON, multisigInitializer(plan), BigInt(plan.saltNonce)],
+            label: `Center’s sponsor creates the ${plan.role === 'owner' ? 'Owner' : 'Operator'} multisig on ${displayChainName(call.chainId)}`,
+            contractName: 'SafeProxyFactory',
+          }
           const request = built.requests.find(item => item.chainId === call.chainId)
-          if (!request) throw new Error('The reviewed calls do not match the launch plan.')
+          if (!request || !isAddressEqual(call.to, request.address)) throw new Error('The reviewed calls do not match the launch plan.')
           return {
             chainId: call.chainId, to: call.to, data: call.data,
             abi: request.abi, functionName: request.functionName, args: request.args,

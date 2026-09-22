@@ -17,7 +17,7 @@ const publicationMessage = `Juice Central project intent\nVersion: 1\nContent ha
 
 const runtime = vi.hoisted(() => ({
   centerWallet: false, safe: false,
-  readContract: vi.fn(), getBlock: vi.fn(), publish: vi.fn(), checkDeployment: vi.fn(),
+  readContract: vi.fn(), getBlock: vi.fn(), getCode: vi.fn(), publish: vi.fn(), checkDeployment: vi.fn(),
   signMessage: vi.fn(), review: vi.fn(), prepareIntent: vi.fn(), publishIntent: vi.fn(),
 }))
 const navigate = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }))
@@ -25,7 +25,7 @@ const navigate = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }))
 vi.mock('next/navigation', () => ({ useRouter: () => navigate }))
 vi.mock('@wagmi/core', () => ({
   getAccount: () => ({ address: '0x1111111111111111111111111111111111111111' }),
-  getPublicClient: () => ({ readContract: runtime.readContract, getBlock: runtime.getBlock }),
+  getPublicClient: () => ({ readContract: runtime.readContract, getBlock: runtime.getBlock, getCode: runtime.getCode }),
   signMessage: runtime.signMessage,
 }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
@@ -43,6 +43,14 @@ vi.mock('@/lib/transaction-review', () => ({ requireTransactionReview: runtime.r
 vi.mock('@/lib/jbcenter-client', () => ({
   jbCenterClient: { prepareIntent: runtime.prepareIntent, publishIntent: runtime.publishIntent },
 }))
+vi.mock('@bananapus/nana-sdk-core/safe', async original => {
+  const sdk = await original<typeof import('@bananapus/nana-sdk-core/safe')>()
+  return { ...sdk, resolveSafeAddress: vi.fn(async (input: Parameters<typeof sdk.resolveSafeAddress>[0]) => {
+    if (input.kind === 'existing') return sdk.resolveSafeAddress(input, [])
+    const policy = { owners: input.owners, threshold: input.threshold, saltNonce: input.saltNonce, proxyCreationCode: sdk.SAFE_PROXY_CREATION_CODE }
+    return { address: sdk.predictSafeAddress(policy), plan: { ...policy, address: sdk.predictSafeAddress(policy) } }
+  }) }
+})
 
 import { FundDeploy } from '../src/components/LiveCreate'
 
@@ -68,6 +76,7 @@ describe('creating a FUND without a transaction', () => {
     runtime.safe = false
     runtime.readContract.mockReset().mockResolvedValue(0n)
     runtime.getBlock.mockReset().mockResolvedValue({ timestamp: 1_800_000_000n })
+    runtime.getCode.mockReset().mockResolvedValue('0x6000')
     runtime.publish.mockReset().mockResolvedValue({ cid: 'bafkreimetadata' })
     runtime.checkDeployment.mockReset().mockResolvedValue(undefined)
     runtime.review.mockReset().mockResolvedValue(undefined)
@@ -98,7 +107,9 @@ describe('creating a FUND without a transaction', () => {
     expect(button('Create project')).toBeUndefined()
   })
 
-  it('keeps the transaction path alone for mainnet, a Safe, a Center wallet, or a new multisig', async () => {
+  const signers = [`0x${'1'.repeat(40)}`, `0x${'2'.repeat(40)}`]
+
+  it('keeps the transaction path alone for mainnet, a Safe and a Center wallet', async () => {
     await render({ networks: ['ethereum', 'base'] })
     expect(button('Create without a transaction')).toBeUndefined()
     expect(button('Create project')).toBeTruthy()
@@ -109,9 +120,34 @@ describe('creating a FUND without a transaction', () => {
     runtime.centerWallet = true
     await render()
     expect(button('Create without a transaction')).toBeUndefined()
+  })
+
+  it('offers the no-transaction path when a new multisig is planned', async () => {
     runtime.centerWallet = false
-    await render({ ownerMode: 'create', ownerSigners: [`0x${'1'.repeat(40)}`, `0x${'2'.repeat(40)}`], ownerThreshold: 2 })
-    expect(button('Create without a transaction')).toBeUndefined()
+    await render({ ownerMode: 'create', ownerSigners: signers, ownerThreshold: 2 })
+    expect(button('Create without a transaction')).toBeTruthy()
+  })
+
+  it('reviews the Safe creation before the launch, and publishes both', async () => {
+    await render({ ownerMode: 'create', ownerSigners: signers, ownerThreshold: 2 })
+    await act(async () => button('Create without a transaction')!.click())
+    const review = runtime.review.mock.calls[0][0]
+    expect(review.kind).toBe('authorization')
+    expect(review.calls).toHaveLength(2)
+    expect(review.calls[0].functionName).toBe('createProxyWithNonce')
+    expect(review.calls[0].contractName).toBe('SafeProxyFactory')
+    expect(review.calls[0].label).toContain('Owner multisig')
+    expect(review.calls[0].from).toBeUndefined()
+    expect(review.calls[1].functionName).toBe('launchFundFor')
+    expect(review.calls[1].from).toBeUndefined()
+    expect(review.description).toContain('2/2 approvals')
+    const envelope = runtime.publishIntent.mock.calls[0][0]
+    expect(envelope.deploymentCalls).toHaveLength(2)
+    expect(envelope.jb.safes).toHaveLength(1)
+    expect(envelope.jb.safes[0].role).toBe('owner')
+    expect(envelope.jb.safes[0].threshold).toBe(2)
+    expect(envelope.jb.owner).toBe(envelope.jb.safes[0].address)
+    expect(navigate.push).toHaveBeenCalledWith(`/intent/${intentId}`)
   })
 
   it('reviews the exact calls, signs once, saves the published project and opens its page', async () => {
