@@ -14,9 +14,13 @@ export type LaunchStatus = {
   executionHash?: Hex
   projectId?: string
 }
+const INTENT_ID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i
+
 export type FundLaunchSession = {
   version: 1
-  transport?: 'direct' | 'relayr'
+  transport?: 'direct' | 'relayr' | 'intent'
+  /** Juicebox Center's identifier for the published project. */
+  intentId?: string
   relayr?: LaunchRelayrJournal
   paymentChainId?: number
   name: string
@@ -58,8 +62,10 @@ export function decodeLaunchSession(raw: string): FundLaunchSession {
     if (status.multisigSetup && (typeof status.multisigSetup.safe !== 'boolean' || (status.multisigSetup.hash !== undefined && !/^0x[\da-f]{64}$/i.test(status.multisigSetup.hash)))) throw new Error('Invalid multisig setup transaction.')
     if (status.projectId !== undefined && (typeof status.projectId !== 'string' || !/^[1-9]\d*$/.test(status.projectId) || BigInt(status.projectId) >= 1n << 256n)) throw new Error('Saved project ID is invalid.')
   }
-  if (value.transport !== undefined && !['direct', 'relayr'].includes(value.transport)) throw new Error('Invalid launch transport.')
+  if (value.transport !== undefined && !['direct', 'relayr', 'intent'].includes(value.transport)) throw new Error('Invalid launch transport.')
   if (value.relayr && value.transport !== 'relayr') throw new Error('Relayed authorizations cannot use direct deployment.')
+  if (value.intentId !== undefined && (value.transport !== 'intent' || typeof value.intentId !== 'string' || !INTENT_ID.test(value.intentId))) throw new Error('Invalid published project reference.')
+  if (value.transport === 'intent' && (value.relayr || !Object.values(value.statuses).every(status => status.phase === 'ready'))) throw new Error('A published project has no wallet transactions to resume.')
   return value
 }
 
@@ -98,6 +104,7 @@ export function saveLaunch(session: FundLaunchSession, options: { cancelledChain
     const previous = decodeLaunchSession(existing)
     if (previous.input.salt !== validated.input.salt) throw new Error('Another FUND launch is already saved. Finish that launch before preparing another.')
     if ((previous.transport ?? 'direct') !== (validated.transport ?? 'direct') && !(validated.transport === 'relayr' && !previous.relayr && Object.values(previous.statuses).every(status => status.phase === 'ready'))) throw new Error('A submitted launch cannot change transport.')
+    if (previous.intentId && previous.intentId !== validated.intentId) throw new Error('A published project cannot be replaced.')
     if (previous.relayr?.published && !validated.relayr) throw new Error('Published authorizations must be retained for recovery.')
     if (frozenInput(previous) !== frozenInput(validated)) throw new Error('A saved launch plan is immutable. Finish it before changing deployment parameters.')
     for (const chainId of previous.input.chainIds) {
@@ -134,7 +141,11 @@ export function refreshLaunchCreationFee(salt: Hex, chainId: number, creationFee
 /** Keep completed history before clearing the active record for a new project. */
 export function archiveLaunch(salt: Hex): void {
   const session = requireLaunch(salt)
-  if (!session.input.chainIds.every(id => session.statuses[id].phase === 'confirmed')) throw new Error('Confirm every linked deployment before archiving this launch.')
+  if (session.transport === 'intent') {
+    if (!session.intentId) throw new Error('Publish this project before archiving its launch.')
+  } else if (!session.input.chainIds.every(id => session.statuses[id].phase === 'confirmed')) {
+    throw new Error('Confirm every linked deployment before archiving this launch.')
+  }
   const historyKey = `${FUND_LAUNCH_KEY}:history`
   const rawHistory = localStorage.getItem(historyKey)
   const history: unknown = rawHistory ? JSON.parse(rawHistory) : []
@@ -149,6 +160,7 @@ export function sameSender(actual: Address | undefined, expected: Address): void
 /** Only a plan that has never acquired an authorization can follow edited networks. */
 export function discardUnsignedLaunch(salt: Hex): boolean {
   const session = requireLaunch(salt)
+  if (session.intentId) return false
   if (!Object.values(session.statuses).every(status => status.phase === 'ready')
     || session.relayr?.signed.length || session.relayr?.superseded?.length
     || session.relayr?.published || session.relayr?.quote || session.relayr?.paymentHash
@@ -158,6 +170,7 @@ export function discardUnsignedLaunch(salt: Hex): boolean {
 }
 
 export function canCancelLaunch(session: FundLaunchSession): boolean {
+  if (session.transport === 'intent') return !session.intentId
   const phases = session.transport === 'relayr' ? ['ready', 'signing', 'authorized'] : ['ready']
   return Object.values(session.statuses).every(status => phases.includes(status.phase) && !status.hash && !status.executionHash)
     && (!session.relayr || (['signing', 'quoting'].includes(session.relayr.phase)
