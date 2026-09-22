@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { getAccount, getPublicClient, sendTransaction, switchChain, waitForTransactionReceipt } from '@wagmi/core'
 import { erc2771ForwarderAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import {
-  EnsureDeployedError, describeCenterRefusal, ensureDeployed, sponsorableChains, unsponsoredChains,
+  EnsureDeployedError, JBCenterRequestError, describeCenterRefusal, ensureDeployed, sponsorableChains, unsponsoredChains,
   type EnsureDeployedStep, type JBCenterDeploymentInput, type JBCenterIntent,
 } from '@bananapus/nana-sdk-core/jbcenter'
 import { jbCenterClient } from '@/lib/jbcenter-client'
@@ -147,7 +147,9 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
         setStopped(true); setError(deployStopped(cause.chainId)); return
       }
       const refused = describeCenterRefusal(watcher.refusal())
-      const own = cause instanceof EnsureDeployedError ? DEPLOY_FAILED : cause instanceof Error && cause.message ? cause.message : DEPLOY_UNAVAILABLE
+      const own = cause instanceof EnsureDeployedError ? DEPLOY_FAILED
+        : cause instanceof JBCenterRequestError ? DEPLOY_UNAVAILABLE
+        : cause instanceof Error && cause.message ? cause.message : DEPLOY_UNAVAILABLE
       setError(refused?.message ?? own)
     } finally {
       if (run.current === controller) run.current = null

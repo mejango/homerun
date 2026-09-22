@@ -13,12 +13,24 @@ const intentId = '3f0f2f4c-0f3f-4f2f-8f1f-0f2f3f4f5f6f'
 const contentHash = `0x${'ab'.repeat(32)}` as Hex
 const hash = `0x${'ef'.repeat(32)}` as Hex
 
-const runtime = vi.hoisted(() => ({ getIntent: vi.fn(), requestDeploy: vi.fn() }))
+const runtime = vi.hoisted(() => ({ getIntent: vi.fn(), requestDeploy: vi.fn(), requestRelay: vi.fn(), recordDeployment: vi.fn() }))
 const navigate = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }))
 vi.mock('next/navigation', () => ({ useRouter: () => navigate }))
 vi.mock('next/image', () => ({ default: ({ alt, src }: { alt: string; src: string }) => <img alt={alt} src={src} /> }))
 vi.mock('@/components/WalletButton', () => ({ WalletButton: () => <span>Wallet</span> }))
-vi.mock('@/lib/jbcenter-client', () => ({ jbCenterClient: { getIntent: runtime.getIntent, requestDeploy: runtime.requestDeploy } }))
+vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
+vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: '0x1111111111111111111111111111111111111111', openSignIn: vi.fn() }) }))
+vi.mock('@wagmi/core', () => ({
+  getAccount: () => ({ address: '0x1111111111111111111111111111111111111111' }),
+  getPublicClient: () => ({ getGasPrice: async () => 2_000_000_000n }),
+  sendTransaction: vi.fn(),
+  switchChain: vi.fn(),
+  waitForTransactionReceipt: vi.fn(),
+}))
+vi.mock('@/lib/jbcenter-client', () => ({ jbCenterClient: {
+  getIntent: runtime.getIntent, requestDeploy: runtime.requestDeploy,
+  requestRelay: runtime.requestRelay, recordDeployment: runtime.recordDeployment,
+} }))
 
 import { IntentProject } from '../src/components/IntentProject'
 
@@ -71,6 +83,8 @@ describe('a published project page', () => {
   beforeEach(() => {
     runtime.getIntent.mockReset().mockResolvedValue(intent())
     runtime.requestDeploy.mockReset()
+    runtime.requestRelay.mockReset().mockRejectedValue(new Error('no relay in this test'))
+    runtime.recordDeployment.mockReset()
     navigate.replace.mockReset()
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
       name: 'Neighborhood Workshop',
@@ -101,7 +115,7 @@ describe('a published project page', () => {
     expect(host.textContent).toContain('FUND')
     expect(host.textContent).toContain(wallet)
     expect(host.querySelector('img[alt*="cover"]')).toBeTruthy()
-    expect(button('Deploy')).toBeTruthy()
+    expect(button('Deploy selected')).toBeTruthy()
   })
 
   it('names every multisig the project creates, with its role, approvals and owners', async () => {
@@ -141,12 +155,13 @@ describe('a published project page', () => {
         deploys: [{ chainId: 8453, status: 'confirmed', transactionHash: hash, bundleUuid: null, error: null, createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() }],
       }))
     await render()
-    await act(async () => { button('Deploy')!.click() })
+    await act(async () => { button('Deploy selected')!.click() })
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 60)) })
-    expect(runtime.requestDeploy).toHaveBeenCalledWith(intentId, expect.anything())
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 60)) })
-    expect(navigate.replace).toHaveBeenCalledWith('/project/8453/42')
-  })
+    expect(runtime.requestDeploy).toHaveBeenCalledWith(intentId, expect.objectContaining({ chainIds: [8453] }))
+    // Center's next reported step is the one the SDK polls for, four seconds on.
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 5_000)) })
+    expect(navigate.replace).toHaveBeenCalledWith(`/project/8453/42?intent=${intentId}`)
+  }, 20_000)
 
   it('opens the created project immediately when one already exists', async () => {
     runtime.getIntent.mockResolvedValue(intent({
@@ -154,7 +169,7 @@ describe('a published project page', () => {
       deployments: [{ chainId: 84532, projectId: '7', transactionHash: hash, createdAt: new Date(0).toISOString() }],
     }))
     await render()
-    expect(navigate.replace).toHaveBeenCalledWith('/project/84532/7')
+    expect(navigate.replace).toHaveBeenCalledWith(`/project/84532/7?intent=${intentId}`)
   })
 
   it('keeps the signed terms and the Deploy action when the pinned details cannot be read', async () => {
@@ -165,14 +180,14 @@ describe('a published project page', () => {
     expect(host.textContent).toContain('Deploys on first use')
     expect(host.textContent).toContain('Base')
     expect(host.textContent).not.toContain('gateway trouble')
-    expect(button('Deploy')).toBeTruthy()
+    expect(button('Deploy selected')).toBeTruthy()
   })
 
   it('says why Center refused, in Center’s words, without raw provider text', async () => {
     const { JBCenterRequestError } = await import('@bananapus/nana-sdk-core/jbcenter')
     runtime.requestDeploy.mockRejectedValue(new JBCenterRequestError('upstream 503 from provider', 503, 'unavailable'))
     await render()
-    await act(async () => { button('Deploy')!.click() })
+    await act(async () => { button('Deploy selected')!.click() })
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 60)) })
     const alert = host.querySelector('[role="alert"]')
     expect(alert?.textContent?.length).toBeGreaterThan(0)
@@ -183,29 +198,30 @@ describe('a published project page', () => {
     const { JBCenterRequestError } = await import('@bananapus/nana-sdk-core/jbcenter')
     runtime.requestDeploy.mockRejectedValue(new JBCenterRequestError('sender 0xabc reverted: nonce too low', 500, 'internal_error'))
     await render()
-    await act(async () => { button('Deploy')!.click() })
+    await act(async () => { button('Deploy selected')!.click() })
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 60)) })
     const alert = host.querySelector('[role="alert"]')
     expect(alert?.textContent).toBe('Center could not start this deploy right now. Try again shortly.')
     expect(host.textContent).not.toContain('nonce too low')
-    expect(button('Deploy')!.disabled).toBe(false)
+    expect(button('Deploy selected')!.disabled).toBe(false)
   })
 
-  it('says a project on unsponsored networks has to be created with a transaction', async () => {
-    runtime.getIntent.mockResolvedValue(intent({ envelope: envelopeFor([call(1)]) }))
+  it('offers Ethereum as a chain the reader pays for, beside the free ones', async () => {
+    runtime.getIntent.mockResolvedValue(intent({ envelope: envelopeFor([call(1), call(8453)]) }))
     await render()
-    expect(host.textContent).toContain('This project’s networks are not sponsored. It has to be created with a transaction.')
-    expect(button('Deploy')).toBeUndefined()
+    expect(host.textContent).toContain('free')
+    expect(host.textContent).toContain('costs gas')
+    expect(button('Deploy selected')).toBeTruthy()
   })
 
   it('words a chain Center recorded as failed as the end of this project', async () => {
     runtime.requestDeploy.mockResolvedValue({ deploys: [deployRow(8453, 'failed')] })
     await render()
-    await act(async () => { button('Deploy')!.click() })
+    await act(async () => { button('Deploy selected')!.click() })
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 60)) })
     const alert = host.querySelector('[role="alert"]')
     expect(alert?.textContent).toBe('Juicebox Center could not create this project on Base. It cannot be deployed from here; create it again.')
-    expect(button('Deploy')!.disabled).toBe(true)
+    expect(button('Deploy selected')!.disabled).toBe(true)
   })
 
   it('links the chain that was created when another chain ended the project', async () => {
@@ -214,25 +230,32 @@ describe('a published project page', () => {
     runtime.getIntent.mockResolvedValue(intent({ envelope, deployments: [deployment(8453, '42')] }))
     runtime.requestDeploy.mockResolvedValue({ deploys: [deployRow(8453, 'confirmed'), deployRow(10, 'failed')] })
     await render()
-    await act(async () => { button('Deploy')!.click() })
+    await act(async () => { button('Deploy selected')!.click() })
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 60)) })
     const alert = host.querySelector('[role="alert"]')
     expect(alert?.textContent).toBe('Juicebox Center could not create this project on Optimism. It cannot be deployed from here; create it again.')
     const link = Array.from(host.querySelectorAll('a')).find(a => a.getAttribute('href') === '/project/8453/42')
-    expect(link?.textContent).toBe('Open the project created on Base')
-    expect(navigate.replace).not.toHaveBeenCalled()
+    expect(link?.textContent).toBe('Deployed on Base')
+    expect(navigate.replace).toHaveBeenCalledWith(`/project/8453/42?intent=${intentId}`)
+  })
+
+  it('opens the first deployed chain in the intent’s own order', async () => {
+    const envelope = envelopeFor([call(10), call(8453)])
+    runtime.getIntent.mockResolvedValue(intent({ envelope, deployments: [deployment(8453, '42'), deployment(10, '43')] }))
+    await render()
+    expect(navigate.replace).toHaveBeenCalledWith(`/project/10/43?intent=${intentId}`)
   })
 
   it('keeps Deploy offered when no chain was recorded as failed', async () => {
     const { JBCenterRequestError } = await import('@bananapus/nana-sdk-core/jbcenter')
     runtime.requestDeploy.mockRejectedValue(new JBCenterRequestError('sender reverted: nonce too low', 400, 'bad_request'))
     await render()
-    await act(async () => { button('Deploy')!.click() })
+    await act(async () => { button('Deploy selected')!.click() })
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 60)) })
     const alert = host.querySelector('[role="alert"]')
-    expect(alert?.textContent).toBe('Juicebox Center could not deploy this project. Try again in a few minutes.')
+    expect(alert?.textContent).toBe('Center could not start this deploy right now. Try again shortly.')
     expect(host.textContent).not.toContain('nonce too low')
-    expect(button('Deploy')!.disabled).toBe(false)
+    expect(button('Deploy selected')!.disabled).toBe(false)
   })
 
   it('holds a linked project on its progress until its last chain is created', async () => {
@@ -249,7 +272,7 @@ describe('a published project page', () => {
       return { deploys: [deployRow(8453, 'confirmed'), deployRow(10, 'queued')] }
     })
     await render()
-    await act(async () => { button('Deploy')!.click() })
+    await act(async () => { button('Deploy selected')!.click() })
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 100)) })
     expect(host.textContent).toContain('Base: created')
     expect(host.textContent).toContain('Optimism: queued at Juicebox Center')
@@ -257,7 +280,7 @@ describe('a published project page', () => {
     created = 2
     // Center's next reported step is the one the SDK polls for, four seconds on.
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 5_000)) })
-    expect(navigate.replace).toHaveBeenCalledWith('/project/8453/42')
+    expect(navigate.replace).toHaveBeenCalledWith(`/project/8453/42?intent=${intentId}`)
   }, 20_000)
 
   it('opens contributions as soon as a project whose start has passed is created', async () => {
@@ -276,7 +299,7 @@ describe('a published project page', () => {
   it('abandons the deploy when the reader leaves the page', async () => {
     runtime.requestDeploy.mockResolvedValue({ deploys: [{ chainId: 8453, status: 'queued', transactionHash: null, bundleUuid: null, error: null, createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() }] })
     await render()
-    await act(async () => { button('Deploy')!.click() })
+    await act(async () => { button('Deploy selected')!.click() })
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 60)) })
     const [, options] = runtime.requestDeploy.mock.calls[0] as [string, { signal?: AbortSignal }]
     expect(options.signal?.aborted).toBe(false)
