@@ -20,6 +20,7 @@ import { buildFundLaunch } from '@/lib/fund-contracts'
 import { buildFundIntent, fundIntentEligibleChains, publishFundIntent, UNSUPPORTED_CHAINS_MESSAGE } from '@/lib/fund-intent'
 import { FUND_LAUNCH_KEY, decodeLaunchSession, discardUnsignedLaunch, sameSender, saveLaunch } from '@/lib/fund-launch-session'
 import { checkLaunchDeployment } from '@/lib/fund-launch-verification'
+import { previewFundProjectMetadata } from '@/lib/fund-project-metadata'
 import { publishFundProjectMetadata } from '@/lib/publish-fund-project-metadata'
 import { requireTransactionReview } from '@/lib/transaction-review'
 import type { CreateValues } from '@/components/CreateFlow'
@@ -158,14 +159,15 @@ export default function CreatePreview() {
     .map(role => `${role === 'owner' ? 'Owner' : 'Operator'}: create Safe, ${values[`${role}Threshold`]}/${(values[`${role}Signers`] ?? []).length} approvals. Owners: ${(values[`${role}Signers`] ?? []).join(', ')}.`)
     .join('\n')
 
+  const details = previewFundProjectMetadata(values)
+
   return <IntentProjectView
     banner={<p role="status" className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7">{BANNER}</p>}
     display={{
-      name: values.name, location: values.location, logoUrl: values.ownerPhoto || undefined,
-      coverUrl: values.photo || undefined, description: values.description,
+      name: details.name ?? values.name, location: details.location, logoUrl: details.logoUrl,
+      coverUrl: details.coverUrl, description: details.description,
       owner: values.ownerMode === 'create' ? 'A multisig this project creates' : values.ownerWallet,
-      ownerProfile: values.ownerName || values.ownerIntroduction || values.ownerPhoto
-        ? { name: values.ownerName, introduction: values.ownerIntroduction, photoUrl: values.ownerPhoto } : undefined,
+      ownerProfile: details.owner ?? undefined,
       chainIds, tokenName: values.fundTokenName, ticker: values.fundTicker,
       mustStartAtOrAfter: 0, status: 'Not created yet',
       multisigs: planned || undefined,

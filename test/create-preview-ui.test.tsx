@@ -114,6 +114,19 @@ describe('the preview of a project that is not created yet', () => {
     expect(button('Create')).toBeTruthy()
   })
 
+  it('shows the owner\u2019s picture as the owner, never as a logo the published page has not got', async () => {
+    localStorage.setItem(CREATE_DRAFT_KEY, JSON.stringify(saved({
+      ownerName: 'Ada Rios', ownerIntroduction: 'She keeps the workshop running.',
+      ownerPhoto: 'data:image/jpeg;base64,/9j/ownerpic',
+    })))
+    await render()
+    expect(host.querySelector('img[alt*="logo"]')).toBeNull()
+    expect(host.querySelector('img[alt*="picture"]')?.getAttribute('src')).toBe('data:image/jpeg;base64,/9j/ownerpic')
+    expect(host.querySelector('img[alt*="cover"]')?.getAttribute('src')).toBe('data:image/jpeg;base64,/9j/previews')
+    expect(host.textContent).toContain('Ada Rios')
+    expect(host.textContent).toContain('She keeps the workshop running.')
+  })
+
   it('names a multisig the project will create, without claiming an address', async () => {
     localStorage.setItem(CREATE_DRAFT_KEY, JSON.stringify(saved({
       ownerMode: 'create', ownerSigners: signers, ownerThreshold: 2, ownerWallet: '',

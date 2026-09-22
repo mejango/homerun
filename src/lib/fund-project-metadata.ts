@@ -145,6 +145,36 @@ export function parseFundProjectMetadata(value: unknown): FundProjectMetadata {
   }
 }
 
+/** Stand-ins for the pins a publication makes, so a preview reads the published mapping. */
+const PREVIEW_PINS = { cover: 'ipfs://preview-cover', owner: 'ipfs://preview-owner', operator: 'ipfs://preview-operator' } as const
+
+/**
+ * What a published page will show, read by the published page's own parser out
+ * of the metadata the publication builds, with the setup's local images
+ * standing in for pins that do not exist yet. A field the publication never
+ * sets, a logo among them, is as absent here as it is there.
+ */
+export function previewFundProjectMetadata(values: CreateValues): FundProjectMetadata {
+  const local = new Map<string, string>()
+  const standIn = (uri: string, photo: string | undefined) => {
+    if (!photo) return undefined
+    local.set(fundIpfsUrl(uri)!, photo)
+    return uri
+  }
+  const parsed = parseFundProjectMetadata(buildFundProjectMetadata(values, {
+    coverImageUri: standIn(PREVIEW_PINS.cover, values.photo),
+    ownerPhotoUri: standIn(PREVIEW_PINS.owner, values.ownerPhoto),
+    operatorPhotoUri: standIn(PREVIEW_PINS.operator, values.operatorPhoto),
+  }))
+  const image = (url: string | null) => url === null ? null : local.get(url) ?? url
+  const profile = (value: ProjectProfileMetadata | null) => value && { ...value, photoUrl: image(value.photoUrl) }
+  return {
+    ...parsed,
+    coverUrl: image(parsed.coverUrl), logoUrl: image(parsed.logoUrl),
+    owner: profile(parsed.owner), operator: profile(parsed.operator),
+  }
+}
+
 export async function fetchFundProjectMetadata(uri: string, fetcher: typeof fetch = fetch): Promise<FundProjectMetadata> {
   const url = fundIpfsUrl(uri)
   if (!url) throw new Error('The project metadata URI is unsupported.')
