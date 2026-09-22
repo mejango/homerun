@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { getPublicClient, getAccount } from '@wagmi/core'
+import { getPublicClient, getAccount, signMessage } from '@wagmi/core'
 import { jbProjectsAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import { toHex, type Hex, type PublicClient } from 'viem'
@@ -21,12 +21,23 @@ import { displayChainName } from '@/lib/chainDisplay'
 import { SUPPORTED_CHAINS } from '@/lib/chains'
 import { plannedNetworks } from '../../web/create-networks.mjs'
 import { isSafeConnection, waitForSafeExecutionHash } from '@/lib/safe-connector'
+import { describeCenterRefusal, intentPath } from '@bananapus/nana-sdk-core/jbcenter'
+import { jbCenterClient } from '@/lib/jbcenter-client'
+import { buildFundIntent, fundIntentEligibleChains, publishFundIntent, MULTISIG_NEEDS_TRANSACTION_MESSAGE, UNSPONSORED_CHAINS_MESSAGE } from '@/lib/fund-intent'
+import { requireTransactionReview } from '@/lib/transaction-review'
 
 const message = (error: unknown) => error instanceof Error ? error.message : 'The request could not be completed.'
+const failure = (error: unknown) => describeCenterRefusal(error)?.message ?? message(error)
+const WALLET_NEEDS_TRANSACTION_MESSAGE = 'Juicebox Center accepts a signature from a wallet address only. Connect a different wallet, or create with a transaction.'
 function publicClient(chainId: number): PublicClient {
   const client = getPublicClient(wagmiConfig, { chainId: chainId as JBChainId })
   if (!client) throw new Error('No RPC client is configured for this chain.')
   return client as PublicClient
+}
+function plannedChainNames(values?: CreateValues): string {
+  if (!values) return 'the selected networks'
+  try { return plannedNetworks(values).map((chain: { chainId: number }) => displayChainName(chain.chainId)).join(', ') }
+  catch { return 'the selected networks' }
 }
 
 function LaunchChain({ session, request, status, update, refreshFee, runId = 0, onStopped, onFeedback }: {
@@ -150,7 +161,7 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
 
 export function FundDeploy({ values, onLockChange }: { values?: CreateValues; onLockChange?: (chains: readonly number[] | null) => void }) {
   const router = useRouter()
-  const { address } = useWallet()
+  const { address, isCenterWallet } = useWallet()
   const [session, setSession] = useState<FundLaunchSession | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState('')
@@ -172,6 +183,15 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
 
   const selectionKey = values?.networkEnvironment && values?.networks?.length
     ? plannedNetworks(values).map((chain: { chainId: number }) => chain.chainId).join(',') : ''
+  // Juicebox Center recovers the publisher from the signature itself, so only an
+  // external EOA can publish: a passkey or Safe signature is refused. A new
+  // multisig needs a transaction, and mainnet is never sponsored.
+  // The connector is read on every render, not held in state: `loaded` keeps the
+  // first client render equal to the server's, and a wallet change re-renders here.
+  const safeConnected = loaded && isSafeConnection(wagmiConfig)
+  const multisigPlanned = !!values && (values.ownerMode === 'create' || (!values.ownerIsOperator && values.operatorMode === 'create'))
+  const intentEligible = !!address && !isCenterWallet && !safeConnected && !multisigPlanned
+    && fundIntentEligibleChains(selectionKey ? selectionKey.split(',').map(Number) : [])
   useEffect(() => {
     onLockChange?.(session?.input.chainIds ?? (preparing && selectionKey ? selectionKey.split(',').map(Number) : null))
   }, [session, preparing, selectionKey, onLockChange])
@@ -187,6 +207,7 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
 
   const persist = (next: FundLaunchSession) => { const saved = saveLaunch(next); setSession(saved); return saved }
   async function run(next: FundLaunchSession) {
+    if (next.transport === 'intent') return
     if (busyRef.current) return
     busyRef.current = true; setRunning(true); setError('')
     let directStarted = false
@@ -247,6 +268,67 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
     } catch (cause) { setError(message(cause)) }
     finally { setPreparing(false) }
   }
+  async function prepareIntent() {
+    if (!address || !values || preparing || busyRef.current) return
+    setPreparing(true); setError(''); setProgress('')
+    try {
+      // A saved plan keeps the transport it was saved with. Publish from a record
+      // of its own, and only once an unauthorized plan has been let go.
+      const saved = localStorage.getItem(FUND_LAUNCH_KEY)
+      if (saved && !discardUnsignedLaunch(decodeLaunchSession(saved).input.salt)) throw new Error('A saved launch already exists. Reload to resume it.')
+      // Re-read the wallet here: the connection can change between the render
+      // that offered this path and the click that takes it.
+      if (isCenterWallet || isSafeConnection(wagmiConfig)) throw new Error(WALLET_NEEDS_TRANSACTION_MESSAGE)
+      const chainIds = plannedNetworks(values).map((chain: { chainId: number }) => chain.chainId)
+      if (!fundIntentEligibleChains(chainIds)) throw new Error(UNSPONSORED_CHAINS_MESSAGE)
+      const sender = address
+      const salt = toHex(crypto.getRandomValues(new Uint8Array(32)))
+      const resolved = await resolveCreateMultisigs(values, chainIds.map(publicClient), salt)
+      if (resolved.plans.length) throw new Error(MULTISIG_NEEDS_TRANSACTION_MESSAGE)
+      setProgress('Saving your project details…')
+      const pin = await publishFundProjectMetadata(resolved.values)
+      const fees = await Promise.all(chainIds.map(async (id: number) => {
+        const client = publicClient(id)
+        const fee = await client.readContract({ address: v6Address('JBProjects', id as JBChainId), abi: jbProjectsAbi, functionName: 'creationFee' })
+        const block = await client.getBlock()
+        return { id, fee, timestamp: Number(block.timestamp) }
+      }))
+      sameSender(getAccount(wagmiConfig).address, sender)
+      const input = {
+        owner: resolved.owner, sender, chainIds, projectUri: `ipfs://${pin.cid}`,
+        tokenName: resolved.values.fundTokenName, ticker: resolved.values.fundTicker,
+        salt, multisigs: resolved.plans, operator: resolved.operator,
+        mustStartAtOrAfter: chainIds.length > 1 ? Math.max(...fees.map(row => row.timestamp)) : 0,
+        creationFees: Object.fromEntries(fees.map(row => [row.id, row.fee])),
+      }
+      const built = buildFundLaunch(input)
+      await Promise.all(built.requests.map(request => checkLaunchDeployment(publicClient(request.chainId), request)))
+      const intent = buildFundIntent(input, values.name)
+      setProgress('')
+      await requireTransactionReview({
+        kind: 'authorization',
+        title: 'Create your project',
+        description: 'Your signature publishes these exact project creations to Juicebox Center. Center sends them on every selected chain when the project is first deployed. You send no transaction and pay no creation fee here.',
+        confirmLabel: 'Continue to wallet',
+        calls: intent.deploymentCalls.map((call, index) => ({
+          chainId: call.chainId, to: call.to, data: call.data, from: sender,
+          abi: built.requests[index].abi, functionName: built.requests[index].functionName, args: built.requests[index].args,
+          label: `Create the FUND on ${displayChainName(call.chainId)}`, contractName: 'HomerunDeployer',
+        })),
+        authorization: { type: 'Juicebox Center project intent', format: intent.format, deploymentVersion: intent.deploymentVersion, chainIds: intent.chainIds, jb: intent.jb },
+      })
+      setProgress('Sign the publication message in your wallet.')
+      sameSender(getAccount(wagmiConfig).address, sender)
+      const published = await publishFundIntent({
+        client: jbCenterClient, input, name: values.name, publisher: sender,
+        sign: publicationMessage => signMessage(wagmiConfig, { account: sender, message: publicationMessage }),
+      })
+      persist({ version: 1, name: values.name, input, transport: 'intent', intentId: published.id, statuses: Object.fromEntries(chainIds.map((id: number) => [id, { phase: 'ready' as const }])) })
+      setProgress('')
+      router.push(intentPath(published.id))
+    } catch (cause) { setError(failure(cause)) }
+    finally { setPreparing(false) }
+  }
   let requests: FundTransaction[] = []
   let invalid = ''
   if (session) { try { requests = buildFundLaunch(session.input).requests } catch (cause) { invalid = message(cause) } }
@@ -278,7 +360,16 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
     <p>Create your multisigs and the FUND raise on your selected chains. INCOME and the Owner’s success allocation are separate later actions.</p>
     {!address && <WalletButton />}
     {selectionChanged && <p role="alert">This launch already has wallet authorizations for {session!.input.chainIds.map(displayChainName).join(', ')}. Continue completes that saved launch; changing the selection above cannot replace signed requests.</p>}
-    {!session ? <button type="button" className="create-primary" disabled={!address || preparing || !loaded || !!error} onClick={() => void prepare()}>{preparing ? 'Preparing your project…' : 'Create project'}</button>
+    {!session ? intentEligible ? <>
+      <button type="button" className="create-primary" disabled={preparing || !loaded || !!error} onClick={() => void prepareIntent()}>{preparing ? 'Publishing your project…' : 'Create without a transaction'}</button>
+      <p className="text-sm">Juicebox Center publishes your project now and sends the creation on {plannedChainNames(values)} when it is first used. Your wallet signs a message; it sends no transaction and pays no creation fee.</p>
+      <button type="button" className="quiet-button" disabled={preparing || !loaded || !!error} onClick={() => void prepare()}>Create with a transaction instead</button>
+    </> : <button type="button" className="create-primary" disabled={!address || preparing || !loaded || !!error} onClick={() => void prepare()}>{preparing ? 'Preparing your project…' : 'Create project'}</button>
+      : session.transport === 'intent' ? <>
+        <p role="status">This project is published. Open its page to deploy it on {session.input.chainIds.map(displayChainName).join(', ')}.</p>
+        <a className="create-primary" href={intentPath(session.intentId!)}>Open project ↗</a>
+        <button type="button" className="quiet-button" onClick={() => { try { archiveLaunch(session.input.salt); setSession(null); setProgress('') } catch (cause) { setError(message(cause)) } }}>Finish this project and start another</button>
+      </>
       : <>
         {signingChain !== undefined && <div className="fund-launch-action" role="status"><span>Confirm the {displayChainName(signingChain)} request in your wallet.</span></div>}
         <ul className="fund-launch-progress" aria-label="Deployment progress">{session.input.chainIds.map(id => {
@@ -299,7 +390,7 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
     <details className="fund-launch-recovery"><summary>Deployment recovery</summary>
       {!session ? <label>Restore a deployment record<input type="file" accept="application/json,.json" disabled={!loaded || preparing} onChange={event => { const file = event.target.files?.[0]; if (file) void restore(file); event.target.value = '' }} /></label>
         : <><p>{session.name}. Owner <code>{session.input.owner}</code>. This saved launch retains its original settings.</p><button type="button" onClick={download}>Download deployment record</button>
-          {session.transport !== 'relayr' && requests.map(request => <LaunchChain key={`${session.input.salt}:${request.chainId}`} session={session} request={request} status={session.statuses[request.chainId]} runId={running && activeChain === request.chainId ? runId : 0} onStopped={stopDirect} onFeedback={directFeedback} update={(status, expectedPhase) => setSession(updateLaunchStatus(session.input.salt, request.chainId, status, expectedPhase))} refreshFee={fee => setSession(refreshLaunchCreationFee(session.input.salt, request.chainId, fee))} />)}
+          {session.transport !== 'relayr' && session.transport !== 'intent' && requests.map(request => <LaunchChain key={`${session.input.salt}:${request.chainId}`} session={session} request={request} status={session.statuses[request.chainId]} runId={running && activeChain === request.chainId ? runId : 0} onStopped={stopDirect} onFeedback={directFeedback} update={(status, expectedPhase) => setSession(updateLaunchStatus(session.input.salt, request.chainId, status, expectedPhase))} refreshFee={fee => setSession(refreshLaunchCreationFee(session.input.salt, request.chainId, fee))} />)}
           {complete && <button type="button" onClick={() => { try { archiveLaunch(session.input.salt); setSession(null); setProgress('') } catch (cause) { setError(message(cause)) } }}>Finish this launch and start another</button>}
         </>}
     </details>
