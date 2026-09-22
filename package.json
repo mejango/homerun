@@ -16,6 +16,7 @@
     "test:browser": "node test/browser-flow.mjs",
     "test:center": "node test/center-browser.mjs",
     "test:create": "node test/create-browser.mjs",
+    "test:intent": "node test/intent-browser.mjs",
     "test:a11y": "node test/accessibility.mjs",
     "test:contracts": "node scripts/test-contracts.mjs",
     "check": "npm run lint && npm run check:indexer && npm test && npm run test:live && npm run build && npm run test:contracts",
