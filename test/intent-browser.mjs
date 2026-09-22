@@ -8,7 +8,9 @@ import { createServer } from 'node:http'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
-import { decodeFunctionData, encodeFunctionResult, multicall3Abi } from 'viem'
+import { decodeFunctionData, encodeFunctionData, encodeFunctionResult, getAddress, multicall3Abi } from 'viem'
+import { SAFE_CREATE_ABI, SAFE_FACTORY } from '@bananapus/nana-sdk-core/safe'
+import safeCode from './fixtures/safe-canonical-code.json' with { type: 'json' }
 import { privateKeyToAccount } from 'viem/accounts'
 import { CREATE_DEFAULTS } from '../web/create-model.mjs'
 
@@ -19,6 +21,9 @@ const centerOrigin = `http://127.0.0.1:${centerPort}`
 const root = fileURLToPath(new URL('..', import.meta.url))
 // A well-known test key. It holds nothing and signs only this modeled message.
 const account = privateKeyToAccount('0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d')
+// A second well-known test address, distinct from the injected wallet.
+// It holds nothing and signs nothing here.
+const SECOND_SIGNER = '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC'
 const cid = 'bafkreiabcdefghijklmnopqrstuvwxyz234567'
 const contentHash = `0x${'ab'.repeat(32)}`
 const transactionHash = `0x${'ef'.repeat(32)}`
@@ -35,6 +40,13 @@ const metadata = {
 const timestamp = new Date(1_800_000_000_000).toISOString()
 const uint256 = value => `0x${value.toString(16).padStart(64, '0')}`
 const AGGREGATE3_SELECTOR = '0x82ad56cb'
+const PROXY_CREATION_CODE_DATA = encodeFunctionData({ abi: SAFE_CREATE_ABI, functionName: 'proxyCreationCode' })
+const CANONICAL_CODE = Object.fromEntries(Object.entries(safeCode.code).map(([address, code]) => [getAddress(address), code]))
+/** Every read this flow makes wants one positive number, except the Safe factory's own
+ *  creation code, which fixes the address of the Safe this envelope creates. */
+const answerCall = (to, data) => to && getAddress(to) === SAFE_FACTORY && data === PROXY_CREATION_CODE_DATA
+  ? encodeFunctionResult({ abi: SAFE_CREATE_ABI, functionName: 'proxyCreationCode', result: safeCode.proxyCreationCode })
+  : uint256(10n ** 18n)
 
 let stored = null
 let deployRequests = 0
@@ -112,17 +124,17 @@ const center = createServer((request, response) => {
       const answer = call => {
         if (call.method === 'eth_chainId') return uint256(BigInt(chainId))
         if (call.method === 'eth_blockNumber') return uint256(1_000n)
-        if (call.method === 'eth_getCode') return '0x60006000'
-        // Every read this flow makes wants one positive number: the creation fee it
-        // compares against the reviewed value, and the USDC price feed. wagmi batches
-        // reads through Multicall3, so answer an aggregate3 with one of those per call.
+        if (call.method === 'eth_getCode') {
+          const address = call.params?.[0]
+          return address ? CANONICAL_CODE[getAddress(address)] ?? '0x60006000' : '0x60006000'
+        }
         if (call.method === 'eth_call') {
-          const data = call.params?.[0]?.data ?? '0x'
-          if (!data.startsWith(AGGREGATE3_SELECTOR)) return uint256(10n ** 18n)
+          const { to, data = '0x' } = call.params?.[0] ?? {}
+          if (!data.startsWith(AGGREGATE3_SELECTOR)) return answerCall(to, data)
           const [batched] = decodeFunctionData({ abi: multicall3Abi, data }).args
           return encodeFunctionResult({
             abi: multicall3Abi, functionName: 'aggregate3',
-            result: batched.map(() => ({ success: true, returnData: uint256(10n ** 18n) })),
+            result: batched.map(item => ({ success: true, returnData: answerCall(item.target, item.callData) })),
           })
         }
         if (call.method === 'eth_getBlockByNumber') return {
@@ -204,7 +216,7 @@ try {
       revenueDescription: 'Members pay for tool hire and repairs.',
       fundTokenName: 'Neighborhood Workshop FUND',
       fundTicker: 'FUND',
-      ownerMode: 'existing', ownerWallet: account.address, ownerIsOperator: true,
+      ownerMode: 'create', ownerSigners: [account.address, SECOND_SIGNER], ownerThreshold: 2, ownerIsOperator: true,
       operatorMode: 'existing', operatorWallet: account.address,
       networks: ['base'], networkEnvironment: 'production',
     },
@@ -233,6 +245,7 @@ try {
 
   const review = page.getByRole('dialog')
   await review.getByText('Create your project', { exact: false }).first().waitFor()
+  await review.getByText('2/2 approvals', { exact: false }).first().waitFor()
   await review.getByRole('checkbox').check()
   await review.getByRole('button', { name: 'Continue to wallet', exact: true }).click()
 
@@ -240,6 +253,10 @@ try {
   await page.getByText('Deploys on first use', { exact: false }).first().waitFor()
   assert.match(await page.locator('main').textContent(), /Neighborhood Workshop/)
   assert.match(await page.locator('main').textContent(), /Base/)
+  const page_text = await page.locator('main').textContent()
+  assert.match(page_text, /Owner: create Safe/)
+  assert.match(page_text, /2\/2 approvals/)
+  assert.match(page_text, new RegExp(SECOND_SIGNER, 'i'))
   assert.deepEqual(errors, [])
 
   await page.getByRole('button', { name: 'Deploy', exact: true }).click()
@@ -249,12 +266,21 @@ try {
   assert.equal(stored.envelope.format, 'homerun.money/fund.v1')
   assert.equal(stored.envelope.deploymentVersion, '6')
   assert.deepEqual(stored.envelope.chainIds, [8453])
-  assert.equal(stored.envelope.deploymentCalls.length, 1)
+  assert.equal(stored.envelope.deploymentCalls.length, 2)
+  assert.equal(getAddress(stored.envelope.deploymentCalls[0].to), SAFE_FACTORY)
   assert.equal(stored.envelope.deploymentCalls[0].chainId, 8453)
-  assert.equal(Object.hasOwn(stored.envelope.deploymentCalls[0], 'value'), false)
+  assert.equal(stored.envelope.deploymentCalls[1].chainId, 8453)
+  assert.equal(Object.hasOwn(stored.envelope.deploymentCalls[1], 'value'), false)
+  assert.equal(stored.envelope.jb.safes.length, 1)
+  assert.equal(stored.envelope.jb.safes[0].role, 'owner')
+  assert.equal(stored.envelope.jb.safes[0].threshold, 2)
+  assert.deepEqual(
+    stored.envelope.jb.safes[0].owners.map(owner => owner.toLowerCase()),
+    [account.address.toLowerCase(), SECOND_SIGNER.toLowerCase()],
+  )
+  assert.equal(stored.envelope.jb.owner, stored.envelope.jb.safes[0].address)
   assert.equal(stored.envelope.jb.app, 'homerun')
   assert.equal(stored.envelope.jb.kind, 'fund')
-  assert.equal(stored.envelope.jb.owner.toLowerCase(), account.address.toLowerCase())
   assert.equal(stored.envelope.jb.projectUri, `ipfs://${cid}`)
   assert.equal(stored.publisher.toLowerCase(), account.address.toLowerCase())
   assert.match(stored.signature, /^0x[0-9a-f]{130}$/i)
@@ -264,8 +290,9 @@ try {
     passed: true, browser: browser.version(),
     evidence: 'real Next.js application and packaged SDK; modeled Center responses and injected test wallet',
     intentId, deployRequests, intentReads, pageErrors: errors,
+    safes: stored.envelope.jb.safes,
   }, null, 2))
-  console.log('PASS Homerun: published a FUND without a transaction, deployed it through Center, opened the created project')
+  console.log('PASS Homerun: published a FUND that creates its 2-of-2 owner multisig, deployed it through Center, opened the created project')
 } finally {
   await browser?.close()
   app.kill('SIGTERM')
