@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { getPublicClient, getAccount, signMessage } from '@wagmi/core'
+import { getPublicClient, getAccount } from '@wagmi/core'
 import { jbProjectsAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
-import { isAddressEqual, toHex, type Hex, type PublicClient } from 'viem'
+import { toHex, type Hex, type PublicClient } from 'viem'
 import { useWallet } from '@/hooks/useWallet'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { wagmiConfig } from '@/providers/Providers'
@@ -15,43 +15,20 @@ import { buildFundLaunch, type FundTransaction } from '@/lib/fund-contracts'
 import { FUND_LAUNCH_KEY, canCancelLaunch, cancelUnsubmittedLaunch, discardUnsignedLaunch, decodeLaunchSession, encodeLaunchSession, saveLaunch, updateLaunchStatus, refreshLaunchCreationFee, archiveLaunch, loadLaunchSession, sameSender, type FundLaunchSession, type LaunchStatus } from '@/lib/fund-launch-session'
 import { checkLaunchDeployment, verifyFundLaunch, verifyFailedFundLaunch } from '@/lib/fund-launch-verification'
 import { publishFundProjectMetadata } from '@/lib/publish-fund-project-metadata'
-import { SAFE_CREATE_ABI, SAFE_SINGLETON, resolveCreateMultisigs, checkCreateMultisigs, verifyCreatedMultisigs, multisigCreationData, multisigDeploymentRequest, multisigInitializer, multisigReview } from '@/lib/create-multisig'
+import { resolveCreateMultisigs, checkCreateMultisigs, verifyCreatedMultisigs, multisigDeploymentRequest, multisigReview } from '@/lib/create-multisig'
 import { runRelayrLaunch } from '@/lib/fund-launch-relayr'
 import { displayChainName } from '@/lib/chainDisplay'
 import { SUPPORTED_CHAINS } from '@/lib/chains'
 import { plannedNetworks } from '../../web/create-networks.mjs'
 import { isSafeConnection, waitForSafeExecutionHash } from '@/lib/safe-connector'
-import { JBCenterRequestError, describeCenterRefusal, intentPath } from '@bananapus/nana-sdk-core/jbcenter'
-import { jbCenterClient } from '@/lib/jbcenter-client'
-import { buildFundIntent, fundIntentEligibleChains, publishFundIntent, UNSUPPORTED_CHAINS_MESSAGE } from '@/lib/fund-intent'
-import { requireTransactionReview } from '@/lib/transaction-review'
+import { intentPath } from '@bananapus/nana-sdk-core/jbcenter'
 
 const message = (error: unknown) => error instanceof Error ? error.message : 'The request could not be completed.'
-/** Center's own wording for a refusal, then this app's, so no server text reaches the page. */
-const failure = (error: unknown) => {
-  const refusal = describeCenterRefusal(error)
-  if (refusal) return refusal.message
-  if (!(error instanceof JBCenterRequestError)) return message(error)
-  return error.code === 'publish_limit' || error.status === 429
-    ? 'Center’s publish limit is reached. Try again later.'
-    : 'Center could not accept this project right now. Try again shortly.'
-}
-const WALLET_NEEDS_TRANSACTION_MESSAGE = 'Juicebox Center accepts a signature from a wallet address only. Connect a different wallet, or create with a transaction.'
-/** Center recovers the publisher from the signature, so a passkey or Safe connection cannot publish. */
-function walletCanPublish(): boolean {
-  return getAccount(wagmiConfig).connector?.id !== 'juicebox-center' && !isSafeConnection(wagmiConfig)
-}
 function publicClient(chainId: number): PublicClient {
   const client = getPublicClient(wagmiConfig, { chainId: chainId as JBChainId })
   if (!client) throw new Error('No RPC client is configured for this chain.')
   return client as PublicClient
 }
-function plannedChainNames(values?: CreateValues): string {
-  if (!values) return 'the selected networks'
-  try { return plannedNetworks(values).map((chain: { chainId: number }) => displayChainName(chain.chainId)).join(', ') }
-  catch { return 'the selected networks' }
-}
-
 function LaunchChain({ session, request, status, update, refreshFee, runId = 0, onStopped, onFeedback }: {
   runId?: number; onStopped?: () => void
   onFeedback?: (phase: string, error: string) => void
@@ -195,13 +172,10 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
 
   const selectionKey = values?.networkEnvironment && values?.networks?.length
     ? plannedNetworks(values).map((chain: { chainId: number }) => chain.chainId).join(',') : ''
-  // Juicebox Center recovers the publisher from the signature, so only an external
-  // wallet can publish: a passkey or Safe connection is refused. Mainnet is never
-  // sponsored. A planned multisig travels with the intent as its own setup call.
-  // `loaded` keeps this first client render equal to the server's.
-  const safeConnected = loaded && isSafeConnection(wagmiConfig)
-  const intentEligible = !!address && !isCenterWallet && !safeConnected
-    && fundIntentEligibleChains(selectionKey ? selectionKey.split(',').map(Number) : [])
+  // Juicebox Center recovers the publisher from a signature, so a passkey or Safe
+  // connection cannot publish and keeps the transaction path. `loaded` keeps this
+  // first client render equal to the server's.
+  const needsTransaction = loaded && (isCenterWallet || isSafeConnection(wagmiConfig))
   useEffect(() => {
     onLockChange?.(session?.input.chainIds ?? (preparing && selectionKey ? selectionKey.split(',').map(Number) : null))
   }, [session, preparing, selectionKey, onLockChange])
@@ -278,91 +252,6 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
     } catch (cause) { setError(message(cause)) }
     finally { setPreparing(false) }
   }
-  async function prepareIntent() {
-    if (!address || !values || preparing || busyRef.current) return
-    setPreparing(true); setError(''); setProgress('')
-    try {
-      // Re-read the wallet here: the connection can change between the render
-      // that offered this path and the click that takes it. Everything this
-      // publication needs is checked before a prepared plan is let go, so a
-      // refused click leaves that plan where it was.
-      if (!walletCanPublish()) throw new Error(WALLET_NEEDS_TRANSACTION_MESSAGE)
-      const chainIds = plannedNetworks(values).map((chain: { chainId: number }) => chain.chainId)
-      if (!fundIntentEligibleChains(chainIds)) throw new Error(UNSUPPORTED_CHAINS_MESSAGE)
-      // A saved plan keeps the transport it was saved with. Publish from a record
-      // of its own, and only once an unauthorized plan has been let go.
-      const saved = localStorage.getItem(FUND_LAUNCH_KEY)
-      if (saved && !discardUnsignedLaunch(decodeLaunchSession(saved).input.salt)) throw new Error('A saved launch already exists. Reload to resume it.')
-      const sender = address
-      const salt = toHex(crypto.getRandomValues(new Uint8Array(32)))
-      const resolved = await resolveCreateMultisigs(values, chainIds.map(publicClient), salt)
-      setProgress('Saving your project details…')
-      const pin = await publishFundProjectMetadata(resolved.values)
-      const fees = await Promise.all(chainIds.map(async (id: number) => {
-        const client = publicClient(id)
-        const fee = await client.readContract({ address: v6Address('JBProjects', id as JBChainId), abi: jbProjectsAbi, functionName: 'creationFee' })
-        const block = await client.getBlock()
-        return { id, fee, timestamp: Number(block.timestamp) }
-      }))
-      sameSender(getAccount(wagmiConfig).address, sender)
-      const input = {
-        owner: resolved.owner, sender, chainIds, projectUri: `ipfs://${pin.cid}`,
-        tokenName: resolved.values.fundTokenName, ticker: resolved.values.fundTicker,
-        salt, multisigs: resolved.plans, operator: resolved.operator,
-        mustStartAtOrAfter: chainIds.length > 1 ? Math.max(...fees.map(row => row.timestamp)) : 0,
-        creationFees: Object.fromEntries(fees.map(row => [row.id, row.fee])),
-      }
-      const built = buildFundLaunch(input)
-      await Promise.all(built.requests.map(request => checkLaunchDeployment(publicClient(request.chainId), request)))
-      const intent = buildFundIntent(input, values.name)
-      setProgress('')
-      const plans = resolved.plans
-      await requireTransactionReview({
-        kind: 'authorization',
-        title: 'Create your project',
-        description: plans.length
-          ? `Your signature publishes these exact creations to Juicebox Center. Center’s sponsor creates your multisigs and the project on every selected chain the first time it is used. You send no transaction and pay no creation fee here.\n${multisigReview(plans)}`
-          : 'Your signature publishes these exact project creations to Juicebox Center. Center’s sponsor sends them on every selected chain the first time the project is used. You send no transaction and pay no creation fee here.',
-        confirmLabel: 'Continue to wallet',
-        calls: intent.deploymentCalls.map(call => {
-          // Center's sponsor is the sender of every one of these calls, and
-          // HomerunDeployer scopes its salt to that sender, so no `from` is shown.
-          const plan = plans.find(item => call.data === multisigCreationData(item))
-          if (plan) return {
-            chainId: call.chainId, to: call.to, data: call.data,
-            abi: SAFE_CREATE_ABI, functionName: 'createProxyWithNonce',
-            args: [SAFE_SINGLETON, multisigInitializer(plan), BigInt(plan.saltNonce)],
-            label: `Center’s sponsor creates the ${plan.role === 'owner' ? 'Owner' : 'Operator'} multisig on ${displayChainName(call.chainId)}`,
-            contractName: 'SafeProxyFactory',
-          }
-          const request = built.requests.find(item => item.chainId === call.chainId)
-          if (!request || !isAddressEqual(call.to, request.address)) throw new Error('The reviewed calls do not match the launch plan.')
-          return {
-            chainId: call.chainId, to: call.to, data: call.data,
-            abi: request.abi, functionName: request.functionName, args: request.args,
-            label: `Center’s sponsor creates the FUND on ${displayChainName(call.chainId)}`, contractName: 'HomerunDeployer',
-          }
-        }),
-        // Center takes a plain signed message, not typed data, so the review
-        // reads the envelope that message commits to.
-        authorization: { kind: 'message', type: 'Juicebox Center project intent', format: intent.format, deploymentVersion: intent.deploymentVersion, chainIds: intent.chainIds, jb: intent.jb },
-      })
-      setProgress('Sign the publication message in your wallet.')
-      sameSender(getAccount(wagmiConfig).address, sender)
-      const published = await publishFundIntent({
-        client: jbCenterClient, input, name: values.name, publisher: sender,
-        sign: publicationMessage => signMessage(wagmiConfig, { account: sender, message: publicationMessage }),
-      })
-      try {
-        persist({ version: 1, name: values.name, input, transport: 'intent', intentId: published.id, statuses: Object.fromEntries(chainIds.map((id: number) => [id, { phase: 'ready' as const }])) })
-      } catch (cause) {
-        throw new Error(`${message(cause)} Your project is published at ${intentPath(published.id)}.`)
-      }
-      setProgress('')
-      router.push(intentPath(published.id))
-    } catch (cause) { setError(failure(cause)) }
-    finally { setPreparing(false) }
-  }
   let requests: FundTransaction[] = []
   let invalid = ''
   if (session) { try { requests = buildFundLaunch(session.input).requests } catch (cause) { invalid = message(cause) } }
@@ -396,11 +285,11 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
     {selectionChanged && (session!.transport === 'intent'
       ? <p role="alert">This project is already published on {session!.input.chainIds.map(displayChainName).join(', ')}. Finish it before changing networks.</p>
       : <p role="alert">This launch already has wallet authorizations for {session!.input.chainIds.map(displayChainName).join(', ')}. Continue completes that saved launch; changing the selection above cannot replace signed requests.</p>)}
-    {!session ? intentEligible ? <>
-      <button type="button" className="create-primary" disabled={preparing || !loaded || !!error} onClick={() => void prepareIntent()}>{preparing ? 'Publishing your project…' : 'Create without a transaction'}</button>
-      <p className="text-sm">Juicebox Center publishes your project now, and Center’s sponsor deploys it on {plannedChainNames(values)} the first time it is used. Your wallet signs a message; it sends no transaction and pays no creation fee.</p>
-      <button type="button" className="quiet-button" disabled={preparing || !loaded} onClick={() => void prepare()}>Create with a transaction instead</button>
-    </> : <button type="button" className="create-primary" disabled={!address || preparing || !loaded || !!error} onClick={() => void prepare()}>{preparing ? 'Preparing your project…' : 'Create project'}</button>
+    {!session ? <>
+      <button type="button" className="create-primary" disabled={preparing || !loaded} onClick={() => router.push('/create/preview')}>Show preview</button>
+      <p className="text-sm">The preview is the project page this creates. Nothing is created until you press Create there.</p>
+      {needsTransaction && <button type="button" className="quiet-button" disabled={preparing || !loaded || !address} onClick={() => void prepare()}>Create with a transaction</button>}
+    </>
       : session.transport === 'intent' ? typeof session.intentId === 'string' ? <>
         <p role="status">This project is published. Center’s sponsor deploys it on {session.input.chainIds.map(displayChainName).join(', ')} the first time it is used, and its page offers Deploy.</p>
         <a className="create-primary" href={intentPath(session.intentId)}>Open project ↗</a>
