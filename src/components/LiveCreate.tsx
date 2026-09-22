@@ -321,7 +321,7 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
         kind: 'authorization',
         title: 'Create your project',
         description: plans.length
-          ? `Your signature publishes these exact creations to Juicebox Center. Center’s sponsor creates your multisigs and then the project on every selected chain the first time it is used. You send no transaction and pay no creation fee here.\n${multisigReview(plans)}`
+          ? `Your signature publishes these exact creations to Juicebox Center. Center’s sponsor creates your multisigs and the project on every selected chain the first time it is used. You send no transaction and pay no creation fee here.\n${multisigReview(plans)}`
           : 'Your signature publishes these exact project creations to Juicebox Center. Center’s sponsor sends them on every selected chain the first time the project is used. You send no transaction and pay no creation fee here.',
         confirmLabel: 'Continue to wallet',
         calls: intent.deploymentCalls.map(call => {

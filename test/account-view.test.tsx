@@ -147,7 +147,7 @@ describe('public account dashboard', () => {
     await settle()
     expect(document.activeElement).toBe(tab('Projects'))
     expect(window.location.hash).toBe('#projects')
-    expect(panel().textContent).toContain('Owned by this account')
+    expect(panel().textContent).toContain('Your projects')
     expect(panel().textContent).toContain('Delegated access')
     expect([...host.querySelectorAll('[role="tab"]')].filter(node => node.getAttribute('tabindex') === '0')).toHaveLength(1)
     await act(async () => tab('Projects').dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true })))

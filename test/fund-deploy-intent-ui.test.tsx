@@ -140,6 +140,7 @@ describe('creating a FUND without a transaction', () => {
     expect(review.calls[0].from).toBeUndefined()
     expect(review.calls[1].functionName).toBe('launchFundFor')
     expect(review.calls[1].from).toBeUndefined()
+    expect(review.description).toContain('creates your multisigs and the project')
     expect(review.description).toContain('2/2 approvals')
     const envelope = runtime.publishIntent.mock.calls[0][0]
     expect(envelope.deploymentCalls).toHaveLength(2)

@@ -269,6 +269,7 @@ try {
   assert.equal(stored.envelope.deploymentCalls.length, 2)
   assert.equal(getAddress(stored.envelope.deploymentCalls[0].to), SAFE_FACTORY)
   assert.equal(stored.envelope.deploymentCalls[0].chainId, 8453)
+  assert.equal(Object.hasOwn(stored.envelope.deploymentCalls[0], 'value'), false)
   assert.equal(stored.envelope.deploymentCalls[1].chainId, 8453)
   assert.equal(Object.hasOwn(stored.envelope.deploymentCalls[1], 'value'), false)
   assert.equal(stored.envelope.jb.safes.length, 1)

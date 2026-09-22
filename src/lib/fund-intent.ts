@@ -194,9 +194,7 @@ export function decodeFundIntent(intent: JBCenterIntent): DecodedFundIntent {
   })
   const [first] = chains
   const start = Number(first.launch.mustStartAtOrAfter)
-  if (chains.some(chain => chain.launch.flavor !== 'homerun-fund'
-    || first.launch.flavor !== 'homerun-fund'
-    || !isAddressEqual(chain.launch.owner, first.launch.owner)
+  if (chains.some(chain => !isAddressEqual(chain.launch.owner, first.launch.owner)
     || chain.launch.projectUri !== first.launch.projectUri
     || chain.launch.tokenName !== first.launch.tokenName
     || chain.launch.ticker !== first.launch.ticker

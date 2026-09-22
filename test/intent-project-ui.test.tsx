@@ -124,6 +124,8 @@ describe('a published project page', () => {
     }))
     await render()
     expect(host.textContent).toContain('Owner: create Safe')
+    expect(host.textContent).toContain('along with the project')
+    expect(host.textContent).toContain('whether the Safe exists yet or not')
     expect(host.textContent).toContain('2/2 approvals')
     expect(host.textContent).toContain(safeOwners[0])
     expect(host.textContent).toContain(safeOwners[1])

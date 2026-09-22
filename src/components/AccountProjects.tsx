@@ -168,7 +168,7 @@ export function AccountProjectSections({ account, network, section = 'both' }: {
   const ownedRows = mergeSearch(indexedOwned, publishedOwned)
   const byRef = new Map(projectRows(heldProjects.data).map(project => [refKey(project), project]))
   return <div className={`grid min-w-0 gap-7${section === 'both' ? ' lg:grid-cols-2' : ''}`}>
-    {section !== 'holdings' && <ProjectSection title="Owned by this account">
+    {section !== 'holdings' && <ProjectSection title="Your projects">
       <QueryNotice failed={owned.isError} hasData={owned.data !== undefined} loading={owned.isPending} noun="owned projects" refresh={() => void owned.refetch()} />
       {owned.data !== undefined && !ownedRows.length && <p className="text-sm">No owned projects indexed for this account on {network}.</p>}
       {ownedRows.length > 0 && <ul className="m-0 grid list-none gap-3 p-0">{ownedRows.slice(0, ownedLimit).map(listRow)}</ul>}
