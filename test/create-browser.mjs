@@ -42,8 +42,10 @@ async function downloadSetup() {
   await result.delete();
   return setup;
 }
+/** The form saves its first draft once it is interactive; a click before that reaches no handler. */
+const formReady = () => page.locator('#draft-status').filter({ hasText: 'Draft saved in this browser' }).waitFor({ state: 'visible' });
 async function currentStep(index) {
-  await page.locator('#draft-status').filter({ hasText: 'Draft saved in this browser' }).waitFor({ state: 'visible' });
+  await formReady();
   await page.locator(`.create-step[data-step-panel="${index}"]`).waitFor({ state: 'visible' });
   await page.locator(`[data-create-step="${index}"][aria-current="step"]`).waitFor({ state: 'visible' });
   assert.equal(await page.locator(`.create-step[data-step-panel="${index}"]`).isVisible(), true);
@@ -524,6 +526,7 @@ try {
   });
   await check('Reset restores the editable draft without creating or overwriting deployments', async () => {
     await page.goto(new URL('/create', home).href);
+    await formReady();
     await page.locator('#start-over').click();
     await currentStep(0);
     assert.equal(await input('name').inputValue(), '');

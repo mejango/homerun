@@ -158,10 +158,10 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
 
   useEffect(() => {
     const requests = photoRequest.current;
+    const next = initialValues();
     try {
       const saved = JSON.parse(localStorage.getItem(CREATE_DRAFT_KEY) || 'null');
       if (saved?.raw && typeof saved.raw === 'object' && !Array.isArray(saved.raw)) {
-        const next = initialValues();
         for (const key of Object.keys(CREATE_DEFAULTS) as FieldName[]) {
           if (Object.hasOwn(saved.raw, key)) next[key] = saved.raw[key];
         }
@@ -184,12 +184,19 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
         }
         if (next.name === 'Untitled Homerun') next.name = 'Untitled';
         next.revnetOperatorEnabled = true;
-        setRaw(next);
         const savedStep = Number.isInteger(saved.step) ? Math.min(LAST_STEP, Math.max(0, saved.step)) : 0;
         setStep(savedStep);
         setFurthest(savedStep);
       }
     } catch { setStorageNotice('Draft saving is unavailable. Keep this tab open while you work.'); }
+    // Text typed before this form attached lives in the field, not in state.
+    // Keep it: the first saved setup is what the preview and the creation read.
+    for (const key of Object.keys(CREATE_DEFAULTS) as FieldName[]) {
+      const field = document.getElementById(`create-${key}`);
+      const typed = field instanceof HTMLTextAreaElement || (field instanceof HTMLInputElement && field.type === 'text') ? field.value : '';
+      if (typed && typed !== String(next[key] ?? '')) next[key] = typed;
+    }
+    setRaw(next);
     setHydrated(true);
     return () => { requests.photo += 1; requests.ownerPhoto += 1; requests.operatorPhoto += 1; };
   }, []);
