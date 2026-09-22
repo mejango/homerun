@@ -319,9 +319,9 @@ try {
     step: 4,
     incomeDefaultsVersion: 3,
   })
-  // The IPFS gateway constant points at production Juicebox Center; serve the pinned
-  // metadata from here so this run reaches no network but the modeled Center.
-  await context.route('https://juicebox.center/ipfs/**', route => route.fulfill({ json: metadata }))
+  // The gateway follows the configured Center, so the pinned metadata is served
+  // from here and this run reaches no network but the modeled Center.
+  await context.route(`${centerOrigin}/ipfs/**`, route => route.fulfill({ json: metadata }))
 
   const page = await context.newPage()
   page.setDefaultTimeout(30_000)
@@ -363,8 +363,10 @@ try {
   const intentText = await page.locator('main').textContent()
   assert.match(intentText, /Neighborhood Workshop/)
   assert.match(intentText, /free/)
-  assert.match(intentText, /Owner: create Safe/)
-  assert.match(intentText, new RegExp(SECOND_SIGNER, 'i'))
+  await page.getByRole('tab', { name: 'Owners', exact: true }).click()
+  const ownersText = await page.locator('main').textContent()
+  assert.match(ownersText, /Owner: create Safe/)
+  assert.match(ownersText, new RegExp(SECOND_SIGNER, 'i'))
   await page.getByText(/costs ~[\d.]+ ETH/).first().waitFor()
   assert.deepEqual(errors, [])
 

@@ -18,7 +18,8 @@ export function useWallet() {
       const selected = connectors.find(item => item.id === connectorId)
       return selected ? connectAsync({ connector: selected }) : Promise.reject(new Error('Unknown wallet'))
     },
-    openSignIn: () => { if (!IS_DETERMINISTIC_BROWSER) requestSignIn() },
+    /** Opens the wallet chooser and resolves once it closes, connected or not. */
+    openSignIn: (): Promise<void> => IS_DETERMINISTIC_BROWSER ? Promise.resolve() : requestSignIn(),
     disconnect: () => disconnect(),
   }
 }

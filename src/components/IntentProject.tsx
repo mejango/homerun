@@ -8,7 +8,7 @@ import { multisigReview } from '@/lib/create-multisig'
 import { decodeFundIntent } from '@/lib/fund-intent'
 import { fetchFundProjectMetadata } from '@/lib/fund-project-metadata'
 import { DeployChains } from '@/components/DeployChains'
-import { IntentProjectView } from '@/components/IntentProjectView'
+import { PlannedProjectView } from '@/components/PlannedProject'
 
 /** Everything shown here comes from the signed calls and the pinned metadata; no chain is read. */
 export function IntentProject({ intentId }: { intentId: string }) {
@@ -53,14 +53,18 @@ export function IntentProject({ intentId }: { intentId: string }) {
   if (!terms) return <p role="alert">{undecodable || 'This project was not created by Homerun.'}</p>
 
   const name = details.data?.name ?? intent.data?.name ?? 'FUND project'
-  return <IntentProjectView
+  return <PlannedProjectView
     display={{
       name, location: details.data?.location, logoUrl: details.data?.logoUrl, coverUrl: details.data?.coverUrl,
       description: details.data?.description, detailsUnavailable: details.isError,
-      owner: terms.owner, ownerProfile: details.data?.owner ?? undefined,
+      owner: terms.owner, ownerAddress: terms.owner,
+      operatorAddress: details.data?.plan?.operatorWallet ?? null,
+      ownerProfile: details.data?.owner ?? undefined,
+      operatorProfile: details.data?.operator ?? undefined,
       chainIds: terms.chainIds, tokenName: terms.tokenName, ticker: terms.ticker,
       mustStartAtOrAfter: terms.mustStartAtOrAfter, status: 'Deploys on first use',
       multisigs: terms.safes.length ? multisigReview(terms.safes) : undefined,
+      plan: details.data?.plan,
     }}
     actions={intent.data && <DeployChains intent={intent.data} heading="Deploy" chainIds={terms.chainIds}
       onDeployed={() => { void intent.refetch() }} onRunningChange={setRunning} />}

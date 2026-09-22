@@ -20,7 +20,7 @@ export default async function IntentPage({ params }: IntentRouteProps) {
   return <div className="project-page live-contract-page">
     <a className="skip-link" href="#main">Skip to content</a>
     <header className="site-header"><Brand /><WalletButton /></header>
-    <main id="main" className="mx-auto max-w-[1220px] px-5 py-10 sm:py-14" tabIndex={-1}>
+    <main id="main" className="mx-auto max-w-[1220px] px-5 py-8 sm:px-8 sm:py-10" tabIndex={-1}>
       <IntentProject key={id} intentId={id} />
     </main>
   </div>

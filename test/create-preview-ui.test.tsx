@@ -73,6 +73,8 @@ describe('the preview of a project that is not created yet', () => {
   let root: Root
   beforeEach(() => {
     localStorage.clear()
+    vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
+    HTMLElement.prototype.scrollIntoView = vi.fn()
     localStorage.setItem(CREATE_DRAFT_KEY, JSON.stringify(saved()))
     runtime.address = wallet
     runtime.centerWallet = false
@@ -99,6 +101,10 @@ describe('the preview of a project that is not created yet', () => {
   const button = (label: string) => [...host.querySelectorAll('button')].find(item => item.textContent === label)
   const alert = () => [...host.querySelectorAll('[role="alert"]')].find(node => !node.closest('details'))
   const render = async () => { await act(async () => root.render(<CreatePreview />)) }
+  const openTab = async (label: string) => {
+    const tab = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(item => item.textContent?.trim() === label)
+    await act(async () => { tab!.click() })
+  }
 
   it('renders the saved setup as the project page, and says nothing is created', async () => {
     await render()
@@ -121,7 +127,7 @@ describe('the preview of a project that is not created yet', () => {
     })))
     await render()
     expect(host.querySelector('img[alt*="logo"]')).toBeNull()
-    expect(host.querySelector('img[alt*="picture"]')?.getAttribute('src')).toBe('data:image/jpeg;base64,/9j/ownerpic')
+    expect(host.querySelector('img[alt="Ada Rios, owner"]')?.getAttribute('src')).toBe('data:image/jpeg;base64,/9j/ownerpic')
     expect(host.querySelector('img[alt*="cover"]')?.getAttribute('src')).toBe('data:image/jpeg;base64,/9j/previews')
     expect(host.textContent).toContain('Ada Rios')
     expect(host.textContent).toContain('She keeps the workshop running.')
@@ -132,9 +138,32 @@ describe('the preview of a project that is not created yet', () => {
       ownerMode: 'create', ownerSigners: signers, ownerThreshold: 2, ownerWallet: '',
     })))
     await render()
+    await openTab('Owners')
     expect(host.textContent).toContain('2/2 approvals')
     expect(host.textContent).toContain(signers[0])
     expect(host.textContent).not.toContain('Deploys on first use')
+  })
+
+  it('renders the raise the setup adds up to, with nothing raised against it', async () => {
+    await render()
+    expect(host.textContent).toContain('Raised: $0 of $615,384.62')
+    expect(host.textContent).toContain('Funded: 0%')
+    expect(host.textContent).toContain('Raise goal')
+    expect(host.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('0')
+  })
+
+  it('reads the stages off the setup, without claiming anything is published', async () => {
+    localStorage.setItem(CREATE_DRAFT_KEY, JSON.stringify(saved({
+      revenueDescription: 'Members pay for tool hire and repairs.',
+      minimumRevenue: 4_000, minimumRevenueConsequences: 'The Owner reviews operating costs.',
+    })))
+    await render()
+    await openTab('Stages')
+    expect(host.textContent).toContain('Contributions open as soon as this project is created.')
+    expect(host.textContent).toContain('Members pay for tool hire and repairs.')
+    expect(host.textContent).toContain('The Owner reviews operating costs.')
+    expect(host.textContent).toContain('The estimates this setup publishes.')
+    expect(host.textContent).not.toContain('Published estimates from the project metadata.')
   })
 
   it('goes back to the setup without changing it', async () => {
@@ -186,12 +215,26 @@ describe('the preview of a project that is not created yet', () => {
     expect(navigate.push).toHaveBeenCalledWith(`/intent/${intentId}`)
   })
 
-  it('asks an unconnected visitor to sign in, and publishes nothing', async () => {
+  it('creates on one press, connecting a wallet first when there is none', async () => {
+    runtime.address = undefined
+    runtime.openSignIn.mockImplementation(async () => { runtime.address = wallet })
+    await render()
+    expect([...host.querySelectorAll('button')].some(item => item.textContent === 'Sign in')).toBe(false)
+    expect(host.textContent).not.toContain('Wallet')
+    await act(async () => { button('Create')!.click() })
+    expect(runtime.openSignIn).toHaveBeenCalledTimes(1)
+    expect(runtime.publishIntent).toHaveBeenCalled()
+    expect(navigate.push).toHaveBeenCalledWith(`/intent/${intentId}`)
+  })
+
+  it('leaves the setup alone when the visitor closes the chooser without a wallet', async () => {
     runtime.address = undefined
     await render()
     await act(async () => { button('Create')!.click() })
     expect(runtime.openSignIn).toHaveBeenCalled()
     expect(runtime.publishIntent).not.toHaveBeenCalled()
+    expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()
+    expect(button('Create')).toBeTruthy()
   })
 
   it('says a Safe or passkey connection has to create with a transaction', async () => {

@@ -1,5 +1,4 @@
 import {
-  JBCENTER_DEFAULT_URL,
   JBCenterRequestError,
   JBCenterTimeoutError,
   createJBCenterClient,
@@ -9,7 +8,8 @@ import {
 } from '@bananapus/nana-sdk-core/jbcenter'
 import { jbCenterBaseUrl } from '@/lib/jbcenter-config'
 
-export const JBCENTER_IPFS_GATEWAY = `${JBCENTER_DEFAULT_URL}/ipfs/`
+/** The gateway of the Center this app pins to, so a CID reads back where it was written. */
+export const JBCENTER_IPFS_GATEWAY = `${jbCenterBaseUrl().replace(/\/+$/, '')}/ipfs/`
 /** CIDv0 of a zero-byte file — what a pin returns when the browser handed us an
  *  empty File (undownloaded cloud files, cross-site drags) or the body was lost. */
 const EMPTY_FILE_CID = 'QmbFMke1KXqnYyBBWxB74N4c5SBnJMVAiMNRcGu6x1AwQH'

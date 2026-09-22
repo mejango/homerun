@@ -3,7 +3,7 @@
 // Clear callback data before loading a wallet SDK or rendering.
 import './center-callback'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { type PropsWithChildren, useCallback, useEffect, useMemo, useState } from 'react'
+import { type PropsWithChildren, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createConfig, injected, WagmiProvider } from 'wagmi'
 import { TransactionReviewProvider } from '@/components/TransactionReviewProvider'
 import { SUPPORTED_CHAINS } from '@/lib/chains'
@@ -45,13 +45,24 @@ export function Providers({ children }: PropsWithChildren) {
     return () => { window.removeEventListener('load', restore); teardown?.() }
   }, [queryClient])
   const [walletOpen, setWalletOpen] = useState(false)
-  const requestSignIn = useCallback(() => { if (!IS_DETERMINISTIC_BROWSER) setWalletOpen(true) }, [])
+  const waiting = useRef<(() => void)[]>([])
+  const requestSignIn = useCallback(() => {
+    if (IS_DETERMINISTIC_BROWSER) return Promise.resolve()
+    setWalletOpen(true)
+    return new Promise<void>(resolve => { waiting.current = [...waiting.current, resolve] })
+  }, [])
+  const closeWallet = useCallback(() => {
+    setWalletOpen(false)
+    const pending = waiting.current
+    waiting.current = []
+    for (const resolve of pending) resolve()
+  }, [])
   const walletAuth = useMemo(() => ({ requestSignIn }), [requestSignIn])
   return <QueryClientProvider client={queryClient}>
     <WagmiProvider config={wagmiConfig} reconnectOnMount={!IS_DETERMINISTIC_BROWSER}>
       <WalletAuthContext.Provider value={walletAuth}>
         <TransactionReviewProvider>{children}</TransactionReviewProvider>
-        {walletOpen ? <ExternalWalletDialog onClose={() => setWalletOpen(false)} /> : null}
+        {walletOpen ? <ExternalWalletDialog onClose={closeWallet} /> : null}
       </WalletAuthContext.Provider>
     </WagmiProvider>
   </QueryClientProvider>
