@@ -85,6 +85,13 @@
   font: 28px/1.3 var(--serif);
   margin: 10px 0;
 }
+.homerun-project-layout .demo-published-token h3 {
+  font: 500 15px/1.4 var(--sans);
+  margin-top: 24px;
+}
+.homerun-project-layout .demo-published-token .demo-account-balances {
+  margin-top: 10px;
+}
 .homerun-project-layout .demo-model-note {
   padding: 16px 18px;
   background: #edf2f4;

@@ -130,14 +130,41 @@ export function FundProject({ chainId, projectId, intentId }: { chainId: JBChain
   </div>}</IncomeProjectRuntime>
 }
 
-function PlannedIncome({ plan }: { plan: NonNullable<FundProjectMetadata['plan']> }) {
+/** The published setup is the page's first source; a setup that fails its own validation is read through the plan. */
+function publishedPlan(details: FundProjectMetadata) {
+  const { setup, plan } = details
+  if (!setup && !plan) return null
+  const pick = <T,>(fromSetup: T | undefined, fromPlan: T | null | undefined): T | null =>
+    fromSetup === undefined || fromSetup === '' ? fromPlan ?? null : fromSetup
+  return {
+    ownerWallet: plan?.ownerWallet ?? null,
+    operatorWallet: plan?.operatorWallet ?? null,
+    purchaseBudget: pick(setup?.purchaseBudget, plan?.purchaseBudget),
+    opsReserve: pick(setup?.opsReserve, plan?.opsReserve),
+    monthlyRent: pick(setup?.monthlyRent, plan?.monthlyRent),
+    monthlyCosts: pick(setup?.monthlyCosts, plan?.monthlyCosts),
+    rentGrowthPercent: pick(setup?.rentGrowthPercent, plan?.rentGrowthPercent),
+    costGrowthPercent: pick(setup?.costGrowthPercent, plan?.costGrowthPercent),
+    revenueDescription: pick(setup?.revenueDescription, plan?.revenueDescription),
+    minimumRevenue: pick(setup?.minimumRevenue, plan?.minimumRevenue),
+    minimumRevenueConsequences: pick(setup?.minimumRevenueConsequences, plan?.minimumRevenueConsequences),
+    operatorFundPercent: pick(setup?.operatorFundPercent, plan?.operatorFundPercent),
+    operatorSplitPercent: pick(setup?.operatorSplitPercent, plan?.operatorSplitPercent),
+    fundHolderSplitPercent: pick(setup?.stickySplitPercent, plan?.fundHolderSplitPercent),
+    tokenName: pick(setup?.fundTokenName, details.tokens?.name),
+    tokenSymbol: pick(setup?.fundTicker, details.tokens?.symbol),
+  }
+}
+
+function PlannedIncome({ plan }: { plan: NonNullable<ReturnType<typeof publishedPlan>> }) {
   const money = (amount: number | null) => amount === null ? 'Not specified' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(amount)
+  const rate = (amount: number | null) => amount === null ? 'Not specified' : `${amount}%`
   return <section className="mt-7 rounded-md border border-[#cbd7db] bg-[#edf2f4] p-5 text-[#3f5b66] sm:p-7">
     <h2 className="mb-4 text-3xl">The project plan</h2>
     <p className="mb-5 text-sm">Published estimates from the project metadata. These values do not set withdrawal rights, mint permissions, or confirm an asset purchase.</p>
     {(plan.ownerWallet || plan.operatorWallet) && <dl className="mb-5 grid gap-5 sm:grid-cols-2"><div><dt className="text-sm">Published Owner wallet: program control and FUND allocation</dt><dd className="mt-2 break-all text-sm">{plan.ownerWallet ?? 'Not specified'}</dd></div><div><dt className="text-sm">Published initial Operator wallet: INCOME incentives</dt><dd className="mt-2 break-all text-sm">{plan.operatorWallet ?? 'Not specified'}</dd></div></dl>}
-    <dl className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4"><div><dt className="text-sm">Asset price</dt><dd className="mt-2 text-xl">{money(plan.purchaseBudget)}</dd></div><div><dt className="text-sm">Cash reserve</dt><dd className="mt-2 text-xl">{money(plan.opsReserve)}</dd></div><div><dt className="text-sm">Monthly revenue estimate</dt><dd className="mt-2 text-xl">{money(plan.monthlyRent)}</dd></div><div><dt className="text-sm">Monthly expense estimate</dt><dd className="mt-2 text-xl">{money(plan.monthlyCosts)}</dd></div></dl>
-    <div className="mt-5"><h3 className="text-xl">Minimum monthly revenue</h3><p className="mt-2">{plan.minimumRevenue === 0 ? 'No minimum set' : money(plan.minimumRevenue)}</p>{plan.minimumRevenueConsequences && <><h4 className="mt-4 font-medium">If revenue falls below the minimum</h4><p className="mt-2 whitespace-pre-line text-sm">{plan.minimumRevenueConsequences}</p></>}<p className="mt-3 text-sm">This is a published operating commitment. It does not automatically change token allocations or contract settings; any program changes must be executed by the Owner.</p></div>
+    <dl className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4"><div><dt className="text-sm">Asset price</dt><dd className="mt-2 text-xl">{money(plan.purchaseBudget)}</dd></div><div><dt className="text-sm">Cash reserve</dt><dd className="mt-2 text-xl">{money(plan.opsReserve)}</dd></div><div><dt className="text-sm">Monthly revenue estimate</dt><dd className="mt-2 text-xl">{money(plan.monthlyRent)}</dd></div><div><dt className="text-sm">Monthly expense estimate</dt><dd className="mt-2 text-xl">{money(plan.monthlyCosts)}</dd></div><div><dt className="text-sm">Revenue growth per year</dt><dd className="mt-2 text-xl">{rate(plan.rentGrowthPercent)}</dd></div><div><dt className="text-sm">Expense growth per year</dt><dd className="mt-2 text-xl">{rate(plan.costGrowthPercent)}</dd></div></dl>
+    <div className="mt-5"><h3 className="text-xl">The revenue plan</h3>{plan.revenueDescription && <p className="mt-2 whitespace-pre-line">{plan.revenueDescription}</p>}<h4 className="mt-4 font-medium">Minimum monthly revenue</h4><p className="mt-2">{plan.minimumRevenue === 0 ? 'No minimum set' : money(plan.minimumRevenue)}</p>{plan.minimumRevenueConsequences && <><h4 className="mt-4 font-medium">If revenue falls below the minimum</h4><p className="mt-2 whitespace-pre-line text-sm">{plan.minimumRevenueConsequences}</p></>}<p className="mt-3 text-sm">This is a published operating commitment. It does not automatically change token allocations or contract settings; any program changes must be executed by the Owner.</p></div>
     <p className="mt-5 text-sm">Planned Owner FUND share: {plan.operatorFundPercent === null ? 'not specified' : `${plan.operatorFundPercent}%`}. The Owner may distribute these FUND tokens at their discretion. Current balances and supply determine actual ownership.</p>
     <h3 className="mb-3 mt-7 text-2xl">Planned INCOME allocation</h3>
     <p className="text-sm">The initial 500,000 INCOME is allocated to all FUND holders at the published snapshot, including wallet tokens and unclaimed credits. Claiming that allocation does not require staking.</p>
@@ -174,9 +201,12 @@ function ProjectActions({ chainId, projectId, intentId, state, client, details, 
   const totalBalance = state.creditBalance + state.erc20Balance
   const isOperator = !!address && Object.values(state.permissions).some(Boolean)
   const supported = state.supportedController && state.supportedTerminals && state.knownOwnerWrapper
-  const name = details?.name ?? undefined, plan = details?.plan
+  const name = details?.name ?? undefined, plan = details && publishedPlan(details)
   const blocked = writesUnavailable || !supported
   const gate = (children: ReactNode) => <fieldset disabled={blocked} className="grid min-w-0 gap-7 border-0 p-0" aria-label="Project transactions">{children}</fieldset>
+  const publishedToken = plan && (plan.tokenName || plan.tokenSymbol) ? <ActionSection title="FUND token">
+    <dl className="grid gap-5 sm:grid-cols-2"><div><dt className="text-sm">Token name</dt><dd className="mt-2 break-words text-xl">{plan.tokenName ?? 'Not specified'}</dd></div><div><dt className="text-sm">Ticker</dt><dd className="mt-2 break-words text-xl">{plan.tokenSymbol ?? 'Not specified'}</dd></div></dl>
+  </ActionSection> : null
   const currency = context && <label className="grid gap-2 text-sm">FUND treasury currency<select value={contextIndex} onChange={event => setContextIndex(Number(event.target.value))} className="min-h-11 rounded border border-[#bfc9b5] bg-white px-3 pr-9">{state.accountingContexts.map((item, index) => <option key={`${item.terminal}:${item.token}`} value={index}>{item.symbol}</option>)}</select></label>
   const verified = <section aria-label="Verified project state" className="rounded-md border border-[#c4cdbb] p-5 sm:p-7">
     <div className="flex flex-wrap justify-between gap-3"><h2 className="text-3xl">The raise</h2><button className="text-sm underline" type="button" disabled={refreshing} onClick={refresh}>{refreshing ? 'Refreshing…' : 'Refresh'}</button></div>
@@ -207,7 +237,7 @@ function ProjectActions({ chainId, projectId, intentId, state, client, details, 
       accountsAll={<div className="grid gap-7"><ProjectParticipants chainId={state.chainId} projectId={state.projectId} tokenLabel="FUND" />{income.projectId ? income.accountsAll : emptyIncome}</div>}
       market={<div className="grid gap-7">{gate(context && <>{currency}<CashOutPanel state={state} client={client} contextIndex={contextIndex} /></>)}{income.projectId ? income.market : emptyIncome}</div>}
       settlement={<div className="grid gap-7">{gate(<FundBridgeActions state={state} />)}{income.projectId && income.settlement}</div>}
-      splits={<div className="grid gap-7"><ProjectSplitsEditor chainId={chainId} projectId={projectId} phase="fund" client={client} unavailable={writesUnavailable} />{income.projectId ? income.splits : emptyIncome}</div>}
+      splits={<div className="grid gap-7">{publishedToken}<ProjectSplitsEditor chainId={chainId} projectId={projectId} phase="fund" client={client} unavailable={writesUnavailable} />{income.projectId ? income.splits : emptyIncome}</div>}
       loans={income.projectId ? income.loans : <ActionSection title="Loans"><p>Loans use INCOME as collateral. They become available after a verified INCOME launch under its contract terms.</p></ActionSection>}
       control={<div className="grid gap-7"><ProjectOwnershipEditor chainId={chainId} projectId={projectId} client={client} unavailable={writesUnavailable} />{income.projectId && income.control}</div>}
       permissions={<div className="grid gap-7"><ProjectPermissionsEditor chainId={chainId} projectId={projectId} client={client} unavailable={writesUnavailable} />{income.projectId && income.permissions}</div>}

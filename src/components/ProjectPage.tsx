@@ -849,10 +849,12 @@ function PhasePanel({
   p,
   inputs,
   revenueDescription,
+  revenuePlan,
 }: {
   p: Projection;
   inputs: NetworkInputs;
   revenueDescription?: string;
+  revenuePlan?: { minimumRevenue: number; consequences: string };
 }) {
   const phase = p.phase as ProjectPhase;
   const sold = phase === "liquidated";
@@ -886,6 +888,26 @@ function PhasePanel({
         <p>{titles[phase][1]}</p>
         {phase === "earning" && revenueDescription && (
           <p className="revenue-description">{revenueDescription}</p>
+        )}
+        {phase === "earning" && revenuePlan && (
+          <dl className="revenue-plan">
+            <div>
+              <dt>Minimum monthly revenue</dt>
+              <dd>
+                {revenuePlan.minimumRevenue > 0
+                  ? money(revenuePlan.minimumRevenue)
+                  : "No minimum set"}
+              </dd>
+            </div>
+            {revenuePlan.consequences && (
+              <div>
+                <dt>If revenue falls below the minimum</dt>
+                <dd className="whitespace-pre-line">
+                  {revenuePlan.consequences}
+                </dd>
+              </div>
+            )}
+          </dl>
         )}
       </div>
       {phase === "raising" && (
@@ -1966,6 +1988,7 @@ function DemoOwners({
   control,
   permissions,
   splitEditor,
+  token,
 }: {
   p: Projection | null;
   phase: ProjectPhase;
@@ -1974,6 +1997,7 @@ function DemoOwners({
   control: ReactNode;
   permissions: ReactNode;
   splitEditor: ReactNode;
+  token?: { name: string; symbol: string };
 }) {
   const unavailable = (
     <section className="demo-section">
@@ -2087,6 +2111,21 @@ function DemoOwners({
               customers.
             </p>
             <Allocation p={p} />
+            {token && (
+              <div className="demo-published-token">
+                <h3>FUND token</h3>
+                <dl className="demo-account-balances">
+                  <div>
+                    <dt>Token name</dt>
+                    <dd>{token.name}</dd>
+                  </div>
+                  <div>
+                    <dt>Ticker</dt>
+                    <dd>{token.symbol}</dd>
+                  </div>
+                </dl>
+              </div>
+            )}
             <TokenTerms p={p} />
             <ProjectActionGuide stage={phase} section="splits" />
             {splitEditor}
@@ -2392,6 +2431,13 @@ export function DemoProjectPage({ project, planned }: { project?: CreatedProject
                     p={project ? overview! : p}
                     inputs={inputs}
                     revenueDescription={project?.values.revenueDescription}
+                    revenuePlan={
+                      project && {
+                        minimumRevenue: project.values.minimumRevenue,
+                        consequences:
+                          project.values.minimumRevenueConsequences,
+                      }
+                    }
                   />
                 ) : (
                   <div className="phase-panel">
@@ -2571,6 +2617,15 @@ export function DemoProjectPage({ project, planned }: { project?: CreatedProject
                 control={<DemoProjectControl {...managementProps} />}
                 permissions={<DemoProjectPermissions {...managementProps} />}
                 splitEditor={<DemoProjectSplits {...managementProps} />}
+                token={
+                  project &&
+                  (project.values.fundTokenName || project.values.fundTicker)
+                    ? {
+                        name: project.values.fundTokenName,
+                        symbol: project.values.fundTicker,
+                      }
+                    : undefined
+                }
               />
             }
             shop={

@@ -59,6 +59,8 @@ export type FundProjectMetadata = {
   location: string | null
   coverUrl: string | null
   logoUrl: string | null
+  /** The FUND ERC-20 name and ticker the setup published with the project. */
+  tokens: { name: string | null; symbol: string | null } | null
   owner: ProjectProfileMetadata | null
   operator: ProjectProfileMetadata | null
   /** The published initial INCOME allocation an INCOME launch pointed at; informational, the launch commits its hash. */
@@ -73,6 +75,9 @@ export type FundProjectMetadata = {
     opsReserve: number | null
     monthlyRent: number | null
     monthlyCosts: number | null
+    rentGrowthPercent: number | null
+    costGrowthPercent: number | null
+    revenueDescription: string | null
     minimumRevenue: number | null
     minimumRevenueConsequences: string | null
     operatorFundPercent: number | null
@@ -102,6 +107,11 @@ function number(value: unknown, maximum = 1_000_000_000_000): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= maximum ? value : null
 }
 
+/** Growth assumptions may be negative, so they are read against their own bounds. */
+function growth(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= -100 && value <= 100 ? value : null
+}
+
 function wallet(value: unknown): Address | null {
   if (typeof value !== 'string') return null
   const address = value.trim()
@@ -125,12 +135,15 @@ export function parseFundProjectMetadata(value: unknown): FundProjectMetadata {
     return parsed.name || parsed.introduction || parsed.photoUrl ? parsed : null
   }
   const coverUrl = fundIpfsUrl(metadata.coverImageUri) ?? fundIpfsUrl(metadata.logoUri)
+  const published = record(metadata.tokens)
+  const tokens = published ? { name: text(published.name, 32), symbol: text(published.symbol, 12) } : null
   return {
     name: text(metadata.name, 160),
     description: text(metadata.description, 4_000),
     location: setup ? text(setup.location, 200) : null,
     coverUrl,
     logoUrl: fundIpfsUrl(metadata.logoUri),
+    tokens: tokens && (tokens.name || tokens.symbol) ? tokens : null,
     owner: profile('owner'),
     operator: profile('operator'),
     setup: publishedSetup(setup, coverUrl, profile('owner'), profile('operator')),
@@ -142,6 +155,9 @@ export function parseFundProjectMetadata(value: unknown): FundProjectMetadata {
       opsReserve: number(setup.opsReserve),
       monthlyRent: number(setup.monthlyRent),
       monthlyCosts: number(setup.monthlyCosts),
+      rentGrowthPercent: growth(setup.rentGrowthPercent),
+      costGrowthPercent: growth(setup.costGrowthPercent),
+      revenueDescription: text(setup.revenueDescription, 4_000),
       minimumRevenue: number(setup.minimumRevenue),
       minimumRevenueConsequences: text(setup.minimumRevenueConsequences, 2_000),
       operatorFundPercent: number(setup.operatorFundPercent, 100),
