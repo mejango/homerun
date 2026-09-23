@@ -232,7 +232,7 @@ describe('the preview of a project that is not created yet', () => {
     runtime.address = undefined
     runtime.openSignIn.mockImplementation(async () => { runtime.address = wallet })
     await render()
-    expect([...host.querySelector('.planned-bar')!.querySelectorAll('button')].map(item => item.textContent)).toEqual(['Edit', 'Create'])
+    expect([...host.querySelector('.planned-bar')!.querySelectorAll('button')].map(item => item.textContent)).toEqual(['Create', 'Edit'])
     await act(async () => { button('Create')!.click() })
     expect(runtime.openSignIn).toHaveBeenCalledTimes(1)
     expect(runtime.publishIntent).toHaveBeenCalled()
