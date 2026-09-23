@@ -7,6 +7,7 @@ import type { FundProjectState } from '../src/lib/fund-state'
 import type { IncomeProjectState } from '../src/lib/income-state'
 import type { CurrentProjectOperator } from '../src/lib/project-operator-profile'
 import { parseFundProjectMetadata, type FundProjectMetadata } from '../src/lib/fund-project-metadata'
+import { FULL_SETUP_PIN } from './fixtures/full-setup'
 
 type AdminEditorProps = { chainId: number; projectId: bigint; unavailable?: boolean; label?: string; inheritedMetadataUri?: string; phase?: string }
 
@@ -127,6 +128,11 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     }
     expect(target, `Missing ${label} tab`).toBeDefined(); await act(async () => target!.click())
   }
+  function section(heading: string) {
+    const found = [...host.querySelectorAll('section')].filter(node => node.querySelector('h2')?.textContent === heading)
+    expect(found, `Missing ${heading} section`).toHaveLength(1)
+    return found[0]
+  }
   async function render(props: { intentId?: string } = {}) {
     await act(async () => root.render(<FundProject chainId={1} projectId="7" {...props} />))
     for (const label of ['Owners', 'Market', 'Settlement', 'Operators', 'Overview']) await tab(label)
@@ -169,6 +175,63 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     await render()
     expect(host.querySelector('section[aria-label="Owner introduction"] a')?.textContent).toBe(runtime.address)
     expect(host.querySelector('section[aria-label="Operator introduction"]')?.textContent).toContain('Address not specified')
+  })
+
+  it('shows every text a published setup carries, each in its own place', async () => {
+    runtime.details = parseFundProjectMetadata(FULL_SETUP_PIN)
+    await render()
+    await tab('Stages')
+    await tab('Owners')
+    await tab('Splits')
+    expect(host.querySelector('h1')?.textContent).toContain('Neighborhood Workshop')
+    expect(host.querySelector('.hpl-location')?.textContent).toBe('Florianópolis, Brazil')
+    expect(host.textContent).toContain('Shared tools that earn revenue through community use.')
+    const owner = host.querySelector('section[aria-label="Owner introduction"]')!
+    expect(owner.textContent).toContain('Ada Rios')
+    expect(owner.textContent).toContain('She keeps the workshop running.')
+    const operator = host.querySelector('section[aria-label="Operator introduction"]')!
+    expect(operator.textContent).toContain('Bruno Lima')
+    expect(operator.textContent).toContain('He maintains the machines and the books.')
+    const plan = section('The project plan')
+    expect(plan.textContent).toContain('Members pay monthly for bench time, and visitors pay by the hour.')
+    expect(plan.textContent).toContain('Minimum monthly revenue')
+    expect(plan.textContent).toContain('$7,500.00')
+    expect(plan.textContent).toContain('If revenue falls below the minimum')
+    expect(plan.textContent).toContain('The Owner cuts machine hours and reports the shortfall to holders.')
+    expect(plan.textContent).toContain('Revenue growth per year')
+    expect(plan.textContent).toContain('3%')
+    expect(plan.textContent).toContain('Expense growth per year')
+    expect(plan.textContent).toContain('2%')
+    const token = section('FUND token')
+    expect(token.textContent).toContain('Workshop Bench FUND')
+    expect(token.textContent).toContain('WKSHP')
+    expect(token.closest('[role="tabpanel"]')?.id).toContain('panel-splits')
+  })
+
+  it('reads an older pin through its plan when the published setup does not validate', async () => {
+    runtime.details = parseFundProjectMetadata({
+      tokens: { name: 'Workshop Bench FUND', symbol: 'WKSHP' },
+      homerun: { version: 1, kind: 'fund', setup: {
+        revenueDescription: 'Members pay monthly for bench time.',
+        minimumRevenue: 4_200,
+        minimumRevenueConsequences: 'The Owner reports the shortfall to holders.',
+        rentGrowthPercent: 4, costGrowthPercent: 1,
+      } },
+    })
+    await render()
+    await tab('Stages')
+    await tab('Owners')
+    await tab('Splits')
+    expect(runtime.details.setup).toBeNull()
+    const plan = section('The project plan')
+    expect(plan.textContent).toContain('Members pay monthly for bench time.')
+    expect(plan.textContent).toContain('Minimum monthly revenue')
+    expect(plan.textContent).toContain('$4,200.00')
+    expect(plan.textContent).toContain('The Owner reports the shortfall to holders.')
+    expect(plan.textContent).toContain('4%')
+    expect(plan.textContent).toContain('1%')
+    expect(section('FUND token').textContent).toContain('Workshop Bench FUND')
+    expect(section('FUND token').textContent).toContain('WKSHP')
   })
 
   it('waits for the initial INCOME binding read before presenting the published Operator as planned', async () => {
