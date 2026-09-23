@@ -427,10 +427,9 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
               <div className="fundraise-inputs">
                 <fieldset className="income-field-group modeling-inputs fundraise-modeling" aria-describedby="fundraise-modeling-note"><legend>Modeling inputs</legend>
                   <p id="fundraise-modeling-note" className="input-purpose-note">Budget assumptions for the raise goal. These do not set contract withdrawal allowances.</p>
-                  <div className="income-inputs">{field('purchaseBudget', 'Asset price', { prefix: '$' })}{field('opsReserve', 'Cash reserve', { prefix: '$', help: 'Cash set aside to cover operating expenses.' })}</div>
+                  <div className="income-inputs">{field('purchaseBudget', 'Asset price', { prefix: '$' })}{field('opsReserve', 'Cash reserve', { prefix: '$', help: 'Cash set aside to cover operating expenses.' })}{field('operatorFundPercent', 'Owner FUND ownership', { suffix: '%', help: 'Allocated to the Owner after a successful purchase. The Owner may distribute these tokens to the Operator at their discretion.' })}</div>
                 </fieldset>
                 <fieldset className="income-field-group fundraise-contract"><legend>Contractual settings</legend>
-                  {field('operatorFundPercent', 'Owner FUND ownership', { suffix: '%', help: 'Allocated to the Owner after a successful purchase. The Owner may distribute these tokens to the Operator at their discretion.' })}
                   <div className="income-inputs token-inputs">{field('fundTokenName', 'FUND token name', { placeholder: 'e.g. Workshop FUND', maxLength: 32, help: 'Blank uses the project title.' })}{field('fundTicker', 'FUND ticker', { placeholder: 'FUND', maxLength: 12, help: 'Deployed with the project as its ERC-20 symbol.' })}</div>
                 </fieldset>
                 <div className="create-callout fundraise-goal"><span>Total fundraising goal</span><strong id="create-raise-goal">{summary ? money(summary.raiseGoal) : '—'}</strong>
@@ -454,10 +453,8 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
                 <div className="income-inputs">
                   {field('monthlyRent', 'Expected monthly revenue', { prefix: '$' })}{field('monthlyCosts', 'Expected monthly expenses', { prefix: '$' })}
                   {field('rentGrowthPercent', 'Target revenue growth rate (%)', { suffix: '%', help: 'Per year.' })}{field('costGrowthPercent', 'Target expense growth rate (%)', { suffix: '%', help: 'Per year.' })}
+                  {field('operatorSplitPercent', 'To operators', { suffix: '%', help: 'Planned share of new INCOME. The split is set when INCOME launches and the Owner can change it.' })}{field('stickySplitPercent', 'To FUND stakers', { suffix: '%', help: 'Planned share of new INCOME for eligible Sticky participants.' })}
                 </div>
-              </fieldset>
-              <fieldset className="income-field-group"><legend>Contractual settings</legend><p className="input-purpose-note">Sets how each new batch of INCOME tokens is initially shared. The Owner can change all split recipients and allocations; no split is locked. The FUND-staker allocation goes to eligible Sticky participants.</p>
-                <div className="income-inputs">{field('operatorSplitPercent', 'To operators', { suffix: '%' })}{field('stickySplitPercent', 'To FUND stakers', { suffix: '%' })}</div>
               </fieldset>
               <section className="income-preview-panel" aria-labelledby="income-preview-heading"><header><h3 id="income-preview-heading">Income preview</h3><p>Based on your inputs. Move the timeline to explore ownership.</p></header>
                 <h4 className="income-chart-heading">New tokens per revenue payment</h4><IncomeSplit summary={summary} />
