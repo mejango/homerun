@@ -128,6 +128,12 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     }
     expect(target, `Missing ${label} tab`).toBeDefined(); await act(async () => target!.click())
   }
+  /** The one figure both pages read out of the same published minimum. */
+  function minimumRevenue(plan: Element) {
+    const heading = [...plan.querySelectorAll('h4')].find(node => node.textContent === 'Minimum monthly revenue')
+    expect(heading, 'Missing the minimum monthly revenue').toBeDefined()
+    return heading!.nextElementSibling?.textContent
+  }
   function section(heading: string) {
     const found = [...host.querySelectorAll('section')].filter(node => node.querySelector('h2')?.textContent === heading)
     expect(found, `Missing ${heading} section`).toHaveLength(1)
@@ -194,8 +200,7 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     expect(operator.textContent).toContain('He maintains the machines and the books.')
     const plan = section('The project plan')
     expect(plan.textContent).toContain('Members pay monthly for bench time, and visitors pay by the hour.')
-    expect(plan.textContent).toContain('Minimum monthly revenue')
-    expect(plan.textContent).toContain('$7,500.00')
+    expect(minimumRevenue(plan)).toBe('$7,500.00')
     expect(plan.textContent).toContain('If revenue falls below the minimum')
     expect(plan.textContent).toContain('The Owner cuts machine hours and reports the shortfall to holders.')
     expect(plan.textContent).toContain('Revenue growth per year')
@@ -206,6 +211,25 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     expect(token.textContent).toContain('Workshop Bench FUND')
     expect(token.textContent).toContain('WKSHP')
     expect(token.closest('[role="tabpanel"]')?.id).toContain('panel-splits')
+  })
+
+  it('keeps the starting token terms beside the FUND token on Owners, and out of Stages', async () => {
+    runtime.details = parseFundProjectMetadata(FULL_SETUP_PIN)
+    await render()
+    await tab('Stages')
+    await tab('Owners')
+    await tab('Splits')
+    const token = host.querySelector('[aria-label="FUND token"]')!
+    expect(token.closest('[role="tabpanel"]')?.id).toContain('panel-splits')
+    expect(token.textContent).toContain('Starting token terms')
+    expect(token.textContent).toContain('The initial 500,000 INCOME is allocated to all FUND holders')
+    expect(token.textContent).toContain('Planned Owner FUND share: 20%')
+    expect(token.textContent).toContain('Planned new INCOME allocation: 70% operators / 10% eligible FUND stakers / 20% customers')
+    const stages = host.querySelector('[id$="-panel-stages"]')!
+    expect(stages.textContent).toContain('The project plan')
+    for (const moved of ['Starting token terms', 'The initial 500,000 INCOME is allocated to all FUND holders', 'Planned Owner FUND share', 'Planned new INCOME allocation', 'Workshop Bench FUND', 'WKSHP']) {
+      expect(stages.textContent).not.toContain(moved)
+    }
   })
 
   it('reads an older pin through its plan when the published setup does not validate', async () => {
@@ -225,8 +249,7 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     expect(runtime.details.setup).toBeNull()
     const plan = section('The project plan')
     expect(plan.textContent).toContain('Members pay monthly for bench time.')
-    expect(plan.textContent).toContain('Minimum monthly revenue')
-    expect(plan.textContent).toContain('$4,200.00')
+    expect(minimumRevenue(plan)).toBe('$4,200.00')
     expect(plan.textContent).toContain('The Owner reports the shortfall to holders.')
     expect(plan.textContent).toContain('4%')
     expect(plan.textContent).toContain('1%')

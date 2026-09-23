@@ -28,7 +28,9 @@ import { ProjectMetadataEditor } from '@/components/ProjectMetadataEditor'
 import { ProjectOwnershipEditor } from '@/components/ProjectOwnershipEditor'
 import { ProjectPermissionsEditor } from '@/components/ProjectPermissionsEditor'
 import { ProjectSplitsEditor } from '@/components/ProjectSplitsEditor'
+import { FundTokenTermsSection } from '@/components/FundTokenTerms'
 import { readIncomeLaunchBinding } from '@/lib/income-launch'
+import { money } from '@/lib/money'
 import { useSafeTx, txPhaseLabel, type TxRequest } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { displayChainName, explorerTxUrl } from '@/lib/chainDisplay'
@@ -157,18 +159,15 @@ function publishedPlan(details: FundProjectMetadata) {
 }
 
 function PlannedIncome({ plan }: { plan: NonNullable<ReturnType<typeof publishedPlan>> }) {
-  const money = (amount: number | null) => amount === null ? 'Not specified' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(amount)
-  const rate = (amount: number | null) => amount === null ? 'Not specified' : `${amount}%`
+  const amount = (value: number | null) => value === null ? 'Not specified' : money(value)
+  const rate = (value: number | null) => value === null ? 'Not specified' : `${value}%`
   return <section className="mt-7 rounded-md border border-[#cbd7db] bg-[#edf2f4] p-5 text-[#3f5b66] sm:p-7">
     <h2 className="mb-4 text-3xl">The project plan</h2>
     <p className="mb-5 text-sm">Published estimates from the project metadata. These values do not set withdrawal rights, mint permissions, or confirm an asset purchase.</p>
     {(plan.ownerWallet || plan.operatorWallet) && <dl className="mb-5 grid gap-5 sm:grid-cols-2"><div><dt className="text-sm">Published Owner wallet: program control and FUND allocation</dt><dd className="mt-2 break-all text-sm">{plan.ownerWallet ?? 'Not specified'}</dd></div><div><dt className="text-sm">Published initial Operator wallet: INCOME incentives</dt><dd className="mt-2 break-all text-sm">{plan.operatorWallet ?? 'Not specified'}</dd></div></dl>}
-    <dl className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4"><div><dt className="text-sm">Asset price</dt><dd className="mt-2 text-xl">{money(plan.purchaseBudget)}</dd></div><div><dt className="text-sm">Cash reserve</dt><dd className="mt-2 text-xl">{money(plan.opsReserve)}</dd></div><div><dt className="text-sm">Monthly revenue estimate</dt><dd className="mt-2 text-xl">{money(plan.monthlyRent)}</dd></div><div><dt className="text-sm">Monthly expense estimate</dt><dd className="mt-2 text-xl">{money(plan.monthlyCosts)}</dd></div><div><dt className="text-sm">Revenue growth per year</dt><dd className="mt-2 text-xl">{rate(plan.rentGrowthPercent)}</dd></div><div><dt className="text-sm">Expense growth per year</dt><dd className="mt-2 text-xl">{rate(plan.costGrowthPercent)}</dd></div></dl>
-    <div className="mt-5"><h3 className="text-xl">The revenue plan</h3>{plan.revenueDescription && <p className="mt-2 whitespace-pre-line">{plan.revenueDescription}</p>}<h4 className="mt-4 font-medium">Minimum monthly revenue</h4><p className="mt-2">{plan.minimumRevenue === 0 ? 'No minimum set' : money(plan.minimumRevenue)}</p>{plan.minimumRevenueConsequences && <><h4 className="mt-4 font-medium">If revenue falls below the minimum</h4><p className="mt-2 whitespace-pre-line text-sm">{plan.minimumRevenueConsequences}</p></>}<p className="mt-3 text-sm">This is a published operating commitment. It does not automatically change token allocations or contract settings; any program changes must be executed by the Owner.</p></div>
-    <p className="mt-5 text-sm">Planned Owner FUND share: {plan.operatorFundPercent === null ? 'not specified' : `${plan.operatorFundPercent}%`}. The Owner may distribute these FUND tokens at their discretion. Current balances and supply determine actual ownership.</p>
-    <h3 className="mb-3 mt-7 text-2xl">Planned INCOME allocation</h3>
-    <p className="text-sm">The initial 500,000 INCOME is allocated to all FUND holders at the published snapshot, including wallet tokens and unclaimed credits. Claiming that allocation does not require staking.</p>
-    {plan.operatorSplitPercent !== null && plan.fundHolderSplitPercent !== null && plan.operatorSplitPercent + plan.fundHolderSplitPercent <= 100 && <p className="mt-3 text-sm">Planned new INCOME allocation: {plan.operatorSplitPercent}% operators / {plan.fundHolderSplitPercent}% eligible FUND stakers / {100 - plan.operatorSplitPercent - plan.fundHolderSplitPercent}% customers.</p>}
+    <dl className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4"><div><dt className="text-sm">Asset price</dt><dd className="mt-2 text-xl">{amount(plan.purchaseBudget)}</dd></div><div><dt className="text-sm">Cash reserve</dt><dd className="mt-2 text-xl">{amount(plan.opsReserve)}</dd></div><div><dt className="text-sm">Monthly revenue estimate</dt><dd className="mt-2 text-xl">{amount(plan.monthlyRent)}</dd></div><div><dt className="text-sm">Monthly expense estimate</dt><dd className="mt-2 text-xl">{amount(plan.monthlyCosts)}</dd></div><div><dt className="text-sm">Revenue growth per year</dt><dd className="mt-2 text-xl">{rate(plan.rentGrowthPercent)}</dd></div><div><dt className="text-sm">Expense growth per year</dt><dd className="mt-2 text-xl">{rate(plan.costGrowthPercent)}</dd></div></dl>
+    <div className="mt-5"><h3 className="text-xl">The revenue plan</h3>{plan.revenueDescription && <p className="mt-2 whitespace-pre-line">{plan.revenueDescription}</p>}<h4 className="mt-4 font-medium">Minimum monthly revenue</h4><p className="mt-2">{plan.minimumRevenue === 0 ? 'No minimum set' : amount(plan.minimumRevenue)}</p>{plan.minimumRevenueConsequences && <><h4 className="mt-4 font-medium">If revenue falls below the minimum</h4><p className="mt-2 whitespace-pre-line text-sm">{plan.minimumRevenueConsequences}</p></>}<p className="mt-3 text-sm">This is a published operating commitment. It does not automatically change token allocations or contract settings; any program changes must be executed by the Owner.</p></div>
+    <p className="mt-5 text-sm">The FUND token and the terms its holders start with are under Owners, Splits.</p>
   </section>
 }
 
@@ -204,9 +203,10 @@ function ProjectActions({ chainId, projectId, intentId, state, client, details, 
   const name = details?.name ?? undefined, plan = details && publishedPlan(details)
   const blocked = writesUnavailable || !supported
   const gate = (children: ReactNode) => <fieldset disabled={blocked} className="grid min-w-0 gap-7 border-0 p-0" aria-label="Project transactions">{children}</fieldset>
-  const publishedToken = plan && (plan.tokenName || plan.tokenSymbol) ? <ActionSection title="FUND token">
-    <dl className="grid gap-5 sm:grid-cols-2"><div><dt className="text-sm">Token name</dt><dd className="mt-2 break-words text-xl">{plan.tokenName ?? 'Not specified'}</dd></div><div><dt className="text-sm">Ticker</dt><dd className="mt-2 break-words text-xl">{plan.tokenSymbol ?? 'Not specified'}</dd></div></dl>
-  </ActionSection> : null
+  const publishedToken = plan ? <FundTokenTermsSection terms={{
+    tokenName: plan.tokenName, tokenSymbol: plan.tokenSymbol, ownerFundPercent: plan.operatorFundPercent,
+    operatorSplitPercent: plan.operatorSplitPercent, fundHolderSplitPercent: plan.fundHolderSplitPercent,
+  }} /> : null
   const currency = context && <label className="grid gap-2 text-sm">FUND treasury currency<select value={contextIndex} onChange={event => setContextIndex(Number(event.target.value))} className="min-h-11 rounded border border-[#bfc9b5] bg-white px-3 pr-9">{state.accountingContexts.map((item, index) => <option key={`${item.terminal}:${item.token}`} value={index}>{item.symbol}</option>)}</select></label>
   const verified = <section aria-label="Verified project state" className="rounded-md border border-[#c4cdbb] p-5 sm:p-7">
     <div className="flex flex-wrap justify-between gap-3"><h2 className="text-3xl">The raise</h2><button className="text-sm underline" type="button" disabled={refreshing} onClick={refresh}>{refreshing ? 'Refreshing…' : 'Refresh'}</button></div>

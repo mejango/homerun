@@ -155,16 +155,25 @@ describe('a published project page', () => {
     expect(income.querySelector('.revenue-description')?.textContent).toBe('Members pay monthly for bench time, and visitors pay by the hour.')
     const revenue = income.querySelector('.revenue-plan')!
     expect(revenue.textContent).toContain('Minimum monthly revenue')
-    expect(revenue.textContent).toContain('$7,500')
+    expect(revenue.querySelector('dd')?.textContent).toBe('$7,500.00')
     expect(revenue.textContent).toContain('If revenue falls below the minimum')
     expect(revenue.textContent).toContain('The Owner cuts machine hours and reports the shortfall to holders.')
     await openTab('Owners')
     await openTab('Splits')
-    const token = host.querySelector('.demo-published-token')!
+    const token = host.querySelector('[aria-label="FUND token"]')!
+    expect(token.closest('[role="tabpanel"]')?.id).toContain('panel-splits')
     expect(token.textContent).toContain('Token name')
     expect(token.textContent).toContain('Workshop Bench FUND')
     expect(token.textContent).toContain('Ticker')
     expect(token.textContent).toContain('WKSHP')
+    expect(token.textContent).toContain('Starting token terms')
+    expect(token.textContent).toContain('The initial 500,000 INCOME is allocated to all FUND holders')
+    expect(token.textContent).toContain('Planned Owner FUND share: 20%')
+    expect(token.textContent).toContain('Planned new INCOME allocation: 70% operators / 10% eligible FUND stakers / 20% customers')
+    const stages = host.querySelector('[id$="-panel-stages"]')!
+    for (const moved of ['Starting token terms', 'The initial 500,000 INCOME is allocated to all FUND holders', 'Planned Owner FUND share', 'Planned new INCOME allocation', 'Workshop Bench FUND', 'WKSHP']) {
+      expect(stages.textContent).not.toContain(moved)
+    }
   })
 
   it('names every multisig the project creates, with its role, approvals and owners', async () => {

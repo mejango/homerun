@@ -91,6 +91,11 @@
 }
 .homerun-project-layout .demo-published-token .demo-account-balances {
   margin-top: 10px;
+  margin-bottom: 0;
+}
+.homerun-project-layout .demo-owner-sections {
+  display: grid;
+  gap: 30px;
 }
 .homerun-project-layout .demo-model-note {
   padding: 16px 18px;
