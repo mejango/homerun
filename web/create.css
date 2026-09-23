@@ -30,7 +30,8 @@
 .create-field { min-width: 0; display: flex; flex-direction: column; gap: 8px; margin-bottom: 30px; }
 .create-field > label { font-size: 12px; font-weight: 500; }
 .create-input { display: flex; align-items: baseline; gap: 9px; padding: 13px 14px; border: 1px solid #bdc7b2; border-radius: var(--radius); background: #fffefa; }
-.create-input:focus-within { border-color: #38694b; outline: 2px solid #dbe5d0; }
+.create-input:focus-within { border-color: #38694b; }
+.create-input :is(input, select, textarea):focus { outline: none; }
 .create-input input, .create-input textarea { width: 100%; min-width: 0; padding: 0; border: 0; background: transparent; color: #293f34; font: 15px/1.5 var(--sans); outline: none; }
 .create-input input::placeholder { color: #7b8579; font-size: 13px; }
 .create-input textarea { resize: vertical; min-height: 80px; }
