@@ -121,6 +121,7 @@ export function IntentProject({ intentId }: { intentId: string }) {
     ? new Date(terms.mustStartAtOrAfter * 1000).toLocaleString()
     : 'as soon as it is created'
   return <DemoProjectPage project={model} planned={{
+    status: 'Deploys on first use',
     payLabel: 'Deploy first',
     pictures: {
       photo: details.data?.coverUrl ?? undefined,

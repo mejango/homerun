@@ -340,7 +340,7 @@ try {
   await preview.click()
 
   await page.waitForURL(`${appOrigin}/create/preview`)
-  await page.getByText('Preview. Nothing is created yet.', { exact: true }).waitFor()
+  await page.getByText('This is a preview', { exact: true }).waitFor()
   assert.match(await page.locator('main').textContent(), /Neighborhood Workshop/)
   // The pay card the created project offers, over the chains this setup selected.
   assert.deepEqual(await page.locator('#pay-panel .payment-chain-select option').allTextContents(), ['Ethereum', 'Optimism', 'Base'])

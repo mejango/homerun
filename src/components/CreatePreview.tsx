@@ -28,7 +28,7 @@ import { plannedNetworks } from '../../web/create-networks.mjs'
 import { modelCreatedProject } from '../../web/create-model.mjs'
 
 const NO_SETUP = 'This project’s setup could not be read in this browser.'
-const BANNER = 'Preview. Nothing is created yet.'
+const BANNER = 'This is a preview'
 const CONNECT_MESSAGE = 'Connect a wallet to create this project.'
 const WALLET_NEEDS_TRANSACTION_MESSAGE = 'Juicebox Center accepts a signature from a wallet address only. Connect a different wallet, or create with a transaction.'
 
@@ -193,14 +193,15 @@ export default function CreatePreview() {
   const planned = plannedMultisigs(values)
   const setup = values
   return <DemoProjectPage project={model} planned={{
+    status: 'Preview',
     payLabel: 'Available once created',
     panel: <section className="planned-bar" aria-label="Preview">
       <p role="status">{BANNER}</p>
       <p className="planned-bar-terms">FUND token: {values.fundTokenName} ({values.fundTicker})</p>
       {planned && <p className="planned-bar-terms">{planned}</p>}
       <div className="planned-bar-actions">
-        <button type="button" className="quiet-button" disabled={publishing} onClick={() => router.push('/create')}>Edit</button>
         <button type="button" className="create-primary" disabled={publishing} onClick={() => void create(setup)}>{publishing ? 'Publishing your project…' : 'Create'}</button>
+        <button type="button" className="quiet-button" disabled={publishing} onClick={() => router.push('/create')}>Edit</button>
       </div>
       {progress && <p role="status">{progress}</p>}
       {error && <p role="alert">{error}</p>}
