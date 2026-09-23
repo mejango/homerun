@@ -157,7 +157,8 @@ export async function run(action, group, {
   const dirty = status.stdout.split('\n').some(line => line.trim() && !/^.{3}deployments\//.test(line));
   // Only a committed checkout may reach the Safe or certify a live deployment; rehearsals may carry development changes.
   if (dirty && action !== 'rehearse') throw new Error(`Commit the reviewed checkout before ${action}; it has uncommitted changes.`);
-  // A broadcast sends from a funded key instead of collecting a Safe proposal; the factory makes the addresses equal.
+  // A broadcast sends the deployments from a funded key instead of collecting a Safe proposal; the factory makes the
+  // addresses equal. Only the Homerun Safe can set the deployer's chain-specific constants, so a proposal follows.
   const deployerKey = env.HOMERUN_DEPLOYER_KEY?.trim();
   if (action === 'broadcast' && !deployerKey) throw new Error('Missing HOMERUN_DEPLOYER_KEY');
   const childEnv = {
@@ -183,9 +184,9 @@ export async function run(action, group, {
         deployerKey, '-vv'], chainId);
     }
   }
-  // Rehearse every destination successfully before creating a Sphinx proposal; verify every destination after a
-  // broadcast.
-  const script = action === 'rehearse' || action === 'propose' ? 'Rehearse' : 'Verify';
+  // Rehearse every destination successfully before creating a Sphinx proposal, and after a broadcast, where the
+  // rehearsal simulates the Safe's configuration of what the broadcast deployed.
+  const script = action === 'verify' ? 'Verify' : 'Rehearse';
   for (const [alias, chainId] of networks[group]) {
     console.log(`${action}: ${alias}`);
     // RPC block heights identify fork state even on chains where EVM block.number means an L1 height.
@@ -207,6 +208,9 @@ export async function run(action, group, {
   requireOneAddressPerGroup(group, script === 'Verify' ? 'verified' : 'simulation', read);
   if (action === 'propose') {
     execute('node_modules/.bin/sphinx', ['propose', 'script/Deploy.s.sol', '--target-contract', 'Deploy', '--networks', group]);
+  }
+  if (action === 'broadcast') {
+    console.log(`Deployed ${group}. Run deploy:propose:${group} so the Safe sets the chain-specific constants, then deploy:verify:${group}.`);
   }
 }
 

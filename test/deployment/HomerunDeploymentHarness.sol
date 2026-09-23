@@ -7,8 +7,28 @@ import {HomerunChainConfig} from "../../src/structs/HomerunChainConfig.sol";
 
 /// @notice Exposes the production deployment helpers to local regression tests.
 contract HomerunDeploymentHarness is HomerunDeployment {
-    function deployFor(HomerunChainConfig[] memory chains) external returns (HomerunDeploymentAddresses memory) {
+    /// @notice Deploys, then configures as `HOMERUN_CONFIGURATOR`, as the Sphinx proposal does.
+    function deployFor(HomerunChainConfig[] memory chains)
+        external
+        returns (HomerunDeploymentAddresses memory deployed)
+    {
+        deployed = _deploy(chains);
+        vm.startPrank(HOMERUN_CONFIGURATOR);
+        _configure({chains: chains, deployed: deployed});
+        vm.stopPrank();
+    }
+
+    /// @notice Deploys without configuring, as a broadcast from a funded key does.
+    function deployUnconfigured(HomerunChainConfig[] memory chains)
+        external
+        returns (HomerunDeploymentAddresses memory)
+    {
         return _deploy(chains);
+    }
+
+    /// @notice Configures from this harness rather than `HOMERUN_CONFIGURATOR`.
+    function configureAsSelf(HomerunChainConfig[] memory chains, HomerunDeploymentAddresses memory deployed) external {
+        _configure({chains: chains, deployed: deployed});
     }
 
     function deployHookOnly(HomerunChainConfig[] memory chains) external {
@@ -16,8 +36,8 @@ contract HomerunDeploymentHarness is HomerunDeployment {
         _deployIfNeeded({name: "HomerunAllowlistHook", salt: HOMERUN_SALT, args: _hookArgs(chains)});
     }
 
-    function deployVariant(HomerunChainConfig[] memory chains, bytes32 salt) external returns (address) {
-        return _deployIfNeeded({name: "HomerunDeployer", salt: salt, args: abi.encode(chains)});
+    function deployVariant(HomerunChainConfig[] memory chains, address hook, bytes32 salt) external returns (address) {
+        return _deployIfNeeded({name: "HomerunDeployer", salt: salt, args: _deployerArgs(chains, hook)});
     }
 
     function loadChains(string memory workspace) external view returns (HomerunChainConfig[] memory) {

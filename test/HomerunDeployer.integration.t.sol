@@ -137,7 +137,8 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
                 abi.encode(_suckers, _hookDeployer(), jbPermissions(), jbController(), FORWARDER)
             )
         );
-        _helper = new HomerunDeployer(_chainConfigs());
+        _helper = new HomerunDeployer(_revDeployer, _omnichain, _allowlist, address(this));
+        _helper.setChainSpecificConstants(_chainConfigs());
         JBMatchingPriceFeed matchingFeed = new JBMatchingPriceFeed();
         vm.prank(multisig());
         jbPrices().addPriceFeedFor(0, 2, uint32(uint160(address(usdcToken()))), matchingFeed);

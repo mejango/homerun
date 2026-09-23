@@ -26,6 +26,9 @@ const profile = incomeReleasePolicy.profile
 const chainIds = [1, 10, 8453, 42161, 84532, 421614, 11155111, 11155420] as const
 const linkedGroups = { mainnet: [1, 10, 8453, 42161], testnet: [84532, 421614, 11155111, 11155420] }
 const deterministicFactory = '0x4e59b44847b379578588920cA78FbF26c0B4956C' as const
+// Source: HOMERUN_CONFIGURATOR in script/helpers/HomerunDeployment.sol, the `homerun` Sphinx Safe. It is the helper's
+// constructor `deployer`, the only address that can set the chain-specific USDC tokens.
+const homerunConfigurator = '0xd5136c794ee43BEf1eD4cF1eB6DEe45b7F803437' as const
 const helperSaltText = incomeReleasePolicy.helperSaltText
 // The deployment scripts pass the salt as `bytes32("HomerunV6")`: the ASCII bytes, right-padded.
 const helperSalt = padHex(toHex(helperSaltText), { dir: 'right', size: 32 })
@@ -45,7 +48,7 @@ type Artifact = {
 type ArtifactSpec = { name: string; location: string; sourceRoot: string; metadataHash: 'ipfs' | 'none'; constructor: string[] }
 
 const specs: ArtifactSpec[] = [
-  { name: 'HomerunDeployer', location: 'out', sourceRoot: root, metadataHash: 'none', constructor: ['chains:tuple[](chainId:uint32,revDeployer:address,usdc:address,omnichainDeployer:address,allowlistHook:address)'] },
+  { name: 'HomerunDeployer', location: 'out', sourceRoot: root, metadataHash: 'none', constructor: ['revDeployer:address', 'omnichainDeployer:address', 'allowlistHook:address', 'deployer:address'] },
   { name: 'HomerunAllowlistHook', location: 'out', sourceRoot: root, metadataHash: 'none', constructor: ['projects:address', 'permissions:address', 'trustedForwarder:address'] },
 ]
 
@@ -166,7 +169,7 @@ function constructorPlan(artifact: Artifact | undefined, values: unknown[], know
 export function assertIncomeReleaseSource(helperSource: string) {
   const normalized = helperSource.replace(/\s+/g, ' ')
   const sourceAssertions = [
-    'constructor(HomerunChainConfig[] memory chains)',
+    'if (msg.sender != _DEPLOYER) revert HomerunDeployer_Unauthorized({caller: msg.sender});', 'if (USDC != address(0)) revert HomerunDeployer_AlreadyConfigured();',
     'CONTROLLER = REV_DEPLOYER.CONTROLLER();', 'ROUTER_TERMINAL_REGISTRY = REV_DEPLOYER.ROUTER_TERMINAL_REGISTRY();',
     'if (!isFund[fundProjectId]) revert HomerunDeployer_UnsupportedFund(fundProjectId);',
     'if (PROJECTS.ownerOf(fundProjectId) != _msgSender()) revert HomerunDeployer_Unauthorized(_msgSender());',
@@ -201,6 +204,8 @@ export async function prepareIncomeRelease() {
   const blockers = ['No executed helper deployment receipts or per-chain runtime/immutable verification are established by this offline packet.', 'The new helper source must be frozen with its reviewed compiler inputs before a production release.']
   const helperSource = await readFile(resolve(root, 'src/HomerunDeployer.sol'), 'utf8')
   const sourceAssertions = assertIncomeReleaseSource(helperSource)
+  const deploymentSource = await readFile(resolve(root, 'script/helpers/HomerunDeployment.sol'), 'utf8')
+  if (!deploymentSource.includes(`HOMERUN_CONFIGURATOR = ${homerunConfigurator};`)) throw new Error('The deployment script names a different configurator than this release profile.')
   const collected = await Promise.all(specs.map(async spec => {
     try { return { name: spec.name, result: await fingerprint(spec) } }
     catch (error) {
@@ -219,7 +224,7 @@ export async function prepareIncomeRelease() {
     if (missingRegistryEntries.length) blockers.push(`Chain ${chainId}: missing SDK registry entries ${missingRegistryEntries.join(', ')}.`)
     return {
       chainId, addresses, missingRegistryEntries, addressEvidence: 'installed SDK registry; no live RPC performed',
-      helperConstructor: 'sharedHelper.groups.<group>.constructor; identical four-chain array on every network of the group',
+      helperConstructor: 'sharedHelper.constructor; identical on all eight networks. USDC per chain: sharedHelper.groups.<group>.chainSpecificConstants, set once by the configurator',
       ccipRoutes: (Object.values(linkedGroups).find(group => group.includes(chainId)) ?? []).filter(remote => remote !== chainId).map(remoteChainId => {
         const address = CCIP_SUCKER_DEPLOYER_ADDRESSES[6][chainId]?.[remoteChainId as keyof typeof CCIP_SUCKER_DEPLOYER_ADDRESSES[6][typeof chainId]] ?? null
         if (!address) blockers.push(`Chain ${chainId}: missing SDK CCIP deployer for ${remoteChainId}.`)
@@ -231,17 +236,23 @@ export async function prepareIncomeRelease() {
       }),
     }
   })
-  // The helper's constructor takes its own group's chains, in ascending order, so each group has one address.
+  // The helper's constructor takes only addresses that are the same on every chain, so all eight chains share one
+  // address. Each group's USDC tokens are set afterwards by the configurator.
+  const shared = (name: string) => {
+    const values = [...new Set(networks.map(network => network.addresses[name]))]
+    if (values.length !== 1) blockers.push(`${name} differs across chains, so the helper cannot have one address.`)
+    return values.length === 1 ? values[0] : null
+  }
+  const constructor = constructorPlan(byName.get('HomerunDeployer'), [shared('REVDeployer'), shared('JBOmnichainDeployer'), shared('HomerunAllowlistHook'), homerunConfigurator], 128)
+  const predictedAddress = constructor.initCodeKeccak256 ? getCreate2Address({ from: deterministicFactory, salt: helperSalt, bytecodeHash: constructor.initCodeKeccak256 }) : null
+  if (predictedAddress && networks.some(network => network.addresses.HomerunDeployer && network.addresses.HomerunDeployer !== predictedAddress)) blockers.push('A registered helper differs from the address implied by the reviewed constructor, artifact and salt.')
   const helperGroups = Object.fromEntries(Object.entries(linkedGroups).map(([group, groupChainIds]) => {
-    const chainConfiguration = networks.filter(({ chainId }) => (groupChainIds as readonly number[]).includes(chainId)).map(({ chainId, addresses }) => ({
+    const chainSpecificConstants = networks.filter(({ chainId }) => (groupChainIds as readonly number[]).includes(chainId)).map(({ chainId, addresses }) => ({
       chainId, revDeployer: addresses.REVDeployer, usdc: addresses.USDC,
       omnichainDeployer: addresses.JBOmnichainDeployer, allowlistHook: addresses.HomerunAllowlistHook,
     }))
-    if (chainConfiguration.some((entry, index) => index > 0 && entry.chainId <= chainConfiguration[index - 1].chainId)) throw new Error('The shared helper constructor must contain strictly increasing chain IDs.')
-    const constructor = constructorPlan(byName.get('HomerunDeployer'), [chainConfiguration], 64 + 160 * chainConfiguration.length)
-    const predictedAddress = constructor.initCodeKeccak256 ? getCreate2Address({ from: deterministicFactory, salt: helperSalt, bytecodeHash: constructor.initCodeKeccak256 }) : null
-    if (predictedAddress && networks.some(network => (groupChainIds as readonly number[]).includes(network.chainId) && network.addresses.HomerunDeployer && network.addresses.HomerunDeployer !== predictedAddress)) blockers.push(`A registered ${group} helper differs from the address implied by the reviewed group constructor, artifact and salt.`)
-    return [group, { chainIds: groupChainIds, constructor, predictedAddress, addressStatus: predictedAddress ? 'deterministic prediction; compare with deployments/<network>/verified.json' : 'unavailable until actual registered dependency inputs exist' }]
+    if (chainSpecificConstants.some((entry, index) => index > 0 && entry.chainId <= chainSpecificConstants[index - 1].chainId)) throw new Error('The chain-specific constants must contain strictly increasing chain IDs.')
+    return [group, { chainIds: groupChainIds, chainSpecificConstants, caller: homerunConfigurator }]
   }))
   const sdkPackage = await readFile(resolve(root, 'node_modules/@bananapus/nana-sdk-core/package.json'))
   return {
@@ -266,11 +277,13 @@ export async function prepareIncomeRelease() {
     sharedHelper: {
       factory: deterministicFactory, factoryEvidence: 'canonical source constant; live factory code not checked by this script',
       saltDerivation: `bytes32(UTF8(${JSON.stringify(helperSaltText)}))`, salt: helperSalt, saltStatus: 'prepared release constant; not a deployment record',
-      chainIds, groups: helperGroups,
-      runtimePolicy: 'same initcode/address across the chains of a group, which commits to that group\'s chain configuration; local immutable dependencies can make deployed runtime hashes different',
+      chainIds, configurator: homerunConfigurator, constructor, predictedAddress,
+      addressStatus: predictedAddress ? 'deterministic prediction; compare with deployments/<network>/verified.json' : 'unavailable until actual registered dependency inputs exist',
+      groups: helperGroups,
+      runtimePolicy: 'same initcode, address and runtime on all eight chains; setChainSpecificConstants writes each group\'s USDC tokens once, from the configurator',
     },
     networks,
-    requiredPostDeploymentEvidence: ['Executed deployment receipts with chain/block/transaction identity, identical shared helper constructor inputs, factory and salt.', 'Full executable-runtime and every immutable-word verification against the exact reviewed artifacts on each chain; template hashes above are not live runtime hashes. Verify CONTROLLER, TERMINAL, ROUTER_TERMINAL_REGISTRY and every usdcOf entry.', 'Verify the FUND owner becomes the INCOME operator and holds one unlocked reserved split, and the Owner-managed stock 721 inventory with the reviewed USD denomination and restricted tier flags.', 'For every directed SDK CCIP route, verify registry allowlisting, directory/tokens, singleton runtime, ccipRemoteChainId, ccipRemoteChainSelector, ccipRouter and reciprocal default-peer predictions. A merely approved alternative deployer is not proof of cross-chain compatibility.', 'Explorer/Sourcify source verification for the helper using the exact compiler input and metadata settings.', 'Published V6 SDK registry/artifact update for executed chains only, then pin that SDK release in Homerun and re-run onchain wiring/transaction smoke checks.'],
+    requiredPostDeploymentEvidence: ['Executed deployment receipts with chain/block/transaction identity, identical shared helper constructor inputs, factory and salt, and the configurator\'s setChainSpecificConstants receipt on every chain.', 'Full executable-runtime and every immutable-word verification against the exact reviewed artifacts on each chain; template hashes above are not live runtime hashes. Verify CONTROLLER, TERMINAL, ROUTER_TERMINAL_REGISTRY and every usdcOf entry.', 'Verify the FUND owner becomes the INCOME operator and holds one unlocked reserved split, and the Owner-managed stock 721 inventory with the reviewed USD denomination and restricted tier flags.', 'For every directed SDK CCIP route, verify registry allowlisting, directory/tokens, singleton runtime, ccipRemoteChainId, ccipRemoteChainSelector, ccipRouter and reciprocal default-peer predictions. A merely approved alternative deployer is not proof of cross-chain compatibility.', 'Explorer/Sourcify source verification for the helper using the exact compiler input and metadata settings.', 'Published V6 SDK registry/artifact update for executed chains only, then pin that SDK release in Homerun and re-run onchain wiring/transaction smoke checks.'],
     blockers,
   }
 }

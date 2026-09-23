@@ -17,6 +17,8 @@ describe('offline INCOME release policy', () => {
   })
 
   it.each([
+    ['anyone setting the chain-specific constants', 'if (msg.sender != _DEPLOYER) revert HomerunDeployer_Unauthorized({caller: msg.sender});', ''],
+    ['chain-specific constants settable twice', 'if (USDC != address(0)) revert HomerunDeployer_AlreadyConfigured();', ''],
     ['incentive recipient gaining authority', 'configuration.operator = _msgSender();', 'configuration.operator = operator;'],
     ['owner check removed', 'if (PROJECTS.ownerOf(fundProjectId) != _msgSender()) revert HomerunDeployer_Unauthorized(_msgSender());', ''],
     ['FUND gate removed', 'if (!isFund[fundProjectId]) revert HomerunDeployer_UnsupportedFund(fundProjectId);', ''],

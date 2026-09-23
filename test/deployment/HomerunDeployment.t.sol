@@ -166,13 +166,47 @@ contract HomerunDeploymentTest is TestBaseWorkflow {
         _deployment.verify(_chains, deployed);
     }
 
-    function test_sameArtifactsAndBindingsPredictSameAddressesOnEveryChainOfTheGroup() public {
+    function test_sameArtifactsAndBindingsPredictSameAddressesOnEveryChain() public {
         bytes32 expected = keccak256(abi.encode(_deployment.predict(_chains)));
-        uint32[] memory group = _deployment.group(1);
-        for (uint256 i; i < group.length; i++) {
-            vm.chainId(group[i]);
-            assertEq(keccak256(abi.encode(_deployment.predict(_chains))), expected);
+        uint32[8] memory everyChain = [uint32(1), 10, 8453, 42_161, 11_155_111, 11_155_420, 84_532, 421_614];
+        for (uint256 i; i < everyChain.length; i++) {
+            vm.chainId(everyChain[i]);
+            // Each group passes its own chains; only the configuration call differs between groups.
+            uint32[] memory group = _deployment.group(everyChain[i]);
+            HomerunChainConfig[] memory chains = new HomerunChainConfig[](group.length);
+            for (uint256 j; j < group.length; j++) {
+                chains[j] = _chains[0];
+                chains[j].chainId = group[j];
+                chains[j].usdc = _chains[j].usdc;
+            }
+            assertEq(keccak256(abi.encode(_deployment.predict(chains))), expected);
         }
+    }
+
+    function test_unconfiguredDeploymentRefusesLaunchesAndVerification() public {
+        HomerunDeploymentAddresses memory deployed = _deployment.deployUnconfigured(_chains);
+        HomerunDeployer factory = HomerunDeployer(deployed.deployer);
+        assertEq(factory.USDC(), address(0));
+        vm.expectRevert(HomerunDeployer.HomerunDeployer_NotConfigured.selector);
+        factory.launchFundFor(OWNER, "ipfs://early", "Early", "FUND", 0, bytes32(0), new address[](0));
+        vm.expectPartialRevert(HomerunDeployment.HomerunDeployment_BindingMismatch.selector);
+        _deployment.verify(_chains, deployed);
+        // Only the Homerun Safe configures, so a front-run of the same initcode cannot bind other constants.
+        vm.expectRevert(
+            abi.encodeWithSelector(HomerunDeployer.HomerunDeployer_Unauthorized.selector, address(_deployment))
+        );
+        _deployment.configureAsSelf(_chains, deployed);
+        // A later proposal configures what the broadcast deployed, without redeploying it.
+        HomerunDeploymentAddresses memory resumed = _deployment.deployFor(_chains);
+        assertEq(keccak256(abi.encode(resumed)), keccak256(abi.encode(deployed)));
+        assertEq(factory.USDC(), MAINNET_USDC);
+        _deployment.verify(_chains, resumed);
+    }
+
+    function test_rejectsGroupWithDifferentProtocolAddresses() public {
+        _chains[1].revDeployer = address(0xdead);
+        vm.expectPartialRevert(HomerunDeployment.HomerunDeployment_BindingMismatch.selector);
+        _deployment.deployFor(_chains);
     }
 
     function test_rejectsWrongCanonicalFactoryRuntime() public {
@@ -214,10 +248,8 @@ contract HomerunDeploymentTest is TestBaseWorkflow {
     function test_rejectsConsistentlyWrongImmutableDependency() public {
         HomerunDeploymentAddresses memory deployed = _deployment.deployFor(_chains);
         // A legitimate second deployer has identical opcodes and different immutable bindings.
-        HomerunChainConfig[] memory other = new HomerunChainConfig[](1);
-        other[0] = _chains[0];
-        other[0].allowlistHook = address(new HomerunAllowlistHook(jbProjects(), jbPermissions(), FORWARDER));
-        address different = _deployment.deployVariant(other, "variant");
+        address otherHook = address(new HomerunAllowlistHook(jbProjects(), jbPermissions(), FORWARDER));
+        address different = _deployment.deployVariant(_chains, otherHook, "variant");
         vm.etch(deployed.deployer, different.code);
         _deployment.verifyRuntime("HomerunDeployer", deployed.deployer);
         vm.expectPartialRevert(HomerunDeployment.HomerunDeployment_BindingMismatch.selector);

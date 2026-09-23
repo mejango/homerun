@@ -29,7 +29,8 @@
   "profileChecks": {
     "recursiveConstructorShape": true,
     "sourceAssertions": [
-      "constructor(HomerunChainConfig[] memory chains)",
+      "if (msg.sender != _DEPLOYER) revert HomerunDeployer_Unauthorized({caller: msg.sender});",
+      "if (USDC != address(0)) revert HomerunDeployer_AlreadyConfigured();",
       "CONTROLLER = REV_DEPLOYER.CONTROLLER();",
       "ROUTER_TERMINAL_REGISTRY = REV_DEPLOYER.ROUTER_TERMINAL_REGISTRY();",
       "if (!isFund[fundProjectId]) revert HomerunDeployer_UnsupportedFund(fundProjectId);",
@@ -212,36 +213,24 @@
       },
       "constructor": [
         {
-          "name": "chains",
-          "type": "tuple[]",
-          "internalType": "struct HomerunChainConfig[]",
-          "components": [
-            {
-              "name": "chainId",
-              "type": "uint32",
-              "internalType": "uint32"
-            },
-            {
-              "name": "revDeployer",
-              "type": "address",
-              "internalType": "address"
-            },
-            {
-              "name": "usdc",
-              "type": "address",
-              "internalType": "address"
-            },
-            {
-              "name": "omnichainDeployer",
-              "type": "address",
-              "internalType": "address"
-            },
-            {
-              "name": "allowlistHook",
-              "type": "address",
-              "internalType": "address"
-            }
-          ]
+          "name": "revDeployer",
+          "type": "address",
+          "internalType": "contract IREVDeployer"
+        },
+        {
+          "name": "omnichainDeployer",
+          "type": "address",
+          "internalType": "contract IJBOmnichainDeployer"
+        },
+        {
+          "name": "allowlistHook",
+          "type": "address",
+          "internalType": "contract IHomerunAllowlistHook"
+        },
+        {
+          "name": "deployer",
+          "type": "address",
+          "internalType": "address"
         }
       ],
       "linkedLibraries": [],

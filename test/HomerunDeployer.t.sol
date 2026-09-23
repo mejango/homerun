@@ -13,6 +13,8 @@ import {HomerunChainConfig} from "../src/structs/HomerunChainConfig.sol";
 import {HomerunInitialIncomeAllocation} from "../src/structs/HomerunInitialIncomeAllocation.sol";
 import {HomerunInitialIncomeSnapshot} from "../src/structs/HomerunInitialIncomeSnapshot.sol";
 import {HomerunAllowlistHook} from "../src/HomerunAllowlistHook.sol";
+import {IJBOmnichainDeployer} from "@bananapus/omnichain-deployers-v6/src/interfaces/IJBOmnichainDeployer.sol";
+import {IREVDeployer} from "@rev-net/core-v6/src/interfaces/IREVDeployer.sol";
 import {IJBProjects} from "@bananapus/core-v6/src/interfaces/IJBProjects.sol";
 import {JBPermissioned} from "@bananapus/core-v6/src/abstract/JBPermissioned.sol";
 import {JBPermissions} from "@bananapus/core-v6/src/JBPermissions.sol";
@@ -534,7 +536,8 @@ contract HomerunDeployerTest is Test {
         directory.setTerminal(revDeployer.MULTI_TERMINAL());
         omnichain = new IncomeTestOmnichainDeployer(controller, address(suckers));
         allowlist = new HomerunAllowlistHook(IJBProjects(address(projects)), permissions, address(0x2771));
-        helper = new HomerunDeployer(_chains());
+        helper = _newHelper(address(allowlist));
+        helper.setChainSpecificConstants(_chains());
         vm.prank(OPERATOR);
         (uint256 fundId, address fundToken) = helper.launchFundFor{value: 0.01 ether}(
             OPERATOR, "ipfs://fund", "House FUND", "HOUSE", 0, bytes32(0), new address[](0)
@@ -557,6 +560,16 @@ contract HomerunDeployerTest is Test {
         _snapshot.totalFundSupply = 500 ether;
         _snapshot.manifestHash = keccak256("independently reconciled manifest");
         _snapshot.manifestUri = "ipfs://snapshot";
+    }
+
+    /// @notice A deployer bound to the test protocol and `hook`, which this test contract configures.
+    function _newHelper(address hook) private returns (HomerunDeployer) {
+        return new HomerunDeployer(
+            IREVDeployer(address(revDeployer)),
+            IJBOmnichainDeployer(address(omnichain)),
+            IHomerunAllowlistHook(hook),
+            address(this)
+        );
     }
 
     function _chains() private view returns (HomerunChainConfig[] memory chains) {
@@ -840,18 +853,17 @@ contract HomerunDeployerTest is Test {
     }
 
     function testAllowlistHookMustShareTheProjectRegistry() public {
-        HomerunChainConfig[] memory chains = _chains();
-        chains[0].allowlistHook =
+        address wrongProjects =
             address(new HomerunAllowlistHook(IJBProjects(address(usdc)), permissions, address(0x2771)));
         vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidProtocolWiring.selector);
-        new HomerunDeployer(chains);
+        _newHelper(wrongProjects);
         // A hook trusting another forwarder would let relayed allowlist changes resolve to a forged owner.
-        chains[0].allowlistHook =
+        address wrongForwarder =
             address(new HomerunAllowlistHook(IJBProjects(address(projects)), permissions, address(0xBEEF)));
         vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidProtocolWiring.selector);
-        new HomerunDeployer(chains);
+        _newHelper(wrongForwarder);
         // A hook reading another permissions contract would let grants the owner never made manage the list.
-        chains[0].allowlistHook = address(
+        address wrongPermissions = address(
             new HomerunAllowlistHook(
                 IJBProjects(address(projects)),
                 IJBPermissions(address(new JBPermissions(address(0x2771)))),
@@ -859,7 +871,72 @@ contract HomerunDeployerTest is Test {
             )
         );
         vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidProtocolWiring.selector);
-        new HomerunDeployer(chains);
+        _newHelper(wrongPermissions);
+    }
+
+    function testOnlyTheBindingDeployerSetsChainSpecificConstantsOnce() public {
+        HomerunDeployer fresh = _newHelper(address(allowlist));
+        vm.expectRevert(abi.encodeWithSelector(HomerunDeployer.HomerunDeployer_Unauthorized.selector, ALICE));
+        vm.prank(ALICE);
+        fresh.setChainSpecificConstants(_chains());
+        // The check reads `msg.sender`, so the trusted forwarder cannot relay a configuration for the deployer.
+        vm.prank(address(0x2771));
+        vm.expectRevert(abi.encodeWithSelector(HomerunDeployer.HomerunDeployer_Unauthorized.selector, address(0x2771)));
+        (bool ok,) = address(fresh)
+            .call(abi.encodePacked(abi.encodeCall(fresh.setChainSpecificConstants, (_chains())), address(this)));
+        ok;
+        assertEq(fresh.USDC(), address(0));
+        fresh.setChainSpecificConstants(_chains());
+        assertEq(fresh.USDC(), address(usdc));
+        assertEq(fresh.usdcOf(1), address(usdc));
+        assertEq(fresh.usdcOf(10), address(remoteUsdc));
+        assertEq(fresh.usdcOf(8453), address(remoteUsdc));
+        vm.expectRevert(HomerunDeployer.HomerunDeployer_AlreadyConfigured.selector);
+        fresh.setChainSpecificConstants(_chains());
+    }
+
+    function testEntryPointsRevertUntilConfigured() public {
+        HomerunDeployer fresh = _newHelper(address(allowlist));
+        vm.startPrank(OPERATOR);
+        vm.expectRevert(HomerunDeployer.HomerunDeployer_NotConfigured.selector);
+        fresh.launchFundFor{value: 0.01 ether}(OPERATOR, "ipfs://fund", "FUND", "FUND", 0, bytes32(0), new address[](0));
+        vm.expectRevert(HomerunDeployer.HomerunDeployer_NotConfigured.selector);
+        fresh.deployIncome{value: 0.01 ether}(1, _snapshot, _description(), 8000, 1_000_000, _noSuckers());
+        vm.expectRevert(HomerunDeployer.HomerunDeployer_NotConfigured.selector);
+        fresh.mintInitialAllocation(1);
+        vm.stopPrank();
+    }
+
+    function testChainSpecificConstantsRejectInconsistentEntries() public {
+        HomerunDeployer fresh = _newHelper(address(allowlist));
+        HomerunChainConfig[] memory chains = _chains();
+        chains[1].usdc = address(0);
+        vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidProtocolWiring.selector);
+        fresh.setChainSpecificConstants(chains);
+        chains = _chains();
+        chains[2].revDeployer = address(0xdead);
+        vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidProtocolWiring.selector);
+        fresh.setChainSpecificConstants(chains);
+        chains = _chains();
+        chains[1].omnichainDeployer = address(0xdead);
+        vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidProtocolWiring.selector);
+        fresh.setChainSpecificConstants(chains);
+        chains = _chains();
+        chains[0].allowlistHook = address(0xdead);
+        vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidProtocolWiring.selector);
+        fresh.setChainSpecificConstants(chains);
+        // This chain must be configured.
+        chains = _chains();
+        chains[0].chainId = 5;
+        vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidProtocolWiring.selector);
+        fresh.setChainSpecificConstants(chains);
+        // This chain's USDC must have 6 decimals.
+        vm.mockCall(address(usdc), abi.encodeWithSignature("decimals()"), abi.encode(uint8(18)));
+        vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidProtocolWiring.selector);
+        fresh.setChainSpecificConstants(_chains());
+        vm.clearMockedCalls();
+        fresh.setChainSpecificConstants(_chains());
+        assertEq(fresh.USDC(), address(usdc));
     }
 
     function _payContext(
@@ -1325,12 +1402,13 @@ contract HomerunDeployerTest is Test {
     }
 
     function testSharedProtocolProfileRequiresUniqueSortedChains() public {
+        HomerunDeployer fresh = _newHelper(address(allowlist));
         HomerunChainConfig[] memory chains = _chains();
         chains[1].chainId = 1;
         vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidProtocolWiring.selector);
-        new HomerunDeployer(chains);
+        fresh.setChainSpecificConstants(chains);
         chains[0].chainId = 10;
         vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidProtocolWiring.selector);
-        new HomerunDeployer(chains);
+        fresh.setChainSpecificConstants(chains);
     }
 }

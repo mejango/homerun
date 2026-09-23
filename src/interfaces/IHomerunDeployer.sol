@@ -12,6 +12,7 @@ import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 import {REVDescription} from "@rev-net/core-v6/src/structs/REVDescription.sol";
 import {REVSuckerDeploymentConfig} from "@rev-net/core-v6/src/structs/REVSuckerDeploymentConfig.sol";
 import {IHomerunAllowlistHook} from "./IHomerunAllowlistHook.sol";
+import {HomerunChainConfig} from "../structs/HomerunChainConfig.sol";
 import {HomerunInitialIncomeSnapshot} from "../structs/HomerunInitialIncomeSnapshot.sol";
 
 /// @notice Launches Homerun FUNDs with fixed campaign rules, and launches each FUND's INCOME revnet with the initial
@@ -114,6 +115,7 @@ interface IHomerunDeployer is IJBPayerTracker {
     function TOKENS() external view returns (IJBTokens tokens);
 
     /// @notice The USDC token every FUND and INCOME treasury accounts in on this chain.
+    /// @dev Zero until the chain-specific constants are set.
     /// @return usdc The USDC token.
     function USDC() external view returns (address usdc);
 
@@ -137,7 +139,7 @@ interface IHomerunDeployer is IJBPayerTracker {
     /// @custom:param projectId The ID of the project.
     function isFund(uint256 projectId) external view returns (bool);
 
-    /// @notice The USDC token on a linked chain.
+    /// @notice The USDC token on a linked chain, including this one.
     /// @custom:param chainId The ID of the chain.
     function usdcOf(uint32 chainId) external view returns (address);
 
@@ -194,4 +196,9 @@ interface IHomerunDeployer is IJBPayerTracker {
         external
         payable
         returns (uint256 projectId, address token);
+
+    /// @notice One-shot setter for the USDC token on every linked chain, this one included.
+    /// @dev Only the binding deployer can call this, once. Launches and payouts revert until it runs.
+    /// @param chains One entry per linked chain, in ascending chain ID, including this chain.
+    function setChainSpecificConstants(HomerunChainConfig[] calldata chains) external;
 }

@@ -19,8 +19,10 @@ import {HomerunDeploymentAddresses} from "../structs/HomerunDeploymentAddresses.
 import {HomerunImmutableReference} from "../structs/HomerunImmutableReference.sol";
 
 /// @notice Shared, restartable Homerun deployment and verification logic.
-/// @dev Only the canonical CREATE2 factory receives transactions. Runtime comparison masks only compiler-reported
-/// immutable words, followed by explicit checks of every immutable binding.
+/// @dev Deployments go through the canonical CREATE2 factory with constructor inputs that are identical on every
+/// supported chain, so the hook and the deployer each have one address on all eight chains. The Homerun Safe then sets
+/// the deployer's chain-specific USDC tokens once. Runtime comparison masks only compiler-reported immutable words,
+/// followed by explicit checks of every immutable binding and of the configured constants.
 abstract contract HomerunDeployment is Script {
     //*********************************************************************//
     // --------------------------- custom errors ------------------------- //
@@ -54,6 +56,10 @@ abstract contract HomerunDeployment is Script {
     /// @notice The canonical deterministic deployment proxy used throughout Juicebox V6.
     address public constant DETERMINISTIC_FACTORY = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
 
+    /// @notice The address allowed to set the deployer's chain-specific constants: the `homerun` Sphinx project's
+    /// Safe, which has the same address on every chain.
+    address public constant HOMERUN_CONFIGURATOR = 0xd5136c794ee43BEf1eD4cF1eB6DEe45b7F803437;
+
     /// @notice The CREATE2 salt shared by the allowlist hook and the deployer.
     bytes32 public constant HOMERUN_SALT = "HomerunV6";
 
@@ -71,7 +77,20 @@ abstract contract HomerunDeployment is Script {
     // ---------------------- internal transactions ---------------------- //
     //*********************************************************************//
 
+    /// @notice Sets the deployer's chain-specific constants unless they are already set, then checks the deployment.
+    /// @dev The caller must be `HOMERUN_CONFIGURATOR`: the Sphinx Safe in a proposal, or a prank in a rehearsal.
+    /// @param chains The verified per-chain protocol configuration for the connected chain's group, without hooks.
+    /// @param deployed The deployed Homerun addresses.
+    function _configure(HomerunChainConfig[] memory chains, HomerunDeploymentAddresses memory deployed) internal {
+        HomerunDeployer deployer = HomerunDeployer(deployed.deployer);
+        if (deployer.USDC() == address(0)) {
+            deployer.setChainSpecificConstants(_configured(chains, deployed.allowlistHook));
+        }
+        _verify({chains: chains, deployed: deployed});
+    }
+
     /// @notice Deploys missing singletons, preserving and checking already deployed contracts.
+    /// @dev Leaves the deployer's chain-specific constants to `_configure`, which only `HOMERUN_CONFIGURATOR` can run.
     /// @param chains The verified per-chain protocol configuration for the connected chain's group, without hooks.
     /// @return deployed The complete deployment addresses.
     function _deploy(HomerunChainConfig[] memory chains) internal returns (HomerunDeploymentAddresses memory deployed) {
@@ -83,9 +102,9 @@ abstract contract HomerunDeployment is Script {
         _deployIfNeeded({name: "HomerunAllowlistHook", salt: HOMERUN_SALT, args: _hookArgs(chains)});
         _verifyHook({chains: chains, deployed: deployed});
         _deployIfNeeded({
-            name: "HomerunDeployer", salt: HOMERUN_SALT, args: abi.encode(_configured(chains, deployed.allowlistHook))
+            name: "HomerunDeployer", salt: HOMERUN_SALT, args: _deployerArgs(chains, deployed.allowlistHook)
         });
-        _verify({chains: chains, deployed: deployed});
+        _verifyDeployer({chains: chains, deployed: deployed});
     }
 
     /// @notice Deploys a contract through the canonical factory if its predicted address has no code.
@@ -241,11 +260,12 @@ abstract contract HomerunDeployment is Script {
         deployed.allowlistHook =
             _predictContract({name: "HomerunAllowlistHook", salt: HOMERUN_SALT, args: _hookArgs(chains)});
         deployed.deployer = _predictContract({
-            name: "HomerunDeployer", salt: HOMERUN_SALT, args: abi.encode(_configured(chains, deployed.allowlistHook))
+            name: "HomerunDeployer", salt: HOMERUN_SALT, args: _deployerArgs(chains, deployed.allowlistHook)
         });
     }
 
-    /// @notice Checks a complete deployment against current compilation and all intended immutable settings.
+    /// @notice Checks a complete deployment against current compilation, all intended immutable settings and the
+    /// configured chain-specific constants.
     /// @param chains The per-chain protocol configuration, without hooks.
     /// @param deployed The expected Homerun addresses.
     function _verify(HomerunChainConfig[] memory chains, HomerunDeploymentAddresses memory deployed) internal view {
@@ -255,23 +275,11 @@ abstract contract HomerunDeployment is Script {
             revert HomerunDeployment_BindingMismatch({target: deployed.deployer, binding: "CREATE2 predictions"});
         }
         _verifyHook({chains: chains, deployed: deployed});
-        _verifyRuntime({name: "HomerunDeployer", target: deployed.deployer});
-        HomerunChainConfig memory local = _local(chains);
+        _verifyDeployer({chains: chains, deployed: deployed});
         HomerunDeployer deployer = HomerunDeployer(deployed.deployer);
-        IREVDeployer revDeployer = IREVDeployer(local.revDeployer);
-        IJBController controller = revDeployer.CONTROLLER();
-        if (
-            address(deployer.CONTROLLER()) != address(controller)
-                || address(deployer.PROJECTS()) != address(controller.PROJECTS())
-                || address(deployer.TOKENS()) != address(controller.TOKENS())
-                || address(deployer.REV_DEPLOYER()) != local.revDeployer
-                || address(deployer.REV_OWNER()) != revDeployer.OWNER()
-                || address(deployer.TERMINAL()) != address(revDeployer.MULTI_TERMINAL())
-                || deployer.USDC() != local.usdc || address(deployer.OMNICHAIN_DEPLOYER()) != local.omnichainDeployer
-                || address(deployer.ROUTER_TERMINAL_REGISTRY()) != address(revDeployer.ROUTER_TERMINAL_REGISTRY())
-                || address(deployer.ALLOWLIST_HOOK()) != deployed.allowlistHook
-                || deployer.trustedForwarder() != _forwarderOf(chains)
-        ) revert HomerunDeployment_BindingMismatch({target: deployed.deployer, binding: "deployer dependencies"});
+        if (deployer.USDC() != _local(chains).usdc) {
+            revert HomerunDeployment_BindingMismatch({target: deployed.deployer, binding: "USDC"});
+        }
         for (uint256 i; i < chains.length; i++) {
             if (deployer.usdcOf(chains[i].chainId) != chains[i].usdc) {
                 revert HomerunDeployment_BindingMismatch({target: deployed.deployer, binding: "usdcOf"});
@@ -288,6 +296,11 @@ abstract contract HomerunDeployment is Script {
             if (chains[i].chainId != group[i] || chains[i].usdc == address(0)) {
                 revert HomerunDeployment_BindingMismatch({target: chains[i].usdc, binding: "group order and USDC"});
             }
+            // One deployer address on every chain requires one protocol address on every chain.
+            if (
+                chains[i].revDeployer != chains[0].revDeployer
+                    || chains[i].omnichainDeployer != chains[0].omnichainDeployer
+            ) revert HomerunDeployment_BindingMismatch({target: chains[i].revDeployer, binding: "same protocol"});
         }
         HomerunChainConfig memory local = _local(chains);
         _requireCode(local.revDeployer);
@@ -374,7 +387,7 @@ abstract contract HomerunDeployment is Script {
     /// @notice Copies a configuration with every chain's hook set.
     /// @param chains The per-chain protocol configuration, without hooks.
     /// @param hook The allowlist hook, identical on every chain.
-    /// @return configured The deployer's constructor argument.
+    /// @return configured The deployer's `setChainSpecificConstants` argument.
     function _configured(
         HomerunChainConfig[] memory chains,
         address hook
@@ -388,6 +401,15 @@ abstract contract HomerunDeployment is Script {
             configured[i] = chains[i];
             configured[i].allowlistHook = hook;
         }
+    }
+
+    /// @notice The deployer's constructor arguments, identical on every supported chain.
+    /// @param chains The per-chain protocol configuration.
+    /// @param hook The allowlist hook, identical on every chain.
+    /// @return args The ABI-encoded constructor arguments.
+    function _deployerArgs(HomerunChainConfig[] memory chains, address hook) internal view returns (bytes memory args) {
+        HomerunChainConfig memory local = _local(chains);
+        return abi.encode(local.revDeployer, local.omnichainDeployer, hook, HOMERUN_CONFIGURATOR);
     }
 
     /// @notice The trusted forwarder of the connected chain's omnichain deployer.
@@ -407,6 +429,8 @@ abstract contract HomerunDeployment is Script {
     }
 
     /// @notice The number of immutable bindings explicitly checked for each deployment artifact.
+    /// @dev The deployer's `_DEPLOYER` has no getter. Its value is bound by the CREATE2 prediction, which commits to
+    /// `HOMERUN_CONFIGURATOR` in the constructor arguments, from the checked canonical factory.
     /// @param name The compiled artifact name.
     /// @return count The expected number of distinct compiler immutable groups.
     function _immutableCount(string memory name) private pure returns (uint256 count) {
@@ -506,6 +530,35 @@ abstract contract HomerunDeployment is Script {
         ) {
             revert HomerunDeployment_BindingMismatch({target: deployed.allowlistHook, binding: "hook dependencies"});
         }
+    }
+
+    /// @notice Verifies the deployer's runtime and immutable bindings.
+    /// @param chains The per-chain protocol configuration.
+    /// @param deployed The predicted Homerun addresses.
+    function _verifyDeployer(
+        HomerunChainConfig[] memory chains,
+        HomerunDeploymentAddresses memory deployed
+    )
+        private
+        view
+    {
+        _verifyRuntime({name: "HomerunDeployer", target: deployed.deployer});
+        HomerunChainConfig memory local = _local(chains);
+        HomerunDeployer deployer = HomerunDeployer(deployed.deployer);
+        IREVDeployer revDeployer = IREVDeployer(local.revDeployer);
+        IJBController controller = revDeployer.CONTROLLER();
+        if (
+            address(deployer.CONTROLLER()) != address(controller)
+                || address(deployer.PROJECTS()) != address(controller.PROJECTS())
+                || address(deployer.TOKENS()) != address(controller.TOKENS())
+                || address(deployer.REV_DEPLOYER()) != local.revDeployer
+                || address(deployer.REV_OWNER()) != revDeployer.OWNER()
+                || address(deployer.TERMINAL()) != address(revDeployer.MULTI_TERMINAL())
+                || address(deployer.OMNICHAIN_DEPLOYER()) != local.omnichainDeployer
+                || address(deployer.ROUTER_TERMINAL_REGISTRY()) != address(revDeployer.ROUTER_TERMINAL_REGISTRY())
+                || address(deployer.ALLOWLIST_HOOK()) != deployed.allowlistHook
+                || deployer.trustedForwarder() != _forwarderOf(chains)
+        ) revert HomerunDeployment_BindingMismatch({target: deployed.deployer, binding: "deployer dependencies"});
     }
 
     /// @notice Checks the canonical factory's exact runtime before making or trusting any deployments.
