@@ -802,14 +802,26 @@ function TokenTerms({ p }: { p: Projection }) {
 }
 
 function Allocation({ p }: { p: Projection }) {
-  const items = [
-    [p.currentOperatorSplitPercent, "to operators"],
-    [p.currentStickySplitPercent, "to FUND stakers"],
-    [p.currentRenterSplitPercent, "to customers"],
-  ] as const;
+  const planned = !p.revenuePreminted;
+  const items: [number, string][] = planned
+    ? [
+        [p.operatorSplitPercent, "to operators"],
+        [p.stickySplitPercent, "to FUND stakers"],
+        [100 - p.operatorSplitPercent - p.stickySplitPercent, "to customers"],
+      ]
+    : [
+        [p.currentOperatorSplitPercent, "to operators"],
+        [p.currentStickySplitPercent, "to FUND stakers"],
+        [p.currentRenterSplitPercent, "to customers"],
+      ];
   return (
     <figure className="allocation-chart">
       <figcaption>New INCOME tokens are shared</figcaption>
+      {planned && (
+        <p className="allocation-planned">
+          Planned allocation until INCOME starts.
+        </p>
+      )}
       <div className="allocation-bar" aria-hidden="true">
         {items.map(([value, label]) => (
           <span key={label} style={{ flex: value }} />
