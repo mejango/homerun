@@ -173,7 +173,7 @@ export function assertIncomeReleaseSource(helperSource: string) {
     'configuration.operator = _msgSender();',
     'uint112 public constant override FUND_WEIGHT = 10_000e18;', 'uint16 public constant override FUND_CASH_OUT_TAX_RATE = 1000;',
     'uint112 public constant override INCOME_INITIAL_ISSUANCE = 10e18;', 'uint32 public constant override INCOME_CUT_PERCENT = 20_000_000;', 'uint16 public constant override INCOME_CASH_OUT_TAX_RATE = 1000;',
-    'suckerDeploymentConfiguration.salt = scopedSalt;', 'keccak256(abi.encode(_msgSender(), owner, salt))', 'originalPayer = JBPayerTrackerLib.resolve(_msgSender());', 'beneficiary: payable(_msgSender()),',
+    'suckerDeploymentConfiguration.salt = scopedSalt;', 'keccak256(abi.encode(_msgSender(), owner, salt, projectUri, name, ticker, mustStartAtOrAfter))', 'originalPayer = JBPayerTrackerLib.resolve(_msgSender());', 'beneficiary: payable(_msgSender()),',
     'configuration.stageConfigurations = new REVStageConfig[](1);',
     'token = address(CONTROLLER.deployERC20For({projectId: projectId, name: name, symbol: ticker, salt: scopedSalt}));',
     'rulesetConfigurations[0].metadata.dataHook = address(ALLOWLIST_HOOK);', 'rulesetConfigurations[0].metadata.useDataHookForPay = true;',

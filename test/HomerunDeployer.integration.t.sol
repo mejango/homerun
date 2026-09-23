@@ -911,6 +911,41 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
         assertTrue(ownerToken != aliceToken);
     }
 
+    function testRealSharedSenderCannotPreemptALinkedLaunchWithDifferentTerms() public {
+        uint256 fee = jbProjects().creationFee();
+        bytes32 salt = keccak256("public salt");
+        uint48 start = uint48(block.timestamp) + 1 days;
+        address[] memory toOptimism = new address[](1);
+        toOptimism[0] = address(_ccipToOptimism);
+
+        // One relaying sender (a sponsor) launches every intent. The owner's FUND lands on Ethereum first.
+        vm.deal(BOB, fee);
+        vm.prank(BOB);
+        (uint256 originId, address originToken) =
+            _helper.launchFundFor{value: fee}(OWNER, "ipfs://real", "Real FUND", "REAL", start, salt, toOptimism);
+        address originSucker = _suckers.allSuckersOf(originId)[0];
+
+        // On Optimism, a launch through the same sender reuses the public owner and salt with other terms first.
+        assertTrue(vm.revertToState(_beforeCcipSnapshot));
+        vm.chainId(10);
+        _ccipToEthereum = _ccipDeployer(1, _feeProjectId);
+        address[] memory toEthereum = new address[](1);
+        toEthereum[0] = address(_ccipToEthereum);
+        vm.deal(BOB, 2 * fee);
+        vm.prank(BOB);
+        (uint256 impostorId, address impostorToken) =
+            _helper.launchFundFor{value: fee}(OWNER, "ipfs://fake", "Fake FUND", "FAKE", start + 1, salt, toEthereum);
+        assertTrue(impostorToken != originToken);
+        assertTrue(_suckers.allSuckersOf(impostorId)[0] != originSucker);
+
+        // The owner's launch still lands at the same token and sucker addresses it has on Ethereum.
+        vm.prank(BOB);
+        (uint256 remoteId, address remoteToken) =
+            _helper.launchFundFor{value: fee}(OWNER, "ipfs://real", "Real FUND", "REAL", start, salt, toEthereum);
+        assertEq(remoteToken, originToken);
+        assertEq(_suckers.allSuckersOf(remoteId)[0], originSucker);
+    }
+
     function testRealStockedOmnichainFundShopCanLaunchSeparateIncomeShop() public {
         (JBRuleset memory current,) = jbController().currentRulesetOf(_fundId);
         (IJB721TiersHook fundHook,) = _omnichain.tiered721HookOf(_fundId, current.id);

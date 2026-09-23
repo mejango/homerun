@@ -29,7 +29,7 @@ describe('offline INCOME release policy', () => {
     ['controller no longer derived from the revnet deployer', 'CONTROLLER = REV_DEPLOYER.CONTROLLER();', ''],
     ['router registry no longer derived from the revnet deployer', 'ROUTER_TERMINAL_REGISTRY = REV_DEPLOYER.ROUTER_TERMINAL_REGISTRY();', ''],
     ['FUND token no longer deployed at launch', 'token = address(CONTROLLER.deployERC20For({projectId: projectId, name: name, symbol: ticker, salt: scopedSalt}));', 'token = address(0);'],
-    ['token salt no longer scoped to the launcher', 'keccak256(abi.encode(_msgSender(), owner, salt))', 'salt'],
+    ['token salt no longer scoped to the launcher', 'keccak256(abi.encode(_msgSender(), owner, salt, projectUri, name, ticker, mustStartAtOrAfter))', 'salt'],
     ['initial allocation no longer paid to the current owner', 'address owner = PROJECTS.ownerOf(fundProjectId);', 'address owner = _msgSender();'],
     ['allowlist hook no longer installed', 'rulesetConfigurations[0].metadata.dataHook = address(ALLOWLIST_HOOK);', ''],
     ['inventory edits disabled', 'tiered721HookConfiguration.preventOperatorAdjustingTiers = false;', 'tiered721HookConfiguration.preventOperatorAdjustingTiers = true;'],

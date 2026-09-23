@@ -179,6 +179,14 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
     mapping(uint32 chainId => address usdc) public override usdcOf;
 
     //*********************************************************************//
+    // -------------------- internal stored properties ------------------- //
+    //*********************************************************************//
+
+    /// @notice Whether a FUND's initial INCOME allocation has been paid to its owner.
+    /// @custom:param fundProjectId The ID of the FUND project.
+    mapping(uint256 fundProjectId => bool) internal _initialAllocationMintedOf;
+
+    //*********************************************************************//
     // ------------------- transient stored properties ------------------- //
     //*********************************************************************//
 
@@ -317,9 +325,11 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
     /// `FUND_CASH_OUT_TAX_RATE`, no reserved issuance, no owner minting, no payouts, the allowlist hook on payments,
     /// and no duration so the owner can change them at any time. Every FUND goes through the stock omnichain deployer,
     /// so it carries that deployer's data hook and a default 721 hook whether or not it links chains. Linked launches
-    /// must use the same `salt`, the same caller and the same owner on every chain: the sucker and token salts are
-    /// scoped to the caller and the owner, so unrelated launches reusing a public salt cannot collide with, block, or
-    /// pair with each other, and a linked FUND's token still shares one address on every chain.
+    /// must use the same caller, owner, `salt`, `projectUri`, `name`, `ticker` and `mustStartAtOrAfter` on every
+    /// chain: the sucker and token salts commit to all of them, so a launch that reuses a public owner and salt with
+    /// different terms lands at different addresses and cannot block, pair with, or replace the original on a chain it
+    /// has not reached yet, while a linked FUND's token still shares one address on every chain. The peer sucker
+    /// deployers differ per chain, so they are not part of the salt.
     /// @param owner The address that will own the FUND.
     /// @param projectUri The FUND's metadata URI.
     /// @param name The FUND token's name.
@@ -344,13 +354,13 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
         nonReentrant
         returns (uint256 projectId, address token)
     {
-        // One salt for the suckers and the token, scoped so only the same caller launching for the same owner can
-        // reproduce it on another chain. Zero for a single-chain FUND.
+        // One salt for the suckers and the token, scoped to the caller, the owner and the launch terms so only the same
+        // launch can reproduce it on another chain. Zero for a single-chain FUND.
         bytes32 scopedSalt;
         if (peerSuckerDeployers.length != 0) {
             // A linked launch needs a salt to pair on, and a shared start so every chain's rules begin together.
             if (salt == bytes32(0) || mustStartAtOrAfter == 0) revert HomerunDeployer_InvalidConfiguration();
-            scopedSalt = keccak256(abi.encode(_msgSender(), owner, salt));
+            scopedSalt = keccak256(abi.encode(_msgSender(), owner, salt, projectUri, name, ticker, mustStartAtOrAfter));
         } else if (salt != bytes32(0)) {
             // A single-chain launch has nothing to pair, so a salt would only be a mistake.
             revert HomerunDeployer_InvalidConfiguration();
@@ -396,14 +406,19 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
     }
 
     /// @notice Mints a FUND's initial INCOME allocation to whoever owns the FUND right now.
-    /// @dev Anyone can call this once INCOME's stage has started. `REVOwner.autoIssueFor` is itself permissionless,
-    /// so the allocation may already sit here when this runs: whatever this contract holds of the INCOME token goes to
-    /// the owner, who settles the published allocation to the snapshot's holders from their balance.
-    /// @param fundProjectId The ID of the FUND project.
+    /// @dev Anyone can call this once INCOME's stage has started, and it pays out once per FUND.
+    /// `REVOwner.autoIssueFor` is itself permissionless, so the allocation may already sit here when this runs:
+    /// whatever this contract holds of
+    /// the INCOME token goes to the owner, who settles the published allocation to the snapshot's holders from their
+    /// balance. INCOME sent here after that is not paid out, so `InitialAllocationMinted` fires only for the
+    /// allocation. @param fundProjectId The ID of the FUND project.
     function mintInitialAllocation(uint256 fundProjectId) external override nonReentrant {
         // Make sure the FUND has an INCOME.
         uint256 incomeProjectId = incomeProjectIdOf[fundProjectId];
         if (incomeProjectId == 0) revert HomerunDeployer_UnsupportedFund(fundProjectId);
+
+        // Make sure the allocation has not been paid out already.
+        if (_initialAllocationMintedOf[fundProjectId]) revert HomerunDeployer_NothingToMint(fundProjectId);
 
         // INCOME has exactly one stage; the revnet deployer keyed its auto-issuance by that stage's ID.
         (JBRuleset memory stage,,) = CONTROLLER.latestQueuedRulesetOf(incomeProjectId);
@@ -419,6 +434,9 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
         IERC20 token = IERC20(address(TOKENS.tokenOf(incomeProjectId)));
         uint256 amount = token.balanceOf(address(this));
         if (amount == 0) revert HomerunDeployer_NothingToMint(fundProjectId);
+
+        // Record the payout before sending it.
+        _initialAllocationMintedOf[fundProjectId] = true;
 
         // Pay whoever owns the FUND at this moment.
         address owner = PROJECTS.ownerOf(fundProjectId);

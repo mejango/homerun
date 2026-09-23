@@ -154,10 +154,14 @@ contract HomerunAllowlistHook is ERC2771Context, IHomerunAllowlistHook {
     // -------------------------- public views --------------------------- //
     //*********************************************************************//
 
-    /// @notice Whether a payment for a beneficiary would be accepted right now.
+    /// @notice Whether the project's allowlist admits a beneficiary: the project is open, or the beneficiary is
+    /// allowed.
+    /// @dev This reports the allowlist only. It does not check whether the project's current ruleset still routes
+    /// payments through this hook, so a project that has moved off the hook may accept payments this returns false
+    /// for.
     /// @param projectId The ID of the project being paid.
     /// @param account The beneficiary of the payment.
-    /// @return flag Whether the payment would be accepted.
+    /// @return flag Whether the allowlist admits the beneficiary.
     function canPay(uint256 projectId, address account) public view override returns (bool flag) {
         return isOpen[projectId] || isAllowed[projectId][account];
     }

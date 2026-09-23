@@ -166,12 +166,13 @@ interface IHomerunDeployer is IJBPayerTracker {
         returns (uint256 incomeProjectId);
 
     /// @notice Mints a FUND's initial INCOME allocation to whoever owns the FUND right now.
-    /// @dev Anyone can call this once INCOME's stage has started.
+    /// @dev Anyone can call this once INCOME's stage has started, and it pays out once per FUND.
     /// @param fundProjectId The ID of the FUND project.
     function mintInitialAllocation(uint256 fundProjectId) external;
 
     /// @notice Launches a FUND with Homerun's fixed campaign rules and deploys its ERC-20.
-    /// @dev Linked launches must use the same `salt`, the same caller and the same owner on every chain.
+    /// @dev Linked launches must use the same caller, owner, `salt`, `projectUri`, `name`, `ticker` and
+    /// `mustStartAtOrAfter` on every chain. The sucker and token salts commit to all of them.
     /// @param owner The address that will own the FUND.
     /// @param projectUri The FUND's metadata URI.
     /// @param name The FUND token's name.

@@ -622,6 +622,24 @@ contract HomerunDeployerTest is Test {
         helper.mintInitialAllocation(7);
     }
 
+    function testIncomeSentAfterThePayoutCannotReplayTheAllocationEvent() public {
+        uint256 id = _deploy();
+        helper.mintInitialAllocation(1);
+        assertEq(tokens.totalBalanceOf(OPERATOR, id), 500_000 ether);
+
+        // Anyone can send INCOME here after the payout; it must not read as another initial allocation.
+        IncomeTestToken income = IncomeTestToken(tokens.tokenOf(id));
+        vm.prank(OPERATOR);
+        assertTrue(income.transfer(address(helper), 1));
+        vm.recordLogs();
+        vm.prank(BOB);
+        vm.expectRevert(abi.encodeWithSelector(HomerunDeployer.HomerunDeployer_NothingToMint.selector, 1));
+        helper.mintInitialAllocation(1);
+        assertEq(vm.getRecordedLogs().length, 0);
+        assertEq(tokens.totalBalanceOf(address(helper), id), 1);
+        assertEq(tokens.totalBalanceOf(OPERATOR, id), 500_000 ether - 1);
+    }
+
     function testStrangerMintingThroughTheRevnetOwnerFirstCannotStrandTheAllocation() public {
         uint256 id = _deploy();
         // The revnet's own auto-issuance is permissionless; a stranger sends the allocation here early.
@@ -747,12 +765,14 @@ contract HomerunDeployerTest is Test {
         assertEq(id, 2);
         assertTrue(helper.isFund(2));
         assertEq(projects.ownerOf(2), OWNER);
-        // The token salt is scoped to the caller, like the sucker salt: a linked FUND still shares one token address
-        // on every chain, and another launcher reusing the public salt cannot block it.
-        assertEq(controller.lastTokenSalt(), keccak256(abi.encode(ALICE, OWNER, bytes32(uint256(7)))));
+        // The token salt is scoped to the caller, the owner and the launch terms, like the sucker salt: a linked FUND
+        // still shares one token address on every chain, and another launch reusing the public salt cannot block it.
+        bytes32 scopedSalt =
+            keccak256(abi.encode(ALICE, OWNER, bytes32(uint256(7)), "ipfs://linked", "Linked FUND", "LINK", 1_000_000));
+        assertEq(controller.lastTokenSalt(), scopedSalt);
         assertEq(omnichain.lastRulesetsHash(), keccak256(abi.encode(_expectedFundRulesets(1_000_000))));
         JBSuckerDeploymentConfig memory expected;
-        expected.salt = keccak256(abi.encode(ALICE, OWNER, bytes32(uint256(7))));
+        expected.salt = scopedSalt;
         expected.deployerConfigurations = new JBSuckerDeployerConfig[](1);
         JBTokenMapping[] memory mappings = new JBTokenMapping[](1);
         mappings[0] = JBTokenMapping({
@@ -761,6 +781,36 @@ contract HomerunDeployerTest is Test {
         expected.deployerConfigurations[0] =
             JBSuckerDeployerConfig({deployer: IJBSuckerDeployer(peers[0]), peer: bytes32(0), mappings: mappings});
         assertEq(omnichain.lastSuckersHash(), keccak256(abi.encode(expected)));
+    }
+
+    function testLinkedLaunchSaltCommitsToEveryLaunchTerm() public {
+        address[] memory peers = new address[](1);
+        peers[0] = address(new IncomeTestCcipDeployer(10));
+        bytes32 salt = bytes32(uint256(7));
+        vm.deal(ALICE, 1 ether);
+
+        // One sender launches for the same owner and salt, changing one term at a time.
+        vm.startPrank(ALICE);
+        helper.launchFundFor{value: 0.01 ether}(OWNER, "ipfs://a", "A FUND", "AAA", 1_000_000, salt, peers);
+        bytes32 original = controller.lastTokenSalt();
+        helper.launchFundFor{value: 0.01 ether}(OWNER, "ipfs://b", "A FUND", "AAA", 1_000_000, salt, peers);
+        bytes32 otherUri = controller.lastTokenSalt();
+        helper.launchFundFor{value: 0.01 ether}(OWNER, "ipfs://a", "B FUND", "AAA", 1_000_000, salt, peers);
+        bytes32 otherName = controller.lastTokenSalt();
+        helper.launchFundFor{value: 0.01 ether}(OWNER, "ipfs://a", "A FUND", "BBB", 1_000_000, salt, peers);
+        bytes32 otherTicker = controller.lastTokenSalt();
+        helper.launchFundFor{value: 0.01 ether}(OWNER, "ipfs://a", "A FUND", "AAA", 1_000_001, salt, peers);
+        bytes32 otherStart = controller.lastTokenSalt();
+        // The same terms again reproduce the original salt, as a linked launch on another chain does.
+        helper.launchFundFor{value: 0.01 ether}(OWNER, "ipfs://a", "A FUND", "AAA", 1_000_000, salt, peers);
+        vm.stopPrank();
+
+        assertEq(original, keccak256(abi.encode(ALICE, OWNER, salt, "ipfs://a", "A FUND", "AAA", 1_000_000)));
+        assertTrue(otherUri != original);
+        assertTrue(otherName != original);
+        assertTrue(otherTicker != original);
+        assertTrue(otherStart != original);
+        assertEq(controller.lastTokenSalt(), original);
     }
 
     function testForwardedLaunchResolvesTheSignerNotTheForwarder() public {

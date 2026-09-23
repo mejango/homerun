@@ -24,10 +24,13 @@ interface IHomerunAllowlistHook is IJBRulesetDataHook {
     /// @return projects The project registry.
     function PROJECTS() external view returns (IJBProjects projects);
 
-    /// @notice Whether a payment for a beneficiary would be accepted right now.
+    /// @notice Whether the project's allowlist admits a beneficiary: the project is open, or the beneficiary is
+    /// allowed.
+    /// @dev Reports the allowlist only, not whether the project's current ruleset still routes payments through this
+    /// hook.
     /// @param projectId The ID of the project being paid.
     /// @param account The beneficiary of the payment.
-    /// @return flag Whether the payment would be accepted.
+    /// @return flag Whether the allowlist admits the beneficiary.
     function canPay(uint256 projectId, address account) external view returns (bool flag);
 
     /// @notice Whether a beneficiary may receive tokens from payments to a project while it is not open.

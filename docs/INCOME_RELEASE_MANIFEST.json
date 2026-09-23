@@ -41,7 +41,7 @@
       "uint32 public constant override INCOME_CUT_PERCENT = 20_000_000;",
       "uint16 public constant override INCOME_CASH_OUT_TAX_RATE = 1000;",
       "suckerDeploymentConfiguration.salt = scopedSalt;",
-      "keccak256(abi.encode(_msgSender(), owner, salt))",
+      "keccak256(abi.encode(_msgSender(), owner, salt, projectUri, name, ticker, mustStartAtOrAfter))",
       "originalPayer = JBPayerTrackerLib.resolve(_msgSender());",
       "beneficiary: payable(_msgSender()),",
       "configuration.stageConfigurations = new REVStageConfig[](1);",
