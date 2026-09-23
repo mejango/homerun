@@ -193,6 +193,7 @@ export default function CreatePreview() {
   const planned = plannedMultisigs(values)
   const setup = values
   return <DemoProjectPage project={model} planned={{
+    status: 'Preview',
     payLabel: 'Available once created',
     panel: <section className="planned-bar" aria-label="Preview">
       <p role="status">{BANNER}</p>

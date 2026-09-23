@@ -117,6 +117,7 @@ describe('a published project page', () => {
     expect(host.textContent).toContain('Neighborhood Workshop')
     expect(host.textContent).toContain('Shared tools that earn revenue through community use.')
     expect(host.textContent).toContain('Deploys on first use')
+    expect(host.querySelector('#project-status')?.textContent).toBe('Status: Deploys on first use')
     expect(host.textContent).toContain('Base')
     expect(host.textContent).toContain('Neighborhood Workshop FUND')
     expect(host.textContent).toContain('FUND')

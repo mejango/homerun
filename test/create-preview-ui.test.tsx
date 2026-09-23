@@ -110,6 +110,7 @@ describe('the preview of a project that is not created yet', () => {
   it('renders the saved setup as the project page, and says nothing is created', async () => {
     await render()
     expect(host.textContent).toContain('Preview. Nothing is created yet.')
+    expect(host.querySelector('#project-status')?.textContent).toBe('Status: Preview')
     expect(host.textContent).toContain('Neighborhood Workshop')
     expect(host.textContent).toContain('Florianópolis')
     expect(host.textContent).toContain('Shared tools that earn revenue through community use.')

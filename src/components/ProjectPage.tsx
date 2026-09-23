@@ -2143,6 +2143,8 @@ export type PlannedProjectSlots = {
   payLabel: string;
   /** Pictures a publication pinned, which a setup's own fields never carry. */
   pictures?: { photo?: string; ownerPhoto?: string; operatorPhoto?: string };
+  /** The header's status word for a project that does not exist yet. */
+  status: string;
 };
 
 export function DemoProjectPage({ project, planned }: { project?: CreatedProject; planned?: PlannedProjectSlots }) {
@@ -2346,7 +2348,7 @@ export function DemoProjectPage({ project, planned }: { project?: CreatedProject
                 data-project-phase={phase}
                 role="status"
               >
-                Status: {statusLabels[phase]}
+                Status: {planned ? planned.status : statusLabels[phase]}
               </span>,
               ...demoStateMetadata(overview, phase),
             ].filter(Boolean)}
