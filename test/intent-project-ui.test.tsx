@@ -7,6 +7,7 @@ vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fix
 import { encodeFunctionData, zeroHash, type Hex } from 'viem'
 import { HOMERUN_DEPLOYER } from './fixtures/homerun-deployer'
 import { homerunDeployerAbi } from '../src/lib/income-contracts'
+import { FULL_SETUP_PIN } from './fixtures/full-setup'
 
 const wallet = '0x1111111111111111111111111111111111111111'
 const intentId = '3f0f2f4c-0f3f-4f2f-8f1f-0f2f3f4f5f6f'
@@ -124,6 +125,46 @@ describe('a published project page', () => {
     expect(host.textContent).toContain(wallet)
     expect(host.querySelector('img[alt*="cover"]')).toBeTruthy()
     expect(button('Deploy selected')).toBeTruthy()
+  })
+
+  it('shows every text the pinned setup carries, each in its own place', async () => {
+    const launch = {
+      chainId: 8453, to: HOMERUN_DEPLOYER,
+      data: encodeFunctionData({
+        abi: homerunDeployerAbi, functionName: 'launchFundFor',
+        args: [wallet, 'ipfs://bafkreimetadata', 'Workshop Bench FUND', 'WKSHP', 0, zeroHash, []],
+      }),
+    }
+    runtime.getIntent.mockResolvedValue(intent({
+      envelope: { ...intent().envelope, deploymentCalls: [launch], jb: { ...intent().envelope.jb, tokenName: 'Workshop Bench FUND', ticker: 'WKSHP' } },
+    }))
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(FULL_SETUP_PIN), { headers: { 'content-type': 'application/json' } })))
+    await render()
+    expect(host.querySelector('h1')?.textContent).toContain('Neighborhood Workshop')
+    expect(host.querySelector('.hpl-location')?.textContent).toBe('Florianópolis, Brazil')
+    expect(host.textContent).toContain('Shared tools that earn revenue through community use.')
+    const owner = host.querySelector('section[aria-label="Owner introduction"]')!
+    expect(owner.textContent).toContain('Ada Rios')
+    expect(owner.textContent).toContain('She keeps the workshop running.')
+    const operator = host.querySelector('section[aria-label="Operator introduction"]')!
+    expect(operator.textContent).toContain('Bruno Lima')
+    expect(operator.textContent).toContain('He maintains the machines and the books.')
+    await openTab('Stages')
+    await act(async () => { host.querySelector<HTMLButtonElement>('button[data-journey-phase="earning"]')!.click() })
+    const income = host.querySelector('#phase-panel')!
+    expect(income.querySelector('.revenue-description')?.textContent).toBe('Members pay monthly for bench time, and visitors pay by the hour.')
+    const revenue = income.querySelector('.revenue-plan')!
+    expect(revenue.textContent).toContain('Minimum monthly revenue')
+    expect(revenue.textContent).toContain('$7,500')
+    expect(revenue.textContent).toContain('If revenue falls below the minimum')
+    expect(revenue.textContent).toContain('The Owner cuts machine hours and reports the shortfall to holders.')
+    await openTab('Owners')
+    await openTab('Splits')
+    const token = host.querySelector('.demo-published-token')!
+    expect(token.textContent).toContain('Token name')
+    expect(token.textContent).toContain('Workshop Bench FUND')
+    expect(token.textContent).toContain('Ticker')
+    expect(token.textContent).toContain('WKSHP')
   })
 
   it('names every multisig the project creates, with its role, approvals and owners', async () => {

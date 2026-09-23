@@ -113,6 +113,10 @@
 
 .revenue-description { white-space: pre-wrap; overflow-wrap: anywhere; }
 
+.revenue-plan { display: grid; gap: 12px; margin-top: 14px; }
+.revenue-plan dt { color: #3f5b66; font-size: 12px; }
+.revenue-plan dd { margin: 4px 0 0; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+
 @media (max-width: 760px) {
   .simulator .deal-heading > .deal-image { order: 1; }
   .simulator .deal-heading > #project-journey { order: 2; }

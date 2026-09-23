@@ -5,6 +5,7 @@ vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fix
 
 import type { Hex } from 'viem'
 import { CREATE_DEFAULTS, CREATE_DRAFT_KEY } from '../web/create-model.mjs'
+import { FULL_SETUP } from './fixtures/full-setup'
 import { FUND_LAUNCH_KEY, decodeLaunchSession, encodeLaunchSession } from '../src/lib/fund-launch-session'
 
 const wallet = '0x1111111111111111111111111111111111111111'
@@ -163,6 +164,50 @@ describe('the preview of a project that is not created yet', () => {
     expect(pay.textContent).toContain('Your new share')
     expect(pay.querySelector<HTMLSelectElement>('#pay-currency')?.value).toBe('USDC')
     expect(button('Available once created')?.disabled).toBe(true)
+  })
+
+  it('shows every text the setup carries, each in its own place', async () => {
+    localStorage.setItem(CREATE_DRAFT_KEY, JSON.stringify({ raw: FULL_SETUP, step: 4, incomeDefaultsVersion: 3 }))
+    await render()
+    expect(host.querySelector('h1')?.textContent).toContain('Neighborhood Workshop')
+    expect(host.querySelector('.hpl-location')?.textContent).toBe('Florianópolis, Brazil')
+    expect(host.textContent).toContain('Shared tools that earn revenue through community use.')
+    const owner = host.querySelector('section[aria-label="Owner introduction"]')!
+    expect(owner.textContent).toContain('Ada Rios')
+    expect(owner.textContent).toContain('She keeps the workshop running.')
+    const operator = host.querySelector('section[aria-label="Operator introduction"]')!
+    expect(operator.textContent).toContain('Bruno Lima')
+    expect(operator.textContent).toContain('He maintains the machines and the books.')
+    await openTab('Stages')
+    await act(async () => { host.querySelector<HTMLButtonElement>('button[data-journey-phase="earning"]')!.click() })
+    const income = host.querySelector('#phase-panel')!
+    expect(income.querySelector('.revenue-description')?.textContent).toBe('Members pay monthly for bench time, and visitors pay by the hour.')
+    const revenue = income.querySelector('.revenue-plan')!
+    expect(revenue.textContent).toContain('Minimum monthly revenue')
+    expect(revenue.textContent).toContain('$7,500')
+    expect(revenue.textContent).toContain('If revenue falls below the minimum')
+    expect(revenue.textContent).toContain('The Owner cuts machine hours and reports the shortfall to holders.')
+    await openTab('Owners')
+    await openTab('Splits')
+    const token = host.querySelector('.demo-published-token')!
+    expect(token.textContent).toContain('Token name')
+    expect(token.textContent).toContain('Workshop Bench FUND')
+    expect(token.textContent).toContain('Ticker')
+    expect(token.textContent).toContain('WKSHP')
+  })
+
+  it('leaves out the revenue plan a setup never filled in', async () => {
+    localStorage.setItem(CREATE_DRAFT_KEY, JSON.stringify({
+      raw: { ...FULL_SETUP, revenueDescription: '', minimumRevenueConsequences: '', minimumRevenue: 0 },
+      step: 4, incomeDefaultsVersion: 3,
+    }))
+    await render()
+    await openTab('Stages')
+    await act(async () => { host.querySelector<HTMLButtonElement>('button[data-journey-phase="earning"]')!.click() })
+    const income = host.querySelector('#phase-panel')!
+    expect(income.querySelector('.revenue-description')).toBeNull()
+    expect(income.textContent).toContain('No minimum set')
+    expect(income.textContent).not.toContain('If revenue falls below the minimum')
   })
 
   it('reads the stages off the setup', async () => {
