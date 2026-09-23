@@ -21,6 +21,8 @@ import {
   sourceAmountFromUSDC,
 } from "../../web/payment-currencies.mjs";
 import { demoPaymentResult, fundPaymentLimitError } from "@/lib/demo-payment-result";
+import { money } from "@/lib/money";
+import { FundTokenTermsSection, type FundTokenTerms } from "./FundTokenTerms";
 import { DemoPaymentResult } from "./DemoPaymentResult";
 import { plannedOwnerActionDraft as modelOwnerActionDraft } from "../../web/owner-actions.mjs";
 import { SiteIntegration } from "./SiteIntegration";
@@ -67,13 +69,6 @@ const payPanelQuote = modelPayPanelQuote as (input: {
   currency: string;
   contributionError: string;
 }) => ReturnType<typeof modelPayPanelQuote>;
-const money = (value: number) =>
-  new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
-    maximumFractionDigits: 2,
-  }).format(value);
 const number = (value: number) =>
   new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value);
 const tokenNumber = (value: number) =>
@@ -771,13 +766,6 @@ function TokenTerms({ p }: { p: Projection }) {
         contributors share {percent(100 - p.operatorFundPercent)} of FUND and
         {p.separateOwnerOperator ? 'the Owner holds' : 'operators hold'} {percent(p.operatorFundPercent)}. Each FUND has the same
         share of net asset-sale proceeds.
-      </p>
-      <p>
-        At purchase, {number(p.revenuePremint)} INCOME tokens are shared among
-        all FUND holders in the same proportions, including inactive ERC20
-        balances and unclaimed token credits. This initial claim requires no
-        activation, staking or vesting. Ongoing rewards are separate and require
-        eligible Sticky staking. Neither token has a promised repayment date.
       </p>
       <dl className="math-values">
         <div>
@@ -1988,7 +1976,7 @@ function DemoOwners({
   control,
   permissions,
   splitEditor,
-  token,
+  terms,
 }: {
   p: Projection | null;
   phase: ProjectPhase;
@@ -1997,7 +1985,7 @@ function DemoOwners({
   control: ReactNode;
   permissions: ReactNode;
   splitEditor: ReactNode;
-  token?: { name: string; symbol: string };
+  terms: FundTokenTerms;
 }) {
   const unavailable = (
     <section className="demo-section">
@@ -2104,32 +2092,20 @@ function DemoOwners({
       }
       splits={
         p ? (
-          <section className="demo-section">
-            <h2>Splits</h2>
-            <p>
-              New INCOME is allocated to operators, eligible FUND stakers and
-              customers.
-            </p>
-            <Allocation p={p} />
-            {token && (
-              <div className="demo-published-token">
-                <h3>FUND token</h3>
-                <dl className="demo-account-balances">
-                  <div>
-                    <dt>Token name</dt>
-                    <dd>{token.name}</dd>
-                  </div>
-                  <div>
-                    <dt>Ticker</dt>
-                    <dd>{token.symbol}</dd>
-                  </div>
-                </dl>
-              </div>
-            )}
-            <TokenTerms p={p} />
-            <ProjectActionGuide stage={phase} section="splits" />
+          <div className="demo-owner-sections">
+            <section className="demo-section">
+              <h2>Splits</h2>
+              <p>
+                New INCOME is allocated to operators, eligible FUND stakers and
+                customers.
+              </p>
+              <Allocation p={p} />
+              <TokenTerms p={p} />
+              <ProjectActionGuide stage={phase} section="splits" />
+            </section>
+            <FundTokenTermsSection terms={terms} />
             {splitEditor}
-          </section>
+          </div>
         ) : (
           unavailable
         )
@@ -2617,15 +2593,13 @@ export function DemoProjectPage({ project, planned }: { project?: CreatedProject
                 control={<DemoProjectControl {...managementProps} />}
                 permissions={<DemoProjectPermissions {...managementProps} />}
                 splitEditor={<DemoProjectSplits {...managementProps} />}
-                token={
-                  project &&
-                  (project.values.fundTokenName || project.values.fundTicker)
-                    ? {
-                        name: project.values.fundTokenName,
-                        symbol: project.values.fundTicker,
-                      }
-                    : undefined
-                }
+                terms={{
+                  tokenName: project?.values.fundTokenName || null,
+                  tokenSymbol: project?.values.fundTicker || null,
+                  ownerFundPercent: inputs.operatorFundPercent,
+                  operatorSplitPercent: inputs.operatorSplitPercent,
+                  fundHolderSplitPercent: inputs.stickySplitPercent,
+                }}
               />
             }
             shop={
