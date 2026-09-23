@@ -106,6 +106,7 @@
 .issuance-split { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 14px 0; }
 .allocation-chart { margin: 20px 0 0; }
 .allocation-chart figcaption { font-size: 12px; color: var(--ink); }
+.allocation-planned { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
 .allocation-bar { display: flex; gap: 3px; height: 14px; border-radius: var(--radius); overflow: hidden; margin-top: 10px; }
 .allocation-bar > span:nth-child(1) { background: #24533e; }
 .allocation-bar > span:nth-child(2) { background: #879d6d; }
