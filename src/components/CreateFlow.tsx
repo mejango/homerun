@@ -431,7 +431,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
                 </fieldset>
                 <fieldset className="income-field-group fundraise-contract"><legend>Contractual settings</legend>
                   {field('operatorFundPercent', 'Owner FUND ownership', { suffix: '%', help: 'Allocated to the Owner after a successful purchase. The Owner may distribute these tokens to the Operator at their discretion.' })}
-                  <div className="income-inputs">{field('fundTokenName', 'FUND token name', { placeholder: 'e.g. Neighborhood Workshop FUND', maxLength: 32, help: 'Blank uses the project title.' })}{field('fundTicker', 'FUND ticker', { placeholder: 'FUND', maxLength: 12, help: 'Deployed with the project as its ERC-20 symbol.' })}</div>
+                  <div className="income-inputs token-inputs">{field('fundTokenName', 'FUND token name', { placeholder: 'e.g. Workshop FUND', maxLength: 32, help: 'Blank uses the project title.' })}{field('fundTicker', 'FUND ticker', { placeholder: 'FUND', maxLength: 12, help: 'Deployed with the project as its ERC-20 symbol.' })}</div>
                 </fieldset>
                 <div className="create-callout fundraise-goal"><span>Total fundraising goal</span><strong id="create-raise-goal">{summary ? money(summary.raiseGoal) : '—'}</strong>
                   <p id="create-fee-note">{summary ? `Includes ${money(summary.values.purchaseBudget)} for the asset, ${money(summary.values.opsReserve)} in reserve, and ${money(Math.round((summary.raiseGoal - summary.values.purchaseBudget - summary.values.opsReserve) * 100) / 100)} in assumed payout fees.` : 'Complete the asset and funding inputs to calculate the goal.'}</p>
