@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
+import {IJBPermissioned} from "@bananapus/core-v6/src/interfaces/IJBPermissioned.sol";
 import {IJBProjects} from "@bananapus/core-v6/src/interfaces/IJBProjects.sol";
 import {IJBSplitHook} from "@bananapus/core-v6/src/interfaces/IJBSplitHook.sol";
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
@@ -238,12 +239,13 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
         ALLOWLIST_HOOK = IHomerunAllowlistHook(local.allowlistHook);
         USDC = local.usdc;
 
-        // Make sure the omnichain deployer and the hook serve the same core the revnet deployer does, that USDC has
-        // the decimals every treasury accounts in, and that relayed allowlist changes resolve the same signer this
-        // contract does.
+        // Make sure the omnichain deployer and the hook serve the same core the revnet deployer does, including the
+        // permissions the hook's list management is delegated through, that USDC has the decimals every treasury
+        // accounts in, and that relayed allowlist changes resolve the same signer this contract does.
         if (
             address(OMNICHAIN_DEPLOYER.CONTROLLER()) != address(CONTROLLER)
                 || address(ALLOWLIST_HOOK.PROJECTS()) != address(PROJECTS)
+                || address(ALLOWLIST_HOOK.PERMISSIONS()) != address(IJBPermissioned(address(CONTROLLER)).PERMISSIONS())
                 || IERC20Metadata(USDC).decimals() != _USDC_DECIMALS
                 || !ERC2771Context(address(ALLOWLIST_HOOK)).isTrustedForwarder(trustedForwarder())
         ) revert HomerunDeployer_InvalidProtocolWiring();

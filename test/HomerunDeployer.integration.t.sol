@@ -116,7 +116,7 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
         });
         _revOwner = new REVOwner(buyback, jbDirectory(), feeProjectId, _suckers, _loans, FORWARDER, address(this));
         _router = new JBRouterTerminalRegistry(jbPermissions(), jbProjects(), permit2(), multisig(), FORWARDER);
-        _allowlist = new HomerunAllowlistHook(jbProjects(), FORWARDER);
+        _allowlist = new HomerunAllowlistHook(jbProjects(), jbPermissions(), FORWARDER);
         _revDeployer = new REVDeployer(
             jbController(),
             jbMultiTerminal(),
@@ -866,10 +866,20 @@ contract HomerunDeployerIntegrationTest is TestBaseWorkflow {
 
         address[] memory accounts = new address[](1);
         accounts[0] = CUSTOMER;
-        vm.expectPartialRevert(HomerunAllowlistHook.HomerunAllowlistHook_Unauthorized.selector);
+        vm.expectPartialRevert(JBPermissioned.JBPermissioned_Unauthorized.selector);
         vm.prank(OPERATOR);
         _allowlist.setAllowed(fundId, accounts, true);
+        // The owner delegates list management through the real permissions contract.
+        uint8[] memory ids = new uint8[](1);
+        ids[0] = _allowlist.SET_ALLOWLIST_PERMISSION_ID();
         vm.prank(OWNER);
+        jbPermissions()
+            .setPermissionsFor(
+                OWNER,
+                // forge-lint: disable-next-line(unsafe-typecast)
+                JBPermissionsData({operator: OPERATOR, projectId: uint64(fundId), permissionIds: ids})
+            );
+        vm.prank(OPERATOR);
         _allowlist.setAllowed(fundId, accounts, true);
         vm.prank(CUSTOMER);
         assertEq(jbMultiTerminal().pay(fundId, address(usdcToken()), 100e6, CUSTOMER, 0, "", ""), 1_000_000 ether);

@@ -3,7 +3,7 @@ pragma solidity 0.8.28;
 
 import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
-import {IJBProjects} from "@bananapus/core-v6/src/interfaces/IJBProjects.sol";
+import {IJBPermissioned} from "@bananapus/core-v6/src/interfaces/IJBPermissioned.sol";
 import {JBCurrencyIds} from "@bananapus/core-v6/src/libraries/JBCurrencyIds.sol";
 import {JBOmnichainDeployer} from "@bananapus/omnichain-deployers-v6/src/JBOmnichainDeployer.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
@@ -401,7 +401,9 @@ abstract contract HomerunDeployment is Script {
     /// @param chains The per-chain protocol configuration.
     /// @return args The ABI-encoded constructor arguments.
     function _hookArgs(HomerunChainConfig[] memory chains) internal view returns (bytes memory args) {
-        return abi.encode(IREVDeployer(_local(chains).revDeployer).CONTROLLER().PROJECTS(), _forwarderOf(chains));
+        IJBController controller = IREVDeployer(_local(chains).revDeployer).CONTROLLER();
+        return
+            abi.encode(controller.PROJECTS(), IJBPermissioned(address(controller)).PERMISSIONS(), _forwarderOf(chains));
     }
 
     /// @notice The number of immutable bindings explicitly checked for each deployment artifact.
@@ -409,7 +411,7 @@ abstract contract HomerunDeployment is Script {
     /// @return count The expected number of distinct compiler immutable groups.
     function _immutableCount(string memory name) private pure returns (uint256 count) {
         bytes32 nameHash = keccak256(bytes(name));
-        if (nameHash == keccak256("HomerunAllowlistHook")) return 2;
+        if (nameHash == keccak256("HomerunAllowlistHook")) return 3;
         if (nameHash == keccak256("HomerunDeployer")) return 11;
         revert HomerunDeployment_InvalidArtifact(name);
     }
@@ -496,8 +498,12 @@ abstract contract HomerunDeployment is Script {
     function _verifyHook(HomerunChainConfig[] memory chains, HomerunDeploymentAddresses memory deployed) private view {
         _verifyRuntime({name: "HomerunAllowlistHook", target: deployed.allowlistHook});
         HomerunAllowlistHook hook = HomerunAllowlistHook(deployed.allowlistHook);
-        IJBProjects projects = IREVDeployer(_local(chains).revDeployer).CONTROLLER().PROJECTS();
-        if (address(hook.PROJECTS()) != address(projects) || hook.trustedForwarder() != _forwarderOf(chains)) {
+        IJBController controller = IREVDeployer(_local(chains).revDeployer).CONTROLLER();
+        if (
+            address(hook.PROJECTS()) != address(controller.PROJECTS())
+                || address(hook.PERMISSIONS()) != address(IJBPermissioned(address(controller)).PERMISSIONS())
+                || hook.trustedForwarder() != _forwarderOf(chains)
+        ) {
             revert HomerunDeployment_BindingMismatch({target: deployed.allowlistHook, binding: "hook dependencies"});
         }
     }

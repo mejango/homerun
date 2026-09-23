@@ -6,7 +6,7 @@ Homerun's contracts deploy through the same Sphinx proposal workflow and canonic
 
 Two singletons, in this order, both with the salt `HomerunV6`:
 
-1. `HomerunAllowlistHook`, constructed with the canonical `JBProjects` and the trusted forwarder of the local `JBOmnichainDeployer`.
+1. `HomerunAllowlistHook`, constructed with the canonical `JBProjects`, the controller's `JBPermissions` and the trusted forwarder of the local `JBOmnichainDeployer`.
 2. `HomerunDeployer`, constructed with one `HomerunChainConfig` per chain of the network group, in ascending chain ID: `REVDeployer`, USDC, `JBOmnichainDeployer` and the allowlist hook. The controller and the router terminal registry are read from `REVDeployer` in the constructor.
 
 The deployer's constructor calldata is identical on every chain of a group, so every chain of a group shares one deployer address, and that address commits to the whole group's configuration. Mainnets (Ethereum, Optimism, Base, Arbitrum) and testnets (their Sepolias) are separate groups with separate addresses.

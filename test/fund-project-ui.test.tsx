@@ -80,7 +80,7 @@ function state(): FundProjectState {
     upcoming: null, projectUri: '', tokenAddress: null, totalSupply: 100n,
     creditBalance: 10n, erc20Balance: 0n,
     accountingContexts: [{ token: '0x000000000000000000000000000000000000EEEe', decimals: 18, currency: 1, terminal: '0x3333333333333333333333333333333333333333', balance: 100n, symbol: 'ETH' }],
-    permissions: { queueRulesets: true, mintTokens: true, deployErc20: true, useAllowance: true, sendPayouts: true, setProjectUri: true },
+    permissions: { queueRulesets: true, mintTokens: true, deployErc20: true, useAllowance: true, sendPayouts: true, setProjectUri: true, manageAllowlist: true },
     issues: [],
   } as unknown as FundProjectState
 }
@@ -513,6 +513,27 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     await act(async () => [...section.querySelectorAll('button')].find(button => button.textContent === 'Open to everyone')!.click())
     expect(runtime.send.mock.calls[1][0].functionName).toBe('setOpen')
     expect(runtime.send.mock.calls[1][0].args).toEqual([7n, true])
+  })
+
+  it('lets a non-owner operator with the allowlist permission manage the list, and no one else', async () => {
+    runtime.phase = 'idle'
+    const allowlist = { hook: '0x4545454545454545454545454545454545454545', open: false, accountAllowed: true }
+    const none = { queueRulesets: false, mintTokens: false, deployErc20: false, useAllowance: false, sendPayouts: false, setProjectUri: false, manageAllowlist: false }
+    runtime.query = { ...runtime.query, data: { ...state(), owner: '0x2222222222222222222222222222222222222222', permissions: { ...none, manageAllowlist: true }, allowlist } }
+    await render()
+    await tab('Operators')
+    let section = host.querySelector('[aria-label="Payment allowlist"]')!
+    expect(section.querySelector('fieldset')!.disabled).toBe(false)
+    expect(section.textContent).not.toContain('Only the FUND owner')
+    await act(async () => [...section.querySelectorAll('button')].find(button => button.textContent === 'Open to everyone')!.click())
+    expect(runtime.send).toHaveBeenCalledTimes(1)
+    expect(runtime.send.mock.calls[0][0].functionName).toBe('setOpen')
+    runtime.query = { ...runtime.query, data: { ...state(), owner: '0x2222222222222222222222222222222222222222', permissions: { ...none, queueRulesets: true }, allowlist } }
+    await render()
+    await tab('Operators')
+    section = host.querySelector('[aria-label="Payment allowlist"]')!
+    expect(section.querySelector('fieldset')!.disabled).toBe(true)
+    expect(section.textContent).toContain('Only the FUND owner, or a wallet the owner granted allowlist permission')
   })
 
   it('does not gate payments once the owner opens the FUND or the wallet is allowed', async () => {

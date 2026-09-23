@@ -57,7 +57,7 @@ function state(chainId: 8453 | 10): FundProjectState {
     totalSupply: 1000n, totalCreditSupply: 100n, pendingReservedTokens: 0n, totalSupplyWithReservedTokens: 1000n,
     creditBalance: 10n, erc20Balance: 10n, totalBalance: 20n,
     accountingContexts: [treasury], permissions: { queueRulesets: false, mintTokens: false, useAllowance: false,
-      sendPayouts: false, deployErc20: false, setProjectUri: false },
+      sendPayouts: false, deployErc20: false, setProjectUri: false, manageAllowlist: false },
     linkedPeers: [{ chainId: chainId === 8453 ? 10 : 8453,
       localSuckerAddress: chainId === 8453 ? activeSource : activeDestination,
       suckerAddress: chainId === 8453 ? activeDestination : activeSource }],

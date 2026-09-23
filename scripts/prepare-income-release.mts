@@ -46,7 +46,7 @@ type ArtifactSpec = { name: string; location: string; sourceRoot: string; metada
 
 const specs: ArtifactSpec[] = [
   { name: 'HomerunDeployer', location: 'out', sourceRoot: root, metadataHash: 'none', constructor: ['chains:tuple[](chainId:uint32,revDeployer:address,usdc:address,omnichainDeployer:address,allowlistHook:address)'] },
-  { name: 'HomerunAllowlistHook', location: 'out', sourceRoot: root, metadataHash: 'none', constructor: ['projects:address', 'trustedForwarder:address'] },
+  { name: 'HomerunAllowlistHook', location: 'out', sourceRoot: root, metadataHash: 'none', constructor: ['projects:address', 'permissions:address', 'trustedForwarder:address'] },
 ]
 
 function parameterShape(input: AbiParameter): string {
@@ -247,7 +247,7 @@ export async function prepareIncomeRelease() {
   return {
     format: 'homerun-income-release-manifest/v3', profile, releaseReady: false, deploymentAuthorized: false,
     supersedesProfile: 'homerun-income-global-stock-sticky-v3-candidate',
-    fundLaunch: { entrypoint: 'launchFundFor(owner,projectUri,name,ticker,mustStartAtOrAfter,salt,peerSuckerDeployers)', rules: incomeReleasePolicy.economics, terminals: ['JBMultiTerminal USDC context', 'JBRouterTerminalRegistry with no contexts'], tokenDeployedAtLaunch: true, payHook: 'HomerunAllowlistHook as the omnichain extra pay hook; owner-managed beneficiary allowlist, closed by default; cash outs ungated', identity: 'isFund(projectId) + FundLaunched event' },
+    fundLaunch: { entrypoint: 'launchFundFor(owner,projectUri,name,ticker,mustStartAtOrAfter,salt,peerSuckerDeployers)', rules: incomeReleasePolicy.economics, terminals: ['JBMultiTerminal USDC context', 'JBRouterTerminalRegistry with no contexts'], tokenDeployedAtLaunch: true, payHook: 'HomerunAllowlistHook as the omnichain extra pay hook; owner-managed beneficiary allowlist (delegable through JBPermissions ID 128), closed by default; cash outs ungated', identity: 'isFund(projectId) + FundLaunched event' },
     capturedAt: new Date().toISOString(), liveRpcCalls: 0, walletCalls: 0,
     helperSourceKeccak256: keccak256(toHex(helperSource)),
     profileChecks: { recursiveConstructorShape: true, sourceAssertions, sourceAssertionsAreFormalVerification: false, metadataHash: { Homerun: 'none' }, fullInitcodeIncludesConstructor: true },

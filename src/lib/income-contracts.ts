@@ -50,9 +50,17 @@ export const homerunDeployerAbi = parseAbi([
   'event InitialAllocationMinted(uint256 indexed fundProjectId, uint256 indexed incomeProjectId, address indexed owner, uint256 incomeAmount, address caller)',
 ])
 
-/** Source: HomerunAllowlistHook.sol. Gates FUND payment beneficiaries; the FUND owner manages it. */
+/**
+ * Source: HomerunAllowlistHook.SET_ALLOWLIST_PERMISSION_ID. The FUND owner grants it (or ROOT) in JBPermissions to let
+ * an operator call both setAllowed and setOpen. It sits above the shared JBPermissionIds registry.
+ */
+export const HOMERUN_SET_ALLOWLIST_PERMISSION_ID = 128
+
+/** Source: HomerunAllowlistHook.sol. Gates FUND payment beneficiaries; the FUND owner or a granted operator manages it. */
 export const homerunAllowlistHookAbi = parseAbi([
   'function PROJECTS() view returns (address)',
+  'function PERMISSIONS() view returns (address)',
+  'function SET_ALLOWLIST_PERMISSION_ID() view returns (uint8)',
   'function isOpen(uint256 projectId) view returns (bool)',
   'function isAllowed(uint256 projectId, address account) view returns (bool)',
   'function canPay(uint256 projectId, address account) view returns (bool)',

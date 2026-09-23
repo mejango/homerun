@@ -14,6 +14,11 @@ import {HomerunInitialIncomeAllocation} from "../src/structs/HomerunInitialIncom
 import {HomerunInitialIncomeSnapshot} from "../src/structs/HomerunInitialIncomeSnapshot.sol";
 import {HomerunAllowlistHook} from "../src/HomerunAllowlistHook.sol";
 import {IJBProjects} from "@bananapus/core-v6/src/interfaces/IJBProjects.sol";
+import {JBPermissioned} from "@bananapus/core-v6/src/abstract/JBPermissioned.sol";
+import {JBPermissions} from "@bananapus/core-v6/src/JBPermissions.sol";
+import {IJBPermissions} from "@bananapus/core-v6/src/interfaces/IJBPermissions.sol";
+import {JBPermissionsData} from "@bananapus/core-v6/src/structs/JBPermissionsData.sol";
+import {JBPermissionIds} from "@bananapus/permission-ids-v6/src/JBPermissionIds.sol";
 import {JBBeforePayRecordedContext} from "@bananapus/core-v6/src/structs/JBBeforePayRecordedContext.sol";
 import {JBTokenAmount} from "@bananapus/core-v6/src/structs/JBTokenAmount.sol";
 import {JBRuleset} from "@bananapus/core-v6/src/structs/JBRuleset.sol";
@@ -139,16 +144,18 @@ contract IncomeTestController {
     address public immutable DIRECTORY;
     address public immutable PROJECTS;
     address public immutable TOKENS;
+    address public immutable PERMISSIONS;
     mapping(uint256 => JBRuleset) private _rulesets;
     mapping(uint256 => JBRulesetMetadata) private _metadata;
     mapping(uint256 => uint256) public pendingReservedTokenBalanceOf;
     uint48 public latestRulesetOverride;
     uint48 public upcomingRulesetOverride;
 
-    constructor(address directory, address projects, address tokens) {
+    constructor(address directory, address projects, address tokens, address permissions) {
         DIRECTORY = directory;
         PROJECTS = projects;
         TOKENS = tokens;
+        PERMISSIONS = permissions;
     }
 
     function setRuleset(uint256 id, JBRuleset memory ruleset, JBRulesetMetadata memory metadata) external {
@@ -493,6 +500,7 @@ contract HomerunDeployerTest is Test {
     address private constant OWNER = address(0x400);
     IncomeTestTokens private tokens;
     IncomeTestProjects private projects;
+    JBPermissions private permissions;
     IncomeTestController private controller;
     IncomeTestDirectory private directory;
     IncomeTestSuckerRegistry private suckers;
@@ -513,7 +521,9 @@ contract HomerunDeployerTest is Test {
         tokens = new IncomeTestTokens();
         projects = new IncomeTestProjects();
         directory = new IncomeTestDirectory();
-        controller = new IncomeTestController(address(directory), address(projects), address(tokens));
+        permissions = new JBPermissions(address(0x2771));
+        controller =
+            new IncomeTestController(address(directory), address(projects), address(tokens), address(permissions));
         directory.setController(address(controller));
         suckers = new IncomeTestSuckerRegistry(address(directory), address(projects));
         revOwner = new IncomeTestRevOwner(controller);
@@ -523,7 +533,7 @@ contract HomerunDeployerTest is Test {
         remoteUsdc = new IncomeTestToken();
         directory.setTerminal(revDeployer.MULTI_TERMINAL());
         omnichain = new IncomeTestOmnichainDeployer(controller, address(suckers));
-        allowlist = new HomerunAllowlistHook(IJBProjects(address(projects)), address(0x2771));
+        allowlist = new HomerunAllowlistHook(IJBProjects(address(projects)), permissions, address(0x2771));
         helper = new HomerunDeployer(_chains());
         vm.prank(OPERATOR);
         (uint256 fundId, address fundToken) = helper.launchFundFor{value: 0.01 ether}(
@@ -831,11 +841,23 @@ contract HomerunDeployerTest is Test {
 
     function testAllowlistHookMustShareTheProjectRegistry() public {
         HomerunChainConfig[] memory chains = _chains();
-        chains[0].allowlistHook = address(new HomerunAllowlistHook(IJBProjects(address(usdc)), address(0x2771)));
+        chains[0].allowlistHook =
+            address(new HomerunAllowlistHook(IJBProjects(address(usdc)), permissions, address(0x2771)));
         vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidProtocolWiring.selector);
         new HomerunDeployer(chains);
         // A hook trusting another forwarder would let relayed allowlist changes resolve to a forged owner.
-        chains[0].allowlistHook = address(new HomerunAllowlistHook(IJBProjects(address(projects)), address(0xBEEF)));
+        chains[0].allowlistHook =
+            address(new HomerunAllowlistHook(IJBProjects(address(projects)), permissions, address(0xBEEF)));
+        vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidProtocolWiring.selector);
+        new HomerunDeployer(chains);
+        // A hook reading another permissions contract would let grants the owner never made manage the list.
+        chains[0].allowlistHook = address(
+            new HomerunAllowlistHook(
+                IJBProjects(address(projects)),
+                IJBPermissions(address(new JBPermissions(address(0x2771)))),
+                address(0x2771)
+            )
+        );
         vm.expectRevert(HomerunDeployer.HomerunDeployer_InvalidProtocolWiring.selector);
         new HomerunDeployer(chains);
     }
@@ -860,7 +882,7 @@ contract HomerunDeployerTest is Test {
         allowlist.beforePayRecordedWith(_payContext(1, ALICE));
         address[] memory accounts = new address[](1);
         accounts[0] = ALICE;
-        vm.expectPartialRevert(HomerunAllowlistHook.HomerunAllowlistHook_Unauthorized.selector);
+        vm.expectPartialRevert(JBPermissioned.JBPermissioned_Unauthorized.selector);
         vm.prank(ALICE);
         allowlist.setAllowed(1, accounts, true);
         vm.expectEmit(true, true, true, true, address(allowlist));
@@ -876,7 +898,7 @@ contract HomerunDeployerTest is Test {
         allowlist.setAllowed(1, accounts, false);
         vm.expectRevert(abi.encodeWithSelector(HomerunAllowlistHook.HomerunAllowlistHook_NotAllowed.selector, 1, ALICE));
         allowlist.beforePayRecordedWith(_payContext(1, ALICE));
-        vm.expectPartialRevert(HomerunAllowlistHook.HomerunAllowlistHook_Unauthorized.selector);
+        vm.expectPartialRevert(JBPermissioned.JBPermissioned_Unauthorized.selector);
         allowlist.setOpen(1, true);
         vm.prank(OPERATOR);
         allowlist.setOpen(1, true);
@@ -901,6 +923,123 @@ contract HomerunDeployerTest is Test {
             .call(abi.encodePacked(abi.encodeCall(allowlist.setAllowed, (1, accounts, false)), ALICE));
         assertFalse(ok);
         assertTrue(allowlist.isAllowed(1, BOB));
+    }
+
+    /// @notice Grants `ids` to `operator` from the FUND owner for `projectId`.
+    function _grant(address operator, uint64 projectId, uint8 id) private {
+        uint8[] memory ids = new uint8[](1);
+        ids[0] = id;
+        vm.prank(OPERATOR);
+        permissions.setPermissionsFor(
+            OPERATOR, JBPermissionsData({operator: operator, projectId: projectId, permissionIds: ids})
+        );
+    }
+
+    function _one(address account) private pure returns (address[] memory accounts) {
+        accounts = new address[](1);
+        accounts[0] = account;
+    }
+
+    function testAllowlistPermissionIdSitsOutsideTheEcosystemRegistry() public view {
+        assertEq(allowlist.SET_ALLOWLIST_PERMISSION_ID(), 128);
+        assertGt(allowlist.SET_ALLOWLIST_PERMISSION_ID(), JBPermissionIds.REPAY_LOAN);
+        assertEq(address(allowlist.PERMISSIONS()), address(permissions));
+    }
+
+    function testGrantedOperatorManagesTheAllowlist() public {
+        _grant(ALICE, 1, allowlist.SET_ALLOWLIST_PERMISSION_ID());
+        vm.expectEmit(true, true, true, true, address(allowlist));
+        emit IHomerunAllowlistHook.AllowedSet(1, BOB, true, ALICE);
+        vm.prank(ALICE);
+        allowlist.setAllowed(1, _one(BOB), true);
+        assertTrue(allowlist.isAllowed(1, BOB));
+        vm.expectEmit(true, true, true, true, address(allowlist));
+        emit IHomerunAllowlistHook.OpenSet(1, true, ALICE);
+        vm.prank(ALICE);
+        allowlist.setOpen(1, true);
+        assertTrue(allowlist.isOpen(1));
+        // The owner keeps full power alongside the operator.
+        vm.prank(OPERATOR);
+        allowlist.setOpen(1, false);
+        vm.prank(OPERATOR);
+        allowlist.setAllowed(1, _one(BOB), false);
+        assertFalse(allowlist.canPay(1, BOB));
+    }
+
+    function testWildcardGrantManagesTheAllowlist() public {
+        _grant(ALICE, 0, allowlist.SET_ALLOWLIST_PERMISSION_ID());
+        vm.prank(ALICE);
+        allowlist.setOpen(1, true);
+        assertTrue(allowlist.isOpen(1));
+    }
+
+    function testRootOperatorManagesTheAllowlist() public {
+        _grant(ALICE, 1, JBPermissionIds.ROOT);
+        vm.prank(ALICE);
+        allowlist.setAllowed(1, _one(BOB), true);
+        vm.prank(ALICE);
+        allowlist.setOpen(1, true);
+        assertTrue(allowlist.isAllowed(1, BOB));
+        assertTrue(allowlist.isOpen(1));
+    }
+
+    function testOperatorWithoutTheAllowlistPermissionIsRejected() public {
+        // Another permission from the owner does not reach the list.
+        _grant(ALICE, 1, JBPermissionIds.QUEUE_RULESETS);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                JBPermissioned.JBPermissioned_Unauthorized.selector,
+                OPERATOR,
+                ALICE,
+                1,
+                allowlist.SET_ALLOWLIST_PERMISSION_ID()
+            )
+        );
+        vm.prank(ALICE);
+        allowlist.setAllowed(1, _one(BOB), true);
+        vm.expectPartialRevert(JBPermissioned.JBPermissioned_Unauthorized.selector);
+        vm.prank(ALICE);
+        allowlist.setOpen(1, true);
+    }
+
+    function testAllowlistGrantForAnotherProjectIsRejected() public {
+        _grant(ALICE, 2, allowlist.SET_ALLOWLIST_PERMISSION_ID());
+        vm.expectPartialRevert(JBPermissioned.JBPermissioned_Unauthorized.selector);
+        vm.prank(ALICE);
+        allowlist.setAllowed(1, _one(BOB), true);
+        vm.expectPartialRevert(JBPermissioned.JBPermissioned_Unauthorized.selector);
+        vm.prank(ALICE);
+        allowlist.setOpen(1, true);
+    }
+
+    function testAllowlistGrantFromAPreviousOwnerLapsesOnTransfer() public {
+        _grant(ALICE, 1, allowlist.SET_ALLOWLIST_PERMISSION_ID());
+        projects.setOwner(1, OWNER);
+        vm.expectPartialRevert(JBPermissioned.JBPermissioned_Unauthorized.selector);
+        vm.prank(ALICE);
+        allowlist.setOpen(1, true);
+    }
+
+    function testForwardedOperatorManagementResolvesTheSigner() public {
+        _grant(ALICE, 1, allowlist.SET_ALLOWLIST_PERMISSION_ID());
+        vm.prank(address(0x2771));
+        (bool ok,) =
+            address(allowlist).call(abi.encodePacked(abi.encodeCall(allowlist.setAllowed, (1, _one(BOB), true)), ALICE));
+        assertTrue(ok);
+        assertTrue(allowlist.isAllowed(1, BOB));
+        vm.prank(address(0x2771));
+        (ok,) = address(allowlist).call(abi.encodePacked(abi.encodeCall(allowlist.setOpen, (1, true)), ALICE));
+        assertTrue(ok);
+        assertTrue(allowlist.isOpen(1));
+        // A signer without the grant is refused even through the forwarder.
+        vm.prank(address(0x2771));
+        (ok,) = address(allowlist).call(abi.encodePacked(abi.encodeCall(allowlist.setOpen, (1, false)), BOB));
+        assertFalse(ok);
+        assertTrue(allowlist.isOpen(1));
+        // The forwarder itself holds no grant, so without a suffix it is refused.
+        vm.prank(address(0x2771));
+        vm.expectPartialRevert(JBPermissioned.JBPermissioned_Unauthorized.selector);
+        allowlist.setOpen(1, false);
     }
 
     function _closedRuleset() private view returns (JBRuleset memory ruleset) {

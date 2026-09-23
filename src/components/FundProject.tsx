@@ -281,7 +281,7 @@ function PaymentPanel({ state, client, contextIndex, chainSelector, onBusyChange
   const { address } = useWallet()
   // The hook reverts for anyone not on the list; say so before a doomed review instead of after.
   if (state.allowlist && !state.allowlist.open && address && state.allowlist.accountAllowed === false) {
-    return <div className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7"><h2 className="mb-3 text-3xl">Contribute</h2><p role="status">Your wallet is not on this FUND’s allowlist. The owner adds contributors before they can pay.</p></div>
+    return <div className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7"><h2 className="mb-3 text-3xl">Contribute</h2><p role="status">Your wallet is not on this FUND’s allowlist. The owner or their allowlist operator adds contributors before they can pay.</p></div>
   }
   return <ProjectPayment chainSelector={chainSelector} onBusyChange={onBusyChange} chainId={state.chainId} projectId={state.projectId} tokenLabel="FUND" title="Contribute" context={context} paused={state.metadata.pausePay} reservedPercent={state.metadata.reservedPercent} rulesetId={state.ruleset.id.toString()} verify={async (account, minimumBlock) => {
     const current = await freshState(client, state, account, minimumBlock)
@@ -378,14 +378,14 @@ function HolderActions({ state, client }: { state: FundProjectState; client: Pub
   </div>
 }
 
-/** The owner-managed payment allowlist. Gates beneficiaries; cash outs are never gated. */
+/** The payment allowlist, managed by the owner or a granted operator. Gates beneficiaries; cash outs are never gated. */
 function FundAllowlist({ state, client }: { state: FundProjectState; client: PublicClient }) {
   const { address } = useWallet()
   const tx = useProjectTransaction(state)
   const [addresses, setAddresses] = useState('')
   const [error, setError] = useState<string | null>(null)
   const allowlist = state.allowlist!
-  const owner = !!address && isAddressEqual(address, state.owner)
+  const canManage = !!address && !!state.account && isAddressEqual(address, state.account) && state.permissions.manageAllowlist
   const accounts = addresses.split(/[\s,;]+/).map(value => value.trim()).filter(Boolean)
   async function send(request: TxRequest, label: string) {
     if (!address) return
@@ -393,7 +393,7 @@ function FundAllowlist({ state, client }: { state: FundProjectState; client: Pub
     try {
       await tx.send({ ...request, label }, { reverify: async () => {
         const fresh = await freshState(client, state, address)
-        if (!isAddressEqual(fresh.owner, address) || !fresh.allowlist || !isAddressEqual(fresh.allowlist.hook, allowlist.hook)) throw new Error('Allowlist authority or wiring changed. Refresh and review again.')
+        if (!fresh.permissions.manageAllowlist || !fresh.allowlist || !isAddressEqual(fresh.allowlist.hook, allowlist.hook)) throw new Error('Allowlist authority or wiring changed. Refresh and review again.')
       } })
       setAddresses('')
     } catch (reason) { setError(errorMessage(reason)) }
@@ -401,7 +401,7 @@ function FundAllowlist({ state, client }: { state: FundProjectState; client: Pub
   return <div className="grid gap-3 rounded border border-[#c4cdbb] p-4" aria-label="Payment allowlist">
     <h3 className="text-xl">Payment allowlist</h3>
     <p className="text-sm">{allowlist.open ? 'Open: anyone can contribute.' : 'Closed: only allowed wallets can receive FUND from a contribution.'} Cash outs are never restricted.</p>
-    <fieldset disabled={!owner || tx.busy || tx.phase === 'review'} className="grid min-w-0 gap-3 border-0 p-0">
+    <fieldset disabled={!canManage || tx.busy || tx.phase === 'review'} className="grid min-w-0 gap-3 border-0 p-0">
       <button type="button" className="btn-secondary min-h-11 justify-self-start px-4" onClick={() => void send(buildFundAllowlistOpen({ chainId: state.chainId, projectId: state.projectId, open: !allowlist.open }), allowlist.open ? 'Close contributions to the allowlist' : 'Open contributions to everyone')}>{allowlist.open ? 'Close to allowlist' : 'Open to everyone'}</button>
       <label className="grid gap-2 text-sm">Wallet addresses, one per line<textarea className="min-h-24 w-full rounded border border-[#bfc9b5] bg-white p-3 font-mono text-sm" value={addresses} onChange={event => setAddresses(event.target.value)} placeholder="0x…" /></label>
       <div className="flex flex-wrap gap-3">
@@ -409,7 +409,7 @@ function FundAllowlist({ state, client }: { state: FundProjectState; client: Pub
         <button type="button" className="btn-secondary min-h-11 px-4" disabled={!accounts.length} onClick={() => void send(buildFundAllowlistChange({ chainId: state.chainId, projectId: state.projectId, accounts, allowed: false }), `Remove ${accounts.length} wallet${accounts.length === 1 ? '' : 's'}`)}>Remove</button>
       </div>
     </fieldset>
-    {!owner && <p className="text-sm">Only the FUND owner can change the allowlist.</p>}
+    {!canManage && <p className="text-sm">Only the FUND owner, or a wallet the owner granted allowlist permission, can change the allowlist.</p>}
     {error && <p role="alert" className="text-sm text-red-800">{error}</p>}<TransactionStatus tx={tx} chainId={state.chainId} />
   </div>
 }

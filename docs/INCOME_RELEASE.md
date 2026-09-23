@@ -10,7 +10,7 @@ The verified helper and hook addresses are pinned in `src/lib/homerun-addresses.
 
 ## Global release profile
 
-The same `HomerunDeployer` artifact takes one ordered array of eight chain configurations. Each entry is `(uint32 chainId, address revDeployer, address usdc, address omnichainDeployer, address allowlistHook)`. `HomerunAllowlistHook(projects, trustedForwarder)` and the `HomerunDeployerLib` external library are deployed once per chain before the helper, the library at the same deterministic address everywhere so the linked helper initcode stays identical.
+The same `HomerunDeployer` artifact takes one ordered array of eight chain configurations. Each entry is `(uint32 chainId, address revDeployer, address usdc, address omnichainDeployer, address allowlistHook)`. `HomerunAllowlistHook(projects, permissions, trustedForwarder)` and the `HomerunDeployerLib` external library are deployed once per chain before the helper, the library at the same deterministic address everywhere so the linked helper initcode stays identical.
 
 The complete array is identical on every network and sorted numerically:
 

@@ -5,6 +5,7 @@ import {TestBaseWorkflow} from "@bananapus/core-v6/test/helpers/TestBaseWorkflow
 import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
 import {JBRuleset} from "@bananapus/core-v6/src/structs/JBRuleset.sol";
 import {JBRulesetMetadata} from "@bananapus/core-v6/src/structs/JBRulesetMetadata.sol";
+import {IJBPermissions} from "@bananapus/core-v6/src/interfaces/IJBPermissions.sol";
 import {IJBPrices} from "@bananapus/core-v6/src/interfaces/IJBPrices.sol";
 import {JBCurrencyIds} from "@bananapus/core-v6/src/libraries/JBCurrencyIds.sol";
 import {JBMatchingPriceFeed} from "@bananapus/core-v6/src/periphery/JBMatchingPriceFeed.sol";
@@ -215,7 +216,7 @@ contract HomerunDeploymentTest is TestBaseWorkflow {
         // A legitimate second deployer has identical opcodes and different immutable bindings.
         HomerunChainConfig[] memory other = new HomerunChainConfig[](1);
         other[0] = _chains[0];
-        other[0].allowlistHook = address(new HomerunAllowlistHook(jbProjects(), FORWARDER));
+        other[0].allowlistHook = address(new HomerunAllowlistHook(jbProjects(), jbPermissions(), FORWARDER));
         address different = _deployment.deployVariant(other, "variant");
         vm.etch(deployed.deployer, different.code);
         _deployment.verifyRuntime("HomerunDeployer", deployed.deployer);
@@ -225,7 +226,17 @@ contract HomerunDeploymentTest is TestBaseWorkflow {
 
     function test_rejectsHookWithDifferentForwarder() public {
         HomerunDeploymentAddresses memory deployed = _deployment.deployFor(_chains);
-        HomerunAllowlistHook different = new HomerunAllowlistHook(jbProjects(), address(0xbeef));
+        HomerunAllowlistHook different = new HomerunAllowlistHook(jbProjects(), jbPermissions(), address(0xbeef));
+        vm.etch(deployed.allowlistHook, address(different).code);
+        _deployment.verifyRuntime("HomerunAllowlistHook", deployed.allowlistHook);
+        vm.expectPartialRevert(HomerunDeployment.HomerunDeployment_BindingMismatch.selector);
+        _deployment.deployFor(_chains);
+    }
+
+    function test_rejectsHookWithDifferentPermissions() public {
+        HomerunDeploymentAddresses memory deployed = _deployment.deployFor(_chains);
+        HomerunAllowlistHook different =
+            new HomerunAllowlistHook(jbProjects(), IJBPermissions(address(0xbeef)), FORWARDER);
         vm.etch(deployed.allowlistHook, address(different).code);
         _deployment.verifyRuntime("HomerunAllowlistHook", deployed.allowlistHook);
         vm.expectPartialRevert(HomerunDeployment.HomerunDeployment_BindingMismatch.selector);

@@ -19,7 +19,7 @@
       "JBRouterTerminalRegistry with no contexts"
     ],
     "tokenDeployedAtLaunch": true,
-    "payHook": "HomerunAllowlistHook as the omnichain extra pay hook; owner-managed beneficiary allowlist, closed by default; cash outs ungated",
+    "payHook": "HomerunAllowlistHook as the omnichain extra pay hook; owner-managed beneficiary allowlist (delegable through JBPermissions ID 128), closed by default; cash outs ungated",
     "identity": "isFund(projectId) + FundLaunched event"
   },
   "capturedAt": "2026-09-21T21:40:36.848Z",
@@ -1095,6 +1095,11 @@
           "name": "projects",
           "type": "address",
           "internalType": "contract IJBProjects"
+        },
+        {
+          "name": "permissions",
+          "type": "address",
+          "internalType": "contract IJBPermissions"
         },
         {
           "name": "trustedForwarder",
