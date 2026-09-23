@@ -248,6 +248,7 @@ try {
     assert.match(await page.locator('#create-review').textContent(), /\$1,025\.65/);
     assert.equal(await page.locator('#create-next').count(), 0);
     await page.getByRole('heading', { name: 'Create your project', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Show preview', exact: true }).click({ trial: true });
     assert.equal(await page.getByRole('button', { name: 'Show preview', exact: true }).isDisabled(), false);
     assert.equal(await environment().inputValue(), 'production');
     assert.deepEqual(await environment().locator('option').allTextContents(), ['Mainnets', 'Testnets']);
@@ -385,12 +386,12 @@ try {
   });
   await check('Modeling panels and FUND pie retain clear field purpose and ownership labels', async () => {
     await page.locator('[data-create-step="2"]').click();
-    assert.equal(await page.locator('.fundraise-modeling .create-input').count(), 2);
+    assert.equal(await page.locator('.fundraise-modeling .create-input').count(), 3);
     assert.equal(await page.getByRole('img', { name: 'Owner 20%, contributors 80%.' }).count(), 1);
     assert.equal(await page.locator('#fund-operator-percent').textContent(), '20%');
     assert.equal(await page.locator('#fund-contributor-percent').textContent(), '80%');
     await page.locator('[data-create-step="3"]').click();
-    assert.equal(await page.locator('.modeling-inputs .create-input').count(), 4);
+    assert.equal(await page.locator('.modeling-inputs .create-input').count(), 6);
     await input('income-months').fill('24');
     assert.equal(await page.locator('#create-income-month-label').textContent(), 'Month 24');
     assert.notEqual(await page.locator('[data-income-total]').textContent(), '500,000');
