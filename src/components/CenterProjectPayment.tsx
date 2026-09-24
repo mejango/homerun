@@ -16,7 +16,7 @@ import { prepareProjectPayQuote } from '@/lib/project-pay-quote'
 type Controller = ReturnType<typeof createHomerunPayment>
 type Pending = ReturnType<Controller['pending']>
 const statuses = {
-  reviewing: 'Approve this payment with your passkey in the Juicebox wallet panel below.',
+  reviewing: 'Approve this payment with your passkey in the Signa panel below.',
   approved: 'Approved. Submit this exact payment when you are ready.',
   submitting: 'Checking the original submission…', pending: 'Submitted. Waiting for confirmation…',
   confirming: 'Confirming the payment onchain…', paid: 'Payment confirmed onchain.', reverted: 'The payment reverted onchain.',

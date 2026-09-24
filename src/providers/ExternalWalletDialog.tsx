@@ -2,14 +2,14 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { createConnectController, passkeyOption, type ConnectOption } from '@bananapus/nana-sdk-connect/core'
-import { JBConnectModal, passkeyLabel } from '@bananapus/nana-sdk-connect/react'
+import { JBConnectModal } from '@bananapus/nana-sdk-connect/react'
 import { WalletFallbackMark } from '@/components/BrandMarks'
 import { useWallet } from '@/hooks/useWallet'
 import { useMobileWallet } from '@/hooks/useMobileWallet'
 import { mobileWalletLinks } from '@/lib/walletLinks'
 import { CENTER_WALLET_CONFIG, CENTER_WALLET_ENABLED } from './wallet-config'
 
-/** Two ways in: a passkey account at Juicebox Center, or an external wallet through the
+/** Two ways in: a passkey account at Signa, or an external wallet through the
  * shared wagmi stack. Keep the SDK's connection and dismissal behavior with Homerun's typography. */
 export function ExternalWalletDialog({ onClose }: { onClose: () => void }) {
   const { connectors, connectWith, isConnected } = useWallet()
@@ -40,16 +40,16 @@ export function ExternalWalletDialog({ onClose }: { onClose: () => void }) {
     const framed = typeof window !== 'undefined' && window.self !== window.top
     const options: ConnectOption[] = []
     let runtime: typeof import('./center-runtime') | undefined
-    if (CENTER_WALLET_ENABLED) options.push(passkeyOption({
+    if (CENTER_WALLET_ENABLED) options.push({ ...passkeyOption({
       // The option loads the runtime before it asks for the return path, so the save is synchronous.
       wallet: async () => { runtime = await import('./center-runtime'); return runtime.centerWalletClient() },
       beforeLaunch: () => runtime!.saveCenterReturnPath(),
-      // Center opens in a frame inside this dialog (Center admits Homerun to frame its sign-in); the page inside
+      // Signa opens in a frame inside this dialog (Signa admits Homerun to frame its sign-in); the page inside
       // offers "Open as a page" when it cannot continue there, which is the full-page path `beforeLaunch` covers.
       frame: true,
       // A framed sign-in finished in this page: the grant is saved, so the connector can connect.
       connected: async () => { await latest.current.connectWith('juicebox-center'); latest.current.onClose() },
-    }))
+    }), name: 'Signa' })
     for (const connector of connectors) {
       if (connector.id === 'safe' && !framed) continue
       options.push({
@@ -70,7 +70,7 @@ export function ExternalWalletDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <JBConnectModal open controller={controller} onClose={onClose} className="homerun-connect"
-      passkeyLabel={passkeyLabel(typeof navigator === 'undefined' ? '' : navigator.userAgent).replace(/^Continue with (a )?/, '')}
+      passkeyLabel="Signa in"
       renderIcon={option => <WalletFallbackMark id={option.id} className="h-5 w-5" />}
       renderHandoff={uri => <PairingCode uri={uri} />}>
       {mobileWallet === 'handoff' ? (
