@@ -476,9 +476,9 @@ describe('FUND history pagination and provenance', () => {
 describe('canonical Sticky custody in the fixed FUND snapshot', () => {
   it.each(['positive', 'empty', 'wrong-token', 'wrong-wiring'] as const)('verifies every discovered Sticky project (%s)', async mode => {
     const registry = jbContractAddress['6'] as Record<string, Record<number, Address> | undefined>
-    const previous = registry.JBStickyDeployer
+    const previous = registry.StickyDeployer
     const factory = getAddress('0x9999999999999999999999999999999999999999')
-    registry.JBStickyDeployer = { [CHAIN_ID]: factory }
+    registry.StickyDeployer = { [CHAIN_ID]: factory }
     const terminal = v6Address('JBMultiTerminal', CHAIN_ID)
     const store = v6Address('JBTerminalStore', CHAIN_ID)
     const rpc = fixture()
@@ -513,8 +513,8 @@ describe('canonical Sticky custody in the fixed FUND snapshot', () => {
       else if (mode === 'wrong-wiring') await expect(read(rpc)).rejects.toThrow('canonical FUND custody contracts')
       else expect((await read(rpc)).evidence.eventCounts.DeploySticky).toBe(1)
     } finally {
-      if (previous) registry.JBStickyDeployer = previous
-      else delete registry.JBStickyDeployer
+      if (previous) registry.StickyDeployer = previous
+      else delete registry.StickyDeployer
     }
   })
 

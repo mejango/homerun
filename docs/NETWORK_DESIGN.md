@@ -83,7 +83,7 @@ Automatic distribution to freely held FUND is an **unimplemented integration spe
 
 Set `fundRewardMode = 'staking'` explicitly to use the legacy comparison. Here the 15% portion goes to eligible FUND Sticky SHARE holders. In the inspected native configuration, `splitPercent = 9000`, and reserved split percentages are `833333333` for operations and `166666667` for FUND Sticky, out of `1000000000`. These ratios cannot be represented exactly: mint and split arithmetic rounds in base units, and dust can remain with `REVOwner` for a permissionless burn. Review exact integer output; the monthly model uses illustrative token quantities.
 
-The Sticky split uses **`JBTokenDistributor` as its hook and the FUND Sticky SHARE ERC20 as its beneficiary**, with `projectId = 0`. The beneficiary is neither the raw FUND token nor `JBStickyHook`. Create or verify the separate Sticky project, its accepted FUND asset, SHARE token and distributor registration before configuring this route. Lock both reserved splits in every configured Revnet stage; a lock in one ruleset does not protect a different stage's split table.
+The Sticky split uses **`JBTokenDistributor` as its hook and the FUND Sticky SHARE ERC20 as its beneficiary**, with `projectId = 0`. The beneficiary is neither the raw FUND token nor `StickyHook`. Create or verify the separate Sticky project, its accepted FUND asset, SHARE token and distributor registration before configuring this route. Lock both reserved splits in every configured Revnet stage; a lock in one ruleset does not protect a different stage's split table.
 
 Check actual recipient balances and the resulting allocation, not merely a successful parent transaction. A failed reserved-token hook can result in unconsumed reward tokens being burned while the parent payment or distribution succeeds.
 
@@ -143,6 +143,6 @@ Relevant inspected sources:
 - [JBController](../../../nana-core-v6/src/JBController.sol): minting, reserved-token distribution and ruleset changes.
 - [JBMultiTerminal](../../../nana-core-v6/src/JBMultiTerminal.sol): cash-out/payout fees and adding balance without issuance.
 - [JBBuybackHook](../../../nana-buyback-hook-v6/src/JBBuybackHook.sol): pay metadata, split bypass and mint/buyback routing.
-- [JBStickyDeployer](../../JBSticky/src/JBStickyDeployer.sol): the separate project, accepted token and configured reward/vesting relationships.
+- [StickyDeployer](../../Sticky/src/StickyDeployer.sol): the separate project, accepted token and configured reward/vesting relationships.
 - [JBTokenDistributor](../../../nana-distributor-v6/src/JBTokenDistributor.sol): SHARE-token reward routing, snapshot eligibility and materialized vesting.
 - [Juicebox developer guide](https://juicebox.money/build) and [mechanics guide](https://juicebox.money/learn).

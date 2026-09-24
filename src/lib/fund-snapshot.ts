@@ -93,7 +93,7 @@ type HistoryLog = {
   args: Record<string, unknown>
 }
 
-/** Exact canonical JBStickyDeployer source interface; used only for custody discovery. */
+/** Exact canonical StickyDeployer source interface; used only for custody discovery. */
 const snapshotStickyAbi = parseAbi([
   'event DeploySticky(uint256 indexed projectId,address indexed stakedToken,address token,uint256 cashOutTaxRate,bool soulbound,address caller)',
   'function CONTROLLER() view returns (address)', 'function TERMINAL() view returns (address)',
@@ -292,7 +292,7 @@ async function readFundSnapshotCore(client: PublicClient, input: FundSnapshotInp
   if (totalCreditSupply + totalErc20Supply !== totalFundSupply) throw new Error('The FUND credit and ERC-20 supplies do not reconcile.')
   input.onProgress?.({ stage: 'creation', completed: 0n, total: 1n, candidates: 0 })
   const creation = await locateCreation(client, input, block.number, projects)
-  const registeredSticky = (jbContractAddress['6'] as Record<string, Partial<Record<JBChainId, Address>>>).JBStickyDeployer?.[input.chainId]
+  const registeredSticky = (jbContractAddress['6'] as Record<string, Partial<Record<JBChainId, Address>>>).StickyDeployer?.[input.chainId]
   let stickyDeployer: Address | null = null
   const terminal = v6Address('JBMultiTerminal', input.chainId)
   if (tokenAddress && registeredSticky && isAddress(registeredSticky) && !isAddressEqual(registeredSticky, zeroAddress)) {
