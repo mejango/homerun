@@ -503,7 +503,7 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
     }
 
     //*********************************************************************//
-    // ------------------------- external views -------------------------- //
+    // ----------------------- external views ---------------------------- //
     //*********************************************************************//
 
     /// @notice Accepts the project NFTs this contract launches, on their way to the owner.
@@ -606,7 +606,7 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
     }
 
     //*********************************************************************//
-    // ------------------------ internal views --------------------------- //
+    // ----------------------- internal views ---------------------------- //
     //*********************************************************************//
 
     /// @notice The INCOME revnet configuration for a launch.

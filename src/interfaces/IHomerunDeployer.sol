@@ -91,8 +91,8 @@ interface IHomerunDeployer is IJBPayerTracker {
     function PROJECTS() external view returns (IJBProjects projects);
 
     /// @notice The number of seconds in one INCOME issuance cycle.
-    /// @return seconds_ The cycle length.
-    function QUARTER() external view returns (uint32 seconds_);
+    /// @return cycleLength The cycle length, in seconds.
+    function QUARTER() external view returns (uint32 cycleLength);
 
     /// @notice The revnet deployer INCOME is launched through.
     /// @return deployer The revnet deployer.

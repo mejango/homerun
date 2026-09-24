@@ -121,7 +121,7 @@ contract HomerunAllowlistHook is ERC2771Context, JBPermissioned, IHomerunAllowli
     }
 
     //*********************************************************************//
-    // ------------------------- external views -------------------------- //
+    // ----------------------- external views ---------------------------- //
     //*********************************************************************//
 
     /// @notice Passes cash outs through untouched. Cash outs are never gated.
@@ -200,7 +200,7 @@ contract HomerunAllowlistHook is ERC2771Context, JBPermissioned, IHomerunAllowli
     }
 
     //*********************************************************************//
-    // ------------------------ internal views --------------------------- //
+    // ----------------------- internal views ---------------------------- //
     //*********************************************************************//
 
     /// @notice The calldata suffix length the trusted forwarder appends.

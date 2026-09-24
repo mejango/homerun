@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {IJBController} from "@bananapus/core-v6/src/interfaces/IJBController.sol";
 import {IJBDirectory} from "@bananapus/core-v6/src/interfaces/IJBDirectory.sol";
 import {IJBPermissioned} from "@bananapus/core-v6/src/interfaces/IJBPermissioned.sol";
+import {IJBPrices} from "@bananapus/core-v6/src/interfaces/IJBPrices.sol";
 import {JBCurrencyIds} from "@bananapus/core-v6/src/libraries/JBCurrencyIds.sol";
 import {JBOmnichainDeployer} from "@bananapus/omnichain-deployers-v6/src/JBOmnichainDeployer.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
@@ -351,11 +352,20 @@ abstract contract HomerunDeployment is Script {
                 || IERC20Metadata(local.usdc).decimals() != 6
         ) revert HomerunDeployment_BindingMismatch({target: local.revDeployer, binding: "protocol dependencies"});
         // Every FUND and INCOME mints against USD through this feed; without it no project launched here can be paid.
-        // forge-lint: disable-next-line(unsafe-typecast)
-        try controller.PRICES().pricePerUnitOf(0, uint32(uint160(local.usdc)), JBCurrencyIds.USD, 6) returns (
+        IJBPrices prices = controller.PRICES();
+        try prices.pricePerUnitOf({
+            projectId: 0,
+            // The currency ID of an ERC-20 is the low 32 bits of its address, by protocol convention.
+            // forge-lint: disable-next-line(unsafe-typecast)
+            pricingCurrency: uint32(uint160(local.usdc)),
+            unitCurrency: JBCurrencyIds.USD,
+            decimals: 6
+        }) returns (
             uint256 price
         ) {
-            if (price == 0) revert HomerunDeployment_BindingMismatch({target: local.usdc, binding: "USD price feed"});
+            if (price == 0) {
+                revert HomerunDeployment_BindingMismatch({target: local.usdc, binding: "USD price feed"});
+            }
         } catch {
             revert HomerunDeployment_BindingMismatch({target: local.usdc, binding: "USD price feed"});
         }
