@@ -152,11 +152,29 @@ dialog.ui-modal-host::backdrop { all: revert-layer; }
   --jb-connect-accent: #42694e;
   --jb-connect-accent-fg: #fff;
   --jb-connect-radius: var(--radius);
+  --jb-connect-font: var(--sans);
   --jb-connect-backdrop: rgb(20 35 29 / .55);
 }
 .jb-connect.homerun-connect :is(.jb-connect-primary, .jb-connect-tile) { border-radius: var(--radius); }
 .jb-connect.homerun-connect .jb-connect-powered { display: none; }
 .jb-connect.homerun-connect .jb-connect-primary { display: inline-block; width: auto; min-height: 44px; padding: 10px 20px; }
+/* Keep the SDK's native cancellation control and handler, without its footer row. */
+.jb-connect.homerun-connect > h2 { padding-right: 36px; }
+.jb-connect.homerun-connect .jb-connect-footer { display: contents; }
+.jb-connect.homerun-connect .jb-connect-footer > .jb-connect-text {
+  position: absolute; top: calc(var(--jb-connect-pad) - 8px); right: calc(var(--jb-connect-pad) - 8px);
+  width: 44px; height: 44px; margin: 0; padding: 0; border-radius: var(--radius);
+  font-size: 0; text-decoration: none;
+}
+.jb-connect.homerun-connect .jb-connect-footer > .jb-connect-text::before,
+.jb-connect.homerun-connect .jb-connect-footer > .jb-connect-text::after {
+  content: ''; position: absolute; top: 21px; left: 11px; width: 22px; height: 2px;
+  background: currentColor; transform: rotate(45deg);
+}
+.jb-connect.homerun-connect .jb-connect-footer > .jb-connect-text::after { transform: rotate(-45deg); }
+.jb-connect.homerun-connect .jb-connect-footer > .jb-connect-text:hover { background: #eef1e7; }
+.jb-connect.homerun-connect:has(.jb-connect-frame) { padding-bottom: 0; }
+.jb-connect.homerun-connect .jb-connect-frame { border-bottom: 0; }
 
 /* A Center payment review framed inside the payment panel; Center reports the height it needs. */
 .center-review-frame iframe { display: block; width: 100%; height: 23rem; border: 1px solid #c4cdbb; border-radius: var(--radius); background: #f7f5ef; }

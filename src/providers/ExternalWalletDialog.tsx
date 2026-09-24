@@ -7,16 +7,34 @@ import { WalletFallbackMark } from '@/components/BrandMarks'
 import { useWallet } from '@/hooks/useWallet'
 import { useMobileWallet } from '@/hooks/useMobileWallet'
 import { mobileWalletLinks } from '@/lib/walletLinks'
-import { CENTER_WALLET_ENABLED } from './wallet-config'
+import { CENTER_WALLET_CONFIG, CENTER_WALLET_ENABLED } from './wallet-config'
 
 /** Two ways in: a passkey account at Juicebox Center, or an external wallet through the
- * shared wagmi stack. The SDK modal owns the layout; this file only supplies the options. */
+ * shared wagmi stack. Keep the SDK's connection and dismissal behavior with Homerun's typography. */
 export function ExternalWalletDialog({ onClose }: { onClose: () => void }) {
   const { connectors, connectWith, isConnected } = useWallet()
   const mobileWallet = useMobileWallet()
+  const [opener] = useState(() => typeof document !== 'undefined' && document.activeElement instanceof HTMLElement
+    ? document.activeElement : null)
+  useEffect(() => () => { if (opener?.isConnected) opener.focus({ preventScroll: true }) }, [opener])
   const latest = useRef({ connectWith, onClose })
   latest.current = { connectWith, onClose }
   useEffect(() => { if (isConnected) onClose() }, [isConnected, onClose])
+  useEffect(() => {
+    const issuer = CENTER_WALLET_CONFIG?.issuer
+    if (!issuer) return
+    const themed = (event: MessageEvent) => {
+      const data = event.data as { type?: unknown; height?: unknown } | null
+      const dialog = document.querySelector<HTMLDialogElement>('.jb-connect.homerun-connect')
+      const frame = dialog?.querySelector('iframe'), heading = dialog?.querySelector('h2')
+      if (!dialog || !heading || !frame?.contentWindow || event.source !== frame.contentWindow || event.origin !== issuer ||
+        data?.type !== 'juicebox-center:size' || typeof data.height !== 'number' || !Number.isFinite(data.height)) return
+      frame.contentWindow.postMessage({ type: 'juicebox-center:theme',
+        theme: { headingFont: getComputedStyle(heading).fontFamily } }, issuer)
+    }
+    window.addEventListener('message', themed)
+    return () => window.removeEventListener('message', themed)
+  }, [])
 
   const [controller] = useState(() => {
     const framed = typeof window !== 'undefined' && window.self !== window.top

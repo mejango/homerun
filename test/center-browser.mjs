@@ -17,9 +17,11 @@ const page = await context.newPage(), errors = []
 page.on('pageerror', error => errors.push(error.name))
 page.setDefaultTimeout(15000)
 const intentId = randomBytes(32).toString('base64url'), code = randomBytes(32).toString('base64url')
-let request, originalExchange, grant, exchanges = 0, launches = 0, held, release
+let request, originalExchange, grant, exchanges = 0, launches = 0, held, release, holdExchange, releaseExchange
 const prepared = new Promise(resolve => { held = resolve })
 const continuing = new Promise(resolve => { release = resolve })
+const exchangeStarted = new Promise(resolve => { holdExchange = resolve })
+const continueExchange = new Promise(resolve => { releaseExchange = resolve })
 const cors = { 'access-control-allow-origin': base, 'access-control-allow-headers': 'content-type,x-center-wallet-request',
   'access-control-allow-methods': 'GET,POST,OPTIONS', 'cache-control': 'no-store' }
 await context.route(issuer + '/**', async route => {
@@ -41,7 +43,10 @@ await context.route(issuer + '/**', async route => {
     assert.equal(url.searchParams.get('intent'), intentId)
     const callback = new URL(base + '/center/callback')
     callback.searchParams.set('code', code); callback.searchParams.set('state', request.state); callback.searchParams.set('iss', issuer)
-    return route.fulfill({ contentType: 'text/html', body: `<h1>Modeled Center approval</h1><a href="${callback.href.replaceAll('&', '&amp;')}">Return to Homerun</a>` })
+    return route.fulfill({ contentType: 'text/html', body: `<h1>Modeled Center approval</h1><a href="${callback.href.replaceAll('&', '&amp;')}">Return to Homerun</a>
+      <script>addEventListener('message',event=>{if(event.source===parent&&event.origin===${JSON.stringify(base)}&&event.data?.type==='juicebox-center:theme'){
+        const font=event.data.theme?.headingFont;if(typeof font==='string')document.documentElement.dataset.headingFont=font;
+      }});parent.postMessage({type:'juicebox-center:size',height:240},${JSON.stringify(base)});</script>` })
   }
   if (url.pathname === '/wallet/launch') {
     assert.equal(http.method(), 'POST');assert.equal(http.headers().origin, base)
@@ -70,7 +75,7 @@ await context.route(issuer + '/**', async route => {
         signerAddress: request.requestKey, scopes: ['read', 'plan', 'relay'], origin: base, callbackUri: base + '/center/callback',
         audience, appGeneration: 1, authorityEpoch: '1', sessionEpoch: '1', createdAt: now, expiresAt: now + 3600, revokedAt: null, retainUntil: now + 3600 + 86400 }
     }
-    if (exchanges === 1) return route.abort('failed')
+    if (exchanges === 1) { holdExchange(); await continueExchange; return route.abort('failed') }
     return json({ grant, replayed: true })
   }
   return route.fulfill({ status: 404 })
@@ -80,6 +85,18 @@ try {
   assert.equal(callback.headers()['cache-control'], 'no-store')
   assert.equal(callback.headers()['referrer-policy'], 'strict-origin')
   await page.goto(base + '/founderhaus')
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  const close = page.getByRole('button', { name: 'Cancel', exact: true })
+  const closeBox = await close.boundingBox(), titleBox = await page.getByRole('heading', { name: 'Sign in', exact: true }).boundingBox()
+  const dialogBox = await page.getByRole('dialog').boundingBox()
+  assert.ok(closeBox && titleBox && dialogBox && closeBox.width >= 44 && closeBox.height >= 44 &&
+    closeBox.y < titleBox.y + titleBox.height && closeBox.x > dialogBox.x + dialogBox.width / 2 &&
+    closeBox.x + closeBox.width <= dialogBox.x + dialogBox.width,
+    'the accessible cancellation control is a full-size top-right X')
+  await close.focus(); await expect(close).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeFocused()
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   await page.locator('.jb-connect-primary').click()
   await prepared
@@ -93,10 +110,17 @@ try {
   // Center opens in a frame inside the dialog; the page stays on the project and opens no window.
   const frame = page.frameLocator('iframe[name="juicebox-center-frame"]')
   await frame.getByRole('heading', { name: 'Modeled Center approval' }).waitFor()
+  const headingFont = await page.getByRole('heading', { name: 'Sign in', exact: true }).evaluate(node => getComputedStyle(node).fontFamily)
+  await expect(frame.locator('html')).toHaveAttribute('data-heading-font', headingFont)
   assert.equal(page.url(), base + '/founderhaus')
   assert.equal(context.pages().length, 1, 'no popup opened')
   await expect(page.getByRole('dialog')).toBeVisible()
   await frame.getByRole('link', { name: 'Return to Homerun' }).click()
+  await exchangeStarted
+  await expect(frame.getByRole('status')).toContainText('Done. You can close this window.')
+  await expect.poll(() => frame.locator('main').evaluate(node => getComputedStyle(node).paddingTop)).toBe('24px')
+  await expect.poll(() => page.locator('iframe[name="juicebox-center-frame"]').evaluate(node => node.getBoundingClientRect().height)).toBeLessThan(200)
+  releaseExchange()
   // The callback page inside the frame hands its URL up to the page; the lost first exchange shows there.
   await expect(page.locator('.jb-connect-error')).toContainText('Retry the pending connection')
   await expect(page.locator('iframe[name="juicebox-center-frame"]')).toHaveCount(0)
@@ -111,6 +135,7 @@ try {
   const direct = await context.newPage()
   await direct.goto(base + '/center/callback?code=' + code + '&state=x&iss=' + encodeURIComponent(issuer))
   await expect(direct.getByRole('status')).toContainText(/no matching wallet callback/i)
+  assert.equal(await direct.locator('main').evaluate(node => getComputedStyle(node).paddingTop), '64px', 'full-page callback keeps its own spacing')
   assert.equal(await direct.evaluate(() => location.href), base + '/center/callback', 'callback secrets are scrubbed')
   await direct.close()
   await page.reload()
