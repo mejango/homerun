@@ -22,15 +22,15 @@ interface IHomerunAllowlistHook is IJBPermissioned, IJBRulesetDataHook {
     /// @param caller The address that made the change.
     event OpenSet(uint256 indexed projectId, bool open, address caller);
 
+    /// @notice The project registry whose owners manage each project's list.
+    /// @return projects The project registry.
+    function PROJECTS() external view returns (IJBProjects projects);
+
     /// @notice The `JBPermissions` ID a project's owner grants to let an operator call `setAllowed` and `setOpen`.
     /// @dev 128 sits well above the ecosystem registry in `JBPermissionIds`, and no other Juicebox V6 contract checks
     /// it.
     /// @return permissionId The permission ID.
     function SET_ALLOWLIST_PERMISSION_ID() external view returns (uint8 permissionId);
-
-    /// @notice The project registry whose owners manage each project's list.
-    /// @return projects The project registry.
-    function PROJECTS() external view returns (IJBProjects projects);
 
     /// @notice Whether the project's allowlist admits a beneficiary: the project is open, or the beneficiary is
     /// allowed.
@@ -42,13 +42,15 @@ interface IHomerunAllowlistHook is IJBPermissioned, IJBRulesetDataHook {
     function canPay(uint256 projectId, address account) external view returns (bool flag);
 
     /// @notice Whether a beneficiary may receive tokens from payments to a project while it is not open.
-    /// @custom:param projectId The ID of the project.
-    /// @custom:param account The beneficiary.
-    function isAllowed(uint256 projectId, address account) external view returns (bool);
+    /// @param projectId The ID of the project.
+    /// @param account The beneficiary.
+    /// @return flag Whether the beneficiary is allowed.
+    function isAllowed(uint256 projectId, address account) external view returns (bool flag);
 
     /// @notice Whether a project accepts payments for any beneficiary.
-    /// @custom:param projectId The ID of the project.
-    function isOpen(uint256 projectId) external view returns (bool);
+    /// @param projectId The ID of the project.
+    /// @return flag Whether the project is open.
+    function isOpen(uint256 projectId) external view returns (bool flag);
 
     /// @notice Allows or disallows beneficiaries for a project.
     /// @dev Only the project's owner, or an operator holding `SET_ALLOWLIST_PERMISSION_ID` or ROOT from the owner,

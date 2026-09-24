@@ -29,7 +29,7 @@
   "profileChecks": {
     "recursiveConstructorShape": true,
     "sourceAssertions": [
-      "if (msg.sender != _DEPLOYER) revert HomerunDeployer_Unauthorized({caller: msg.sender});",
+      "if (msg.sender != _DEPLOYER) revert HomerunDeployer_Unauthorized(msg.sender);",
       "if (USDC != address(0)) revert HomerunDeployer_AlreadyConfigured();",
       "CONTROLLER = REV_DEPLOYER.CONTROLLER();",
       "ROUTER_TERMINAL_REGISTRY = REV_DEPLOYER.ROUTER_TERMINAL_REGISTRY();",

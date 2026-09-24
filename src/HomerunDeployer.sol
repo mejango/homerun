@@ -62,11 +62,11 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
     // --------------------------- custom errors ------------------------- //
     //*********************************************************************//
 
-    /// @notice Thrown when a FUND already has an INCOME, so a second launch cannot mint a second initial allocation.
-    error HomerunDeployer_AlreadyDeployed(uint256 fundProjectId, uint256 incomeProjectId);
-
     /// @notice Thrown when the chain-specific constants are set a second time, since the one-shot binding is final.
     error HomerunDeployer_AlreadyConfigured();
+
+    /// @notice Thrown when a FUND already has an INCOME, so a second launch cannot mint a second initial allocation.
+    error HomerunDeployer_AlreadyDeployed(uint256 fundProjectId, uint256 incomeProjectId);
 
     /// @notice Thrown when a launch input is empty, out of range, or inconsistent with its linked chains.
     error HomerunDeployer_InvalidConfiguration();
@@ -78,9 +78,6 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
     /// @notice Thrown when a snapshot names an unconfigured or repeated chain, another FUND, or does not sum to the
     /// initial INCOME supply.
     error HomerunDeployer_InvalidSnapshot();
-
-    /// @notice Thrown when a launch or payout runs before the chain-specific constants are set.
-    error HomerunDeployer_NotConfigured();
 
     /// @notice Thrown when nothing is left to mint for a FUND: its allocation was already paid out or is zero.
     error HomerunDeployer_NothingToMint(uint256 fundProjectId);
@@ -181,6 +178,10 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
     // --------------------- public stored properties -------------------- //
     //*********************************************************************//
 
+    /// @notice The USDC token every FUND and INCOME treasury accounts in on this chain.
+    /// @dev Set once by `_DEPLOYER` through `setChainSpecificConstants`. Zero until then.
+    address public override USDC;
+
     /// @notice The INCOME project a FUND launched, if any.
     /// @custom:param fundProjectId The ID of the FUND project.
     mapping(uint256 fundProjectId => uint256 incomeProjectId) public override incomeProjectIdOf;
@@ -188,11 +189,6 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
     /// @notice Whether a project was launched as a FUND through this contract. INCOME only attaches to these.
     /// @custom:param projectId The ID of the project.
     mapping(uint256 projectId => bool) public override isFund;
-
-    /// @notice The USDC token every FUND and INCOME treasury accounts in on this chain.
-    /// @dev Set once by `_DEPLOYER` through `setChainSpecificConstants`. Zero until then, and every launch and payout
-    /// reverts while it is.
-    address public override USDC;
 
     /// @notice The USDC token on a linked chain, including this one.
     /// @dev Set once by `_DEPLOYER` through `setChainSpecificConstants`.
@@ -263,51 +259,6 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
     // ---------------------- external transactions ---------------------- //
     //*********************************************************************//
 
-    /// @notice One-shot setter for the USDC token on every linked chain, this one included.
-    /// @dev Callable only by `_DEPLOYER` and only once (while `USDC` is still zero). After this call the values are
-    /// effectively immutable for the contract's lifetime. Keeping them out of the constructor keeps this contract's
-    /// CREATE2 inputs byte-identical across chains, so its address is unified. Every entry names the revnet deployer,
-    /// omnichain deployer and allowlist hook this contract was built with, since the unified address assumes they are
-    /// the same on every chain.
-    /// @param chains One entry per linked chain, in ascending chain ID, including this chain.
-    function setChainSpecificConstants(HomerunChainConfig[] calldata chains) external override {
-        if (msg.sender != _DEPLOYER) revert HomerunDeployer_Unauthorized({caller: msg.sender});
-        if (USDC != address(0)) revert HomerunDeployer_AlreadyConfigured();
-
-        // Keep a reference to this chain's USDC, found while walking the configuration.
-        address localUsdc;
-
-        // Keep a reference to the last chain ID seen, so the configuration must be strictly ascending.
-        uint32 previousChain;
-
-        for (uint256 i; i < chains.length; i++) {
-            // Get a reference to the entry being iterated on.
-            HomerunChainConfig calldata entry = chains[i];
-
-            // Make sure the chains are unique and ascending, every chain has USDC, and every chain runs the protocol
-            // this contract was built with.
-            if (
-                entry.chainId <= previousChain || entry.usdc == address(0) || entry.revDeployer != address(REV_DEPLOYER)
-                    || entry.omnichainDeployer != address(OMNICHAIN_DEPLOYER)
-                    || entry.allowlistHook != address(ALLOWLIST_HOOK)
-            ) revert HomerunDeployer_InvalidProtocolWiring();
-            previousChain = entry.chainId;
-
-            // Store the chain's USDC token so sucker mappings can name it.
-            usdcOf[entry.chainId] = entry.usdc;
-
-            // If this is the connected chain's entry, bind it below.
-            if (entry.chainId == block.chainid) localUsdc = entry.usdc;
-        }
-
-        // Make sure this chain is configured and its USDC has the decimals every treasury accounts in.
-        if (localUsdc == address(0) || IERC20Metadata(localUsdc).decimals() != _USDC_DECIMALS) {
-            revert HomerunDeployer_InvalidProtocolWiring();
-        }
-
-        USDC = localUsdc;
-    }
-
     /// @notice Launches a FUND's INCOME revnet, with this chain's share of the initial allocation recorded as an
     /// auto-issuance to this contract for `mintInitialAllocation` to pay to the FUND's owner.
     /// @dev Only the FUND's owner can call this, and only once per FUND. The snapshot is the owner's attestation: its
@@ -339,9 +290,6 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
         nonReentrant
         returns (uint256 incomeProjectId)
     {
-        // Make sure this chain's constants are set.
-        _requireConfigured();
-
         // Make sure the project is a FUND launched here, and that the caller owns it.
         if (!isFund[fundProjectId]) revert HomerunDeployer_UnsupportedFund(fundProjectId);
         if (PROJECTS.ownerOf(fundProjectId) != _msgSender()) revert HomerunDeployer_Unauthorized(_msgSender());
@@ -412,9 +360,6 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
         nonReentrant
         returns (uint256 projectId, address token)
     {
-        // Make sure this chain's constants are set.
-        _requireConfigured();
-
         // One salt for the suckers and the token, scoped to the caller, the owner and the launch terms so only the same
         // launch can reproduce it on another chain. Zero for a single-chain FUND.
         bytes32 scopedSalt;
@@ -469,15 +414,11 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
     /// @notice Mints a FUND's initial INCOME allocation to whoever owns the FUND right now.
     /// @dev Anyone can call this once INCOME's stage has started, and it pays out once per FUND.
     /// `REVOwner.autoIssueFor` is itself permissionless, so the allocation may already sit here when this runs:
-    /// whatever this contract holds of
-    /// the INCOME token goes to the owner, who settles the published allocation to the snapshot's holders from their
-    /// balance. INCOME sent here after that is not paid out, so `InitialAllocationMinted` fires only for the
-    /// allocation.
+    /// whatever this contract holds of the INCOME token goes to the owner, who settles the published allocation to the
+    /// snapshot's holders from their balance. INCOME sent here after that is not paid out, so `InitialAllocationMinted`
+    /// fires only for the allocation.
     /// @param fundProjectId The ID of the FUND project.
     function mintInitialAllocation(uint256 fundProjectId) external override nonReentrant {
-        // Make sure this chain's constants are set.
-        _requireConfigured();
-
         // Make sure the FUND has an INCOME.
         uint256 incomeProjectId = incomeProjectIdOf[fundProjectId];
         if (incomeProjectId == 0) revert HomerunDeployer_UnsupportedFund(fundProjectId);
@@ -514,6 +455,51 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
             incomeAmount: amount,
             caller: _msgSender()
         });
+    }
+
+    /// @notice One-shot setter for the USDC token on every linked chain, this one included.
+    /// @dev Callable only by `_DEPLOYER` and only once (while `USDC` is still zero). After this call the values are
+    /// effectively immutable for the contract's lifetime. Keeping them out of the constructor keeps this contract's
+    /// CREATE2 inputs byte-identical across chains, so its address is unified. Every entry names the revnet deployer,
+    /// omnichain deployer and allowlist hook this contract was built with, since the unified address assumes they are
+    /// the same on every chain.
+    /// @param chains One entry per linked chain, in ascending chain ID, including this chain.
+    function setChainSpecificConstants(HomerunChainConfig[] calldata chains) external override {
+        if (msg.sender != _DEPLOYER) revert HomerunDeployer_Unauthorized(msg.sender);
+        if (USDC != address(0)) revert HomerunDeployer_AlreadyConfigured();
+
+        // Keep a reference to this chain's USDC, found while walking the configuration.
+        address localUsdc;
+
+        // Keep a reference to the last chain ID seen, so the configuration must be strictly ascending.
+        uint32 previousChain;
+
+        for (uint256 i; i < chains.length; i++) {
+            // Get a reference to the entry being iterated on.
+            HomerunChainConfig calldata entry = chains[i];
+
+            // Make sure the chains are unique and ascending, every chain has USDC, and every chain runs the protocol
+            // this contract was built with.
+            if (
+                entry.chainId <= previousChain || entry.usdc == address(0) || entry.revDeployer != address(REV_DEPLOYER)
+                    || entry.omnichainDeployer != address(OMNICHAIN_DEPLOYER)
+                    || entry.allowlistHook != address(ALLOWLIST_HOOK)
+            ) revert HomerunDeployer_InvalidProtocolWiring();
+            previousChain = entry.chainId;
+
+            // Store the chain's USDC token so sucker mappings can name it.
+            usdcOf[entry.chainId] = entry.usdc;
+
+            // If this is the connected chain's entry, bind it below.
+            if (entry.chainId == block.chainid) localUsdc = entry.usdc;
+        }
+
+        // Make sure this chain is configured and its USDC has the decimals every treasury accounts in.
+        if (localUsdc == address(0) || IERC20Metadata(localUsdc).decimals() != _USDC_DECIMALS) {
+            revert HomerunDeployer_InvalidProtocolWiring();
+        }
+
+        USDC = localUsdc;
     }
 
     //*********************************************************************//
@@ -714,11 +700,6 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
         terminalConfigurations[0].accountingContextsToAccept = new JBAccountingContext[](1);
         terminalConfigurations[0].accountingContextsToAccept[0] = _usdcAccountingContext();
         terminalConfigurations[1].terminal = ROUTER_TERMINAL_REGISTRY;
-    }
-
-    /// @notice Reverts until `_DEPLOYER` has set this chain's constants.
-    function _requireConfigured() internal view {
-        if (USDC == address(0)) revert HomerunDeployer_NotConfigured();
     }
 
     /// @notice Reverts unless a snapshot names this FUND on this chain and divides exactly the initial supply across

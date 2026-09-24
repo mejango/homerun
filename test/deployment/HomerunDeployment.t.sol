@@ -183,12 +183,10 @@ contract HomerunDeploymentTest is TestBaseWorkflow {
         }
     }
 
-    function test_unconfiguredDeploymentRefusesLaunchesAndVerification() public {
+    function test_unconfiguredDeploymentFailsVerificationUntilTheSafeConfigures() public {
         HomerunDeploymentAddresses memory deployed = _deployment.deployUnconfigured(_chains);
         HomerunDeployer factory = HomerunDeployer(deployed.deployer);
         assertEq(factory.USDC(), address(0));
-        vm.expectRevert(HomerunDeployer.HomerunDeployer_NotConfigured.selector);
-        factory.launchFundFor(OWNER, "ipfs://early", "Early", "FUND", 0, bytes32(0), new address[](0));
         vm.expectPartialRevert(HomerunDeployment.HomerunDeployment_BindingMismatch.selector);
         _deployment.verify(_chains, deployed);
         // Only the Homerun Safe configures, so a front-run of the same initcode cannot bind other constants.

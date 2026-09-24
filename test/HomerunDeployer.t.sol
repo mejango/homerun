@@ -895,18 +895,6 @@ contract HomerunDeployerTest is Test {
         fresh.setChainSpecificConstants(_chains());
     }
 
-    function testEntryPointsRevertUntilConfigured() public {
-        HomerunDeployer fresh = _newHelper(address(allowlist));
-        vm.startPrank(OPERATOR);
-        vm.expectRevert(HomerunDeployer.HomerunDeployer_NotConfigured.selector);
-        fresh.launchFundFor{value: 0.01 ether}(OPERATOR, "ipfs://fund", "FUND", "FUND", 0, bytes32(0), new address[](0));
-        vm.expectRevert(HomerunDeployer.HomerunDeployer_NotConfigured.selector);
-        fresh.deployIncome{value: 0.01 ether}(1, _snapshot, _description(), 8000, 1_000_000, _noSuckers());
-        vm.expectRevert(HomerunDeployer.HomerunDeployer_NotConfigured.selector);
-        fresh.mintInitialAllocation(1);
-        vm.stopPrank();
-    }
-
     function testChainSpecificConstantsRejectInconsistentEntries() public {
         HomerunDeployer fresh = _newHelper(address(allowlist));
         HomerunChainConfig[] memory chains = _chains();
