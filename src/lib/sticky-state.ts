@@ -145,10 +145,10 @@ export async function readStickyProjectState(
     throw new Error(
       "Distinct positive FUND and Sticky project IDs are required.",
     );
-  const deployer = registeredStickyContract(chainId, "JBStickyDeployer");
+  const deployer = registeredStickyContract(chainId, "StickyDeployer");
   if (!deployer)
     throw new Error(
-      "Sticky is not enabled: no verified JBStickyDeployer is registered on this network.",
+      "Sticky is not enabled: no verified StickyDeployer is registered on this network.",
     );
   if (
     (client.chain && client.chain.id !== chainId) ||

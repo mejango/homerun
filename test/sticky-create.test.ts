@@ -85,7 +85,7 @@ const registry = jbContractAddress["6"] as Record<
     string,
     Partial<Record<JBChainId, Address>>
   >,
-  oldFactory = registry.JBStickyDeployer,
+  oldFactory = registry.StickyDeployer,
   oldDistributor = registry.JBTokenDistributor;
 const controller = v6Address("JBController", 1),
   terminal = v6Address("JBMultiTerminal", 1),
@@ -434,7 +434,7 @@ const input = () => ({
 });
 beforeEach(() => {
   localStorage.clear();
-  registry.JBStickyDeployer = { 1: DEPLOYER };
+  registry.StickyDeployer = { 1: DEPLOYER };
   registry.JBTokenDistributor = { 1: DISTRIBUTOR };
   vi.mocked(readFundProjectState).mockReset().mockResolvedValue(fundState());
   vi.mocked(readFundGlobalSnapshot)
@@ -456,8 +456,8 @@ beforeEach(() => {
     } as StickyProjectState);
 });
 afterEach(() => {
-  if (oldFactory) registry.JBStickyDeployer = oldFactory;
-  else delete registry.JBStickyDeployer;
+  if (oldFactory) registry.StickyDeployer = oldFactory;
+  else delete registry.StickyDeployer;
   if (oldDistributor) registry.JBTokenDistributor = oldDistributor;
   else delete registry.JBTokenDistributor;
 });
@@ -483,7 +483,7 @@ describe("verified stock Sticky creation", () => {
     expect(prepared.localAllocation.snapshotBlockNumber).toBe("100");
   });
   it("never treats a predicted or absent deployment as authority", async () => {
-    delete registry.JBStickyDeployer;
+    delete registry.StickyDeployer;
     await expect(
       prepareStickyCreate(clientFixture().client, input()),
     ).rejects.toThrow("Verified Sticky");

@@ -2,7 +2,7 @@
 
 **Status (September 19, 2026): deferred.** Stock Sticky is not deployed and `HomerunDeployer` v4 no longer wires it or the token distributor. INCOME launches with its whole reserved split held by the Owner; connecting Sticky later is a split change, not a helper change. The policy below is what that connection is expected to look like.
 
-Chosen policy, September 10, 2026: use stock `JBSticky` and `JBTokenDistributor` for ongoing INCOME rewards. Holders stake FUND for Sticky SHARE tokens. A funded round allocates INCOME proportionally to SHARE balances at its recorded snapshot, with four weekly vesting rounds. There is no minimum staking period or age multiplier. Streaks and deposit timestamps are informational.
+Chosen policy, September 10, 2026: use stock `Sticky` and `JBTokenDistributor` for ongoing INCOME rewards. Holders stake FUND for Sticky SHARE tokens. A funded round allocates INCOME proportionally to SHARE balances at its recorded snapshot, with four weekly vesting rounds. There is no minimum staking period or age multiplier. Streaks and deposit timestamps are informational.
 
 ## Initial allocation and ongoing rewards
 
@@ -51,19 +51,19 @@ There is no staking time lock. The stock supply floor rejects a burn that leaves
 
 ## Deployment evidence and release gates
 
-At this audit, the installed Nana SDK `2.3.2` registry has no verified `JBStickyDeployer` or `JBTokenDistributor` entries. Sticky's checkout contains an ignored Base `simulation.json`, marked `kind: simulation` and `revision: unrecorded`, with these predictions:
+At this audit, the installed Nana SDK `2.3.2` registry has no verified `StickyDeployer` or `JBTokenDistributor` entries. Sticky's checkout contains an ignored Base `simulation.json`, marked `kind: simulation` and `revision: unrecorded`, with these predictions:
 
 | Contract | Unverified prediction |
 | --- | --- |
-| `JBStickyDeployer` | `0x548B27933aD9005bcc66d9A465069bc8553Fa2e2` |
-| `JBStickyHook` | `0xe96d1eda8A34BC3054b5373757B09BEaF9608A7a` |
+| `StickyDeployer` | `0x548B27933aD9005bcc66d9A465069bc8553Fa2e2` |
+| `StickyHook` | `0xe96d1eda8A34BC3054b5373757B09BEaF9608A7a` |
 | `JBTokenDistributor` | `0xEDa8563977EB0857616C163b8084B3152332e6BE` |
 
 Read-only code checks on September 10, 2026 returned `0x` for all three predictions on Ethereum, Optimism, Base, Arbitrum and their four Sepolia networks: chain IDs `1, 10, 8453, 42161, 11155111, 11155420, 84532, 421614`. These checks establish only that those predicted addresses were undeployed, not that no historical Sticky deployment exists elsewhere. Predictions are never transaction targets.
 
 Before enabling production:
 
-1. Retain the reviewed compilation, exact dependency commits, executed deployment receipts and per-chain `verified.json`; publish verified addresses through the normal V6 SDK registry. Follow Sticky's [`DEPLOYMENT.md`](../../JBSticky/DEPLOYMENT.md). A local rehearsal is insufficient.
+1. Retain the reviewed compilation, exact dependency commits, executed deployment receipts and per-chain `verified.json`; publish verified addresses through the normal V6 SDK registry. Follow Sticky's [`DEPLOYMENT.md`](../../Sticky/DEPLOYMENT.md). A local rehearsal is insufficient.
 2. Verify runtime code and every immutable binding against that release, including factory/hook reciprocity, canonical controller/terminal/token registry, the per-project FUND/SHARE/feed relationship, factory NFT ownership, permanent rules and zero withdrawal allowances.
 3. Verify all distributor parameters above, SHARE's block-number clock and locked self-delegation, and the actual INCOME reserved split. A positive round duration alone is insufficient. Verify the initial-allocation helper independently.
 4. Reconcile the public global manifest, confirm each chain's recorded auto-issuance and its mint to the FUND owner, and reject unsupported custody or historical graph shapes. Mark global launch complete only after every required execution is verified.
@@ -76,7 +76,7 @@ Checkout paths are relative to the V6 EVM workspace; source paths are relative t
 
 | Checkout commit | Source paths |
 | --- | --- |
-| `extensions/JBSticky` at `584c6322584a0c85f5fe2e32c2f572822cbb4d1d` | `src/JBStickyDeployer.sol`, `src/JBStickyHook.sol`, `src/JBStickyToken.sol`, `script/helpers/JBStickyDeployment.sol`, `DEPLOYMENT.md` |
+| `extensions/Sticky` at `584c6322584a0c85f5fe2e32c2f572822cbb4d1d` | `src/StickyDeployer.sol`, `src/StickyHook.sol`, `src/StickyToken.sol`, `script/helpers/StickyDeployment.sol`, `DEPLOYMENT.md` |
 | `nana-distributor-v6` at `79af754e642b648347aba0c7df8a3398215e74a5` | `src/JBDistributor.sol` (`_recordRewardRound`, `_ensureSnapshotBlock`, `_claimDeadlineFor`), `src/JBTokenDistributor.sol` (`processSplitWith`, `_claimPastRewards`, `_claimRewardRoundFor`, `_totalStake`), `src/libraries/JBVestingMath.sol` |
 | `nana-core-v6` at `898f08b96194391d545df31a62f9d89ef6759f9a` | `src/JBMultiTerminal.sol` (`pay`, `previewPayFor`, `cashOutTokensOf`), `src/JBTokens.sol` |
 

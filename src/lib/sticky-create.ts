@@ -92,7 +92,7 @@ function same(actual: Address, expected: Address, label: string) {
 }
 export function stickyCreateBlockers(state: FundProjectState): string[] {
   const issues: string[] = [];
-  if (!registeredStickyContract(state.chainId, "JBStickyDeployer"))
+  if (!registeredStickyContract(state.chainId, "StickyDeployer"))
     issues.push("A verified Sticky factory is not registered on this network.");
   if (!registeredStickyContract(state.chainId, "JBTokenDistributor"))
     issues.push(
@@ -122,7 +122,7 @@ export async function verifyStickyCreateWiring(
   chainId: JBChainId,
   blockNumber: bigint,
 ) {
-  const deployer = registeredStickyContract(chainId, "JBStickyDeployer"),
+  const deployer = registeredStickyContract(chainId, "StickyDeployer"),
     distributor = registeredStickyContract(chainId, "JBTokenDistributor");
   if (!deployer || !distributor)
     throw new Error(
@@ -359,7 +359,7 @@ export async function prepareStickyCreate(
   if ((await client.getChainId()) !== input.chainId)
     throw new Error("The Sticky RPC is on a different network.");
   if (
-    !registeredStickyContract(input.chainId, "JBStickyDeployer") ||
+    !registeredStickyContract(input.chainId, "StickyDeployer") ||
     !registeredStickyContract(input.chainId, "JBTokenDistributor")
   )
     throw new Error(
@@ -524,7 +524,7 @@ export async function verifyStickyCreationExecution(
 ): Promise<StickyCreationResult> {
   const deployer = registeredStickyContract(
     record.chainId as JBChainId,
-    "JBStickyDeployer",
+    "StickyDeployer",
   );
   if (!deployer)
     throw new Error(

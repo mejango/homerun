@@ -27,7 +27,7 @@ const registry = jbContractAddress["6"] as Record<
   string,
   Partial<Record<JBChainId, Address>>
 >;
-const priorSticky = registry.JBStickyDeployer,
+const priorSticky = registry.StickyDeployer,
   priorDistributor = registry.JBTokenDistributor;
 const identity: StickyIdentity = {
   chainId: 1,
@@ -39,12 +39,12 @@ const identity: StickyIdentity = {
   terminal: v6Address("JBMultiTerminal", 1),
 };
 beforeEach(() => {
-  registry.JBStickyDeployer = { 1: DEPLOYER };
+  registry.StickyDeployer = { 1: DEPLOYER };
   registry.JBTokenDistributor = { 1: DISTRIBUTOR };
 });
 afterEach(() => {
-  if (priorSticky) registry.JBStickyDeployer = priorSticky;
-  else delete registry.JBStickyDeployer;
+  if (priorSticky) registry.StickyDeployer = priorSticky;
+  else delete registry.StickyDeployer;
   if (priorDistributor) registry.JBTokenDistributor = priorDistributor;
   else delete registry.JBTokenDistributor;
 });
@@ -61,8 +61,8 @@ function decoded(request: ReturnType<typeof buildStickyStake>) {
 
 describe("Sticky transaction targets and limits", () => {
   it("does not substitute simulated or caller-provided addresses for a missing registry entry", () => {
-    delete registry.JBStickyDeployer;
-    expect(registeredStickyContract(1, "JBStickyDeployer")).toBeNull();
+    delete registry.StickyDeployer;
+    expect(registeredStickyContract(1, "StickyDeployer")).toBeNull();
     expect(() => buildStickyStake(identity, HOLDER, 10n, 9n)).toThrow(
       /verified Sticky/,
     );

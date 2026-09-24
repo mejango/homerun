@@ -26,7 +26,7 @@ const registry = jbContractAddress["6"] as Record<
     string,
     Partial<Record<JBChainId, Address>>
   >,
-  priorSticky = registry.JBStickyDeployer,
+  priorSticky = registry.StickyDeployer,
   priorDistributor = registry.JBTokenDistributor;
 const currency = Number(BigInt(FUND) & 0xffffffffn);
 const input = {
@@ -36,12 +36,12 @@ const input = {
   account: HOLDER,
 };
 beforeEach(() => {
-  registry.JBStickyDeployer = { 1: DEPLOYER, 42161: DEPLOYER };
+  registry.StickyDeployer = { 1: DEPLOYER, 42161: DEPLOYER };
   registry.JBTokenDistributor = { 1: DISTRIBUTOR, 42161: DISTRIBUTOR };
 });
 afterEach(() => {
-  if (priorSticky) registry.JBStickyDeployer = priorSticky;
-  else delete registry.JBStickyDeployer;
+  if (priorSticky) registry.StickyDeployer = priorSticky;
+  else delete registry.StickyDeployer;
   if (priorDistributor) registry.JBTokenDistributor = priorDistributor;
   else delete registry.JBTokenDistributor;
 });
@@ -331,7 +331,7 @@ describe("Sticky verified reads and quotes", () => {
     expect(state.rewards).toBeNull();
   });
   it("fails before RPC when the Sticky deployment is not registered", async () => {
-    delete registry.JBStickyDeployer;
+    delete registry.StickyDeployer;
     const { client, readContract } = fixture();
     await expect(readStickyProjectState(client, input)).rejects.toThrow(
       /no verified/,

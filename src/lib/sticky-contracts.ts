@@ -1,4 +1,4 @@
-/** Native adapters for the canonical JBSticky sources. No predicted deployment is a write target. */
+/** Native adapters for the canonical Sticky sources. No predicted deployment is a write target. */
 import { jbContractAddress, type JBChainId } from "@bananapus/nana-sdk-core";
 import {
   buildClaimTokensTx,
@@ -72,7 +72,7 @@ export const stickyDistributorAbi = parseAbi([
 /** Verified SDK records only. Sticky deployment simulation files are intentionally excluded. */
 export function registeredStickyContract(
   chainId: JBChainId,
-  name: "JBStickyDeployer" | "JBTokenDistributor",
+  name: "StickyDeployer" | "JBTokenDistributor",
 ): Address | null {
   const value = (
     jbContractAddress["6"] as Record<
@@ -105,7 +105,7 @@ export function assertStickyIdentity(state: StickyIdentity): void {
     );
   const registered = registeredStickyContract(
     state.chainId,
-    "JBStickyDeployer",
+    "StickyDeployer",
   );
   if (!registered || !isAddressEqual(registered, state.deployer))
     throw new Error(

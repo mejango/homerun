@@ -55,7 +55,7 @@ const registry = jbContractAddress["6"] as Record<
   string,
   Partial<Record<JBChainId, Address>>
 >;
-const oldFactory = registry.JBStickyDeployer;
+const oldFactory = registry.StickyDeployer;
 const state = {
   chainId: 1,
   fundProjectId: 7n,
@@ -110,7 +110,7 @@ async function mount(incomeProjectId?: bigint) {
 }
 beforeEach(() => {
   localStorage.clear();
-  registry.JBStickyDeployer = { 1: DEPLOYER };
+  registry.StickyDeployer = { 1: DEPLOYER };
   vi.clearAllMocks();
   vi.mocked(readStickyProjectState).mockResolvedValue(state);
   vi.mocked(quoteStickyStake).mockResolvedValue({
@@ -123,8 +123,8 @@ beforeEach(() => {
   root = createRoot(element);
 });
 afterEach(async () => {
-  if (oldFactory) registry.JBStickyDeployer = oldFactory;
-  else delete registry.JBStickyDeployer;
+  if (oldFactory) registry.StickyDeployer = oldFactory;
+  else delete registry.StickyDeployer;
   await act(async () => root.unmount());
   cache.clear();
   element.remove();

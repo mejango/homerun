@@ -203,7 +203,7 @@ test('Sticky reward routing uses the SHARE token beneficiary and invents no depl
   assert.equal(sticky.rewardRoute.beneficiary, 'FUND Sticky SHARE ERC20');
   assert.equal(sticky.rewardRoute.hookAddress, null);
   assert.equal(sticky.rewardRoute.beneficiaryAddress, null);
-  assert.deepEqual(sticky.rewardRoute.notBeneficiary, ['raw FH-FUND token', 'JBStickyHook']);
+  assert.deepEqual(sticky.rewardRoute.notBeneficiary, ['raw FH-FUND token', 'StickyHook']);
   assert.equal(sticky.projectId, null);
   const ids = draft.steps.map(item => item.id);
   assert(ids.indexOf('snapshot_all_fund') < ids.indexOf('prepare_fund_sticky'));

@@ -77,7 +77,7 @@ These commands do not invoke a deployment script. The packet records dependency 
 
 ## Local rehearsal coverage
 
-Earlier stock Sticky rehearsals (six networks in an isolated local VM, Arbitrum pending) belonged to the v3 profile, whose helper wired the Sticky deployer and token distributor into its constructor. The v4 helper does not: ongoing holder rewards are deferred, the owner holds INCOME's reserved split, and Sticky will be connected later by redirecting that split. Those rehearsal logs remain ignored under `../JBSticky/cache/homerun-release-rehearsal` as history only, and the former `rehearse-income-release.mts` script was removed with them. A v4 helper rehearsal (isolated Forge VM load of the exact artifact, immutable-word and runtime verification, CREATE2 reuse) is still to be written before any deployment.
+Earlier stock Sticky rehearsals (six networks in an isolated local VM, Arbitrum pending) belonged to the v3 profile, whose helper wired the Sticky deployer and token distributor into its constructor. The v4 helper does not: ongoing holder rewards are deferred, the owner holds INCOME's reserved split, and Sticky will be connected later by redirecting that split. Those rehearsal logs remain ignored under `../Sticky/cache/homerun-release-rehearsal` as history only, and the former `rehearse-income-release.mts` script was removed with them. A v4 helper rehearsal (isolated Forge VM load of the exact artifact, immutable-word and runtime verification, CREATE2 reuse) is still to be written before any deployment.
 
 ## Deployment dependencies and current blockers
 
