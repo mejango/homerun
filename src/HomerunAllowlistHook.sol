@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
+import {JBPermissioned} from "@bananapus/core-v6/src/abstract/JBPermissioned.sol";
+import {IJBPermissions} from "@bananapus/core-v6/src/interfaces/IJBPermissions.sol";
 import {IJBProjects} from "@bananapus/core-v6/src/interfaces/IJBProjects.sol";
 import {IJBRulesetDataHook} from "@bananapus/core-v6/src/interfaces/IJBRulesetDataHook.sol";
 import {JBBeforeCashOutRecordedContext} from "@bananapus/core-v6/src/structs/JBBeforeCashOutRecordedContext.sol";
@@ -9,17 +11,19 @@ import {JBCashOutHookSpecification} from "@bananapus/core-v6/src/structs/JBCashO
 import {JBPayHookSpecification} from "@bananapus/core-v6/src/structs/JBPayHookSpecification.sol";
 import {JBRuleset} from "@bananapus/core-v6/src/structs/JBRuleset.sol";
 import {ERC2771Context} from "@openzeppelin/contracts/metatx/ERC2771Context.sol";
+import {Context} from "@openzeppelin/contracts/utils/Context.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
 import {IHomerunAllowlistHook} from "./interfaces/IHomerunAllowlistHook.sol";
 
 /// @notice A pay hook that accepts FUND payments only for beneficiaries a project's owner has allowed, or for anyone
 /// once the owner opens the project.
-/// @dev One deployment serves every FUND; `HomerunDeployer` installs it as each FUND's extra pay hook. It gates the
-/// beneficiary rather than the payer, since swap-routed payments arrive from the router. It gates payments only: FUND
-/// is a transferable ERC-20, and a linked FUND's suckers mint bridged FUND to whoever the sender named. A new FUND
-/// starts closed with an empty list. Cash outs are never gated.
-contract HomerunAllowlistHook is ERC2771Context, IHomerunAllowlistHook {
+/// @dev The owner can delegate list management through `JBPermissions` by granting `SET_ALLOWLIST_PERMISSION_ID` (or
+/// ROOT) for the project or the wildcard project. One deployment serves every FUND; `HomerunDeployer` installs it as
+/// each FUND's extra pay hook. It gates the beneficiary rather than the payer, since swap-routed payments arrive from
+/// the router. It gates payments only: FUND is a transferable ERC-20, and a linked FUND's suckers mint bridged FUND to
+/// whoever the sender named. A new FUND starts closed with an empty list. Cash outs are never gated.
+contract HomerunAllowlistHook is ERC2771Context, JBPermissioned, IHomerunAllowlistHook {
     //*********************************************************************//
     // --------------------------- custom errors ------------------------- //
     //*********************************************************************//
@@ -28,8 +32,14 @@ contract HomerunAllowlistHook is ERC2771Context, IHomerunAllowlistHook {
     /// closed, so the payment is refused rather than minting FUND to them.
     error HomerunAllowlistHook_NotAllowed(uint256 projectId, address beneficiary);
 
-    /// @notice Thrown when someone other than the project's owner tries to change its list.
-    error HomerunAllowlistHook_Unauthorized(uint256 projectId, address caller);
+    //*********************************************************************//
+    // ------------------------- public constants ------------------------ //
+    //*********************************************************************//
+
+    /// @notice The `JBPermissions` ID a project's owner grants to let an operator call `setAllowed` and `setOpen`.
+    /// @dev 128 sits well above the ecosystem registry in `JBPermissionIds` (1 to 39, with 40 reserved for the next
+    /// shared ID), and no other Juicebox V6 contract checks it. `JBPermissions` accepts any bit from 1 to 255.
+    uint8 public constant override SET_ALLOWLIST_PERMISSION_ID = 128;
 
     //*********************************************************************//
     // --------------- public immutable stored properties ---------------- //
@@ -56,8 +66,16 @@ contract HomerunAllowlistHook is ERC2771Context, IHomerunAllowlistHook {
     //*********************************************************************//
 
     /// @param projects The project registry whose owners manage each project's list.
+    /// @param permissions The permissions contract through which owners delegate list management.
     /// @param trustedForwarder The trusted forwarder for the ERC2771Context.
-    constructor(IJBProjects projects, address trustedForwarder) ERC2771Context(trustedForwarder) {
+    constructor(
+        IJBProjects projects,
+        IJBPermissions permissions,
+        address trustedForwarder
+    )
+        ERC2771Context(trustedForwarder)
+        JBPermissioned(permissions)
+    {
         PROJECTS = projects;
     }
 
@@ -66,13 +84,16 @@ contract HomerunAllowlistHook is ERC2771Context, IHomerunAllowlistHook {
     //*********************************************************************//
 
     /// @notice Allows or disallows beneficiaries for a project.
-    /// @dev Only the project's owner can call this.
+    /// @dev Only the project's owner, or an operator holding `SET_ALLOWLIST_PERMISSION_ID` or ROOT from the owner,
+    /// can call this.
     /// @param projectId The ID of the project.
     /// @param accounts The beneficiaries to change.
     /// @param allowed Whether the beneficiaries may receive tokens from payments.
     function setAllowed(uint256 projectId, address[] calldata accounts, bool allowed) external override {
         // Enforce permissions.
-        _requireOwner(projectId);
+        _requirePermissionFrom({
+            account: PROJECTS.ownerOf(projectId), projectId: projectId, permissionId: SET_ALLOWLIST_PERMISSION_ID
+        });
 
         for (uint256 i; i < accounts.length; i++) {
             // Set the beneficiary's status.
@@ -83,12 +104,15 @@ contract HomerunAllowlistHook is ERC2771Context, IHomerunAllowlistHook {
     }
 
     /// @notice Opens or closes a project to every beneficiary.
-    /// @dev Only the project's owner can call this. Closing keeps the list, so allowed beneficiaries stay allowed.
+    /// @dev Only the project's owner, or an operator holding `SET_ALLOWLIST_PERMISSION_ID` or ROOT from the owner,
+    /// can call this. Closing keeps the list, so allowed beneficiaries stay allowed.
     /// @param projectId The ID of the project.
     /// @param open Whether any beneficiary may receive tokens from payments.
     function setOpen(uint256 projectId, bool open) external override {
         // Enforce permissions.
-        _requireOwner(projectId);
+        _requirePermissionFrom({
+            account: PROJECTS.ownerOf(projectId), projectId: projectId, permissionId: SET_ALLOWLIST_PERMISSION_ID
+        });
 
         // Set the project's status.
         isOpen[projectId] = open;
@@ -97,7 +121,7 @@ contract HomerunAllowlistHook is ERC2771Context, IHomerunAllowlistHook {
     }
 
     //*********************************************************************//
-    // ------------------------- external views -------------------------- //
+    // ----------------------- external views ---------------------------- //
     //*********************************************************************//
 
     /// @notice Passes cash outs through untouched. Cash outs are never gated.
@@ -154,10 +178,14 @@ contract HomerunAllowlistHook is ERC2771Context, IHomerunAllowlistHook {
     // -------------------------- public views --------------------------- //
     //*********************************************************************//
 
-    /// @notice Whether a payment for a beneficiary would be accepted right now.
+    /// @notice Whether the project's allowlist admits a beneficiary: the project is open, or the beneficiary is
+    /// allowed.
+    /// @dev This reports the allowlist only. It does not check whether the project's current ruleset still routes
+    /// payments through this hook, so a project that has moved off the hook may accept payments this returns false
+    /// for.
     /// @param projectId The ID of the project being paid.
     /// @param account The beneficiary of the payment.
-    /// @return flag Whether the payment would be accepted.
+    /// @return flag Whether the allowlist admits the beneficiary.
     function canPay(uint256 projectId, address account) public view override returns (bool flag) {
         return isOpen[projectId] || isAllowed[projectId][account];
     }
@@ -172,14 +200,24 @@ contract HomerunAllowlistHook is ERC2771Context, IHomerunAllowlistHook {
     }
 
     //*********************************************************************//
-    // ------------------------ internal views --------------------------- //
+    // ----------------------- internal views ---------------------------- //
     //*********************************************************************//
 
-    /// @notice Reverts unless the caller owns the project.
-    /// @param projectId The ID of the project.
-    function _requireOwner(uint256 projectId) internal view {
-        if (PROJECTS.ownerOf(projectId) != _msgSender()) {
-            revert HomerunAllowlistHook_Unauthorized({projectId: projectId, caller: _msgSender()});
-        }
+    /// @notice The calldata suffix length the trusted forwarder appends.
+    /// @return The suffix length.
+    function _contextSuffixLength() internal view override(ERC2771Context, Context) returns (uint256) {
+        return super._contextSuffixLength();
+    }
+
+    /// @notice The calldata of this call, without the trusted forwarder's suffix.
+    /// @return The calldata.
+    function _msgData() internal view override(ERC2771Context, Context) returns (bytes calldata) {
+        return ERC2771Context._msgData();
+    }
+
+    /// @notice The signer the trusted forwarder relays for, or the direct caller.
+    /// @return sender The address which sent this call.
+    function _msgSender() internal view override(ERC2771Context, Context) returns (address sender) {
+        return ERC2771Context._msgSender();
     }
 }

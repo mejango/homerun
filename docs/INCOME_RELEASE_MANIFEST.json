@@ -19,7 +19,7 @@
       "JBRouterTerminalRegistry with no contexts"
     ],
     "tokenDeployedAtLaunch": true,
-    "payHook": "HomerunAllowlistHook as the omnichain extra pay hook; owner-managed beneficiary allowlist, closed by default; cash outs ungated",
+    "payHook": "HomerunAllowlistHook as the omnichain extra pay hook; owner-managed beneficiary allowlist (delegable through JBPermissions ID 128), closed by default; cash outs ungated",
     "identity": "isFund(projectId) + FundLaunched event"
   },
   "capturedAt": "2026-09-21T21:40:36.848Z",
@@ -29,7 +29,8 @@
   "profileChecks": {
     "recursiveConstructorShape": true,
     "sourceAssertions": [
-      "constructor(HomerunChainConfig[] memory chains)",
+      "if (msg.sender != _DEPLOYER) revert HomerunDeployer_Unauthorized(msg.sender);",
+      "if (USDC != address(0)) revert HomerunDeployer_AlreadyConfigured();",
       "CONTROLLER = REV_DEPLOYER.CONTROLLER();",
       "ROUTER_TERMINAL_REGISTRY = REV_DEPLOYER.ROUTER_TERMINAL_REGISTRY();",
       "if (!isFund[fundProjectId]) revert HomerunDeployer_UnsupportedFund(fundProjectId);",
@@ -41,7 +42,7 @@
       "uint32 public constant override INCOME_CUT_PERCENT = 20_000_000;",
       "uint16 public constant override INCOME_CASH_OUT_TAX_RATE = 1000;",
       "suckerDeploymentConfiguration.salt = scopedSalt;",
-      "keccak256(abi.encode(_msgSender(), owner, salt))",
+      "keccak256(abi.encode(_msgSender(), owner, salt, projectUri, name, ticker, mustStartAtOrAfter))",
       "originalPayer = JBPayerTrackerLib.resolve(_msgSender());",
       "beneficiary: payable(_msgSender()),",
       "configuration.stageConfigurations = new REVStageConfig[](1);",
@@ -212,36 +213,24 @@
       },
       "constructor": [
         {
-          "name": "chains",
-          "type": "tuple[]",
-          "internalType": "struct HomerunChainConfig[]",
-          "components": [
-            {
-              "name": "chainId",
-              "type": "uint32",
-              "internalType": "uint32"
-            },
-            {
-              "name": "revDeployer",
-              "type": "address",
-              "internalType": "address"
-            },
-            {
-              "name": "usdc",
-              "type": "address",
-              "internalType": "address"
-            },
-            {
-              "name": "omnichainDeployer",
-              "type": "address",
-              "internalType": "address"
-            },
-            {
-              "name": "allowlistHook",
-              "type": "address",
-              "internalType": "address"
-            }
-          ]
+          "name": "revDeployer",
+          "type": "address",
+          "internalType": "contract IREVDeployer"
+        },
+        {
+          "name": "omnichainDeployer",
+          "type": "address",
+          "internalType": "contract IJBOmnichainDeployer"
+        },
+        {
+          "name": "allowlistHook",
+          "type": "address",
+          "internalType": "contract IHomerunAllowlistHook"
+        },
+        {
+          "name": "deployer",
+          "type": "address",
+          "internalType": "address"
         }
       ],
       "linkedLibraries": [],
@@ -1095,6 +1084,11 @@
           "name": "projects",
           "type": "address",
           "internalType": "contract IJBProjects"
+        },
+        {
+          "name": "permissions",
+          "type": "address",
+          "internalType": "contract IJBPermissions"
         },
         {
           "name": "trustedForwarder",

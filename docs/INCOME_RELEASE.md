@@ -10,7 +10,7 @@ The verified helper and hook addresses are pinned in `src/lib/homerun-addresses.
 
 ## Global release profile
 
-The same `HomerunDeployer` artifact takes one ordered array of eight chain configurations. Each entry is `(uint32 chainId, address revDeployer, address usdc, address omnichainDeployer, address allowlistHook)`. `HomerunAllowlistHook(projects, trustedForwarder)` and the `HomerunDeployerLib` external library are deployed once per chain before the helper, the library at the same deterministic address everywhere so the linked helper initcode stays identical.
+The same `HomerunDeployer` artifact is constructed on every chain with `(revDeployer, omnichainDeployer, allowlistHook, deployer)`, all identical on the eight networks; `deployer` is the `homerun` Sphinx Safe `0xd5136c794ee43BEf1eD4cF1eB6DEe45b7F803437`. The Safe then calls `setChainSpecificConstants` once per chain with its group's ordered `HomerunChainConfig` entries `(uint32 chainId, address revDeployer, address usdc, address omnichainDeployer, address allowlistHook)`. `HomerunAllowlistHook(projects, permissions, trustedForwarder)` and the `HomerunDeployerLib` external library are deployed once per chain before the helper, the library at the same deterministic address everywhere so the linked helper initcode stays identical.
 
 The complete array is identical on every network and sorted numerically:
 
@@ -18,7 +18,7 @@ The complete array is identical on every network and sorted numerically:
 1, 10, 8453, 42161, 84532, 421614, 11155111, 11155420
 ```
 
-The helper selects its local dependencies from that array during construction, and derives the controller and the router terminal registry from `REVDeployer`. The CREATE2 address commits to the whole array, so a matching address on all eight networks is the profile check. Local immutable values, including USDC, can differ, so **identical CREATE2 addresses do not imply identical deployed runtime hashes**. Verify every chain independently.
+The helper derives the controller and the router terminal registry from `REVDeployer` during construction. Its immutables are the same on every network, so a matching address on all eight networks is the profile check. USDC lives in storage, set once by the configurator, so verify every chain's `USDC` and `usdcOf` independently.
 
 The FUND Owner remains the authorized caller and becomes `REVConfig.operator`, the stock Revnet control wallet. The separate Homerun Operator is a nonzero initial INCOME incentive beneficiary, passed after `suckerConfiguration`; canonical `REVOwner` continues to hold the INCOME NFT. The client verifies helper version 3 before freezing a new plan and before preparing unfinished networks. Legacy receipt and pending-record decoding preserves exact original calldata; it is not a new-launch compatibility path for an old helper. Recovery and binding lookup currently require the saved helper to remain in the registry. If a future registry replaces an already-used helper, retain explicit legacy helper discovery before migration.
 
@@ -54,9 +54,9 @@ The packet verifies every source hash in each artifact's compiler metadata and l
 | Contract | Creation template | Runtime template | Full initcode / limit |
 | --- | ---: | ---: | --- |
 | `HomerunDeployer` | 26,896 bytes | 21,544 bytes | 28,752 bytes with the eight-entry constructor; below 49,152 |
-| `HomerunAllowlistHook` | 2,739 bytes | 2,554 bytes | Two-word constructor |
+| `HomerunAllowlistHook` | 2,739 bytes | 2,554 bytes | Three-word constructor |
 
-The claim vault and its `HomerunDeployerLib` creation library are gone; the helper records the initial allocation as a stock revnet auto-issuance instead, and its sizes above predate that change, so re-measure them before release. The helper's constructor occupies `64 + 160 × 8 = 1,344` bytes (five words per chain: chain ID, REVDeployer, USDC, omnichain deployer, allowlist hook). Its runtime has 3,032 bytes of EIP-170 headroom. EIP-3860 applies to **creation bytecode plus constructor arguments**, not the creation template alone. The script checks complete fixed singleton constructors and the known helper payload size even while dependency values are unavailable.
+The claim vault and its `HomerunDeployerLib` creation library are gone; the helper records the initial allocation as a stock revnet auto-issuance instead, and its sizes above predate that change, so re-measure them before release. The helper's constructor occupies 128 bytes (four address words). Its runtime has 3,032 bytes of EIP-170 headroom. EIP-3860 applies to **creation bytecode plus constructor arguments**, not the creation template alone. The script checks complete fixed singleton constructors and the known helper payload size even while dependency values are unavailable.
 
 Runtime templates contain unresolved immutable words. Their hashes are not live code hashes. Verification must patch and compare **every immutable occurrence** using actual chain/project/constructor values, including full uint256 and EIP712 words. Keep the exact compiler input: the local integration build resolves remappings to absolute source paths, which enter IPFS metadata. Recompiling elsewhere with rewritten paths can change bytecode even if source contents match.
 
@@ -89,7 +89,7 @@ The installed `@bananapus/nana-sdk-core` has canonical core, omnichain, router-t
 
 Required evidence for the current v4 release:
 
-1. Executed receipts for the shared helper deployments, with chain, transaction, block hash, constructor calldata, factory and salt. A proposal or simulation is insufficient.
+1. Executed receipts for the shared helper deployments, with chain, transaction, block hash, constructor calldata, factory and salt, and each chain's `setChainSpecificConstants` receipt from the configurator. A proposal or simulation is insufficient.
 2. Per-chain source/runtime/immutable verification. Verify both launch selectors, every `usdcOf` entry, `CONTROLLER`, `TERMINAL`, `ROUTER_TERMINAL_REGISTRY` and the local core/REV/omnichain bindings.
 3. Every directed SDK CCIP route's allowlisting, directory/tokens, singleton, router, remote selector and chain ID, plus matching reciprocal default peers. The helper accepts an approved compatible route; registry approval alone does not prove two independently selected deployer generations produce matching peers. The packet records the exact SDK route addresses for review.
 4. Initial project relationships: the FUND launched by the helper with its deployed ERC-20, FUND owner control of INCOME, the single unlocked reserved split to the owner, and the recorded helper auto-issuance matching the manifest's local amount. Preserve actual project IDs and addresses from receipts, never predictions.

@@ -1,47 +1,50 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {TestBaseWorkflow} from "@bananapus/core-v6/test/helpers/TestBaseWorkflow.sol";
-import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
-import {JBRuleset} from "@bananapus/core-v6/src/structs/JBRuleset.sol";
-import {JBRulesetMetadata} from "@bananapus/core-v6/src/structs/JBRulesetMetadata.sol";
-import {IJBPrices} from "@bananapus/core-v6/src/interfaces/IJBPrices.sol";
-import {JBCurrencyIds} from "@bananapus/core-v6/src/libraries/JBCurrencyIds.sol";
-import {JBMatchingPriceFeed} from "@bananapus/core-v6/src/periphery/JBMatchingPriceFeed.sol";
-import {JBOmnichainDeployer} from "@bananapus/omnichain-deployers-v6/src/JBOmnichainDeployer.sol";
-import {JBSuckerRegistry} from "@bananapus/suckers-v6/src/JBSuckerRegistry.sol";
-import {JB721TiersHookStore} from "@bananapus/721-hook-v6/src/JB721TiersHookStore.sol";
+import {JB721CheckpointsDeployer} from "@bananapus/721-hook-v6/src/JB721CheckpointsDeployer.sol";
 import {JB721TiersHook} from "@bananapus/721-hook-v6/src/JB721TiersHook.sol";
 import {JB721TiersHookDeployer} from "@bananapus/721-hook-v6/src/JB721TiersHookDeployer.sol";
-import {JB721CheckpointsDeployer} from "@bananapus/721-hook-v6/src/JB721CheckpointsDeployer.sol";
+import {JB721TiersHookStore} from "@bananapus/721-hook-v6/src/JB721TiersHookStore.sol";
 import {JBAddressRegistry} from "@bananapus/address-registry-v6/src/JBAddressRegistry.sol";
 import {JBBuybackHookRegistry} from "@bananapus/buyback-hook-v6/src/JBBuybackHookRegistry.sol";
+import {IJBPermissions} from "@bananapus/core-v6/src/interfaces/IJBPermissions.sol";
+import {IJBPrices} from "@bananapus/core-v6/src/interfaces/IJBPrices.sol";
+import {IJBTerminal} from "@bananapus/core-v6/src/interfaces/IJBTerminal.sol";
+import {JBCurrencyIds} from "@bananapus/core-v6/src/libraries/JBCurrencyIds.sol";
+import {JBMatchingPriceFeed} from "@bananapus/core-v6/src/periphery/JBMatchingPriceFeed.sol";
+import {JBRuleset} from "@bananapus/core-v6/src/structs/JBRuleset.sol";
+import {JBRulesetMetadata} from "@bananapus/core-v6/src/structs/JBRulesetMetadata.sol";
+import {TestBaseWorkflow} from "@bananapus/core-v6/test/helpers/TestBaseWorkflow.sol";
+import {JBOmnichainDeployer} from "@bananapus/omnichain-deployers-v6/src/JBOmnichainDeployer.sol";
+import {JBRouterTerminalRegistry} from "@bananapus/router-terminal-v6/src/JBRouterTerminalRegistry.sol";
+import {JBSuckerRegistry} from "@bananapus/suckers-v6/src/JBSuckerRegistry.sol";
 import {CTPublisher} from "@croptop/core-v6/src/CTPublisher.sol";
 import {REVDeployer} from "@rev-net/core-v6/src/REVDeployer.sol";
-import {REVOwner} from "@rev-net/core-v6/src/REVOwner.sol";
 import {REVLoans} from "@rev-net/core-v6/src/REVLoans.sol";
-import {JBRouterTerminalRegistry} from "@bananapus/router-terminal-v6/src/JBRouterTerminalRegistry.sol";
+import {REVOwner} from "@rev-net/core-v6/src/REVOwner.sol";
 
 import {HomerunDeployment} from "../../script/helpers/HomerunDeployment.sol";
 import {HomerunDeploymentAddresses} from "../../script/structs/HomerunDeploymentAddresses.sol";
 import {HomerunImmutableReference} from "../../script/structs/HomerunImmutableReference.sol";
+
 import {HomerunAllowlistHook} from "../../src/HomerunAllowlistHook.sol";
 import {HomerunDeployer} from "../../src/HomerunDeployer.sol";
 import {HomerunChainConfig} from "../../src/structs/HomerunChainConfig.sol";
+
 import {HomerunDeploymentHarness} from "./HomerunDeploymentHarness.sol";
 
 /// @notice Tests the production deployment helper against real protocol contracts, without live network writes.
 contract HomerunDeploymentTest is TestBaseWorkflow {
-    address private constant FORWARDER = address(0x500);
-    address private constant OWNER = address(0x700);
-    address private constant MAINNET_USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
     string private constant FACTORY_CODE =
         "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3";
+    address private constant FORWARDER = address(0x500);
+    address private constant MAINNET_USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
+    address private constant OWNER = address(0x700);
 
-    HomerunDeploymentHarness internal _deployment;
     HomerunChainConfig[] internal _chains;
-    REVDeployer internal _revDeployer;
+    HomerunDeploymentHarness internal _deployment;
     JBOmnichainDeployer internal _omnichain;
+    REVDeployer internal _revDeployer;
     JBRouterTerminalRegistry internal _router;
 
     function setUp() public override {
@@ -62,7 +65,6 @@ contract HomerunDeploymentTest is TestBaseWorkflow {
         // The currency ID of an ERC-20 is the low 32 bits of its address, by protocol convention.
         // forge-lint: disable-next-line(unsafe-typecast)
         jbPrices().addPriceFeedFor(0, JBCurrencyIds.USD, uint32(uint160(MAINNET_USDC)), feed);
-
         uint256 feeProjectId = jbProjects().createFor(multisig());
         JBSuckerRegistry suckers =
             new JBSuckerRegistry(jbDirectory(), jbPermissions(), jbPrices(), multisig(), FORWARDER);
@@ -165,13 +167,45 @@ contract HomerunDeploymentTest is TestBaseWorkflow {
         _deployment.verify(_chains, deployed);
     }
 
-    function test_sameArtifactsAndBindingsPredictSameAddressesOnEveryChainOfTheGroup() public {
+    function test_sameArtifactsAndBindingsPredictSameAddressesOnEveryChain() public {
         bytes32 expected = keccak256(abi.encode(_deployment.predict(_chains)));
-        uint32[] memory group = _deployment.group(1);
-        for (uint256 i; i < group.length; i++) {
-            vm.chainId(group[i]);
-            assertEq(keccak256(abi.encode(_deployment.predict(_chains))), expected);
+        uint32[8] memory everyChain = [uint32(1), 10, 8453, 42_161, 11_155_111, 11_155_420, 84_532, 421_614];
+        for (uint256 i; i < everyChain.length; i++) {
+            vm.chainId(everyChain[i]);
+            // Each group passes its own chains; only the configuration call differs between groups.
+            uint32[] memory group = _deployment.group(everyChain[i]);
+            HomerunChainConfig[] memory chains = new HomerunChainConfig[](group.length);
+            for (uint256 j; j < group.length; j++) {
+                chains[j] = _chains[0];
+                chains[j].chainId = group[j];
+                chains[j].usdc = _chains[j].usdc;
+            }
+            assertEq(keccak256(abi.encode(_deployment.predict(chains))), expected);
         }
+    }
+
+    function test_unconfiguredDeploymentFailsVerificationUntilTheSafeConfigures() public {
+        HomerunDeploymentAddresses memory deployed = _deployment.deployUnconfigured(_chains);
+        HomerunDeployer factory = HomerunDeployer(deployed.deployer);
+        assertEq(factory.USDC(), address(0));
+        vm.expectPartialRevert(HomerunDeployment.HomerunDeployment_BindingMismatch.selector);
+        _deployment.verify(_chains, deployed);
+        // Only the Homerun Safe configures, so a front-run of the same initcode cannot bind other constants.
+        vm.expectRevert(
+            abi.encodeWithSelector(HomerunDeployer.HomerunDeployer_Unauthorized.selector, address(_deployment))
+        );
+        _deployment.configureAsSelf(_chains, deployed);
+        // A later proposal configures what the broadcast deployed, without redeploying it.
+        HomerunDeploymentAddresses memory resumed = _deployment.deployFor(_chains);
+        assertEq(keccak256(abi.encode(resumed)), keccak256(abi.encode(deployed)));
+        assertEq(factory.USDC(), MAINNET_USDC);
+        _deployment.verify(_chains, resumed);
+    }
+
+    function test_rejectsGroupWithDifferentProtocolAddresses() public {
+        _chains[1].revDeployer = address(0xdead);
+        vm.expectPartialRevert(HomerunDeployment.HomerunDeployment_BindingMismatch.selector);
+        _deployment.deployFor(_chains);
     }
 
     function test_rejectsWrongCanonicalFactoryRuntime() public {
@@ -213,10 +247,8 @@ contract HomerunDeploymentTest is TestBaseWorkflow {
     function test_rejectsConsistentlyWrongImmutableDependency() public {
         HomerunDeploymentAddresses memory deployed = _deployment.deployFor(_chains);
         // A legitimate second deployer has identical opcodes and different immutable bindings.
-        HomerunChainConfig[] memory other = new HomerunChainConfig[](1);
-        other[0] = _chains[0];
-        other[0].allowlistHook = address(new HomerunAllowlistHook(jbProjects(), FORWARDER));
-        address different = _deployment.deployVariant(other, "variant");
+        address otherHook = address(new HomerunAllowlistHook(jbProjects(), jbPermissions(), FORWARDER));
+        address different = _deployment.deployVariant(_chains, otherHook, "variant");
         vm.etch(deployed.deployer, different.code);
         _deployment.verifyRuntime("HomerunDeployer", deployed.deployer);
         vm.expectPartialRevert(HomerunDeployment.HomerunDeployment_BindingMismatch.selector);
@@ -225,7 +257,17 @@ contract HomerunDeploymentTest is TestBaseWorkflow {
 
     function test_rejectsHookWithDifferentForwarder() public {
         HomerunDeploymentAddresses memory deployed = _deployment.deployFor(_chains);
-        HomerunAllowlistHook different = new HomerunAllowlistHook(jbProjects(), address(0xbeef));
+        HomerunAllowlistHook different = new HomerunAllowlistHook(jbProjects(), jbPermissions(), address(0xbeef));
+        vm.etch(deployed.allowlistHook, address(different).code);
+        _deployment.verifyRuntime("HomerunAllowlistHook", deployed.allowlistHook);
+        vm.expectPartialRevert(HomerunDeployment.HomerunDeployment_BindingMismatch.selector);
+        _deployment.deployFor(_chains);
+    }
+
+    function test_rejectsHookWithDifferentPermissions() public {
+        HomerunDeploymentAddresses memory deployed = _deployment.deployFor(_chains);
+        HomerunAllowlistHook different =
+            new HomerunAllowlistHook(jbProjects(), IJBPermissions(address(0xbeef)), FORWARDER);
         vm.etch(deployed.allowlistHook, address(different).code);
         _deployment.verifyRuntime("HomerunAllowlistHook", deployed.allowlistHook);
         vm.expectPartialRevert(HomerunDeployment.HomerunDeployment_BindingMismatch.selector);
@@ -374,23 +416,6 @@ contract HomerunDeploymentTest is TestBaseWorkflow {
         revert("unsupported fixture chain");
     }
 
-    /// @dev Writes one artifact per protocol repository for every chain of the group, mirroring the workspace layout.
-    function _writeWorkspace(uint32[] memory group, uint256 chainIdOffset) private returns (string memory root) {
-        root = string.concat("deployments/_test/", vm.toString(block.chainid + chainIdOffset));
-        for (uint256 i; i < group.length; i++) {
-            string memory network = _deployment.network(group[i]);
-            uint256 recorded = group[i] + chainIdOffset;
-            _writeArtifact(root, "nana-core-v6", network, "JBController", address(jbController()), recorded);
-            _writeArtifact(root, "revnet-core-v6", network, "REVDeployer", address(_revDeployer), recorded);
-            _writeArtifact(
-                root, "nana-omnichain-deployers-v6", network, "JBOmnichainDeployer", address(_omnichain), recorded
-            );
-            _writeArtifact(
-                root, "nana-router-terminal-v6", network, "JBRouterTerminalRegistry", address(_router), recorded
-            );
-        }
-    }
-
     function _writeArtifact(
         string memory root,
         string memory repo,
@@ -407,5 +432,22 @@ contract HomerunDeploymentTest is TestBaseWorkflow {
         vm.serializeAddress(key, "address", target);
         string memory json = vm.serializeString(key, "chainId", vm.toString(bytes32(chainId)));
         vm.writeJson(json, string.concat(directory, "/", name, ".json"));
+    }
+
+    /// @dev Writes one artifact per protocol repository for every chain of the group, mirroring the workspace layout.
+    function _writeWorkspace(uint32[] memory group, uint256 chainIdOffset) private returns (string memory root) {
+        root = string.concat("deployments/_test/", vm.toString(block.chainid + chainIdOffset));
+        for (uint256 i; i < group.length; i++) {
+            string memory network = _deployment.network(group[i]);
+            uint256 recorded = group[i] + chainIdOffset;
+            _writeArtifact(root, "nana-core-v6", network, "JBController", address(jbController()), recorded);
+            _writeArtifact(root, "revnet-core-v6", network, "REVDeployer", address(_revDeployer), recorded);
+            _writeArtifact(
+                root, "nana-omnichain-deployers-v6", network, "JBOmnichainDeployer", address(_omnichain), recorded
+            );
+            _writeArtifact(
+                root, "nana-router-terminal-v6", network, "JBRouterTerminalRegistry", address(_router), recorded
+            );
+        }
     }
 }

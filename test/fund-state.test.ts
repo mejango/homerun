@@ -11,6 +11,7 @@ import {
 import { padHex, zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
 import { buildFundRulesetChange, initialFundRuleset } from '../src/lib/fund-contracts'
 import { HOMERUN_ALLOWLIST_HOOK } from './fixtures/homerun-deployer'
+import { HOMERUN_SET_ALLOWLIST_PERMISSION_ID } from '../src/lib/income-contracts'
 
 vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fixtures/homerun-deployer')).withHomerunDeployer(await importOriginal()))
 import { assertFundStateForWrite, readFundProjectState, readLinkedFundProjects } from '../src/lib/fund-state'
@@ -31,6 +32,7 @@ const PERMISSION_IDS = [
   JBPermissionIdsV6.SEND_PAYOUTS,
   JBPermissionIdsV6.DEPLOY_ERC20,
   JBPermissionIdsV6.SET_PROJECT_URI,
+  HOMERUN_SET_ALLOWLIST_PERMISSION_ID,
 ]
 
 type ReadRequest = { address: Address; functionName: string; args?: readonly unknown[]; blockNumber?: bigint }
@@ -209,7 +211,7 @@ describe('readFundProjectState', () => {
   it('uses the actual NFT owner directly without requiring delegated permissions', async () => {
     const fixture = rpcFixture({ fail: 'hasPermission' })
     const state = await read(fixture, OWNER)
-    expect(Object.values(state.permissions)).toEqual([true, true, true, true, true, true])
+    expect(Object.values(state.permissions)).toEqual([true, true, true, true, true, true, true])
     expect(fixture.readContract.mock.calls.some(([request]) => request.functionName === 'hasPermission')).toBe(false)
   })
 
@@ -218,7 +220,12 @@ describe('readFundProjectState', () => {
     const state = await read(fixture)
     const requests = fixture.readContract.mock.calls.map(([request]) => request).filter(request => request.functionName === 'hasPermission')
     expect(requests.map(request => request.args)).toEqual(PERMISSION_IDS.map(id => [DELEGATE, OWNER, PROJECT_ID, BigInt(id), true, true]))
-    expect(state.permissions).toEqual({ queueRulesets: false, mintTokens: true, useAllowance: false, sendPayouts: true, deployErc20: false, setProjectUri: false })
+    expect(state.permissions).toEqual({ queueRulesets: false, mintTokens: true, useAllowance: false, sendPayouts: true, deployErc20: false, setProjectUri: false, manageAllowlist: false })
+  })
+
+  it('reads the Homerun allowlist permission for a delegate like any other grant', async () => {
+    const state = await read(rpcFixture({ allowedPermissions: [HOMERUN_SET_ALLOWLIST_PERMISSION_ID] }))
+    expect(state.permissions).toEqual({ queueRulesets: false, mintTokens: false, useAllowance: false, sendPayouts: false, deployErc20: false, setProjectUri: false, manageAllowlist: true })
   })
 
   it('returns no wallet authority when disconnected and does not invent holder reads', async () => {

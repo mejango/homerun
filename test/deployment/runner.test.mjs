@@ -174,7 +174,7 @@ test('proposal rejects a missing lock, wrong organization, or unregistered proje
   }
 });
 
-test('a broadcast sends every destination from the funded key, then verifies every destination', async () => {
+test('a broadcast sends every destination from the funded key, then rehearses the Safe configuration on every destination', async () => {
   const setup = fixture('testnets');
   await assert.rejects(run('broadcast', 'testnets', { ...setup, spawn: readOnlyTool }), /HOMERUN_DEPLOYER_KEY/);
   setup.env.HOMERUN_DEPLOYER_KEY = '0x' + '11'.repeat(32);
@@ -186,7 +186,7 @@ test('a broadcast sends every destination from the funded key, then verifies eve
     return { status: 0 };
   } });
   const aliases = networks.testnets.map(([alias]) => alias);
-  assert.deepEqual(calls.map(call => call.script), [...aliases.map(() => 'script/Broadcast.s.sol:Broadcast'), ...aliases.map(() => 'script/Verify.s.sol:Verify')]);
+  assert.deepEqual(calls.map(call => call.script), [...aliases.map(() => 'script/Broadcast.s.sol:Broadcast'), ...aliases.map(() => 'script/Rehearse.s.sol:Rehearse')]);
   assert.deepEqual(calls.map(call => call.alias), [...aliases, ...aliases]);
   assert.deepEqual(calls.map(call => call.chainId), [...networks.testnets, ...networks.testnets].map(([, id]) => String(id)));
   assert.deepEqual(calls[0].flags, ['--broadcast', '--private-key', setup.env.HOMERUN_DEPLOYER_KEY, '-vv']);

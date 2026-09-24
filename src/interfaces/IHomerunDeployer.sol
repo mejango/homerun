@@ -11,7 +11,9 @@ import {IREVDeployer} from "@rev-net/core-v6/src/interfaces/IREVDeployer.sol";
 import {IREVOwner} from "@rev-net/core-v6/src/interfaces/IREVOwner.sol";
 import {REVDescription} from "@rev-net/core-v6/src/structs/REVDescription.sol";
 import {REVSuckerDeploymentConfig} from "@rev-net/core-v6/src/structs/REVSuckerDeploymentConfig.sol";
+
 import {IHomerunAllowlistHook} from "./IHomerunAllowlistHook.sol";
+import {HomerunChainConfig} from "../structs/HomerunChainConfig.sol";
 import {HomerunInitialIncomeSnapshot} from "../structs/HomerunInitialIncomeSnapshot.sol";
 
 /// @notice Launches Homerun FUNDs with fixed campaign rules, and launches each FUND's INCOME revnet with the initial
@@ -22,6 +24,12 @@ interface IHomerunDeployer is IJBPayerTracker {
     /// @param owner The address that owns the FUND.
     /// @param caller The address that launched it.
     event FundLaunched(uint256 indexed projectId, address indexed owner, address caller);
+
+    /// @notice Emitted when a FUND's INCOME is deployed with its initial allocation recorded for the owner.
+    /// @param fundProjectId The ID of the FUND project.
+    /// @param incomeProjectId The ID of the new INCOME project.
+    /// @param owner The FUND owner, who becomes the INCOME revnet's operator and holds its reserved split.
+    event IncomeDeployed(uint256 indexed fundProjectId, uint256 indexed incomeProjectId, address indexed owner);
 
     /// @notice Emitted when a FUND's initial INCOME allocation is minted to the FUND's owner.
     /// @param fundProjectId The ID of the FUND project.
@@ -36,12 +44,6 @@ interface IHomerunDeployer is IJBPayerTracker {
         uint256 incomeAmount,
         address caller
     );
-
-    /// @notice Emitted when a FUND's INCOME is deployed with its initial allocation recorded for the owner.
-    /// @param fundProjectId The ID of the FUND project.
-    /// @param incomeProjectId The ID of the new INCOME project.
-    /// @param owner The FUND owner, who becomes the INCOME revnet's operator and holds its reserved split.
-    event IncomeDeployed(uint256 indexed fundProjectId, uint256 indexed incomeProjectId, address indexed owner);
 
     /// @notice The pay hook installed on every FUND. Its owner-managed allowlist gates payment beneficiaries.
     /// @return hook The allowlist hook.
@@ -89,8 +91,8 @@ interface IHomerunDeployer is IJBPayerTracker {
     function PROJECTS() external view returns (IJBProjects projects);
 
     /// @notice The number of seconds in one INCOME issuance cycle.
-    /// @return seconds_ The cycle length.
-    function QUARTER() external view returns (uint32 seconds_);
+    /// @return cycleLength The cycle length, in seconds.
+    function QUARTER() external view returns (uint32 cycleLength);
 
     /// @notice The revnet deployer INCOME is launched through.
     /// @return deployer The revnet deployer.
@@ -114,6 +116,7 @@ interface IHomerunDeployer is IJBPayerTracker {
     function TOKENS() external view returns (IJBTokens tokens);
 
     /// @notice The USDC token every FUND and INCOME treasury accounts in on this chain.
+    /// @dev Zero until the chain-specific constants are set.
     /// @return usdc The USDC token.
     function USDC() external view returns (address usdc);
 
@@ -130,16 +133,19 @@ interface IHomerunDeployer is IJBPayerTracker {
         returns (bytes32 salt);
 
     /// @notice The INCOME project a FUND launched, if any.
-    /// @custom:param fundProjectId The ID of the FUND project.
-    function incomeProjectIdOf(uint256 fundProjectId) external view returns (uint256);
+    /// @param fundProjectId The ID of the FUND project.
+    /// @return incomeProjectId The ID of the INCOME project, or zero if none.
+    function incomeProjectIdOf(uint256 fundProjectId) external view returns (uint256 incomeProjectId);
 
     /// @notice Whether a project was launched as a FUND through the deployer. INCOME only attaches to these.
-    /// @custom:param projectId The ID of the project.
-    function isFund(uint256 projectId) external view returns (bool);
+    /// @param projectId The ID of the project.
+    /// @return flag Whether the project is a FUND.
+    function isFund(uint256 projectId) external view returns (bool flag);
 
-    /// @notice The USDC token on a linked chain.
-    /// @custom:param chainId The ID of the chain.
-    function usdcOf(uint32 chainId) external view returns (address);
+    /// @notice The USDC token on a linked chain, including this one.
+    /// @param chainId The ID of the chain.
+    /// @return usdc The chain's USDC token.
+    function usdcOf(uint32 chainId) external view returns (address usdc);
 
     /// @notice Launches a FUND's INCOME revnet, with this chain's share of the initial allocation recorded as an
     /// auto-issuance to the deployer for `mintInitialAllocation` to pay to the FUND's owner.
@@ -165,13 +171,9 @@ interface IHomerunDeployer is IJBPayerTracker {
         payable
         returns (uint256 incomeProjectId);
 
-    /// @notice Mints a FUND's initial INCOME allocation to whoever owns the FUND right now.
-    /// @dev Anyone can call this once INCOME's stage has started.
-    /// @param fundProjectId The ID of the FUND project.
-    function mintInitialAllocation(uint256 fundProjectId) external;
-
     /// @notice Launches a FUND with Homerun's fixed campaign rules and deploys its ERC-20.
-    /// @dev Linked launches must use the same `salt`, the same caller and the same owner on every chain.
+    /// @dev Linked launches must use the same caller, owner, `salt`, `projectUri`, `name`, `ticker` and
+    /// `mustStartAtOrAfter` on every chain. The sucker and token salts commit to all of them.
     /// @param owner The address that will own the FUND.
     /// @param projectUri The FUND's metadata URI.
     /// @param name The FUND token's name.
@@ -193,4 +195,14 @@ interface IHomerunDeployer is IJBPayerTracker {
         external
         payable
         returns (uint256 projectId, address token);
+
+    /// @notice Mints a FUND's initial INCOME allocation to whoever owns the FUND right now.
+    /// @dev Anyone can call this once INCOME's stage has started, and it pays out once per FUND.
+    /// @param fundProjectId The ID of the FUND project.
+    function mintInitialAllocation(uint256 fundProjectId) external;
+
+    /// @notice One-shot setter for the USDC token on every linked chain, this one included.
+    /// @dev Only the binding deployer can call this, once.
+    /// @param chains One entry per linked chain, in ascending chain ID, including this chain.
+    function setChainSpecificConstants(HomerunChainConfig[] calldata chains) external;
 }

@@ -25,7 +25,7 @@ function state(configuration = initialFundRuleset()): FundProjectState {
     tokenSymbol: 'FUND', tokenDecimals: 18, totalSupply: 0n, totalCreditSupply: 0n, pendingReservedTokens: 0n, totalSupplyWithReservedTokens: 0n,
     creditBalance: 0n, erc20Balance: 0n, totalBalance: 0n,
     accountingContexts: [{ token: USDC_ADDRESSES[8453], decimals: 6, currency: 2, terminal: v6Address('JBMultiTerminal', 8453), primaryTerminal: v6Address('JBMultiTerminal', 8453), isPrimary: true, balance: 0n, surplus: 0n, symbol: 'USDC', payoutLimits: [], surplusAllowances: [] }],
-    permissions: { queueRulesets: true, mintTokens: true, useAllowance: true, sendPayouts: true, deployErc20: true, setProjectUri: true },
+    permissions: { queueRulesets: true, mintTokens: true, useAllowance: true, sendPayouts: true, deployErc20: true, setProjectUri: true, manageAllowlist: true },
     linkedPeers: [], linkedChainIds: [8453], linkedProjects: [{ chainId: 8453, projectId: 7n }], issues: [],
     rulesetSnapshot: { chainId: 8453, projectId: 7n, blockNumber: 100n, controller: v6Address('JBController', 8453), currentRulesetId: 1n, upcomingRulesetId: 0n, linkedChainIds: [8453], configuration },
   }

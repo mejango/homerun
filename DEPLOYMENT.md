@@ -1,15 +1,15 @@
 # Deploying the Homerun contracts
 
-Homerun's contracts deploy through the same Sphinx proposal workflow and canonical CREATE2 factory as the other Juicebox V6 repositories, under the `homerun` Sphinx project and its 1-of-3 `V6 Jango` Safe (`0x4e59b44847b379578588920cA78FbF26c0B4956C`) as the other Juicebox V6 repositories. The rollout lives in this repository: `script/Deploy.s.sol:Deploy` is the production entrypoint, `script/helpers/HomerunDeployment.sol` holds the restartable deployment and verification logic, and `script/deploy.mjs` runs it per network group. Nothing here is executed by `deploy-all-v6`.
+Homerun's contracts deploy through the same Sphinx proposal workflow and canonical CREATE2 factory as the other Juicebox V6 repositories, under the `homerun` Sphinx project and its 1-of-3 `V6 Jango` Safe (`0xd5136c794ee43BEf1eD4cF1eB6DEe45b7F803437`, the same address on every chain). The rollout lives in this repository: `script/Deploy.s.sol:Deploy` is the production entrypoint, `script/helpers/HomerunDeployment.sol` holds the restartable deployment and verification logic, and `script/deploy.mjs` runs it per network group. Nothing here is executed by `deploy-all-v6`.
 
 ## What gets deployed
 
 Two singletons, in this order, both with the salt `HomerunV6`:
 
-1. `HomerunAllowlistHook`, constructed with the canonical `JBProjects` and the trusted forwarder of the local `JBOmnichainDeployer`.
-2. `HomerunDeployer`, constructed with one `HomerunChainConfig` per chain of the network group, in ascending chain ID: `REVDeployer`, USDC, `JBOmnichainDeployer` and the allowlist hook. The controller and the router terminal registry are read from `REVDeployer` in the constructor.
+1. `HomerunAllowlistHook`, constructed with the canonical `JBProjects`, the controller's `JBPermissions` and the trusted forwarder of the local `JBOmnichainDeployer`.
+2. `HomerunDeployer`, constructed with `REVDeployer`, `JBOmnichainDeployer`, the allowlist hook and the Safe as its one-time configurator. The controller and the router terminal registry are read from `REVDeployer` in the constructor.
 
-The deployer's constructor calldata is identical on every chain of a group, so every chain of a group shares one deployer address, and that address commits to the whole group's configuration. Mainnets (Ethereum, Optimism, Base, Arbitrum) and testnets (their Sepolias) are separate groups with separate addresses.
+Every constructor argument of both contracts is the same address on all eight chains, so the hook and the deployer each have one address on every mainnet (Ethereum, Optimism, Base, Arbitrum) and every testnet (their Sepolias). USDC is the only chain-specific value. In the same proposal the Safe calls `HomerunDeployer.setChainSpecificConstants` once per chain with one `HomerunChainConfig` per chain of the network group, in ascending chain ID: chain ID, `REVDeployer`, USDC, `JBOmnichainDeployer` and the allowlist hook. The deployer requires every entry's protocol addresses to be its own, stores every chain's USDC for sucker mappings, checks the local USDC's 6 decimals, and refuses a second call. Only the Safe can configure, so a stranger who sends the identical creation code first gains nothing.
 
 ## Reproducible checkout
 
@@ -77,15 +77,15 @@ sh scripts/forge.sh script script/Rehearse.s.sol:Rehearse --rpc-url ethereum_sep
 sh scripts/forge.sh script script/Verify.s.sol:Verify --rpc-url ethereum_sepolia -vv
 ```
 
-`deploy:broadcast:<group>` is the alternative to a proposal: it sends the missing deployment transactions from `HOMERUN_DEPLOYER_KEY` through the canonical factory on every destination (`script/Broadcast.s.sol:Broadcast`), then runs the same `Verify` pass and writes `verified.json`. The factory derives every address from the salt and creation code alone, so a broadcast and a proposal land on the same addresses. Like a proposal it refuses an uncommitted checkout and re-checks the dependency pins. Do not run `forge script --broadcast` by hand; use the runner so every destination is verified.
+`deploy:broadcast:<group>` sends the missing deployment transactions from `HOMERUN_DEPLOYER_KEY` through the canonical factory on every destination (`script/Broadcast.s.sol:Broadcast`), then rehearses every destination, which simulates the Safe's configuration of what the broadcast deployed. The factory derives every address from the salt and creation code alone, so a broadcast and a proposal land on the same addresses. The key cannot set the chain-specific constants, so follow a broadcast with `deploy:propose:<group>`, whose proposal skips the existing contracts and only configures them, then `deploy:post:<group>`. Like a proposal it refuses an uncommitted checkout and re-checks the dependency pins. Do not run `forge script --broadcast` by hand; use the runner so every destination is verified.
 
 ## What a repeated run accepts
 
-A repeated collection or rehearsal skips an existing contract only after checking its compiled runtime against the current artifact, masking only compiler-reported immutable words (every occurrence of an immutable must agree). It then checks every immutable binding through the getters: the hook's `PROJECTS` and forwarder; the deployer's controller, projects, tokens, revnet deployer and owner, terminal, USDC, omnichain deployer, router registry, hook, forwarder and every `usdcOf`. Unexpected code or bindings fail the run rather than silently reusing a contract. A changed source revision deploys new predictions; it never upgrades or replaces an earlier deployment.
+A repeated collection or rehearsal skips an existing contract only after checking its compiled runtime against the current artifact, masking only compiler-reported immutable words (every occurrence of an immutable must agree). It then checks every immutable binding through the getters: the hook's `PROJECTS` and forwarder; the deployer's controller, projects, tokens, revnet deployer and owner, terminal, omnichain deployer, router registry, hook and forwarder. The deployer's configurator has no getter; the CREATE2 address binds it, since it is a constructor argument. Before writing a manifest it also checks the configured `USDC` and every `usdcOf`. Unexpected code or bindings fail the run rather than silently reusing a contract. A changed source revision deploys new predictions; it never upgrades or replaces an earlier deployment.
 
 ## Interference and recovery
 
-The canonical factory is permissionless, so anyone can send the byte-identical creation code first. That cannot substitute different code (the address commits to the exact creation code, and every immutable is derived from chain state the constructor reads), but the Safe's transaction for that contract then reverts on the CREATE2 collision and Sphinx marks that chain's deployment failed. Rerun the rehearsal and a new proposal: an existing contract that passes the runtime and binding checks is reused, and only the missing ones are collected.
+The canonical factory is permissionless, so anyone can send the byte-identical creation code first. That cannot substitute different code (the address commits to the exact creation code, and every immutable is derived from chain state the constructor reads), and it cannot configure the deployer, which only the Safe can, but the Safe's transaction for that contract then reverts on the CREATE2 collision and Sphinx marks that chain's deployment failed. Rerun the rehearsal and a new proposal: an existing contract that passes the runtime and binding checks is reused, and only the missing ones are collected.
 
 The build runs with absolute remapping targets, so standard-JSON source names carry the workspace path; the bytecode does not (`bytecode_hash = "none"`).
 

@@ -37,7 +37,7 @@ import {
   type PublicClient,
 } from 'viem'
 import type { FundRulesetSnapshot } from './fund-contracts'
-import { homerunAllowlistHookAbi, registeredAllowlistHook } from './income-contracts'
+import { HOMERUN_SET_ALLOWLIST_PERMISSION_ID, homerunAllowlistHookAbi, registeredAllowlistHook } from './income-contracts'
 import { readVerifiedProject721Hook, UnsupportedProject721HookError } from './fund-hooks'
 
 export type FundAccountingContext = {
@@ -69,6 +69,8 @@ export type FundProjectPermissions = {
   sendPayouts: boolean
   deployErc20: boolean
   setProjectUri: boolean
+  /** `HomerunAllowlistHook.setAllowed` and `setOpen`. */
+  manageAllowlist: boolean
 }
 
 export type FundProjectState = {
@@ -130,6 +132,7 @@ const PERMISSIONS = {
   sendPayouts: JBPermissionIdsV6.SEND_PAYOUTS,
   deployErc20: JBPermissionIdsV6.DEPLOY_ERC20,
   setProjectUri: JBPermissionIdsV6.SET_PROJECT_URI,
+  manageAllowlist: HOMERUN_SET_ALLOWLIST_PERMISSION_ID,
 } as const
 
 function nonzero(address: Address): boolean {

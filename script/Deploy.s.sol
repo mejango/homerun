@@ -17,13 +17,6 @@ contract Deploy is HomerunDeployment, Sphinx {
     error Deploy_UnexpectedSafe(address expected, address actual);
 
     //*********************************************************************//
-    // ------------------------ private constants ------------------------ //
-    //*********************************************************************//
-
-    /// @notice The `homerun` Sphinx project's 1-of-3 `V6 Jango` Safe.
-    address private constant _EXPECTED_SAFE = 0xd5136c794ee43BEf1eD4cF1eB6DEe45b7F803437;
-
-    //*********************************************************************//
     // -------------------- internal stored properties ------------------- //
     //*********************************************************************//
 
@@ -41,17 +34,22 @@ contract Deploy is HomerunDeployment, Sphinx {
         sphinxConfig.testnets = ["ethereum_sepolia", "optimism_sepolia", "base_sepolia", "arbitrum_sepolia"];
     }
 
-    /// @notice Collects only missing deployment transactions and validates every new or reused contract.
+    /// @notice Collects only missing deployment and configuration transactions and validates every new or reused
+    /// contract.
+    /// @dev The Safe is `HOMERUN_CONFIGURATOR`, so it sets the deployer's chain-specific constants in the same
+    /// proposal.
     function deploy() public sphinx {
         HomerunDeploymentAddresses memory deployed = _deploy(_chains);
+        _configure({chains: _chains, deployed: deployed});
         _writeManifest({chains: _chains, deployed: deployed, kind: "simulation"});
     }
 
     /// @notice Validates connected-chain dependencies before collecting the Sphinx proposal.
     function run() public {
         address actualSafe = safeAddress();
-        if (actualSafe != _EXPECTED_SAFE) {
-            revert Deploy_UnexpectedSafe({expected: _EXPECTED_SAFE, actual: actualSafe});
+        // The `homerun` Sphinx project's 1-of-3 `V6 Jango` Safe is the deployer's configurator.
+        if (actualSafe != HOMERUN_CONFIGURATOR) {
+            revert Deploy_UnexpectedSafe({expected: HOMERUN_CONFIGURATOR, actual: actualSafe});
         }
         HomerunChainConfig[] memory chains = _loadChains();
         delete _chains;

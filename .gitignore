@@ -23,3 +23,5 @@ deployments/**/simulation.json
 deployments/**/test.json
 deployments/_test/
 broadcast/
+.solidity-auditor/
+*-pashov-ai-audit-report-*.md
