@@ -14,8 +14,8 @@ import { CENTER_WALLET_CONFIG, CENTER_WALLET_ENABLED } from './wallet-config'
 export function ExternalWalletDialog({ onClose }: { onClose: () => void }) {
   const { connectors, connectWith, isConnected } = useWallet()
   const mobileWallet = useMobileWallet()
-  const [deviceLabel, setDeviceLabel] = useState('Continue with your device')
-  useEffect(() => { setDeviceLabel(passkeyLabel(navigator.userAgent).replace('a passkey', 'your device')) }, [])
+  const [deviceLabel, setDeviceLabel] = useState('Device')
+  useEffect(() => { setDeviceLabel(passkeyLabel(navigator.userAgent).replace(/^Continue with /, '').replace(/^a passkey$/, 'Device')) }, [])
   useEffect(() => {
     const label = () => {
       const dialog = document.querySelector('.jb-connect.homerun-connect')

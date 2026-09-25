@@ -17,8 +17,7 @@ const page = await context.newPage(), errors = []
 page.on('pageerror', error => errors.push(error.name))
 page.setDefaultTimeout(15000)
 const intentId = randomBytes(32).toString('base64url'), code = randomBytes(32).toString('base64url')
-let request, originalExchange, grant, exchanges = 0, launches = 0, held, release, holdExchange, releaseExchange
-const prepared = new Promise(resolve => { held = resolve })
+let request, originalExchange, grant, exchanges = 0, launches = 0, release, holdExchange, releaseExchange
 const continuing = new Promise(resolve => { release = resolve })
 const exchangeStarted = new Promise(resolve => { holdExchange = resolve })
 const continueExchange = new Promise(resolve => { releaseExchange = resolve })
@@ -36,7 +35,7 @@ await context.route(issuer + '/**', async route => {
     assert.equal(request.callbackUri, base + '/center/callback')
     assert.equal(request.origin, base); assert.equal(request.issuer, issuer)
     assert.match(request.requestKey, /^0x[0-9a-f]{40}$/)
-    held(); await continuing
+    await continuing
     return json({ id: intentId, request, state: 'prepared', createdAtMs: Date.now(), expiresAtMs: request.expiresAtMs })
   }
   if (url.pathname === '/wallet') {
@@ -87,6 +86,7 @@ try {
   await page.goto(base + '/founderhaus')
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   await expect(page.locator('.jb-connect-powered')).toHaveText('using Signa')
+  await expect(page.locator('.jb-connect-primary')).toHaveText(/^(Touch ID|Face ID|Windows Hello|Device)$/)
   const close = page.getByRole('button', { name: 'Cancel', exact: true })
   const closeBox = await close.boundingBox(), titleBox = await page.getByRole('heading', { name: 'Sign in', exact: true }).boundingBox()
   const dialogBox = await page.getByRole('dialog').boundingBox()
@@ -100,7 +100,7 @@ try {
   await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeFocused()
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   await page.locator('.jb-connect-primary').click()
-  await prepared
+  await expect.poll(() => request, { timeout: 10000 }).toBeDefined()
   await expect(page.locator('.jb-connect-status')).toHaveText('Connecting, just a sec...')
   await page.getByRole('button', { name: 'Cancel', exact: true }).click()
   release()
