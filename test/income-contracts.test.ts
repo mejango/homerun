@@ -44,7 +44,7 @@ describe('registry lookups', () => {
     expect(registeredIncomeDistributor(8453)).toBe(ADDRESSES.distributor)
     expect(registeredHomerunDeployer(8453)).toBe(ADDRESSES.launcher)
     expect(registeredIncomeDistributor(1)).toBeNull()
-    expect(registeredHomerunDeployer(1)).toBe('0xAC9250654ea223513FfEe25fDB647Dc016873905')
+    expect(registeredHomerunDeployer(1)).toBe('0x19Ce092bc3f9662E40C4670C68ff03C8322D0E76')
     expect(registeredHomerunDeployer(137 as never)).toBeNull()
   })
 })
