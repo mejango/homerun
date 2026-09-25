@@ -115,7 +115,6 @@ describe('the preview of a project that is not created yet', () => {
     expect(host.textContent).toContain('Neighborhood Workshop')
     expect(host.textContent).toContain('Florianópolis')
     expect(host.textContent).toContain('Shared tools that earn revenue through community use.')
-    expect(host.textContent).toContain('Neighborhood Workshop FUND')
     expect(host.textContent).toContain('Base')
     expect(host.textContent).toContain(wallet)
     expect(host.querySelector('img[alt*="cover"]')?.getAttribute('src')).toBe('data:image/jpeg;base64,/9j/previews')

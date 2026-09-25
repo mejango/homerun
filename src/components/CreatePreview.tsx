@@ -197,7 +197,6 @@ export default function CreatePreview() {
     payLabel: 'Available once created',
     panel: <section className="planned-bar" aria-label="Preview">
       <p role="status">{BANNER}</p>
-      <p className="planned-bar-terms">FUND token: {values.fundTokenName} ({values.fundTicker})</p>
       {planned && <p className="planned-bar-terms">{planned}</p>}
       <div className="planned-bar-actions">
         <button type="button" className="create-primary" disabled={publishing} onClick={() => void create(setup)}>{publishing ? 'Publishing your project…' : 'Create'}</button>
