@@ -88,6 +88,10 @@ try {
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   await expect(page.locator('.jb-connect-powered')).toBeHidden()
   await expect(page.locator('.jb-connect-primary')).toHaveText(/^(Touch ID|Face ID|Windows Hello|Device)$/)
+  const primaryBox = await page.locator('.jb-connect-primary').boundingBox()
+  const dividerBox = await page.locator('.jb-connect-divider').boundingBox()
+  assert.ok(primaryBox && dividerBox && dividerBox.y - primaryBox.y - primaryBox.height < 24,
+    'the wallet choices sit close to the primary button')
   const close = page.getByRole('button', { name: 'Cancel', exact: true })
   const closeBox = await close.boundingBox(), titleBox = await page.getByRole('heading', { name: 'Sign in', exact: true }).boundingBox()
   const dialogBox = await page.getByRole('dialog').boundingBox()
