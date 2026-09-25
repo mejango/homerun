@@ -86,6 +86,7 @@ try {
   assert.equal(callback.headers()['referrer-policy'], 'strict-origin')
   await page.goto(base + '/founderhaus')
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  await expect(page.locator('.jb-connect-powered')).toHaveText('with Signa')
   const close = page.getByRole('button', { name: 'Cancel', exact: true })
   const closeBox = await close.boundingBox(), titleBox = await page.getByRole('heading', { name: 'Sign in', exact: true }).boundingBox()
   const dialogBox = await page.getByRole('dialog').boundingBox()

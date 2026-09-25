@@ -16,6 +16,18 @@ export function ExternalWalletDialog({ onClose }: { onClose: () => void }) {
   const mobileWallet = useMobileWallet()
   const [deviceLabel, setDeviceLabel] = useState('Continue with your device')
   useEffect(() => { setDeviceLabel(passkeyLabel(navigator.userAgent).replace('a passkey', 'your device')) }, [])
+  useEffect(() => {
+    const dialog = document.querySelector('.jb-connect.homerun-connect')
+    if (!dialog) return
+    const label = () => {
+      const caption = dialog.querySelector('.jb-connect-powered')
+      if (caption && caption.textContent !== 'with Signa') caption.textContent = 'with Signa'
+    }
+    label()
+    const observer = new MutationObserver(label)
+    observer.observe(dialog, { childList: true, characterData: true, subtree: true })
+    return () => observer.disconnect()
+  }, [])
   const [opener] = useState(() => typeof document !== 'undefined' && document.activeElement instanceof HTMLElement
     ? document.activeElement : null)
   useEffect(() => () => { if (opener?.isConnected) opener.focus({ preventScroll: true }) }, [opener])
