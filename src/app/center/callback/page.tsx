@@ -51,8 +51,8 @@ export default function CenterCallbackPage() {
     })
     return () => { active = false }
   }, [attempt])
-  return <main ref={content} className={`mx-auto max-w-xl px-6 ${framed ? 'flex min-h-40 flex-col justify-center py-6' : 'py-16'}`}><h1 className="font-agrandir text-2xl">Your Signa account</h1>
-    <p role="status" className="mt-5 break-words">{error ?? (delivered ? 'Done. You can close this window.' :'Restoring your wallet and original page…')}</p>
+  return <main ref={content} className={`mx-auto max-w-xl px-6 ${framed ? 'flex min-h-40 flex-col justify-center py-6' : 'py-16'}`}><h1 className="font-agrandir text-2xl">{framed && delivered && !error ? 'All done.' : 'Your Signa account'}</h1>
+    {framed && delivered && !error ? null : <p role="status" className="mt-5 break-words">{error ?? (delivered ? 'Done. You can close this window.' :'Restoring your wallet and original page…')}</p>}
     {error ? <button type="button" className="btn-primary mt-5 px-4 py-3" onClick={() => { setError(null); setAttempt(value => value + 1) }}>Retry</button> : null}
   </main>
 }

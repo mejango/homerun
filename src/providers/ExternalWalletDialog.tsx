@@ -17,15 +17,19 @@ export function ExternalWalletDialog({ onClose }: { onClose: () => void }) {
   const [deviceLabel, setDeviceLabel] = useState('Continue with your device')
   useEffect(() => { setDeviceLabel(passkeyLabel(navigator.userAgent).replace('a passkey', 'your device')) }, [])
   useEffect(() => {
-    const dialog = document.querySelector('.jb-connect.homerun-connect')
-    if (!dialog) return
     const label = () => {
+      const dialog = document.querySelector('.jb-connect.homerun-connect')
+      if (!dialog) return
       const caption = dialog.querySelector('.jb-connect-powered')
-      if (caption && caption.textContent !== 'with Signa') caption.textContent = 'with Signa'
+      if (caption && caption.textContent !== 'using Signa') caption.textContent = 'using Signa'
+      const status = dialog.querySelector('.jb-connect-status')
+      if (status?.textContent === 'Continuing at Juicebox Center…') status.textContent = 'Connecting, just a sec...'
+      const frame = dialog.querySelector('iframe.jb-connect-frame')
+      if (frame?.getAttribute('title') === 'Juicebox Center') frame.setAttribute('title', 'Signa')
     }
     label()
     const observer = new MutationObserver(label)
-    observer.observe(dialog, { childList: true, characterData: true, subtree: true })
+    observer.observe(document.body, { childList: true, characterData: true, subtree: true })
     return () => observer.disconnect()
   }, [])
   const [opener] = useState(() => typeof document !== 'undefined' && document.activeElement instanceof HTMLElement

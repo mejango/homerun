@@ -86,7 +86,7 @@ try {
   assert.equal(callback.headers()['referrer-policy'], 'strict-origin')
   await page.goto(base + '/founderhaus')
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
-  await expect(page.locator('.jb-connect-powered')).toHaveText('with Signa')
+  await expect(page.locator('.jb-connect-powered')).toHaveText('using Signa')
   const close = page.getByRole('button', { name: 'Cancel', exact: true })
   const closeBox = await close.boundingBox(), titleBox = await page.getByRole('heading', { name: 'Sign in', exact: true }).boundingBox()
   const dialogBox = await page.getByRole('dialog').boundingBox()
@@ -101,6 +101,7 @@ try {
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   await page.locator('.jb-connect-primary').click()
   await prepared
+  await expect(page.locator('.jb-connect-status')).toHaveText('Connecting, just a sec...')
   await page.getByRole('button', { name: 'Cancel', exact: true }).click()
   release()
   await expect(page.getByRole('dialog')).toHaveCount(0)
@@ -118,7 +119,7 @@ try {
   await expect(page.getByRole('dialog')).toBeVisible()
   await frame.getByRole('link', { name: 'Return to Homerun' }).click()
   await exchangeStarted
-  await expect(frame.getByRole('status')).toContainText('Done. You can close this window.')
+  await expect(frame.getByRole('heading', { name: 'All done.' })).toBeVisible()
   await expect.poll(() => frame.locator('main').evaluate(node => getComputedStyle(node).paddingTop)).toBe('24px')
   await expect.poll(() => page.locator('iframe[name="juicebox-center-frame"]').evaluate(node => node.getBoundingClientRect().height)).toBeLessThan(200)
   releaseExchange()
