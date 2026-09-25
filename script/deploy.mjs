@@ -122,6 +122,20 @@ export function requireOneAddressPerGroup(group, kind, read = readFileSync) {
   }
 }
 
+// Whether the working sphinx.lock holds exactly the committed content, ignoring key order.
+export function sameLock(spawn = spawnSync, read = readFileSync) {
+  const sorted = value => Array.isArray(value) ? value.map(sorted)
+    : value && typeof value === 'object'
+      ? Object.fromEntries(Object.keys(value).sort().map(key => [key, sorted(value[key])])) : value;
+  const committed = spawn('git', ['show', 'HEAD:sphinx.lock'], { encoding: 'utf8' });
+  try {
+    return committed.status === 0
+      && JSON.stringify(sorted(JSON.parse(committed.stdout))) === JSON.stringify(sorted(JSON.parse(read('sphinx.lock', 'utf8'))));
+  } catch {
+    return false;
+  }
+}
+
 export async function run(action, group, {
   env = process.env, spawn = spawnSync, read = readFileSync, remappings = absoluteRemappings, registry,
 } = {}) {
@@ -153,8 +167,10 @@ export async function run(action, group, {
   if (revision.status !== 0) throw new Error('Cannot record the source revision.');
   const status = spawn('git', ['status', '--porcelain', '--untracked-files=normal'], { encoding: 'utf8' });
   if (status.status !== 0) throw new Error('Cannot inspect the source checkout.');
-  // The runner's own outputs under deployments/ do not make the reviewed source dirty.
-  const dirty = status.stdout.split('\n').some(line => line.trim() && !/^.{3}deployments\//.test(line));
+  // The runner's own outputs under deployments/ do not make the reviewed source dirty, and neither does Sphinx
+  // re-serializing sphinx.lock in a different key order during a proposal.
+  const dirty = status.stdout.split('\n').some(line => line.trim() && !/^.{3}deployments\//.test(line)
+    && !(line.slice(3) === 'sphinx.lock' && sameLock(spawn, read)));
   // Only a committed checkout may reach the Safe or certify a live deployment; rehearsals may carry development changes.
   if (dirty && action !== 'rehearse') throw new Error(`Commit the reviewed checkout before ${action}; it has uncommitted changes.`);
   // A broadcast sends the deployments from a funded key instead of collecting a Safe proposal; the factory makes the

@@ -241,3 +241,31 @@ test('preflight rejects an artifact that disagrees with the SDK registry', () =>
   preflight('mainnets', env, read, () => '0x' + '12'.repeat(20));
   assert.throws(() => preflight('mainnets', env, read, name => name === 'REVDeployer' ? '0x' + '34'.repeat(20) : undefined), /REVDeployer artifact .* differs from the SDK registry/);
 });
+
+test('a sphinx.lock Sphinx only reordered is clean; a changed one is not', async () => {
+  const lock = JSON.parse(readFileSync('sphinx.lock', 'utf8'));
+  const reordered = JSON.stringify(Object.fromEntries(Object.entries(lock).reverse()));
+  const lockGit = (command, args) => {
+    if (command === 'git' && args[0] === 'status') return { status: 0, stdout: ' M sphinx.lock\n' };
+    if (command === 'git' && args[0] === 'show') return { status: 0, stdout: JSON.stringify(lock) };
+    return readOnlyTool(command, args);
+  };
+  const withLock = text => {
+    const setup = fixture('mainnets');
+    return { ...setup, read: file => (file === 'sphinx.lock' ? text : setup.read(file)) };
+  };
+  let attempts = 0;
+  await run('verify', 'mainnets', { ...withLock(reordered), spawn(command, args) {
+    const tool = lockGit(command, args);
+    if (tool) return tool;
+    attempts++;
+    return { status: 0 };
+  } });
+  assert.equal(attempts, 4);
+  await assert.rejects(run('verify', 'mainnets', { ...withLock(JSON.stringify({ ...lock, orgId: 'someone-else' })),
+    spawn(command, args) {
+      const tool = lockGit(command, args);
+      if (tool) return tool;
+      assert.fail('a changed lock must not verify');
+    } }), /uncommitted/);
+});
