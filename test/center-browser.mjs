@@ -83,6 +83,7 @@ try {
   const callback = await context.request.get(base + '/center/callback')
   assert.equal(callback.headers()['cache-control'], 'no-store')
   assert.equal(callback.headers()['referrer-policy'], 'strict-origin')
+  assert.match(await callback.text(), /visibility:hidden/, 'callback content is hidden on the first server-rendered frame')
   await page.goto(base + '/founderhaus')
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   await expect(page.locator('.jb-connect-powered')).toHaveText('using Signa')

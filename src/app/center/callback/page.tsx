@@ -32,11 +32,14 @@ export default function CenterCallbackPage() {
   const [attempt, setAttempt] = useState(0)
   const [delivered, setDelivered] = useState(false)
   const [framed, setFramed] = useState(false)
+  const [contextKnown, setContextKnown] = useState(false)
   const content = useRef<HTMLElement>(null)
   useEffect(() => {
     const main = content.current
-    if (window.parent === window || !main) return
-    setFramed(true)
+    const inFrame = window.parent !== window
+    setFramed(inFrame)
+    setContextKnown(true)
+    if (!inFrame || !main) return
     const report = () => window.parent.postMessage({ type: 'juicebox-center:size',
       height: Math.ceil(main.getBoundingClientRect().height) }, window.location.origin)
     const resize = new ResizeObserver(report)
@@ -51,7 +54,7 @@ export default function CenterCallbackPage() {
     })
     return () => { active = false }
   }, [attempt])
-  return <main ref={content} className={`mx-auto max-w-xl px-6 ${framed ? 'flex min-h-40 flex-col justify-center py-6' : 'py-16'}`}><h1 className="font-agrandir text-2xl">{framed && delivered && !error ? 'All done.' : 'Your Signa account'}</h1>
+  return <main ref={content} style={{ visibility: contextKnown && (!framed || delivered || error) ? 'visible' : 'hidden' }} className={`mx-auto max-w-xl px-6 ${framed ? 'flex min-h-40 flex-col justify-center py-6' : 'py-16'}`}><h1 className="font-agrandir text-2xl">{framed && delivered && !error ? 'All done.' : 'Your Signa account'}</h1>
     {framed && delivered && !error ? null : <p role="status" className="mt-5 break-words">{error ?? (delivered ? 'Done. You can close this window.' :'Restoring your wallet and original page…')}</p>}
     {error ? <button type="button" className="btn-primary mt-5 px-4 py-3" onClick={() => { setError(null); setAttempt(value => value + 1) }}>Retry</button> : null}
   </main>
