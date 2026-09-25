@@ -23,6 +23,7 @@ import { erc2771ForwarderAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import { FUND_CHAIN_IDS, buildFundLaunch, type FundLaunchInput, type FundTransaction } from './fund-contracts'
 import { homerunDeployerAbi } from './income-contracts'
+import { decodeHomerunFundLaunch } from './homerun-fund-launch'
 import { SAFE_FACTORY, multisigCreationData, multisigDeploymentCalls } from './create-multisig'
 
 export const FUND_INTENT_FORMAT = 'homerun.money/fund.v1'
@@ -197,8 +198,9 @@ export function decodeFundIntent(intent: JBCenterIntent): DecodedFundIntent {
   const chainIds = [...grouped.keys()]
   const chains = chainIds.map(chainId => {
     const { setup, launch } = grouped.get(chainId)!
-    if (launch.decoded.flavor !== 'homerun-fund') throw new Error('This project was not created by Homerun.')
-    return { launch: launch.decoded, safes: readSafes(setup) }
+    const decoded = decodeHomerunFundLaunch(launch)
+    if (!decoded) throw new Error('This project was not created by Homerun.')
+    return { launch: decoded, safes: readSafes(setup) }
   })
   const [first] = chains
   const start = Number(first.launch.mustStartAtOrAfter)

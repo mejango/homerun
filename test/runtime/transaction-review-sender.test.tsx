@@ -56,7 +56,7 @@ const sender = (dialog: Element) =>
 
 const call = {
   chainId: 8453,
-  to: '0xAC9250654ea223513FfEe25fDB647Dc016873905' as const,
+  to: '0x19Ce092bc3f9662E40C4670C68ff03C8322D0E76' as const,
   data: '0xdeadbeef' as const,
 }
 
