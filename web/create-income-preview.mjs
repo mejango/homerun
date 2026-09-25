@@ -65,7 +65,7 @@ export function initCreateIncomePreview(container) {
         </ul>
       </div>
       <div class="income-preview-revenue"><span>Revenue received</span><strong data-income-revenue>$0</strong></div>
-      <figcaption id="create-income-preview-note">The Owner receives initial INCOME and Sticky rewards through their FUND share. The Operator receives its ongoing INCOME split. Expenses use the cash reserve first, then Operator token cash-outs. Projections assume all FUND participates in Sticky and rewards are fully vested; weekly reward vesting is not modeled.</figcaption>
+      <figcaption id="create-income-preview-note">The Owner receives initial INCOME and Sticky rewards through their FUND share. The Operator receives its ongoing INCOME split. Expenses use the bootstrap operating budget first, then Operator token cash-outs. Projections assume all FUND participates in Sticky and rewards are fully vested; weekly reward vesting is not modeled.</figcaption>
     </figure>`;
 
   const slider = container.querySelector('#create-income-months');

@@ -47,7 +47,7 @@ export const CREATE_DEFAULTS = Object.freeze({
 const NETWORK_IDS = NETWORK_FAMILIES.map(family => family.id);
 const MONEY_FIELDS = ['purchaseBudget', 'opsReserve', 'monthlyRent', 'monthlyCosts', 'minimumRevenue'];
 const LABELS = {
-  purchaseBudget: 'Asset price', opsReserve: 'Cash reserve', monthlyRent: 'Monthly revenue', minimumRevenue: 'Minimum monthly revenue',
+  purchaseBudget: 'Asset price', opsReserve: 'Bootstrap operating budget', monthlyRent: 'Monthly revenue', minimumRevenue: 'Minimum monthly revenue',
   monthlyCosts: 'Monthly expenses', operatorFundPercent: 'Owner FUND ownership',
   rentGrowthPercent: 'Target revenue growth rate',
   costGrowthPercent: 'Target expense growth rate',

@@ -89,9 +89,9 @@ export function buildDemoActivity(p: Projection): DemoActivityEvent[] {
 
   // Distinct assumptions provide useful older history even before the first contribution.
   setting('scenario', 'Demo scenario prepared', 'This illustrative history follows the project’s modeling inputs.');
-  setting('goal', 'Raise goal modeled', 'The modeled goal includes the purchase, reserve, closing costs and pre-purchase spending.', p.raiseGoal, 'USD');
+  setting('goal', 'Raise goal modeled', 'The modeled goal includes the purchase, operating budget, closing costs and pre-purchase spending.', p.raiseGoal, 'USD');
   setting('asset', 'Asset budget modeled', 'The purchase price is a planning assumption until the asset is bought.', p.purchaseBudget, 'USD');
-  setting('reserve', 'Operating reserve planned', 'This amount is planned for operating costs after a successful purchase.', p.opsReserve, 'USD');
+  setting('reserve', 'Bootstrap operating budget planned', 'This amount is planned for operating costs after a successful purchase.', p.opsReserve, 'USD');
   setting('closing', 'Closing costs estimated', 'Planned closing costs are included in the raise goal.', p.closingCosts, 'USD');
   setting('fee', 'Closing fee estimated', 'The modeled payout fee is included in the amount to raise.', p.closingFeeEstimate, 'USD');
   setting('preclose', 'Pre-purchase spending modeled', `${dollars(p.precloseSpent)} of modeled spending is included in the goal and reduces the available escrow.`);
@@ -144,7 +144,7 @@ export function buildDemoActivity(p: Projection): DemoActivityEvent[] {
     add('asset-purchased', 'purchase', 'Asset purchased', 'The acquisition budget is applied to the asset purchase.', 'Purchase', -p.purchaseBudget, 'USD');
     if (p.closingCosts > 0) add('closing-costs', 'expense', 'Closing costs paid', 'Closing expenses come from the completed raise.', 'Purchase', -p.closingCosts, 'USD');
     if (p.closingFeeEstimate > 0) add('closing-fee', 'expense', 'Closing fee applied', 'The payout fee estimate is accounted for at purchase.', 'Purchase', -p.closingFeeEstimate, 'USD');
-    if (p.opsReserve > 0) add('reserve-funded', 'milestone', 'Operating reserve set aside', `${dollars(p.opsReserve)} is held separately to cover operating costs.`, 'Purchase');
+    if (p.opsReserve > 0) add('reserve-funded', 'milestone', 'Bootstrap operating budget set aside', `${dollars(p.opsReserve)} is held separately to cover operating costs.`, 'Purchase');
     if (p.operatorFundMinted && p.fundOperatorMint > 0) add('operator-fund', 'issuance', 'Operator FUND share issued', `The operator receives the planned ${number(p.operatorFundPercent)}% ownership after purchase.`, 'Purchase', p.fundOperatorMint, 'FUND');
     if (p.revenuePreminted && p.revenuePremint > 0) add('initial-income', 'issuance', 'Initial INCOME allocated', 'The initial modeled INCOME supply is allocated across FUND ownership.', 'Income begins', p.revenuePremint, 'INCOME');
 
@@ -166,12 +166,12 @@ export function buildDemoActivity(p: Projection): DemoActivityEvent[] {
       if (rewards > 0) monthEvent('rewards', 'reward', 'FUND rewards allocated', 'INCOME rewards are allocated to eligible FUND ownership under this model’s reward assumptions.', rewards, 'INCOME');
       const unallocated = row.revStickyUnallocatedTokens - before.revStickyUnallocatedTokens;
       if (unallocated > 0) monthEvent('unallocated', 'reward', 'Reward INCOME remains unallocated', 'These issued rewards have no eligible allocation under the modeled participation assumptions.', unallocated, 'INCOME');
-      if (row.lastOpsFromReserve > 0) monthEvent('reserve', 'expense', 'Reserve covered operating costs', 'The separate operating reserve pays costs before operator INCOME is cashed out.', -row.lastOpsFromReserve, 'USD');
-      if (row.lastOpsCashFromRevnet > 0) monthEvent('operator-cashout', 'cashout', 'Operator INCOME cashed out', 'Net cash after fees covers operating costs that remain after using the reserve.', -row.lastOpsCashFromRevnet, 'USD');
+      if (row.lastOpsFromReserve > 0) monthEvent('reserve', 'expense', 'Operating budget covered costs', 'The separate operating budget pays costs before operator INCOME is cashed out.', -row.lastOpsFromReserve, 'USD');
+      if (row.lastOpsCashFromRevnet > 0) monthEvent('operator-cashout', 'cashout', 'Operator INCOME cashed out', 'Net cash after fees covers operating costs that remain after using the operating budget.', -row.lastOpsCashFromRevnet, 'USD');
       if (row.lastRenterCashout > 0) monthEvent('customer-cashout', 'cashout', 'Customer INCOME cashed out', 'The modeled customer exit exchanges this month’s eligible INCOME allocation for net cash.', -row.lastRenterCashout, 'USD');
       if (row.lastMonthFees > 0) monthEvent('fees', 'expense', 'INCOME cash-out fees applied', 'Combined fees from the modeled operator and customer cash-outs.', -row.lastMonthFees, 'USD');
       const unpaid = Math.round(row.unpaidOps * 100) - Math.round(before.unpaidOps * 100);
-      if (unpaid > 0) monthEvent('unpaid', 'milestone', 'Operating costs remain unpaid', `${dollars(unpaid / 100)} of this month’s costs could not be covered by the reserve or operator cash-out.`);
+      if (unpaid > 0) monthEvent('unpaid', 'milestone', 'Operating costs remain unpaid', `${dollars(unpaid / 100)} of this month’s costs could not be covered by the operating budget or operator cash-out.`);
     }
     if (p.monthsApplied > 0 && monthlyEvents === 0) add('income-checkpoint', 'milestone', `Income modeled through month ${p.monthsApplied}`, 'No revenue receipts, expense payments or reward allocations occur under the selected assumptions.', `Month ${p.monthsApplied}`);
   }
@@ -181,7 +181,7 @@ export function buildDemoActivity(p: Projection): DemoActivityEvent[] {
     if (p.saleCostEstimate > 0) add('sale-costs', 'sale', 'Sale costs accounted for', `${dollars(p.saleCostEstimate)} is deducted in the sale settlement calculation.`, 'Asset sale');
     if (p.saleDebt > 0) add('sale-debt', 'sale', 'Debt accounted for at sale', `${dollars(p.saleDebt)} is included in the settlement calculation; this is not a separate modeled repayment.`, 'Asset sale');
     if (p.unpaidOps > 0) add('sale-unpaid', 'sale', 'Unpaid operating costs accounted for', `${dollars(p.unpaidOps)} is deducted in the sale settlement calculation.`, 'Asset sale');
-    if (p.reserveReturnedToFund > 0) add('sale-reserve', 'sale', 'Unused reserve included in settlement', `${dollars(p.reserveReturnedToFund)} is already included in the final FUND balance.`, 'Asset sale');
+    if (p.reserveReturnedToFund > 0) add('sale-reserve', 'sale', 'Unused operating budget included in settlement', `${dollars(p.reserveReturnedToFund)} is already included in the final FUND balance.`, 'Asset sale');
     add('sale-settlement', 'sale', p.fundSaleCash > 0 ? 'Sale proceeds available to FUND' : 'No distributable sale proceeds remain', 'The modeled FUND settlement is available to holders; individual sale claims are not simulated.', 'Asset sale', p.fundSaleCash, 'USD');
   }
 

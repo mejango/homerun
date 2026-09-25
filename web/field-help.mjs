@@ -1,14 +1,14 @@
 /** Plain-language explanations for the simulator's editable assumptions. */
 export const FIELD_HELP = Object.freeze({
-  purchaseBudget: 'The amount needed to buy the asset. The fundraising goal also includes the cash reserve, purchase costs, and assumed payout fee.',
-  opsReserve: 'Extra cash raised to help pay operating expenses while income builds up. Any unused reserve is shared with FUND holders if the asset is sold.',
+  purchaseBudget: 'The amount needed to buy the asset. The fundraising goal also includes the bootstrap operating budget, purchase costs, and assumed payout fee.',
+  opsReserve: 'Extra cash raised to help pay operating expenses while income builds up. Any unused budget is shared with FUND holders if the asset is sold.',
   monthlyRent: 'Total revenue expected each month in year one, before operating expenses. Annual revenue growth changes this amount in later years.',
   monthlyCosts: 'Money needed each month in year one to run the asset, including maintenance, taxes, insurance and management.',
   raisedPercent: 'How much of the total fundraising goal has been contributed so far. Changing this only previews a stage of the raise.',
   revenueMonths: 'How many months of revenue to include after the asset purchase. In the sale preview, this is also the month the asset is sold.',
   closingCosts: 'Additional costs paid when buying the asset, beyond its price. These increase the fundraising goal.',
   precloseSpent: 'Money already spent from investor contributions before the purchase. It increases the total amount that must be raised and reduces the cash left for refunds if the raise fails.',
-  payoutFeePercent: 'The assumed Juicebox fee on money paid out at closing; the actual fee depends on how the payment is sent. The goal increases to cover it so the asset, reserve, and purchase costs receive their planned amounts.',
+  payoutFeePercent: 'The assumed Juicebox fee on money paid out at closing; the actual fee depends on how the payment is sent. The goal increases to cover it so the asset, operating budget, and purchase costs receive their planned amounts.',
   operatorFundPercent: 'The operator’s share of all FUND after the purchase completes. At 20%, investors hold the other 80% of the claim on net asset-sale cash.',
   revenuePremint: 'Total INCOME tokens created once when the asset purchase completes. They are divided among all FUND holders, including the operator, and do not represent cash already earned.',
   stickySplitPercent: 'Share of new INCOME automatically allocated to FUND holders in proportion to their holdings. No staking is required.',

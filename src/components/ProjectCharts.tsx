@@ -53,7 +53,7 @@ export function BudgetChart({ projection: p }: ChartProps) {
   const [selected, setSelected] = useState<number | null>(null);
   const parts = [
     { name: 'Asset', value: p.purchaseBudget, kind: 'house' },
-    { name: 'Cash reserve', value: p.opsReserve, kind: 'reserve' },
+    { name: 'Bootstrap operating budget', value: p.opsReserve, kind: 'reserve' },
     { name: 'Fees & expenses', value: Math.max(0, Math.round((p.raiseGoal - p.purchaseBudget - p.opsReserve) * 100) / 100), kind: 'expenses' },
   ];
   const share = (value: number) => p.raiseGoal > 0 ? value / p.raiseGoal * 100 : 0;
@@ -187,8 +187,8 @@ function HistoryChart({ projection: p, title, series, note, kind }: ChartProps &
 
 export function CashHistoryChart({ projection }: ChartProps) {
   return <HistoryChart projection={projection} title="Cash over time" kind="cash"
-    series={[{ key: 'revCash', name: 'Revenue held' }, { key: 'opsReserveCash', name: 'Cash reserve' }]}
-    note={projection.phase === 'liquidated' ? 'History ends before the sale; unused reserve then returns to FUND holders.' : 'Two separate pools. The reserve pays asset expenses.'} />;
+    series={[{ key: 'revCash', name: 'Revenue held' }, { key: 'opsReserveCash', name: 'Operating budget' }]}
+    note={projection.phase === 'liquidated' ? 'History ends before the sale; unused operating budget then returns to FUND holders.' : 'Two separate pools. The operating budget pays asset expenses.'} />;
 }
 
 export function BorrowingChart({ projection }: ChartProps) {

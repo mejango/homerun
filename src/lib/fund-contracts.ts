@@ -114,7 +114,7 @@ export function initialFundRuleset(mustStartAtOrAfter = 0): JBRulesetConfig {
       reservedPercent: 0,
       allowOwnerMinting: false,
     }),
-    // Asset price and cash reserve are modeling values, never withdrawal rights.
+    // Asset price and operating budget are modeling values, never withdrawal rights.
     splitGroups: [],
     fundAccessLimitGroups: [],
   })

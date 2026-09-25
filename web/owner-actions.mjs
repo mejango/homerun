@@ -313,7 +313,7 @@ export function ownerActionDraft(action, projection) {
   }
   if (action === 'close_raise' || action === 'complete_purchase') {
     if (projection.escrowCash + 0.000001 < grossClosingBudget) {
-      draft.blockedReasons.push('Current escrow cash cannot cover the purchase plus operating reserve after the assumed payout fee.');
+      draft.blockedReasons.push('Current escrow cash cannot cover the purchase plus operating budget after the assumed payout fee.');
     }
     if (projection.raiseGoal + 0.000001 < grossClosingBudget + projection.precloseSpent) {
       draft.blockedReasons.push('The configured raise goal does not cover both prior gross spending and the gross closing budget.');
@@ -335,7 +335,7 @@ export function ownerActionDraft(action, projection) {
       releasesPurchaseCash: false,
     };
     draft.steps = [
-      step('verify_closing_budget', 'Verify the funds and commitment', 'Confirm the purchase terms, remaining cash, fee budget and operating reserve before committing to a closing.'),
+      step('verify_closing_budget', 'Verify the funds and commitment', 'Confirm the purchase terms, remaining cash, fee budget and operating budget before committing to a closing.'),
       step('queue_commitment', 'Queue the committed-closing ruleset', 'Pause payments and set the cash-out tax to 10000/10000. Replace existing payout limits with the reviewed gross closing reservation; do not add it on top of a prior operating reservation. Remove surplus-withdrawal allowances.', { rulesetMetadata: metadata(10_000), fundAccess: draft.changes.fundAccess }),
       step('verify_activation', 'Wait for activation and recheck balances', 'Confirm the ruleset is active and the full cash remains available before signing an off-chain purchase commitment. This draft performs no purchase payout.'),
     ];
@@ -432,7 +432,7 @@ export function ownerActionDraft(action, projection) {
     draft.warnings.push('Temporarily enabling owner minting creates an owner-controlled mint window. Queueing, minting, freezing and snapshotting are not automatically atomic or one-time.');
     draft.warnings.push('Standard FH-FUND ERC20 transfers can continue. Ownership at the disclosed finalized snapshot determines the initial FH-INCOME allocation; later FUND transfers do not repeat that initial allocation.');
     draft.warnings.push('Revenue stage percentages split newly issued INCOME tokens, not cash revenue. The quoted issuance price is not a cash-out floor or guaranteed redemption price.');
-    draft.warnings.push('The closing premint gives an early ownership share, not senior repayment priority. Investors also finance the startup operating reserve; operators can use their available FUND rewards as well as their other INCOME for expenses.');
+    draft.warnings.push('The closing premint gives an early ownership share, not senior repayment priority. Investors also finance the bootstrap operating budget; operators can use their available FUND rewards as well as their other INCOME for expenses.');
     if (holderRewards) {
       draft.warnings.push('Automatic holder rewards are an unimplemented integration specification. The model assumes fixed FUND holdings and immediate delivery; it does not prove live transfer accounting or distribution correctness.');
     } else {

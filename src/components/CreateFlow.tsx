@@ -407,7 +407,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
               <fieldset className="create-operator-profile"><legend>Operator</legend>
                 <ul className="create-help create-role-description">
                   <li>The operator is the current entity that runs the show day to day.</li>
-                  <li>The operator owns the initial cash reserve and receives revenue split tokens. The owner can replace this recipient.</li>
+                  <li>The operator owns the bootstrap operating budget and receives revenue split tokens. The owner can replace this recipient.</li>
                 </ul>
                 <label className="create-owner-operator"><input type="checkbox" checked={raw.ownerIsOperator === true} onChange={event => update('ownerIsOperator', event.target.checked)} /> Operator same as owner</label>
                 {!raw.ownerIsOperator && <>{multisig('operator')}
@@ -427,13 +427,13 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
               <div className="fundraise-inputs">
                 <fieldset className="income-field-group modeling-inputs fundraise-modeling" aria-describedby="fundraise-modeling-note"><legend>Modeling inputs</legend>
                   <p id="fundraise-modeling-note" className="input-purpose-note">Budget assumptions for the raise goal. These do not set contract withdrawal allowances.</p>
-                  <div className="income-inputs">{field('purchaseBudget', 'Asset price', { prefix: '$' })}{field('opsReserve', 'Cash reserve', { prefix: '$', help: 'Cash set aside to cover operating expenses.' })}{field('operatorFundPercent', 'Owner FUND ownership', { suffix: '%', help: 'Allocated to the Owner after a successful purchase. The Owner may distribute these tokens to the Operator at their discretion.' })}</div>
+                  <div className="income-inputs">{field('purchaseBudget', 'Asset price', { prefix: '$' })}{field('opsReserve', 'Bootstrap operating budget', { prefix: '$', help: 'Cash set aside to cover operating expenses.' })}{field('operatorFundPercent', 'Owner FUND ownership', { suffix: '%', help: 'Allocated to the Owner after a successful purchase. The Owner may distribute these tokens to the Operator at their discretion.' })}</div>
                 </fieldset>
                 <fieldset className="income-field-group fundraise-contract"><legend>Contractual settings</legend>
                   <div className="income-inputs token-inputs">{field('fundTokenName', 'FUND token name', { placeholder: 'e.g. Workshop FUND', maxLength: 32, help: 'Blank uses the project title.' })}{field('fundTicker', 'FUND ticker', { placeholder: 'FUND', maxLength: 12, help: 'Deployed with the project as its ERC-20 symbol.' })}</div>
                 </fieldset>
                 <div className="create-callout fundraise-goal"><span>Total fundraising goal</span><strong id="create-raise-goal">{summary ? money(summary.raiseGoal) : '—'}</strong>
-                  <p id="create-fee-note">{summary ? `Includes ${money(summary.values.purchaseBudget)} for the asset, ${money(summary.values.opsReserve)} in reserve, and ${money(Math.round((summary.raiseGoal - summary.values.purchaseBudget - summary.values.opsReserve) * 100) / 100)} in assumed payout fees.` : 'Complete the asset and funding inputs to calculate the goal.'}</p>
+                  <p id="create-fee-note">{summary ? `Includes ${money(summary.values.purchaseBudget)} for the asset, ${money(summary.values.opsReserve)} for the bootstrap operating budget, and ${money(Math.round((summary.raiseGoal - summary.values.purchaseBudget - summary.values.opsReserve) * 100) / 100)} in assumed payout fees.` : 'Complete the asset and funding inputs to calculate the goal.'}</p>
                 </div>
                 <div className="create-callout fundraise-ownership"><span>FUND ownership after purchase</span>
                   <div id="create-fund-pie" className="fund-ownership-pie" role="img"

@@ -173,7 +173,7 @@ export function projectNetwork(inputs = {}, phase = 'raising') {
   const isClosed = CLOSED.has(phase);
   const isRefund = phase === 'refunding' || phase === 'refunded';
   const netClosingBudget = cents.purchaseBudget + cents.opsReserve + cents.closingCosts;
-  if (netClosingBudget <= 0) throw new RangeError('The purchase, operating reserve, and closing budget must total more than zero.');
+  if (netClosingBudget <= 0) throw new RangeError('The purchase, operating budget, and closing budget must total more than zero.');
   const closingGross = safeCents('Closing gross requirement', ceil(netClosingBudget / (1 - config.payoutFeePercent / 100)));
   const raiseGoal = safeCents('Raise goal', closingGross + cents.precloseSpent);
   const raised = phase === 'raising' || isRefund

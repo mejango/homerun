@@ -708,18 +708,18 @@ function ReserveStress({
   ] as const;
   return (
     <details className="holder-choices" id="reserve-stress">
-      <summary>Can the reserve cover operations?</summary>
+      <summary>Can the operating budget cover operations?</summary>
       <p>
         This tests every month through month {p.diagnosticHorizonMonths}, using
         your asset estimates and token terms.
       </p>
       <div className="stress-table-wrap">
         <table className="stress-table">
-          <caption>Operating reserve scenarios</caption>
+          <caption>Operating budget scenarios</caption>
           <thead>
             <tr>
               <th scope="col">Assumptions</th>
-              <th scope="col">Lowest reserve</th>
+              <th scope="col">Lowest operating budget</th>
               <th scope="col">Cost coverage</th>
             </tr>
           </thead>
@@ -788,7 +788,7 @@ function TokenTerms({ p }: { p: Projection }) {
       <p>
         New INCOME per revenue dollar falls {percent(p.issuanceCutPercent)}{" "}
         every {p.issuanceCutMonths} months for {p.issuanceCutYears} years, then
-        stays fixed. This model uses the reserve first, then operator cash-outs
+        stays fixed. This model uses the bootstrap operating budget first, then operator cash-outs
         for expenses, and assumes all FUND participates in Sticky with full
         snapshot eligibility and fully vested rewards. Stock Sticky uses
         proportional share-balance snapshots, with four weekly vesting rounds
@@ -872,7 +872,7 @@ function PhasePanel({
     refunded: ["Refunds complete.", "No asset was purchased."],
     earning: [
       "Collect revenue. Pay the bills.",
-      "Revenue comes in. Expenses use the cash reserve first, then operator INCOME cash-outs.",
+      "Revenue comes in. Expenses use the bootstrap operating budget first, then operator INCOME cash-outs.",
     ],
     liquidated: [
       "Sell the asset. Share the proceeds.",
@@ -967,13 +967,13 @@ function PhasePanel({
           </div>
           {!sold && (
             <div className="reserve-line">
-              <span>Reserve left</span>
+              <span>Operating budget left</span>
               <strong id="ops-reserve-cash">{money(p.opsReserveCash)}</strong>
             </div>
           )}
           {p.unpaidOps > 0 && (
             <p className="scenario-caution">
-              {money(p.unpaidOps)} of costs remain unpaid. The reserve is
+              {money(p.unpaidOps)} of costs remain unpaid. The operating budget is
               exhausted.
             </p>
           )}
@@ -999,7 +999,7 @@ function PhasePanel({
               </div>
               <p>
                 The modeled goal covers the {money(p.purchaseBudget)} purchase,{" "}
-                {money(p.opsReserve)} separate operating reserve, purchase
+                {money(p.opsReserve)} bootstrap operating budget, purchase
                 expenses and an assumed {percent(p.payoutFeePercent)} payout
                 fee. These assumptions do not configure withdrawal allowances.
                 Failed raises return remaining cash.
@@ -1054,7 +1054,7 @@ function PhasePanel({
                 </div>
                 <span aria-hidden="true">+</span>
                 <div>
-                  <span>Reserve used</span>
+                  <span>Operating budget used</span>
                   <strong id="ops-reserve-used">
                     {money(p.lastOpsFromReserve)}
                   </strong>
@@ -1067,7 +1067,7 @@ function PhasePanel({
           {sold && (
             <p>
               Assumes {percent(p.saleCostPercent)} selling expenses. Sale cash
-              includes {money(p.reserveReturnedToFund)} of unused reserve.
+              includes {money(p.reserveReturnedToFund)} of unused operating budget.
               Unpaid operating expenses are deducted. Existing INCOME remains
               separate.
             </p>
@@ -1967,7 +1967,7 @@ function DemoOutlook({ p, inputs }: { p: Projection; inputs: NetworkInputs }) {
               <dd>{money(future.revCash)}</dd>
             </div>
             <div>
-              <dt>Cash reserve left</dt>
+              <dt>Operating budget left</dt>
               <dd>{money(future.opsReserveCash)}</dd>
             </div>
           </dl>
@@ -2455,7 +2455,7 @@ export function DemoProjectPage({ project, planned }: { project?: CreatedProject
                             min: 0.01,
                             currency: true,
                           })}
-                          {field("opsReserve", "Cash reserve", {
+                          {field("opsReserve", "Bootstrap operating budget", {
                             currency: true,
                           })}
                           {field("monthlyRent", "Monthly revenue", {

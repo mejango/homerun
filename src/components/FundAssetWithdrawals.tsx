@@ -231,7 +231,7 @@ export function FundAssetWithdrawals({ state, client, contextIndex, onConfigureA
   const inputClass = 'min-h-12 w-full rounded border border-[#bfc9b5] bg-white px-3 text-base'
   return <section className="grid gap-4 border-t border-[#c4cdbb] pt-5" aria-labelledby="fund-asset-withdrawals">
     <h3 id="fund-asset-withdrawals" className="text-xl">Pay for the asset</h3>
-    <p className="text-sm">Close fundraising and FUND cash-outs, then set an explicit purchase allowance. The allowance is a contract withdrawal limit. The asset price and cash reserve in the model do not authorize spending.</p>
+    <p className="text-sm">Close fundraising and FUND cash-outs, then set an explicit purchase allowance. The allowance is a contract withdrawal limit. The asset price and bootstrap operating budget in the model do not authorize spending.</p>
     {!closed && <p role="status" className="text-sm">The active contract rules must close both contributions and cash-outs before purchase withdrawals are available.</p>}
     {context ? <>
       <dl className="grid gap-3 rounded border border-[#c4cdbb] p-4 text-sm sm:grid-cols-3">
