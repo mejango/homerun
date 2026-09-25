@@ -35,7 +35,6 @@ describe('contextual project action placement', () => {
         expect(entry?.section).toBe('accounts')
         expect(entry?.href).toBe('#owners/accounts')
       }
-      expect(projectActionsFor(stage, 'market')).toEqual({ primary: [], other: [] })
     }
     for (const { id: stage } of transactionStages) {
       expect(projectActionsFor(stage, 'stages').primary.some(entry => ['contribute', 'income-pay', 'fund-cashout', 'refund', 'sale-claim'].includes(entry.id))).toBe(false)
@@ -49,7 +48,7 @@ describe('contextual project action placement', () => {
     expect(ids('funded')).toEqual(['pause', 'withdraw', 'offchain'])
     expect(ids('raising', false)).toEqual(['pause', 'fail', 'return'])
     for (const id of ['withdraw', 'offchain']) expect(transactionCatalog.find(entry => entry.id === id)?.stages).not.toContain('raising')
-    for (const section of ['operators', 'accounts', 'market'] as const) {
+    for (const section of ['operators', 'accounts'] as const) {
       expect(projectActionsFor('raising', section, true)).toEqual(projectActionsFor('raising', section, false))
     }
   })

@@ -27,7 +27,7 @@ export function LiveProjectActions(props: Props) {
   if (props.token === 'FUND') {
     const { paymentsPaused, cashOutsEnabled, mintingEnabled, hasLinkedIncome } = props.state
     actions.push({ label: 'Use FUND', href: '#owners/accounts' })
-    if (cashOutsEnabled) actions.push({ label: 'Cash out FUND', href: '#owners/market' })
+    if (cashOutsEnabled) actions.push({ label: 'Cash out FUND', href: '#owners/accounts' })
     if (hasLinkedIncome) actions.push({ label: 'Check initial INCOME allocation', href: '#owners/accounts' })
     actions.push({ label: 'Manage contributions', href: '#operators' })
     if (paymentsPaused && !cashOutsEnabled) actions.push({ label: 'Manage treasury withdrawals', href: '#operators' })
@@ -35,7 +35,7 @@ export function LiveProjectActions(props: Props) {
   } else {
     actions.push({ label: 'Use INCOME', href: '#owners/accounts' })
     if (props.state.hasInitialAllocation) actions.push({ label: 'Check initial INCOME allocation', href: '#owners/accounts' })
-    if (props.state.cashOutsEnabled) actions.push({ label: 'Cash out INCOME', href: '#owners/market' })
+    if (props.state.cashOutsEnabled) actions.push({ label: 'Cash out INCOME', href: '#owners/accounts' })
     actions.push({ label: 'Manage loans', href: '#owners/loans' })
     actions.push({ label: 'Distribute allocations', href: '#owners/splits' })
   }

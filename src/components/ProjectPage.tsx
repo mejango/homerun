@@ -2058,7 +2058,6 @@ function DemoOwners({
           unavailable
         )
       }
-      market={null}
       settlement={
         <section className="demo-section">
           <h2>Settlement</h2>

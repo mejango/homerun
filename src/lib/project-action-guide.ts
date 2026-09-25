@@ -1,6 +1,6 @@
 import { transactionCatalog, transactionRoles, type TransactionStage } from './transaction-catalog'
 
-export type ProjectActionSection = 'stages' | 'accounts' | 'market' | 'settlement' | 'splits' | 'loans' | 'operators'
+export type ProjectActionSection = 'stages' | 'accounts' | 'settlement' | 'splits' | 'loans' | 'operators'
 type CatalogEntry = (typeof transactionCatalog)[number]
 export type ProjectGuideAction = CatalogEntry & {
   section: ProjectActionSection
@@ -11,7 +11,6 @@ export type ProjectGuideAction = CatalogEntry & {
 export const projectActionSections: Record<ProjectActionSection, { title: string; tabLabel: string; href: string }> = {
   stages: { title: 'Next actions', tabLabel: 'Payment panel', href: '#pay-panel' },
   accounts: { title: 'Account actions', tabLabel: 'Accounts', href: '#owners/accounts' },
-  market: { title: 'Cash-out actions', tabLabel: 'Market', href: '#owners/market' },
   settlement: { title: 'Bridge actions', tabLabel: 'Settlement', href: '#owners/settlement' },
   splits: { title: 'Income distributions', tabLabel: 'Splits', href: '#owners/splits' },
   loans: { title: 'Loan actions', tabLabel: 'Loans', href: '#owners/loans' },
@@ -22,7 +21,6 @@ export const projectActionSections: Record<ProjectActionSection, { title: string
 export const projectActionIds: Record<ProjectActionSection, readonly string[]> = {
   stages: ['contribute', 'income-pay'],
   accounts: ['fund-cashout', 'refund', 'sale-claim', 'income-cashout', 'fund-credit', 'fund-transfer', 'fund-burn', 'initial-income', 'stake', 'unstake', 'vest', 'collect', 'income-credit', 'income-transfer', 'income-burn'],
-  market: [],
   settlement: ['fund-bridge', 'income-bridge'],
   splits: ['reserved', 'scheduled'],
   loans: ['borrow', 'repay', 'refinance', 'transfer-loan'],
@@ -51,7 +49,6 @@ const operatorOrder: Record<TransactionStage, readonly string[]> = {
 
 const primaryIds: Partial<Record<ProjectActionSection, readonly string[]>> = {
   accounts: ['initial-income', 'collect', 'stake', 'fund-credit', 'fund-transfer', 'income-credit', 'income-transfer'],
-  market: [],
   settlement: ['fund-bridge', 'income-bridge'],
   splits: ['reserved'],
   loans: ['borrow', 'repay'],

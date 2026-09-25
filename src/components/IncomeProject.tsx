@@ -111,7 +111,6 @@ export type IncomeProjectSlots = {
   stages: ReactNode
   accountsYou: ReactNode
   accountsAll: ReactNode
-  market: ReactNode
   settlement: ReactNode
   splits: ReactNode
   loans: ReactNode
@@ -167,7 +166,7 @@ export function IncomeProject({ chainId, projectId, fundProjectId }: { chainId: 
     activity={slots.activity}
     overview={<StandaloneIncomeOverview chainId={chainId} slots={slots} />}
     stages={slots.stages}
-    owners={<OwnersTabs accountsYou={slots.accountsYou} accountsAll={slots.accountsAll} market={slots.market} settlement={slots.settlement} splits={slots.splits} loans={slots.loans} control={slots.control} permissions={slots.permissions} />}
+    owners={<OwnersTabs accountsYou={slots.accountsYou} accountsAll={slots.accountsAll} settlement={slots.settlement} splits={slots.splits} loans={slots.loans} control={slots.control} permissions={slots.permissions} />}
     shop={slots.shop}
     extras={slots.extras}
     operators={<div className="grid gap-7">{slots.operators}<Panel title="INCOME administration"><p>INCOME follows its deployed revnet schedule. Allocations and loan operations are available to their beneficiaries under Owners.</p>{slots.fundProjectId && <a className="mt-4 inline-block underline" href={`/project/${chainId}/${slots.fundProjectId}`}>Open FUND Owner controls →</a>}</Panel></div>}
@@ -231,9 +230,8 @@ function IncomeActions({ state, client, fundProjectId, writesUnavailable, bindin
     activity: projectId && <ProjectActivity chainId={chainId} projectId={projectId} />,
     overview: state && <Panel title="Revenue"><dl className="grid gap-5 sm:grid-cols-2"><div><dt>INCOME supply</dt><dd><DisplayTokenAmount value={state.totalSupply} /> INCOME</dd></div><div><dt>Payments</dt><dd>{state.metadata.pausePay ? 'Paused' : 'Open'}</dd></div>{state.accountingContexts.map(item => <div key={`${item.terminal}:${item.token}`}><dt>Treasury</dt><dd><DisplayTokenAmount value={item.balance} decimals={item.decimals} /> {item.symbol}</dd></div>)}</dl><p className="mt-4 text-sm">Verified at block {state.blockNumber.toString()}. INCOME is separate from FUND and does not grant an asset-sale claim.</p></Panel>,
     stages: state && <div className="grid gap-7"><LiveProjectActions token="INCOME" state={{cashOutsEnabled: state.cashOutsAvailable, hasInitialAllocation: !!fundProjectId}} /><Panel title="INCOME schedule"><dl className="grid gap-4"><div><dt>Current ruleset</dt><dd>{state.ruleset.id.toString()}</dd></div><div><dt>Started</dt><dd>{new Date(Number(state.ruleset.start) * 1_000).toLocaleString()}</dd></div><div><dt>Cash-outs and loans</dt><dd>{state.cashOutsAvailable ? 'Available under the current contract terms' : `Unlock ${new Date(Number(state.cashOutDelay) * 1_000).toLocaleString()}`}</dd></div></dl><p className="mt-4">Initial INCOME allocations and ongoing Sticky rewards are separate. Sticky rewards vest in four weekly rounds after a claim is materialized.</p></Panel></div>,
-    accountsYou: gate(ready && <><Panel title="Your INCOME"><p className="break-words text-2xl"><DisplayTokenAmount value={state.totalBalance} /> INCOME</p><p className="mt-2 text-sm"><DisplayTokenAmount value={state.creditBalance} /> credits / <DisplayTokenAmount value={state.erc20Balance} /> ERC-20 tokens</p></Panel><IncomeTokenActions state={state} client={client} />{fundProjectId && <InitialIncomeMint chainId={state.chainId} fundProjectId={fundProjectId} incomeProjectId={state.projectId} manifestUri={details?.incomeManifestUri ?? null} />}<IncomeHolderRewards state={state} client={client} fundProjectId={fundProjectId} /></>),
+    accountsYou: gate(ready && <><Panel title="Your INCOME"><p className="break-words text-2xl"><DisplayTokenAmount value={state.totalBalance} /> INCOME</p><p className="mt-2 text-sm"><DisplayTokenAmount value={state.creditBalance} /> credits / <DisplayTokenAmount value={state.erc20Balance} /> ERC-20 tokens</p></Panel><IncomeTokenActions state={state} client={client} />{fundProjectId && <InitialIncomeMint chainId={state.chainId} fundProjectId={fundProjectId} incomeProjectId={state.projectId} manifestUri={details?.incomeManifestUri ?? null} />}<IncomeHolderRewards state={state} client={client} fundProjectId={fundProjectId} />{context && <>{currency}<IncomeCashOut state={state} client={client} context={context} /></>}</>),
     accountsAll: projectId && <ProjectParticipants chainId={chainId} projectId={projectId} tokenLabel="INCOME" />,
-    market: gate(ready && context && <>{currency}<IncomeCashOut state={state} client={client} context={context} /></>),
     settlement: gate(ready && <IncomeBridgeActions state={state} />),
     splits: <div className="grid gap-7">{ready && <ProjectSplitsEditor chainId={chainId} projectId={state.projectId} phase="income" client={client} unavailable={writesUnavailable} />}{gate(ready && <><IncomeReservedTokens state={state} client={client} /><IncomeAutoIssue state={state} client={client} /></>)}</div>,
     loans: gate(ready && <>{currency}{context && <IncomeBorrow state={state} client={client} context={context} />}<IncomeRepay state={state} client={client} /><IncomeLoanTools state={state} client={client} /></>),

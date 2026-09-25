@@ -4,7 +4,7 @@ import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type
 import { ProjectOverflowIcon, ProjectTabIcon } from './ProjectTabIcon'
 
 export type ProjectTab = 'overview' | 'stages' | 'owners' | 'shop' | 'extras' | 'operators'
-type OwnerTab = 'accounts' | 'market' | 'settlement' | 'splits' | 'loans' | 'control' | 'permissions'
+type OwnerTab = 'accounts' | 'settlement' | 'splits' | 'loans' | 'control' | 'permissions'
 type NavigationTab = ProjectTab | 'activity'
 
 const PROJECT_TABS: { key: ProjectTab; label: string }[] = [
@@ -17,7 +17,6 @@ const PROJECT_TABS: { key: ProjectTab; label: string }[] = [
 ]
 const OWNER_TABS: { key: OwnerTab; label: string }[] = [
   { key: 'accounts', label: 'Accounts' },
-  { key: 'market', label: 'Market' },
   { key: 'settlement', label: 'Settlement' },
   { key: 'splits', label: 'Splits' },
   { key: 'loans', label: 'Loans' },
@@ -288,11 +287,10 @@ export function HomerunProjectLayout({
   )
 }
 
-/** Both token types share the same account, market and settlement navigation. */
-export function OwnersTabs({ accountsYou, accountsAll, market, settlement, splits, loans, control, permissions }: {
+/** Both token types share the same account and settlement navigation. */
+export function OwnersTabs({ accountsYou, accountsAll, settlement, splits, loans, control, permissions }: {
   accountsYou: ReactNode
   accountsAll: ReactNode
-  market: ReactNode
   settlement: ReactNode
   splits: ReactNode
   loans: ReactNode
@@ -303,10 +301,9 @@ export function OwnersTabs({ accountsYou, accountsAll, market, settlement, split
   const [selected, setSelected] = useState<OwnerTab>('accounts')
   const visited = useRef(new Set<OwnerTab>())
   visited.current.add(selected)
-  const hasMarket = market !== undefined && market !== null
   const hasControl = control !== undefined && control !== null
   const hasPermissions = permissions !== undefined && permissions !== null
-  const tabs = useMemo(() => OWNER_TABS.filter(item => item.key === 'market' ? hasMarket : item.key === 'control' ? hasControl : item.key === 'permissions' ? hasPermissions : true), [hasMarket, hasControl, hasPermissions])
+  const tabs = useMemo(() => OWNER_TABS.filter(item => item.key === 'control' ? hasControl : item.key === 'permissions' ? hasPermissions : true), [hasControl, hasPermissions])
 
   useNavigationListener(() => {
     // Older /accounts/you and /accounts/all links both open the full account view.
@@ -328,7 +325,7 @@ export function OwnersTabs({ accountsYou, accountsAll, market, settlement, split
       <div className="hpl-account-section" data-account-section="you">{accountsYou}</div>
       <div className="hpl-account-section" data-account-section="all">{accountsAll}</div>
     </div>,
-    market, settlement, splits, loans, control, permissions,
+    settlement, splits, loans, control, permissions,
   }
   return <div className="hpl-owners">
     <TabStrip id={id} label="Ownership sections" tabs={tabs} active={selected} onSelect={chooseOwner} level="owners" />

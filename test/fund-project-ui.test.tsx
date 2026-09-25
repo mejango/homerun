@@ -141,8 +141,16 @@ describe('live FUND transaction tracking survives refreshed data', () => {
   }
   async function render(props: { intentId?: string } = {}) {
     await act(async () => root.render(<FundProject chainId={1} projectId="7" {...props} />))
-    for (const label of ['Owners', 'Market', 'Settlement', 'Operators', 'Overview']) await tab(label)
+    for (const label of ['Owners', 'Accounts', 'Settlement', 'Operators', 'Overview']) await tab(label)
   }
+
+  it('keeps FUND cash-out under Owners → Accounts → You without a Market tab', async () => {
+    await render()
+    await tab('Owners')
+    await tab('Accounts')
+    expect(host.textContent).not.toContain('Market')
+    expect(host.querySelector('[data-account-section="you"]')?.textContent).toContain('Cash out FUND')
+  })
 
   it('offers the remaining networks of the intent this project came from', async () => {
     await render({ intentId: '3f0f2f4c-0f3f-4f2f-8f1f-0f2f3f4f5f6f' })

@@ -12,6 +12,7 @@ describe('contextual live project actions', () => {
   it('does not turn a payment pause into a purchase or failure claim', () => {
     const html = renderToStaticMarkup(<LiveProjectActions token="FUND" state={{ paymentsPaused: true, cashOutsEnabled: true, mintingEnabled: true, hasLinkedIncome: false }} />)
     expect(html).toContain('Cash out FUND')
+    expect(html).toMatch(/href="#owners\/accounts"[^>]*>Cash out FUND/)
     expect(html).not.toMatch(/Issue FUND|purchase|refund|sale|initial INCOME/)
   })
 
@@ -28,5 +29,10 @@ describe('contextual live project actions', () => {
     expect(html).toContain('href="#owners/loans"')
     expect(html).toContain('Manage loans')
     expect(html).not.toMatch(/Cash out INCOME|initial INCOME/)
+  })
+
+  it('links available INCOME cash-out to Accounts', () => {
+    const html = renderToStaticMarkup(<LiveProjectActions token="INCOME" state={{ cashOutsEnabled: true, hasInitialAllocation: false }} />)
+    expect(html).toMatch(/href="#owners\/accounts"[^>]*>Cash out INCOME/)
   })
 })

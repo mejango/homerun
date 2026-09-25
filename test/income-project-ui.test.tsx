@@ -114,8 +114,15 @@ describe('INCOME transaction surfaces', () => {
     }
     expect(target, `Missing ${label} tab`).toBeDefined(); await act(async () => target!.click())
   }
-  async function visitActions() { for (const label of ['Owners', 'Accounts', 'Market', 'Settlement', 'Splits', 'Loans', 'Overview']) await tab(label) }
+  async function visitActions() { for (const label of ['Owners', 'Accounts', 'Settlement', 'Splits', 'Loans', 'Overview']) await tab(label) }
   async function render() { await act(async () => root.render(<IncomeProject chainId={1} projectId={7n} />)); await visitActions() }
+  it('keeps INCOME cash-out under Owners → Accounts → You without a Market tab', async () => {
+    await render()
+    await tab('Owners')
+    await tab('Accounts')
+    expect(host.textContent).not.toContain('Market')
+    expect(host.querySelector('[data-account-section="you"]')?.textContent).toContain('Cash out INCOME')
+  })
   function section(title: string) { return [...host.querySelectorAll('section')].find(element => element.querySelector('h3')?.textContent === title)! }
   function pendingReserved() {
     const current = state()

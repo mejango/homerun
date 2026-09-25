@@ -41,7 +41,6 @@ describe('shared project layout', () => {
       owners: <OwnersTabs
         accountsYou={<Panel name="you" />}
         accountsAll={<Panel name="all" />}
-        market={<Panel name="market" />}
         settlement={<Panel name="settlement" />}
         splits={<Panel name="splits" />}
         loans={<Panel name="loans" />}
@@ -201,7 +200,7 @@ describe('shared project layout', () => {
     const all = input('all')!
     you.value = 'reviewed holder operation'
     all.value = 'holder search'
-    await click('Ownership sections', 'Market')
+    await click('Ownership sections', 'Settlement')
     await act(async () => {
       window.dispatchEvent(new Event('receipt:you'))
       window.dispatchEvent(new Event('receipt:all'))
@@ -245,7 +244,7 @@ describe('shared project layout', () => {
     window.history.replaceState(window.history.state, '', '#owners/permissions')
     await render()
     expect(selected('Ownership sections')).toBe('Accounts')
-    await render({ owners: <OwnersTabs accountsYou={<Panel name="you" />} accountsAll={<Panel name="all" />} market={null} settlement={null} splits={<Panel name="splits" />} loans={null} control={<Panel name="control" />} permissions={<Panel name="permissions" />} /> })
+    await render({ owners: <OwnersTabs accountsYou={<Panel name="you" />} accountsAll={<Panel name="all" />} settlement={null} splits={<Panel name="splits" />} loans={null} control={<Panel name="control" />} permissions={<Panel name="permissions" />} /> })
     expect(selected('Ownership sections')).toBe('Permissions')
     const draft = input('permissions')!
     draft.value = 'reviewed permission changes'
@@ -270,8 +269,8 @@ describe('shared project layout', () => {
     }
     button('Ownership sections', 'Accounts').focus()
     await key('ArrowRight')
-    expect(selected('Ownership sections')).toBe('Market')
-    expect(document.activeElement).toBe(button('Ownership sections', 'Market'))
+    expect(selected('Ownership sections')).toBe('Settlement')
+    expect(document.activeElement).toBe(button('Ownership sections', 'Settlement'))
     await key('End')
     expect(selected('Ownership sections')).toBe('Loans')
     await key('ArrowRight')
