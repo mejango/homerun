@@ -15,13 +15,12 @@ export function ExternalWalletDialog({ onClose }: { onClose: () => void }) {
   const { connectors, connectWith, isConnected } = useWallet()
   const mobileWallet = useMobileWallet()
   const [deviceLabel, setDeviceLabel] = useState('Device')
+  const [frameTitle, setFrameTitle] = useState('Sign in')
   useEffect(() => { setDeviceLabel(passkeyLabel(navigator.userAgent).replace(/^Continue with /, '').replace(/^a passkey$/, 'Device')) }, [])
   useEffect(() => {
     const label = () => {
       const dialog = document.querySelector('.jb-connect.homerun-connect')
       if (!dialog) return
-      const caption = dialog.querySelector('.jb-connect-powered')
-      if (caption && caption.textContent !== 'using Signa') caption.textContent = 'using Signa'
       const status = dialog.querySelector('.jb-connect-status')
       if (status?.textContent === 'Continuing at Juicebox Center…') status.textContent = 'Connecting, just a sec...'
       const frame = dialog.querySelector('iframe.jb-connect-frame')
@@ -42,11 +41,15 @@ export function ExternalWalletDialog({ onClose }: { onClose: () => void }) {
     const issuer = CENTER_WALLET_CONFIG?.issuer
     if (!issuer) return
     const themed = (event: MessageEvent) => {
-      const data = event.data as { type?: unknown; height?: unknown } | null
+      const data = event.data as { type?: unknown; height?: unknown; page?: unknown } | null
       const dialog = document.querySelector<HTMLDialogElement>('.jb-connect.homerun-connect')
       const frame = dialog?.querySelector('iframe'), heading = dialog?.querySelector('h2')
-      if (!dialog || !heading || !frame?.contentWindow || event.source !== frame.contentWindow || event.origin !== issuer ||
-        data?.type !== 'juicebox-center:size' || typeof data.height !== 'number' || !Number.isFinite(data.height)) return
+      if (!dialog || !heading || !frame?.contentWindow || event.source !== frame.contentWindow || event.origin !== issuer) return
+      if (data?.type === 'juicebox-center:page' && (data.page === 'signup' || data.page === 'signin')) {
+        setFrameTitle(data.page === 'signup' ? 'Sign up' : 'Sign in')
+        return
+      }
+      if (data?.type !== 'juicebox-center:size' || typeof data.height !== 'number' || !Number.isFinite(data.height)) return
       frame.contentWindow.postMessage({ type: 'juicebox-center:theme',
         theme: { headingFont: getComputedStyle(heading).fontFamily } }, issuer)
     }
@@ -87,7 +90,7 @@ export function ExternalWalletDialog({ onClose }: { onClose: () => void }) {
   })
 
   return (
-    <JBConnectModal open controller={controller} onClose={onClose} className="homerun-connect"
+    <JBConnectModal open controller={controller} onClose={onClose} className="homerun-connect" title={frameTitle}
       passkeyLabel={deviceLabel}
       renderIcon={option => <WalletFallbackMark id={option.id} className="h-5 w-5" />}
       renderHandoff={uri => <PairingCode uri={uri} />}>
