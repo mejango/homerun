@@ -67,6 +67,10 @@ describe('new INCOME allocation chart', () => {
   it('shows the planned allocation while the raise is still open', async () => {
     await act(async () => root.render(<DemoProjectPage project={saveCreatedProject(values)} />))
     const { note, shares } = await allocation()
+    expect([...host.querySelectorAll('[role="tab"]')].some(tab => tab.textContent === 'Market')).toBe(false)
+    const splitsPanel = host.querySelector('[id$="-panel-splits"]')!
+    expect(splitsPanel.querySelector('[aria-label="FUND token"]')).toBeNull()
+    expect(splitsPanel.textContent).not.toContain('Starting token terms')
     expect(note).toBe('Planned allocation until INCOME starts.')
     expect(shares).toEqual([
       { value: 70, label: 'to operators' },

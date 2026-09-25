@@ -187,9 +187,8 @@ describe('the preview of a project that is not created yet', () => {
     expect(revenue.textContent).toContain('If revenue falls below the minimum')
     expect(revenue.textContent).toContain('The Owner cuts machine hours and reports the shortfall to holders.')
     await openTab('Owners')
-    await openTab('Splits')
     const token = host.querySelector('[aria-label="FUND token"]')!
-    expect(token.closest('[role="tabpanel"]')?.id).toContain('panel-splits')
+    expect(token.closest('[role="tabpanel"]')?.id).toContain('panel-accounts')
     expect(token.textContent).toContain('Token name')
     expect(token.textContent).toContain('Workshop Bench FUND')
     expect(token.textContent).toContain('Ticker')

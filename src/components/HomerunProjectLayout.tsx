@@ -303,9 +303,10 @@ export function OwnersTabs({ accountsYou, accountsAll, market, settlement, split
   const [selected, setSelected] = useState<OwnerTab>('accounts')
   const visited = useRef(new Set<OwnerTab>())
   visited.current.add(selected)
+  const hasMarket = market !== undefined && market !== null
   const hasControl = control !== undefined && control !== null
   const hasPermissions = permissions !== undefined && permissions !== null
-  const tabs = useMemo(() => OWNER_TABS.filter(item => item.key === 'control' ? hasControl : item.key === 'permissions' ? hasPermissions : true), [hasControl, hasPermissions])
+  const tabs = useMemo(() => OWNER_TABS.filter(item => item.key === 'market' ? hasMarket : item.key === 'control' ? hasControl : item.key === 'permissions' ? hasPermissions : true), [hasMarket, hasControl, hasPermissions])
 
   useNavigationListener(() => {
     // Older /accounts/you and /accounts/all links both open the full account view.

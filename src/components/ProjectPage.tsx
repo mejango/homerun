@@ -836,10 +836,8 @@ function Allocation({ p }: { p: Projection }) {
         ))}
       </div>
       <p>
-        These percentages divide new tokens. The FUND-staker allocation goes to
-        eligible Sticky participants, including {p.separateOwnerOperator ? 'the Owner when staked' : 'operators who stake'}. Projections
-        assume all FUND participates and is eligible at each snapshot with fully
-        vested rewards; weekly reward vesting is not modeled.
+        These percentages divide new INCOME tokens, not cash. FUND stakers must
+        be eligible to receive their share.
       </p>
     </figure>
   );
@@ -2042,54 +2040,25 @@ function DemoOwners({
       }
       accountsAll={
         p ? (
-          <section className="demo-section">
-            <h2>All owners</h2>
-            <p>
-              Modeled ownership across contributors, {p.separateOwnerOperator ? 'the Owner, the Operator' : 'operators'} and customers.
-              This demo represents groups, not indexed wallet accounts.
-            </p>
-            <div id="fund-ownership-preview">
-              <OwnershipCharts projection={p} />
-            </div>
-          </section>
+          <div className="demo-owner-sections">
+            <section className="demo-section">
+              <h2>All owners</h2>
+              <p>
+                Modeled ownership across contributors, {p.separateOwnerOperator ? 'the Owner, the Operator' : 'operators'} and customers.
+                This demo represents groups, not indexed wallet accounts.
+              </p>
+              <div id="fund-ownership-preview">
+                <OwnershipCharts projection={p} />
+              </div>
+            </section>
+            <FundTokenTermsSection terms={terms} />
+            <TokenTerms p={p} />
+          </div>
         ) : (
           unavailable
         )
       }
-      market={
-        p ? (
-          <section className="demo-section">
-            <h2>Market</h2>
-            <p>
-              Preview cash-out values for your modeled position. Live quotes use
-              confirmed treasury balances.
-            </p>
-            <div className="demo-token-summary">
-              <div>
-                <h3>FUND</h3>
-                <strong>{money(p.personalFundCashout)}</strong>
-                <p>
-                  {p.phase === "funded" || p.phase === "earning"
-                    ? "Cash-outs are closed during purchase and operation."
-                    : "Estimated cash-out before protocol fees."}
-                </p>
-              </div>
-              <div>
-                <h3>INCOME</h3>
-                <strong>
-                  {income ? money(p.personalCashout) : "Not issued yet"}
-                </strong>
-                <p>
-                  Cash-outs return revenue backing and give up the tokens
-                  redeemed.
-                </p>
-              </div>
-            </div>
-          </section>
-        ) : (
-          unavailable
-        )
-      }
+      market={null}
       settlement={
         <section className="demo-section">
           <h2>Settlement</h2>
@@ -2107,15 +2076,8 @@ function DemoOwners({
           <div className="demo-owner-sections">
             <section className="demo-section">
               <h2>Splits</h2>
-              <p>
-                New INCOME is allocated to operators, eligible FUND stakers and
-                customers.
-              </p>
               <Allocation p={p} />
-              <TokenTerms p={p} />
-              <ProjectActionGuide stage={phase} section="splits" />
             </section>
-            <FundTokenTermsSection terms={terms} />
             {splitEditor}
           </div>
         ) : (

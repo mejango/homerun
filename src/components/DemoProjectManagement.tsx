@@ -154,7 +154,7 @@ export function DemoProjectSplits({ state, ready, onSave }: { state: DemoProject
   const total = splits.reduce((sum, split) => sum + Number(split.percent), 0)
   return <section className="demo-section space-y-5" aria-label="Split recipient preview">
     <h3>Split recipients</h3>{demoNotice}
-    <p>Try recipient addresses and percentages for each project. These saved previews are separate from the modeled token allocations and balances above.</p>
+    <p>Preview recipient addresses and percentages. These edits stay in your browser.</p>
     <label className="grid max-w-xs gap-2">Project<select className={inputClass} value={phase} onChange={event => setPhase(event.target.value as 'fund' | 'income')}><option value="fund">FUND</option><option value="income">INCOME</option></select></label>
     {splits.length ? <div className="space-y-3">{splits.map(split => <p key={split.address} className="break-all">{split.percent}% — {split.address}</p>)}<p>{Number((100 - total).toFixed(7))}% unallocated in this preview.</p></div> : <p>No {phase.toUpperCase()} recipient preview saved.</p>}
     <button type="button" className="btn-secondary min-h-11 px-4 py-2" disabled={!ready} onClick={() => { setDraft(splits.map(split => ({ ...split }))); setReview(false); setError('') }}>Edit {phase.toUpperCase()} splits</button>
