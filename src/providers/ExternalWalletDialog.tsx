@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { createConnectController, passkeyOption, type ConnectOption } from '@bananapus/nana-sdk-connect/core'
-import { JBConnectModal } from '@bananapus/nana-sdk-connect/react'
+import { JBConnectModal, passkeyLabel } from '@bananapus/nana-sdk-connect/react'
 import { WalletFallbackMark } from '@/components/BrandMarks'
 import { useWallet } from '@/hooks/useWallet'
 import { useMobileWallet } from '@/hooks/useMobileWallet'
@@ -14,6 +14,8 @@ import { CENTER_WALLET_CONFIG, CENTER_WALLET_ENABLED } from './wallet-config'
 export function ExternalWalletDialog({ onClose }: { onClose: () => void }) {
   const { connectors, connectWith, isConnected } = useWallet()
   const mobileWallet = useMobileWallet()
+  const [deviceLabel, setDeviceLabel] = useState('Continue with your device')
+  useEffect(() => { setDeviceLabel(passkeyLabel(navigator.userAgent).replace('a passkey', 'your device')) }, [])
   const [opener] = useState(() => typeof document !== 'undefined' && document.activeElement instanceof HTMLElement
     ? document.activeElement : null)
   useEffect(() => () => { if (opener?.isConnected) opener.focus({ preventScroll: true }) }, [opener])
@@ -70,7 +72,7 @@ export function ExternalWalletDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <JBConnectModal open controller={controller} onClose={onClose} className="homerun-connect"
-      passkeyLabel="Signa in"
+      passkeyLabel={deviceLabel}
       renderIcon={option => <WalletFallbackMark id={option.id} className="h-5 w-5" />}
       renderHandoff={uri => <PairingCode uri={uri} />}>
       {mobileWallet === 'handoff' ? (

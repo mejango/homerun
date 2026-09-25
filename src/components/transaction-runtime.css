@@ -156,7 +156,8 @@ dialog.ui-modal-host::backdrop { all: revert-layer; }
   --jb-connect-backdrop: rgb(20 35 29 / .55);
 }
 .jb-connect.homerun-connect :is(.jb-connect-primary, .jb-connect-tile) { border-radius: var(--radius); }
-.jb-connect.homerun-connect .jb-connect-powered { display: none; }
+.jb-connect.homerun-connect .jb-connect-powered { font-size: 0; text-align: left; }
+.jb-connect.homerun-connect .jb-connect-powered::after { content: 'with Signa'; font-size: 13px; }
 .jb-connect.homerun-connect .jb-connect-primary { display: inline-block; width: auto; min-height: 44px; padding: 10px 20px; }
 /* Keep the SDK's native cancellation control and handler, without its footer row. */
 .jb-connect.homerun-connect > h2 { padding-right: 36px; }

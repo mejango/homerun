@@ -6,7 +6,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { chromium } from 'playwright'
 import { expect } from '@playwright/test'
 const base = process.env.BASE_URL || 'http://localhost:54064'
-const issuer = 'https://wallet.homerun.test', audience = 'https://api.homerun.test'
+const issuer = 'https://signa.center', audience = 'https://api.signa.center'
 const wallet = '0x1111111111111111111111111111111111111111'
 // The modeled issuer is a public https origin while the app is on localhost; Chrome's local network access
 // checks would otherwise block the frame's navigation from the one to the other, which production never has.
