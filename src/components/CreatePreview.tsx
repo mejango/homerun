@@ -199,8 +199,8 @@ export default function CreatePreview() {
       <p role="status">{BANNER}</p>
       {planned && <p className="planned-bar-terms">{planned}</p>}
       <div className="planned-bar-actions">
-        <button type="button" className="create-primary" disabled={publishing} onClick={() => void create(setup)}>{publishing ? 'Publishing your project…' : 'Create'}</button>
-        <button type="button" className="quiet-button" disabled={publishing} onClick={() => router.push('/create')}>Edit</button>
+        <button type="button" className="create-primary" disabled={publishing} onClick={() => void create(setup)}>{publishing ? 'Publishing your project…' : 'Make it real'}</button>
+        <button type="button" className="btn-secondary" disabled={publishing} onClick={() => router.push('/create')}>Edit</button>
       </div>
       {progress && <p role="status">{progress}</p>}
       {error && <p role="alert">{error}</p>}

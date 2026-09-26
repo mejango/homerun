@@ -112,3 +112,10 @@
 @media (min-width: 1600px) {
   .ballpark-hero { height: calc(62.5vw + 136px); }
 }
+
+/* The controls sit on the scene's bottom edge. */
+@media (min-width: 761px) {
+  .ballpark-hero { height: calc(clamp(650px, 61vw, 900px) + 200px); }
+  .home-footer { position: relative; z-index: 1; justify-content: center; height: 64px; margin-top: -64px; padding-block: 0; border-top: 0; }
+  .home-color-controls { padding: 4px 14px; border-radius: var(--radius); background: rgb(247 245 239 / .82); }
+}

@@ -353,7 +353,7 @@ try {
   await page.getByRole('button', { name: 'Show preview', exact: true }).click()
   await page.waitForURL(`${appOrigin}/create/preview`)
 
-  await page.getByRole('button', { name: 'Create', exact: true }).click()
+  await page.getByRole('button', { name: 'Make it real', exact: true }).click()
   const review = page.getByRole('dialog')
   await review.getByText('Create your project', { exact: false }).first().waitFor()
   await review.getByText('2/2 approvals', { exact: false }).first().waitFor()

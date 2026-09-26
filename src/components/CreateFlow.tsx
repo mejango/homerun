@@ -6,7 +6,6 @@ import { CREATE_DEFAULTS, CREATE_DRAFT_KEY, normalizeCreateDraft, creationSummar
 import { NETWORK_FAMILIES } from '../../web/create-networks.mjs';
 import { drawAssetSketch } from '../../web/asset-sketch.mjs';
 import { CreateIncomePreview } from './CreateIncomePreview';
-import { SiteIntegration } from './SiteIntegration';
 import { OperatorProfile } from './OperatorProfile';
 
 /** Validated setup values. Budget and income estimates remain modeling assumptions. */
@@ -60,7 +59,6 @@ export interface CreateFlowProps {
   lockedChains?: readonly number[] | null;
   /** Supply the live FUND creation controls from a client component. */
   renderDeploy?: (values: CreateValues) => ReactNode;
-  renderIntegration?: (values: CreateValues) => ReactNode;
 }
 
 const labels = ['Asset', 'Management', 'Fundraise', 'Income', 'Review & create'];
@@ -142,7 +140,7 @@ function IncomeSplit({ summary }: { summary: Summary | null }) {
   </div>;
 }
 
-export default function CreateFlow({ renderDeploy, renderIntegration, lockedChains }: CreateFlowProps) {
+export default function CreateFlow({ renderDeploy, lockedChains }: CreateFlowProps) {
   const [raw, setRaw] = useState<RawValues>(initialValues);
   const [step, setStep] = useState(0);
   const [furthest, setFurthest] = useState(0);
@@ -373,8 +371,10 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
           <section className="create-step" data-step-panel={step} aria-labelledby={`step-title-${step}`}>
             <h2 id={`step-title-${step}`} tabIndex={-1} ref={heading}>{['Asset', 'Management', 'Fundraise', 'Income', 'Review'][step]}</h2>
             {step === 0 && <>
-              {field('name', 'Title', { placeholder: 'e.g. Neighborhood Workshop', maxLength: 60 })}
-              {field('location', 'Location (optional)', { placeholder: 'City, region', maxLength: 100 })}
+              <div className="create-pair">
+                {field('name', 'Title', { placeholder: 'e.g. Neighborhood Workshop', maxLength: 60 })}
+                {field('location', 'Location (optional)', { placeholder: 'City, region', maxLength: 100 })}
+              </div>
               {field('description', 'The idea (optional)', { rows: 3, maxLength: 600, help: 'A short introduction to the asset and how it earns income.' })}
               <div className="create-field"><label htmlFor="create-photo">Cover photo (optional)</label>
                 <label className="photo-picker" htmlFor="create-photo"><span aria-hidden="true">＋</span><span>{photoBusy.photo ? 'Preparing photo…' : 'Choose a photo'}<small>JPG, PNG or WebP | up to 8 MB</small></span>
@@ -430,7 +430,7 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
                   <div className="income-inputs">{field('purchaseBudget', 'Asset price', { prefix: '$' })}{field('opsReserve', 'Bootstrap operating budget', { prefix: '$', help: 'Cash set aside to cover operating expenses.' })}{field('operatorFundPercent', 'Owner FUND ownership', { suffix: '%', help: 'Allocated to the Owner after a successful purchase. The Owner may distribute these tokens to the Operator at their discretion.' })}</div>
                 </fieldset>
                 <fieldset className="income-field-group fundraise-contract"><legend>Contractual settings</legend>
-                  <div className="income-inputs token-inputs">{field('fundTokenName', 'FUND token name', { placeholder: 'e.g. Workshop FUND', maxLength: 32, help: 'Blank uses the project title.' })}{field('fundTicker', 'FUND ticker', { placeholder: 'FUND', maxLength: 12, help: 'Deployed with the project as its ERC-20 symbol.' })}</div>
+                  <div className="income-inputs token-inputs">{field('fundTokenName', 'FUND token name', { placeholder: 'e.g. Workshop FUND', maxLength: 32, help: 'Blank uses the project title. The owner can change it later.' })}{field('fundTicker', 'FUND ticker', { placeholder: 'FUND', maxLength: 12, help: 'The ERC-20 symbol. The owner can change it later.' })}</div>
                 </fieldset>
                 <div className="create-callout fundraise-goal"><span>Total fundraising goal</span><strong id="create-raise-goal">{summary ? money(summary.raiseGoal) : '—'}</strong>
                   <p id="create-fee-note">{summary ? `Includes ${money(summary.values.purchaseBudget)} for the asset, ${money(summary.values.opsReserve)} for the bootstrap operating budget, and ${money(Math.round((summary.raiseGoal - summary.values.purchaseBudget - summary.values.opsReserve) * 100) / 100)} in assumed payout fees.` : 'Complete the asset and funding inputs to calculate the goal.'}</p>
@@ -526,7 +526,6 @@ export default function CreateFlow({ renderDeploy, renderIntegration, lockedChai
           </div>
         </form>
         <div className="draft-status"><span id="draft-status" role="status">{storageNotice}</span><button type="button" id="start-over" disabled={locked} className="quiet-button" onClick={reset}>Start over</button></div>
-        {summary && (renderIntegration ? renderIntegration(summary.values) : <SiteIntegration configuration={deploymentDraft(summary.values)} />)}
       </section>
       <aside className="create-aside" aria-label="Your project preview"><div className="draft-preview">
         <AssetArt photo={photo} /><h2 id="draft-name">{String(raw.name || '').trim() || 'Untitled'}</h2>

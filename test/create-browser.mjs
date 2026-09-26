@@ -404,25 +404,8 @@ try {
     await currentStep(4);
     assert.equal(await page.getByText('Income plan', { exact: true }).count(), 0);
   });
-  await check('AI handoff separates initial INCOME claims from ongoing Sticky rewards', async () => {
-    await page.getByText('Use on your site', { exact: true }).click();
-    const prompt = await page.locator('[data-prompt]').inputValue();
-    assert.match(prompt, /Next\.js\/React/);
-    assert.match(prompt, /all FUND holders, including inactive ERC20 balances and unclaimed token credits/);
-    assert.match(prompt, /Initial claims require no activation, staking or vesting/);
-    assert.match(prompt, /eligible FUND stakers using Sticky/);
-    assert.match(prompt, /four weekly vesting rounds/);
-    assert.match(prompt, /Vesting starts in the reward-claim round when the allocation is materialized, not at the FUND deposit/);
-    assert.match(prompt, /There is no minimum staking period or stake-age weight boost/);
-    assert.match(prompt, /requires a verified deployment/);
-    assert.match(prompt, /Neighborhood Workshop/);
-    assert.match(prompt, /Safe proposal is not confirmed execution/);
-    const pending = page.waitForEvent('download');
-    await page.getByRole('button', { name: 'Download instructions', exact: true }).click();
-    const downloaded = await pending;
-    assert.equal(await readFile(await downloaded.path(), 'utf8'), prompt);
-    await downloaded.delete();
-    await page.getByText('Use on your site', { exact: true }).click();
+  await check('Site handoff lives on the project page, not in setup', async () => {
+    assert.equal(await page.getByText('Use on your site', { exact: true }).count(), 0);
   });
   await check('All setup stages remain usable on narrow screens', async () => {
     for (const width of [390, 320]) {

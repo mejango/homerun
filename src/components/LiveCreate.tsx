@@ -9,7 +9,6 @@ import { toHex, type Hex, type PublicClient } from 'viem'
 import { useWallet } from '@/hooks/useWallet'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { wagmiConfig } from '@/providers/Providers'
-import { WalletButton } from './WalletButton'
 import CreateFlow, { type CreateValues } from './CreateFlow'
 import { buildFundLaunch, type FundTransaction } from '@/lib/fund-contracts'
 import { FUND_LAUNCH_KEY, canCancelLaunch, cancelUnsubmittedLaunch, discardUnsignedLaunch, decodeLaunchSession, encodeLaunchSession, saveLaunch, updateLaunchStatus, refreshLaunchCreationFee, archiveLaunch, loadLaunchSession, sameSender, type FundLaunchSession, type LaunchStatus } from '@/lib/fund-launch-session'
@@ -281,13 +280,12 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
   return <div className="fund-launch">
     <h2 className="text-xl">Create your project</h2>
     <p>Create your multisigs and the FUND raise on your selected chains. INCOME and the Owner’s success allocation are separate later actions.</p>
-    {!address && <WalletButton />}
     {selectionChanged && (session!.transport === 'intent'
       ? <p role="alert">This project is already published on {session!.input.chainIds.map(displayChainName).join(', ')}. Finish it before changing networks.</p>
       : <p role="alert">This launch already has wallet authorizations for {session!.input.chainIds.map(displayChainName).join(', ')}. Continue completes that saved launch; changing the selection above cannot replace signed requests.</p>)}
     {!session ? <>
       <button type="button" className="create-primary" disabled={preparing || !loaded} onClick={() => router.push('/create/preview')}>Show preview</button>
-      <p className="text-sm">The preview is the project page this creates. Nothing is created until you press Create there.</p>
+      <p className="text-sm">The preview is the project page this creates. Nothing is created until you press Make it real there.</p>
       {needsTransaction && <button type="button" className="quiet-button" disabled={preparing || !loaded || !address} onClick={() => void prepare()}>Create with a transaction</button>}
     </>
       : session.transport === 'intent' ? typeof session.intentId === 'string' ? <>
