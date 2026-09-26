@@ -295,3 +295,4 @@
 .create-role-description li + li { margin-top: 6px; }
 
 .create-operator-profile { min-inline-size: 0; }
+.fundraise-contract > .create-help { margin: 0 0 14px; }
