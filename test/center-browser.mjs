@@ -129,8 +129,8 @@ try {
   await expect(page.getByRole('dialog')).toBeVisible()
   await frame.getByRole('link', { name: 'Return to Homerun' }).click()
   await exchangeStarted
-  await expect(frame.getByRole('heading', { name: 'All done.' })).toBeVisible()
-  await expect.poll(() => frame.locator('main').evaluate(node => getComputedStyle(node).paddingTop)).toBe('24px')
+  await expect(frame.getByRole('heading', { name: 'Signing you in…' })).toBeVisible()
+  await expect.poll(() => frame.locator('main').evaluate(node => getComputedStyle(node).paddingTop)).toBe('20px')
   await expect.poll(() => page.locator('iframe[name="juicebox-center-frame"]').evaluate(node => node.getBoundingClientRect().height)).toBeLessThan(200)
   releaseExchange()
   // The callback page inside the frame hands its URL up to the page; the lost first exchange shows there.
