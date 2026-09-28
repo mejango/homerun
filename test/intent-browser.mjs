@@ -364,11 +364,11 @@ try {
   await page.getByText('Deploys on first use', { exact: false }).first().waitFor()
   const intentText = await page.locator('main').textContent()
   assert.match(intentText, /Neighborhood Workshop/)
-  assert.match(intentText, /free/)
+  assert.match(intentText, /Free/)
   assert.match(intentText, /Owner: create Safe/)
   assert.match(intentText, new RegExp(SECOND_SIGNER, 'i'))
   assert.equal(await page.getByRole('button', { name: 'Deploy first', exact: true }).isDisabled(), true)
-  await page.getByText(/costs ~[\d.]+ ETH/).first().waitFor()
+  await page.getByText(/~[\d.]+ ETH/).first().waitFor()
   assert.deepEqual(errors, [])
 
   await page.locator('input[type="checkbox"][value="1"]').check()

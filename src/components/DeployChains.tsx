@@ -20,29 +20,30 @@ import {
 import { holdDeployment, loadHeldDeployments, releaseDeployment } from '@/lib/relay-held'
 import { requireTransactionReview } from '@/lib/transaction-review'
 import { displayChainName } from '@/lib/chainDisplay'
+import { ChainIcon } from '@/components/ChainIcon'
 
 const STEP_LABELS: Record<EnsureDeployedStep['status'], string> = {
-  queued: 'queued at Juicebox Center',
-  sent: 'sent onchain',
-  confirmed: 'created',
-  failed: 'could not be created',
-  'self-paid': 'recorded',
-  'relay-paid': 'recorded',
+  queued: 'Queued',
+  sent: 'Sending…',
+  confirmed: 'Created',
+  failed: 'Failed',
+  'self-paid': 'Created',
+  'relay-paid': 'Created',
 }
 
 /** Neither a provider, a gateway nor Center's own request text reaches a reader. */
-const DEPLOY_UNAVAILABLE = 'Center could not start this deploy right now. Try again shortly.'
-const DEPLOY_FAILED = 'Juicebox Center could not deploy this project. Try again in a few minutes.'
+const DEPLOY_UNAVAILABLE = 'This deploy could not start right now. Try again shortly.'
+const DEPLOY_FAILED = 'This project could not be deployed. Try again in a few minutes.'
 const CONNECT_MESSAGE = 'Connect a wallet to deploy the networks you pay for.'
 const WALLET_MESSAGE = 'The wallet did not send the transaction.'
-const OVER_FEE_MESSAGE = 'Center asked for more than the creation fee.'
+const OVER_FEE_MESSAGE = 'The deploy asked for more than the creation fee.'
 const NO_CLIENT_MESSAGE = 'No network connection is configured for this chain.'
 const reverted = (chainId: number) => `The transaction reverted on ${displayChainName(chainId)}.`
 const notRecorded = (chainId: number) =>
-  `The project is created on ${displayChainName(chainId)}, but Center has not recorded it yet. Press Deploy selected again to record it.`
+  `Your ${displayChainName(chainId)} transaction went through, but the project page has not picked it up yet. Try again to finish.`
 /** Center keeps a failed chain as a failed chain: this page cannot send it again. */
 const deployStopped = (chainId: number) =>
-  `Juicebox Center could not create this project on ${displayChainName(chainId)}. It cannot be deployed from here; create it again.`
+  `This project could not be created on ${displayChainName(chainId)}. It cannot be deployed from here; create it again.`
 
 /** Only this app's own sentences are shown; everything else reads as one fixed sentence. */
 function fixedSentence(cause: unknown, chainIds: readonly number[]): string {
@@ -75,12 +76,12 @@ function RelayCost({ intentId, chainId }: { intentId: string; chainId: number })
       return request.gas * await client.getGasPrice() + request.value
     },
   })
-  return <span className="text-sm">{cost.data === undefined ? 'costs gas' : relayCostLabel(cost.data)}</span>
+  return <>{cost.data === undefined ? 'Gas + fee' : relayCostLabel(cost.data)}</>
 }
 
 export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningChange }: {
   intent: JBCenterIntent
-  heading: 'Deploy' | 'Also deploy on'
+  heading: 'Deploy' | 'Deploy on more networks'
   /** The intent's own chain order, as the signed calls give it. */
   chainIds: readonly number[]
   onDeployed?: () => void
@@ -94,7 +95,7 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
   const [selected, setSelected] = useState<number[]>(free)
   const [deploying, setDeploying] = useState(false)
   const [stopped, setStopped] = useState<number[]>([])
-  const [steps, setSteps] = useState<string[]>([])
+  const [steps, setSteps] = useState<Record<number, EnsureDeployedStep['status']>>({})
   const [error, setError] = useState('')
   const run = useRef<AbortController | null>(null)
   /** A created project Center has not recorded: the next run records it alone. */
@@ -144,7 +145,7 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
     await fromWallet(() => requireTransactionReview({
       kind: 'transaction',
       title: `Create this project on ${displayChainName(request.chainId)}`,
-      description: 'You send these transactions and pay their gas and creation fee. Juicebox Center’s sponsor stays the sender of the creation itself, so this project keeps the same token and bridge addresses on every network.',
+      description: 'You send these transactions and pay their gas and creation fee. The project keeps the same token and bridge addresses on every network.',
       confirmLabel: 'Continue to wallet',
       calls: [
         ...setup.map(entry => ({
@@ -193,16 +194,28 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
     if (!address && selected.some(chainId => paid.includes(chainId) && !unrecorded.current.has(chainId))) {
       openSignIn(); setError(CONNECT_MESSAGE); return
     }
-    setDeploying(true); onRunningChange?.(true); setError(''); setSteps([])
+    setDeploying(true); onRunningChange?.(true); setError(''); setSteps({})
     const watcher = watchDeployRefusal(jbCenterClient)
     const controller = new AbortController()
     run.current?.abort()
     run.current = controller
     try {
-      await ensureDeployed({
+      // A project this wallet already created only needs recording. Asking for
+      // its relay again is refused, because the creation now exists onchain.
+      const created = [...unrecorded.current].filter(([chainId]) => selected.includes(chainId))
+      for (const [chainId, deployment] of created) {
+        await watcher.client.recordDeployment(intent.id, deployment, { signal: controller.signal })
+        unrecorded.current.delete(chainId)
+        releaseDeployment(intent.id, chainId)
+        syncHeld()
+        setSteps(current => ({ ...current, [chainId]: 'relay-paid' }))
+        onDeployed?.()
+      }
+      const rest = selected.filter(chainId => !created.some(([id]) => id === chainId))
+      if (rest.length) await ensureDeployed({
         client: watcher.client,
         intent,
-        chainIds: [...selected],
+        chainIds: rest,
         relayPaid,
         timeoutMs: 600_000,
         signal: controller.signal,
@@ -211,7 +224,7 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
             releaseDeployment(intent.id, step.chainId)
             syncHeld()
           }
-          setSteps(current => [...current, `${displayChainName(step.chainId)}: ${STEP_LABELS[step.status]}`])
+          setSteps(current => ({ ...current, [step.chainId]: step.status }))
           onDeployed?.()
         },
       })
@@ -234,26 +247,31 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
     }
   }
 
+  const heldOnly = selected.length > 0 && selected.every(chainId => held.includes(chainId))
   return <section className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7">
-    <h2 className="mb-5 text-3xl">{heading === 'Also deploy on' && remaining.length ? `${heading} ${remaining.map(displayChainName).join(', ')}` : heading}</h2>
-    <p>Juicebox Center pays for the networks it sponsors. You pay the gas and the creation fee for the others. Anyone can deploy this project, and its terms cannot change.</p>
-    <ul className="m-0 mt-5 grid list-none gap-2 p-0">
+    <h2 className="text-3xl">{heading}</h2>
+    <p className="mt-2 text-sm text-smoke-600">{remaining.length ? 'Anyone can deploy this project as you designed it.' : 'Deployed on every network.'}</p>
+    <ul className="m-0 mt-5 list-none divide-y divide-[#d8dece] border-y border-[#d8dece] p-0" aria-label="Networks">
       {chainIds.map(chainId => {
         const projectId = deployed.get(chainId)
-        if (projectId) return <li key={chainId} className="text-sm">
-          <a className="underline" href={`/project/${chainId}/${projectId}`}>Deployed on {displayChainName(chainId)}</a>
+        const step = steps[chainId]
+        const name = <span className="flex items-center gap-2.5"><ChainIcon chainId={chainId} size={20} />{displayChainName(chainId)}</span>
+        if (projectId) return <li key={chainId} className="flex min-h-12 items-center justify-between gap-3 py-2">
+          <span className="flex items-center gap-3"><span className="w-4" aria-hidden="true">✓</span>{name}</span>
+          <a className="text-sm underline" href={`/project/${chainId}/${projectId}`} aria-label={`Deployed on ${displayChainName(chainId)}`}>View</a>
         </li>
-        return <li key={chainId} className="flex flex-wrap items-center gap-3">
-          <label className="flex items-center gap-2">
-            <input type="checkbox" value={chainId} checked={selected.includes(chainId)} disabled={deploying || stopped.includes(chainId)} onChange={() => toggle(chainId)} />
-            {held.includes(chainId) ? `Deployed on ${displayChainName(chainId)}, not yet recorded` : displayChainName(chainId)}
+        return <li key={chainId} className="flex min-h-12 items-center justify-between gap-3 py-2">
+          <label className="flex cursor-pointer items-center gap-3">
+            <input type="checkbox" className="size-4" value={chainId} checked={selected.includes(chainId)} disabled={deploying || stopped.includes(chainId)} onChange={() => toggle(chainId)} />
+            {name}
           </label>
-          {held.includes(chainId) ? null : free.includes(chainId) ? <span className="text-sm">free</span> : <RelayCost intentId={intent.id} chainId={chainId} />}
+          <span className="text-right text-sm text-smoke-600" role={step ? 'status' : undefined}>
+            {step ? STEP_LABELS[step] : held.includes(chainId) ? 'Created, finishing' : free.includes(chainId) ? 'Free' : <RelayCost intentId={intent.id} chainId={chainId} />}
+          </span>
         </li>
       })}
     </ul>
-    {remaining.length > 0 && <button type="button" className="btn-primary mt-5" disabled={deploying || !selected.length} onClick={() => void deploy()}>{deploying ? 'Deploying…' : 'Deploy selected'}</button>}
-    {steps.length > 0 && <ul className="m-0 mt-5 grid list-none gap-2 p-0 text-sm" aria-label="Deployment progress">{steps.map((step, index) => <li key={`${step}:${index}`} role="status">{step}</li>)}</ul>}
-    {error && <p role="alert" className="mt-5 text-sm">{error}</p>}
+    {remaining.length > 0 && <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={deploying || !selected.length} onClick={() => void deploy()}>{deploying ? 'Deploying…' : heldOnly ? 'Finish deploy' : 'Deploy selected'}</button>}
+    {error && <p role="alert" className="mt-4 text-sm leading-relaxed text-smoke-700">{error}</p>}
   </section>
 }

@@ -133,7 +133,7 @@ describe('choosing the chains a published project is deployed on', () => {
   })
   afterEach(async () => { await act(async () => root.unmount()); client.clear(); host.remove() })
 
-  async function render(value: ReturnType<typeof intent>, heading: 'Deploy' | 'Also deploy on' = 'Deploy') {
+  async function render(value: ReturnType<typeof intent>, heading: 'Deploy' | 'Deploy on more networks' = 'Deploy') {
     runtime.getIntent.mockResolvedValue(value)
     await act(async () => root.render(<QueryClientProvider client={client}>
       <DeployChains intent={value as never} heading={heading} chainIds={value.envelope.chainIds} />
@@ -147,8 +147,8 @@ describe('choosing the chains a published project is deployed on', () => {
 
   it('labels a sponsored chain free and prices a chain the visitor pays for', async () => {
     await render(intent([1, 10, 8453]))
-    expect(host.textContent).toContain('free')
-    expect(host.textContent).toContain('costs ~0.0018 ETH')
+    expect(host.textContent).toContain('Free')
+    expect(host.textContent).toContain('~0.0018 ETH')
     expect(rowFor(10)!.checked).toBe(true)
     expect(rowFor(8453)!.checked).toBe(true)
     expect(rowFor(1)!.checked).toBe(false)
@@ -157,14 +157,14 @@ describe('choosing the chains a published project is deployed on', () => {
   it('says a price is still being read while the request loads', async () => {
     runtime.requestRelay.mockImplementation(() => new Promise(() => {}))
     await render(intent([1, 8453]))
-    expect(host.textContent).toContain('costs gas')
+    expect(host.textContent).toContain('Gas + fee')
   })
 
   it('links a chain that is already created and offers no checkbox for it', async () => {
     await render(intent([10, 8453], { deployments: [deployment(8453, '42')] }))
     expect(rowFor(8453)).toBeNull()
     const link = [...host.querySelectorAll('a')].find(item => item.getAttribute('href') === '/project/8453/42')
-    expect(link?.textContent).toBe('Deployed on Base')
+    expect(link?.getAttribute('aria-label')).toBe('Deployed on Base')
   })
 
   it('queues only the sponsored chains the reader ticked', async () => {
@@ -256,7 +256,7 @@ describe('choosing the chains a published project is deployed on', () => {
     await act(async () => { button('Deploy selected')!.click() })
     await settle()
     expect(runtime.send).not.toHaveBeenCalled()
-    expect(alert()).toBe('Center asked for more than the creation fee.')
+    expect(alert()).toBe('The deploy asked for more than the creation fee.')
   })
 
   it('leaves the gas for the transaction it sends to the wallet', async () => {
@@ -291,9 +291,12 @@ describe('choosing the chains a published project is deployed on', () => {
     await act(async () => { rowFor(1)!.click() })
     await act(async () => { button('Deploy selected')!.click() })
     await settle()
-    expect(alert()).toBe('The project is created on Ethereum, but Center has not recorded it yet. Press Deploy selected again to record it.')
-    await act(async () => { button('Deploy selected')!.click() })
+    expect(alert()).toBe('Your Ethereum transaction went through, but the project page has not picked it up yet. Try again to finish.')
+    const relays = runtime.requestRelay.mock.calls.length
+    await act(async () => { button('Finish deploy')!.click() })
     await settle()
+    // Center refuses a second relay for a creation that exists, so none is asked for.
+    expect(runtime.requestRelay).toHaveBeenCalledTimes(relays)
     expect(runtime.send).toHaveBeenCalledTimes(1)
     expect(runtime.review).toHaveBeenCalledTimes(1)
     expect(runtime.recordDeployment).toHaveBeenCalledTimes(2)
@@ -315,9 +318,9 @@ describe('choosing the chains a published project is deployed on', () => {
     runtime.send.mockClear(); runtime.review.mockClear(); runtime.recordDeployment.mockClear()
     root = createRoot(host)
     await render(intent([1]))
-    expect(host.textContent).toContain('Deployed on Ethereum, not yet recorded')
+    expect(host.textContent).toContain('Created, finishing')
     expect(rowFor(1)!.checked).toBe(true)
-    await act(async () => { button('Deploy selected')!.click() })
+    await act(async () => { button('Finish deploy')!.click() })
     await settle()
     expect(runtime.send).not.toHaveBeenCalled()
     expect(runtime.review).not.toHaveBeenCalled()
@@ -335,7 +338,7 @@ describe('choosing the chains a published project is deployed on', () => {
     runtime.address = undefined
     root = createRoot(host)
     await render(intent([1]))
-    await act(async () => { button('Deploy selected')!.click() })
+    await act(async () => { button('Finish deploy')!.click() })
     await settle()
     expect(runtime.openSignIn).not.toHaveBeenCalled()
     expect(runtime.recordDeployment).toHaveBeenCalledTimes(2)
@@ -346,7 +349,7 @@ describe('choosing the chains a published project is deployed on', () => {
     await render(intent([1, 10, 8453]))
     await act(async () => { button('Deploy selected')!.click() })
     await settle()
-    expect(alert()).toBe('Juicebox Center could not create this project on Base. It cannot be deployed from here; create it again.')
+    expect(alert()).toBe('This project could not be created on Base. It cannot be deployed from here; create it again.')
     expect(rowFor(8453)!.disabled).toBe(true)
     expect(rowFor(10)!.disabled).toBe(false)
     expect(rowFor(1)!.disabled).toBe(false)
@@ -354,8 +357,8 @@ describe('choosing the chains a published project is deployed on', () => {
   })
 
   it('names the networks a created project can still be deployed on', async () => {
-    await render(intent([1, 8453]), 'Also deploy on')
-    expect(host.querySelector('h2')?.textContent).toBe('Also deploy on Ethereum, Base')
+    await render(intent([1, 8453]), 'Deploy on more networks')
+    expect(host.querySelector('h2')?.textContent).toBe('Deploy on more networks')
   })
 
   it('drops a chain from the selection once a refetch shows it created', async () => {

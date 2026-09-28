@@ -16,7 +16,6 @@ import type { CreateValues } from '@/components/CreateFlow'
 import { CREATE_DEFAULTS, modelCreatedProject } from '../../web/create-model.mjs'
 import { networkSelectionForChainIds } from '../../web/create-networks.mjs'
 
-const STATUS = 'Status: Deploys on first use'
 const UNREADABLE = 'The project details could not be loaded. The terms below are read from the signed project creation.'
 
 type Terms = ReturnType<typeof decodeFundIntent>
@@ -128,17 +127,16 @@ export function IntentProject({ intentId }: { intentId: string }) {
       ownerPhoto: details.data?.owner?.photoUrl ?? undefined,
       operatorPhoto: details.data?.operator?.photoUrl ?? undefined,
     },
-    panel: <section className="planned-bar" aria-label="Published project">
-      <p role="status">{STATUS}</p>
-      {details.isError && <p>{UNREADABLE}</p>}
-      <p className="planned-bar-terms">FUND token: {terms.tokenName} ({terms.ticker})</p>
-      <p className="planned-bar-terms">Contributions open: {opens}</p>
-      {safes && <>
-        <p className="planned-bar-terms">{safes}</p>
-        <p className="planned-bar-terms">Juicebox Center’s sponsor creates these Safes on {terms.chainIds.map(displayChainName).join(', ')} along with the project. Each address is fixed by its owners, its approval policy and its salt, so the project is theirs whether the Safe exists yet or not.</p>
-      </>}
+    panel: <section className="mb-5 grid gap-3" aria-label="Published project">
+      {details.isError && <p className="text-sm">{UNREADABLE}</p>}
       {intent.data && <DeployChains intent={intent.data} heading="Deploy" chainIds={terms.chainIds}
         onDeployed={() => { void intent.refetch() }} onRunningChange={setRunning} />}
+      <ul className="m-0 grid list-none gap-1 px-1 py-0 text-sm text-smoke-600">
+        <li>FUND token: {terms.tokenName} ({terms.ticker})</li>
+        <li>Contributions open: {opens}</li>
+        {safes && <li className="wrap-anywhere whitespace-pre-line">{safes}</li>}
+        {safes && <li>Each Safe is created with the project on {terms.chainIds.map(displayChainName).join(', ')}. Its address is fixed by its owners, approval policy and salt, so the project is theirs whether the Safe exists yet or not.</li>}
+      </ul>
     </section>,
   }} />
 }

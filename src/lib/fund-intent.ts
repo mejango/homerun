@@ -236,7 +236,10 @@ export function watchDeployRefusal(client: JBCenterClient): { client: JBCenterCl
   const watched = {
     getIntent: (intentId: string, options?: JBCenterRequestOptions) => client.getIntent(intentId, options),
     recordDeployment: (intentId: string, deployment: JBCenterDeploymentInput, options?: JBCenterRequestOptions) =>
-      client.recordDeployment(intentId, deployment, options),
+      client.recordDeployment(intentId, deployment, options).catch((error: unknown) => {
+        refusal = error
+        throw error
+      }),
     requestRelay: (intentId: string, chainId: number, options?: JBCenterRequestOptions) =>
       client.requestRelay(intentId, chainId, options),
     requestDeploy: (intentId: string, options?: JBCenterRequestOptions) =>
@@ -345,5 +348,5 @@ export function relayCostLabel(wei: bigint): string {
   const amount = eth === 0 || eth >= 0.0001
     ? Number(eth.toFixed(4)).toString()
     : new Intl.NumberFormat('en-US', { maximumSignificantDigits: 1 }).format(eth)
-  return `costs ~${amount} ETH`
+  return `~${amount} ETH`
 }

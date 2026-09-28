@@ -163,9 +163,9 @@ test('the project a paid deployment created is read out of its receipt', () => {
 })
 
 test('a relay cost reads as one short amount of ETH', () => {
-  assert.equal(relayCostLabel(4_200_000_000_000_000n), 'costs ~0.0042 ETH')
-  assert.equal(relayCostLabel(0n), 'costs ~0 ETH')
-  assert.equal(relayCostLabel(20_000_000_000_000n), 'costs ~0.00002 ETH')
+  assert.equal(relayCostLabel(4_200_000_000_000_000n), '~0.0042 ETH')
+  assert.equal(relayCostLabel(0n), '~0 ETH')
+  assert.equal(relayCostLabel(20_000_000_000_000n), '~0.00002 ETH')
 })
 
 test('publishing signs Center’s prepared message and sends the envelope with the publisher', async () => {

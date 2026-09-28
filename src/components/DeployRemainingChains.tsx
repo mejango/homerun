@@ -28,5 +28,5 @@ export function DeployRemainingChains({ chainId, projectId, owner, intentId }: {
   let chainIds: number[]
   try { chainIds = decodeFundIntent(intent.data).chainIds } catch { return null }
   if (chainIds.every(id => intent.data!.deployments.some(row => row.chainId === id))) return null
-  return <DeployChains intent={intent.data} heading="Also deploy on" chainIds={chainIds} onDeployed={() => void intent.refetch()} />
+  return <DeployChains intent={intent.data} heading="Deploy on more networks" chainIds={chainIds} onDeployed={() => void intent.refetch()} />
 }
