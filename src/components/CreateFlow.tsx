@@ -261,9 +261,10 @@ export default function CreateFlow({ renderDeploy, lockedChains }: CreateFlowPro
   }
 
   function formatField(name: FieldName) {
-    if (![...groups[2], ...groups[3]].includes(name) || ['revenueDescription', 'minimumRevenueConsequences'].includes(name)) return;
+    if (![...groups[2], ...groups[3]].includes(name)) return;
     const result = normalize(raw);
-    if (!result.errors[name]) update(name, number(result.values[name] as number));
+    const value = result.values[name];
+    if (!result.errors[name] && typeof value === 'number') update(name, number(value));
   }
 
   async function choosePhoto(name: 'photo' | 'ownerPhoto' | 'operatorPhoto', file: File | undefined) {

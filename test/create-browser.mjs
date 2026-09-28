@@ -161,6 +161,11 @@ try {
     await next();
     assert.equal(await input('operatorFundPercent').getAttribute('aria-invalid'), 'true');
     await input('operatorFundPercent').fill('20');
+    await input('fundTokenName').fill('Workshop FUND');
+    await input('fundTicker').fill('SHOP');
+    await input('opsReserve').click();
+    assert.equal(await input('fundTokenName').inputValue(), 'Workshop FUND');
+    assert.equal(await input('fundTicker').inputValue(), 'SHOP');
     assert.equal(await page.locator('#create-raise-goal').textContent(), '$1,025.65');
     await a11y('Valid funding form');
     await shot('create-fundraise-desktop.png');
