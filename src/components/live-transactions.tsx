@@ -206,8 +206,8 @@ function FundAllowlist({ state, client }: { state: FundProjectState; client: Pub
       setAddresses('')
     } catch (reason) { setError(errorMessage(reason)) }
   }
-  return <div className="grid gap-3 rounded border border-[#c4cdbb] p-4" aria-label="Payment allowlist">
-    <h3 className="text-xl">Payment allowlist</h3>
+  return <div className="grid gap-3 border-b border-[var(--line)] pb-6" aria-label="Payment allowlist">
+    <h3 className="text-[15px] font-medium">Payment allowlist</h3>
     <p className="text-sm">{allowlist.open ? 'Open: anyone can contribute.' : 'Closed: only allowed wallets can receive FUND from a contribution.'} Cash outs are never restricted.</p>
     <fieldset disabled={!canManage || tx.busy || tx.phase === 'review'} className="grid min-w-0 gap-3 border-0 p-0">
       <button type="button" className="btn-secondary min-h-11 justify-self-start px-4" onClick={() => void send(buildFundAllowlistOpen({ chainId: state.chainId, projectId: state.projectId, open: !allowlist.open }), allowlist.open ? 'Close contributions to the allowlist' : 'Open contributions to everyone')}>{allowlist.open ? 'Close to allowlist' : 'Open to everyone'}</button>

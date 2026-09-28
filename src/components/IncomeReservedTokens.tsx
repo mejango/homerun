@@ -69,16 +69,16 @@ export function IncomeReservedTokens({ state, client }: { state: IncomeProjectSt
   const snapshot = query.data
   const busy = preparing || tx.busy || tx.phase === 'review'
   const leftover = snapshot ? snapshot.pending - snapshot.splits.reduce((sum, split) => sum + splitAmount(snapshot, split.percent), 0n) : 0n
-  return <section className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7" aria-label="Distribute reserved INCOME">
-    <h3 className="mb-5 text-2xl">Distribute reserved INCOME</h3>
-    <p className="text-sm">Payments accrue INCOME for the operator and other reserved recipients. Anyone can distribute these tokens, including funding the configured rewards. You pay only the transaction fee.</p>
+  return <section className="demo-section" aria-label="Distribute reserved INCOME">
+    <h2>Distribute reserved INCOME</h2>
+    <p>Payments reserve INCOME for the Operator and other recipients. Anyone can distribute it for the gas fee.</p>
     {snapshot && <>
-      <p className="mt-4 text-2xl">{formatUnits(snapshot.pending, 18)} INCOME pending</p>
-      <dl className="mt-4 grid gap-3 text-sm">
-        {snapshot.splits.map((split, index) => <div className="break-words" key={index}><dt>{recipient(split)}</dt><dd>{split.percent / 10_000_000}% of reserves, currently {formatUnits(splitAmount(snapshot, split.percent), 18)} INCOME</dd></div>)}
-        {leftover > 0n && <div className="break-words"><dt>Remainder to project owner {snapshot.owner}</dt><dd>{formatUnits(leftover, 18)} INCOME</dd></div>}
+      <h3 className="mt-5 text-[15px] font-medium">{formatUnits(snapshot.pending, 18)} INCOME pending</h3>
+      <dl className="demo-live-rows mt-3">
+        {snapshot.splits.map((split, index) => <div key={index}><dt>{recipient(split)}</dt><dd>{split.percent / 10_000_000}% of reserves, currently {formatUnits(splitAmount(snapshot, split.percent), 18)} INCOME</dd></div>)}
+        {leftover > 0n && <div><dt>Remainder to project owner {snapshot.owner}</dt><dd>{formatUnits(leftover, 18)} INCOME</dd></div>}
       </dl>
-      <p className="mt-4 text-sm">Reward funding enters the distributor’s current round. Eligible holders claim and collect rewards separately.</p>
+      <p className="mt-3 text-xs text-[var(--muted)]">Reward funding enters the distributor’s current round; holders claim it separately.</p>
     </>}
     {query.isPending && <p className="mt-4 text-sm" role="status">Reading pending INCOME and its recipients…</p>}
     {query.isError && <p className="mt-4 text-sm" role="alert">{message(query.error)} <button type="button" className="underline" onClick={() => void query.refetch()}>Retry</button></p>}

@@ -1,9 +1,7 @@
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
-import { Brand } from '@/components/Brand'
 import { IncomeProject } from '@/components/IncomeProject'
-import { WalletButton } from '@/components/WalletButton'
 import { displayChainName } from '@/lib/chainDisplay'
 import { FUND_CHAIN_IDS } from '@/lib/fund-contracts'
 
@@ -41,11 +39,5 @@ export default async function IncomePage({ params, searchParams }: IncomeRoutePr
   // This parameter only requests a reward-route check. Contract splits must
   // independently prove the FUND token before its rewards become available.
   const fundProjectId = fundId(search.fund)
-  return <div className="project-page live-contract-page">
-    <a className="skip-link" href="#main">Skip to content</a>
-    <header className="site-header flex items-center justify-between gap-5"><Brand /><WalletButton /></header>
-    <main id="main" className="mx-auto max-w-[1220px] px-5 py-8 sm:px-8 sm:py-10" tabIndex={-1}>
-      <IncomeProject key={`${chainId}:${projectId}`} chainId={chainId} projectId={projectId} fundProjectId={fundProjectId} />
-    </main>
-  </div>
+  return <IncomeProject key={`${chainId}:${projectId}`} chainId={chainId} projectId={projectId} fundProjectId={fundProjectId} />
 }

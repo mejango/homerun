@@ -48,19 +48,18 @@ export function ProjectPermissionsEditor({ chainId, projectId, client, unavailab
     } catch (reason) { setError(message(reason)); void query.refetch() } finally { setPreparing(false) }
   }
 
-  return <section className="rounded-md border border-[#c4cdbb] p-5 sm:p-7" aria-label="Project permissions">
-    <h3 className="text-2xl">{state ? `${state.kind === 'revnet' ? 'INCOME' : 'FUND'} permissions` : 'Permissions'}</h3>
-    <p className="mt-2 text-sm">Project #{projectId.toString()} · {displayChainName(chainId)}</p>
-    <p className="mt-3 text-sm">Look up a wallet’s permissions and choose what it can do for this project on {displayChainName(chainId)}. Changes apply only to this project.</p>
-    {state?.kind === 'revnet' && !state.canManagePermissions && <p className="mt-3 text-sm">REVOwner defines this revnet’s control permissions. Its standard control wallet cannot grant additional permissions; ownership control can be moved in the ownership section.</p>}
-    {state && state.kind !== 'revnet' && !state.canManagePermissions && <p className="mt-3 text-sm">Connect the project owner or a delegate with ROOT to edit permissions.</p>}
+  return <section className="demo-section" aria-label="Project permissions">
+    <h2>{state ? `${state.kind === 'revnet' ? 'INCOME' : 'FUND'} permissions` : 'Permissions'}</h2>
+    <p>Look up a wallet and choose what it can do for project #{projectId.toString()} on {displayChainName(chainId)}.</p>
+    {state?.kind === 'revnet' && !state.canManagePermissions && <p className="text-xs text-[var(--muted)]">REVOwner sets this revnet’s control permissions. The control wallet cannot grant more; move control under Control.</p>}
+    {state && state.kind !== 'revnet' && !state.canManagePermissions && <p className="text-xs text-[var(--muted)]">Connect the project owner or a delegate with ROOT to edit permissions.</p>}
     <form className="mt-5 flex flex-wrap items-end gap-3" onSubmit={event => { event.preventDefault(); if (valid) { setOperator(wallet.trim() as Address); setError(null) } }}>
-      <label className="grid min-w-0 flex-1 gap-2 text-sm">Delegate wallet<input className="min-h-12 w-full rounded border border-[#bfc9b5] bg-transparent px-3 text-base" placeholder="0x…" value={wallet} onChange={event => setWallet(event.target.value)} autoComplete="off" spellCheck={false} disabled={busy} /></label>
-      <button type="submit" className="btn-secondary min-h-12 px-5" disabled={!valid || busy || unavailable || !client}>Look up permissions</button>
+      <label className="grid min-w-0 flex-1 gap-2 text-sm">Delegate wallet<input className="min-h-11 w-full rounded border border-[#bfc9b5] bg-white px-3 text-base" placeholder="0x…" value={wallet} onChange={event => setWallet(event.target.value)} autoComplete="off" spellCheck={false} disabled={busy} /></label>
+      <button type="submit" className="btn-secondary min-h-11 px-4" disabled={!valid || busy || unavailable || !client}>Look up permissions</button>
     </form>
     {query.isPending && client && !unavailable && <p className="mt-4 text-sm" role="status">Reading project permissions…</p>}
-    {query.isError && <p className="mt-4 text-sm text-red-800" role="alert">{message(query.error)} <button className="underline" onClick={() => void query.refetch()}>Retry</button></p>}
-    {(!client || unavailable) && <p className="mt-4 text-sm">Project permissions are temporarily unavailable.</p>}
+    {query.isError && <p className="mt-4 text-sm text-red-800" role="alert">{message(query.error)} <button type="button" className="quiet-button" onClick={() => void query.refetch()}>Retry</button></p>}
+    {(!client || unavailable) && <p className="mt-4 text-sm text-[var(--muted)]">Project permissions are temporarily unavailable.</p>}
     {state?.operator && <PermissionSelection key={state.identity} state={state} disabled={busy || !tx.ready || unavailable || query.isError} onSubmit={submit} />}
     {error && <p className="mt-4 text-sm text-red-800" role="alert">{error}</p>}
     <ProjectAdminTransactionStatus tx={tx} />
@@ -78,16 +77,16 @@ function PermissionSelection({ state, disabled, onSubmit }: { state: ProjectAuth
   const hasRoot = selected.includes(JBPermissionIdsV6.ROOT)
   const inheritedRoot = inherited.includes(JBPermissionIdsV6.ROOT)
   const changed = selected.join(',') !== original.filter(id => PROJECT_PERMISSION_CATALOG.some(entry => entry.id === id)).join(',')
-  return <form className="mt-6" onSubmit={event => { event.preventDefault(); void onSubmit(state, selected, rootConfirmed) }}>
-    <p className="break-all text-sm">Permissions for {state.operator}</p>
-    {isOwnerWallet && <p className="mt-3 text-sm">This wallet owns the project and already has full owner authority.</p>}
-    {inherited.length > 0 && <p className="mt-3 text-sm">Inherited from global grants: {inherited.map(id => PROJECT_PERMISSION_CATALOG.find(entry => entry.id === id)?.label ?? `Permission ${id}`).join(', ')}. These remain effective even if their project checkbox is cleared.</p>}
-    {unknown.length > 0 && <p className="mt-3 text-sm">Unrecognized project permissions {unknown.join(', ')} are preserved when saving.</p>}
+  return <form className="mt-6 border-t border-[var(--line)] pt-6" onSubmit={event => { event.preventDefault(); void onSubmit(state, selected, rootConfirmed) }}>
+    <h3 className="break-all text-[15px] font-medium">Permissions for {state.operator}</h3>
+    {isOwnerWallet && <p className="mt-3 text-xs text-[var(--muted)]">This wallet owns the project and already has full authority.</p>}
+    {inherited.length > 0 && <p className="mt-3 text-xs text-[var(--muted)]">Inherited from global grants: {inherited.map(id => PROJECT_PERMISSION_CATALOG.find(entry => entry.id === id)?.label ?? `Permission ${id}`).join(', ')}. These stay in effect even if cleared here.</p>}
+    {unknown.length > 0 && <p className="mt-3 text-xs text-[var(--muted)]">Unrecognized project permissions {unknown.join(', ')} are preserved when saving.</p>}
     <fieldset className="mt-5 grid gap-3 sm:grid-cols-2" disabled={disabled || !canEdit}>
       <legend className="mb-3 text-sm font-medium">Project permissions</legend>
-      {PROJECT_PERMISSION_CATALOG.map(entry => <label key={entry.id} className="flex items-start gap-3 text-sm"><input type="checkbox" className="mt-1" checked={selected.includes(entry.id)} disabled={disabled || !canEdit || (entry.id === JBPermissionIdsV6.ROOT && !state.isOwner && !hasRoot)} onChange={event => { setSelected(current => event.target.checked ? [...current, entry.id].sort((a, b) => a - b) : current.filter(id => id !== entry.id)); setRootConfirmed(false) }} /><span>{entry.label}{(inheritedRoot || inherited.includes(entry.id)) && <span className="block text-xs text-[#596653]">Also granted globally</span>}</span></label>)}
+      {PROJECT_PERMISSION_CATALOG.map(entry => <label key={entry.id} className="flex items-start gap-3 text-sm"><input type="checkbox" className="mt-1" checked={selected.includes(entry.id)} disabled={disabled || !canEdit || (entry.id === JBPermissionIdsV6.ROOT && !state.isOwner && !hasRoot)} onChange={event => { setSelected(current => event.target.checked ? [...current, entry.id].sort((a, b) => a - b) : current.filter(id => id !== entry.id)); setRootConfirmed(false) }} /><span>{entry.label}{(inheritedRoot || inherited.includes(entry.id)) && <span className="block text-xs text-[var(--muted)]">Also granted globally</span>}</span></label>)}
     </fieldset>
-    {hasRoot && canEdit && !state.isOwner && <p className="mt-4 text-sm">A ROOT delegate can save non-ROOT permissions only. Clear ROOT to revoke it, or connect the project owner to retain it.</p>}
+    {hasRoot && canEdit && !state.isOwner && <p className="mt-4 text-xs text-[var(--muted)]">A ROOT delegate can save non-ROOT permissions only. Clear ROOT to revoke it, or connect the owner to keep it.</p>}
     {hasRoot && canEdit && state.isOwner && <label className="mt-5 flex items-start gap-3 text-sm"><input type="checkbox" className="mt-1" checked={rootConfirmed} disabled={disabled} onChange={event => setRootConfirmed(event.target.checked)} /><span>I understand ROOT gives every Juicebox project permission and lets this wallet delegate non-ROOT powers to others.</span></label>}
     {canEdit && <button type="submit" className="btn-primary mt-5 min-h-11 px-5" disabled={disabled || !changed || (hasRoot && (!state.isOwner || !rootConfirmed))}>Review permission changes</button>}
   </form>

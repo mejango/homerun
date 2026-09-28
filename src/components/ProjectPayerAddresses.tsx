@@ -132,44 +132,44 @@ function ProjectPayerAddressContext({ chainId, projectId, tokenLabel = 'Project 
     catch (reason) { setStorageError(message(reason)) }
   }
   const duplicates = (rows.data ?? []).filter(row => row.defaultAddToBalance === addToBalance && isAddressEqual(row.defaultBeneficiary, (isAddress(beneficiary.trim()) ? beneficiary.trim() : zeroAddress) as Address))
-  return <section className="space-y-6" aria-label={`${tokenLabel} payer addresses`}>
+  return <section className="demo-section space-y-6" aria-label={`${tokenLabel} payer addresses`}>
     <div>
-      <h2 className="text-2xl">Payer addresses</h2>
-      <p className="mt-3 text-sm">Send ETH to a dedicated address to pay this project on {displayChainName(chainId)}. Anyone can create an address. Other tokens must use the payment module.</p>
-      {factory.data && !factory.data.acceptsNative && <p className="mt-3 text-sm">This project does not currently have an ETH terminal. A payer address can be created, but direct ETH transfers will revert until the project configures one.</p>}
+      <h2>Payer addresses</h2>
+      <p>Send ETH to a dedicated address to pay this project on {displayChainName(chainId)}. Anyone can create one. Other tokens must use the payment module.</p>
+      {factory.data && !factory.data.acceptsNative && <p className="mt-3 text-xs text-[var(--muted)]">This project has no ETH terminal yet. Direct ETH transfers will revert until it adds one.</p>}
     </div>
     <div>
-      <h3 className="text-lg">Deployed payer addresses</h3>
+      <h3 className="text-[15px] font-medium">Deployed payer addresses</h3>
       {rows.isPending && <p className="mt-3 text-sm" role="status">Loading payer addresses…</p>}
-      {rows.isError && <p className="mt-3 text-sm" role="alert">Could not load payer addresses from Bendystraw. <button type="button" className="underline" onClick={() => void rows.refetch()}>Retry</button></p>}
-      {rows.data?.length === 0 && <p className="mt-3 text-sm">No deployed payer addresses indexed yet.</p>}
-      {!!rows.data?.length && <div className="mt-3 divide-y divide-[#d8ddcf] border-y border-[#d8ddcf]">{rows.data.map(row => <article key={row.address} className="grid gap-3 py-4 text-sm sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <div><AddressLink chainId={chainId} address={row.address} /><button type="button" className="mt-2 block min-h-11 underline" onClick={() => void copy(row.address)}>{copied === row.address ? 'Copied' : 'Copy address'}</button></div>
+      {rows.isError && <p className="mt-3 text-sm" role="alert">Could not load payer addresses from Bendystraw. <button type="button" className="quiet-button" onClick={() => void rows.refetch()}>Retry</button></p>}
+      {rows.data?.length === 0 && <p className="mt-3 text-sm text-[var(--muted)]">No deployed payer addresses indexed yet.</p>}
+      {!!rows.data?.length && <div className="mt-3 divide-y divide-[var(--line)] border-y border-[var(--line)]">{rows.data.map(row => <article key={row.address} className="grid gap-3 py-4 text-sm sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <div><AddressLink chainId={chainId} address={row.address} /><button type="button" className="quiet-button mt-1 block" onClick={() => void copy(row.address)}>{copied === row.address ? 'Copied' : 'Copy address'}</button></div>
         <div><p>{row.defaultAddToBalance ? 'Add to balance, no tokens minted' : isAddressEqual(row.defaultBeneficiary, zeroAddress) ? `${tokenLabel} goes to the original payer` : <>{tokenLabel} beneficiary: <AddressLink chainId={chainId} address={row.defaultBeneficiary} /></>}</p>
           <p className="mt-1">{facilitated(row)} facilitated | {row.paymentsCount} payments | {row.addToBalanceCount} balance additions</p>
-          <p className="mt-1 text-xs">{isAddressEqual(row.owner, zeroAddress) ? 'Immutable routing' : <>Editable routing. Admin: <AddressLink chainId={chainId} address={row.owner} /></>}</p>
+          <p className="mt-1 text-xs text-[var(--muted)]">{isAddressEqual(row.owner, zeroAddress) ? 'Immutable routing' : <>Editable routing. Admin: <AddressLink chainId={chainId} address={row.owner} /></>}</p>
         </div>
       </article>)}</div>}
     </div>
-    {attempt && <div className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-4 text-sm" role="status">
-      {attempt.phase === 'confirmed' && attempt.payer ? <><p>Payer deployment confirmed.</p><p className="mt-2">This receipt confirms the original deployment. Use the indexed list above for the address and its current routing; an admin may have changed editable settings since deployment. New addresses appear when indexing catches up.</p></> : attempt.phase === 'reverted' ? <p>The payer deployment reverted. No payer was created by this call. Review the settings before trying again.</p> : <>
+    {attempt && <div className="border-t border-[var(--line)] pt-6 text-sm" role="status">
+      {attempt.phase === 'confirmed' && attempt.payer ? <><p>Payer deployment confirmed.</p><p className="mt-2 text-xs text-[var(--muted)]">This confirms the original deployment. Use the list above for current routing; an admin may have changed it. New addresses appear once indexed.</p></> : attempt.phase === 'reverted' ? <p>The payer deployment reverted. No payer was created by this call. Review the settings before trying again.</p> : <>
         <p>{attempt.safe && attempt.hash && !attempt.executionHash ? 'Proposed to Safe. Execution and onchain confirmation are still required.' : attempt.hash || attempt.executionHash ? 'Submitted. Verifying the payer deployment onchain…' : 'The wallet was asked to submit this deployment. Check your wallet before creating another payer address.'}</p>
         {confirmation.isError && <p className="mt-2">Confirmation is unavailable. {message(confirmation.error)}</p>}
-        <details className="mt-3"><summary className="cursor-pointer">Recover confirmation</summary><p className="mt-2">Paste the executed transaction hash from your wallet or Safe. The original call and payer settings will be verified before another deployment is enabled.</p><label className="mt-3 block" htmlFor={`${prefix}-recovery`}>Onchain transaction hash</label><input id={`${prefix}-recovery`} className="mt-2 w-full" value={recoveryHash} onChange={event => setRecoveryHash(event.target.value)} placeholder="0x…" /><button type="button" className="btn-secondary mt-3 min-h-11 px-4" onClick={recover}>Verify execution</button></details>
+        <details className="mt-3"><summary className="quiet-button cursor-pointer">Recover confirmation</summary><p className="mt-2 text-xs text-[var(--muted)]">Paste the executed transaction hash from your wallet or Safe. The call and settings are verified before another deployment is enabled.</p><label className="mt-3 block text-sm" htmlFor={`${prefix}-recovery`}>Onchain transaction hash</label><input id={`${prefix}-recovery`} className="mt-2 min-h-11 w-full rounded border border-[#bfc9b5] bg-white px-3" value={recoveryHash} onChange={event => setRecoveryHash(event.target.value)} placeholder="0x…" /><button type="button" className="btn-secondary mt-3 min-h-10 px-4" onClick={recover}>Verify execution</button></details>
       </>}
       {(attempt.executionHash || (!attempt.safe && attempt.hash)) && <a className="mt-2 block underline" href={explorerTxUrl(chainId, attempt.executionHash ?? attempt.hash!) ?? undefined} target="_blank" rel="noreferrer">View transaction</a>}
     </div>}
-    <details className="border-t border-[#d8ddcf] pt-5">
-      <summary className="cursor-pointer text-lg">Create payer address</summary>
+    <details className="border-t border-[var(--line)] pt-6">
+      <summary className="cursor-pointer text-[15px] font-medium">Create payer address</summary>
       <fieldset disabled={busy || unresolved || !!storageError} className="mt-5 space-y-4">
-        <div><label className="block text-sm" htmlFor={`${prefix}-behavior`}>Payment behavior</label><select id={`${prefix}-behavior`} className="mt-2 w-full" value={addToBalance ? 'balance' : 'pay'} onChange={event => setAddToBalance(event.target.value === 'balance')}><option value="pay">Pay and mint {tokenLabel}</option><option value="balance">Add to balance without minting</option></select></div>
-        {!addToBalance && <div><label className="block text-sm" htmlFor={`${prefix}-beneficiary`}>{tokenLabel} beneficiary</label><input id={`${prefix}-beneficiary`} className="mt-2 w-full" value={beneficiary} onChange={event => setBeneficiary(event.target.value)} placeholder="Original payer (default)" /><p className="mt-2 text-xs">Leave empty for the original payer, or enter a fixed wallet address.</p></div>}
-        <div><label className="block text-sm" htmlFor={`${prefix}-memo`}>Memo (optional)</label><input id={`${prefix}-memo`} className="mt-2 w-full" maxLength={500} value={memo} onChange={event => setMemo(event.target.value)} /></div>
+        <div><label className="block text-sm" htmlFor={`${prefix}-behavior`}>Payment behavior</label><select id={`${prefix}-behavior`} className="mt-2 min-h-11 w-full rounded border border-[#bfc9b5] bg-white px-3" value={addToBalance ? 'balance' : 'pay'} onChange={event => setAddToBalance(event.target.value === 'balance')}><option value="pay">Pay and mint {tokenLabel}</option><option value="balance">Add to balance without minting</option></select></div>
+        {!addToBalance && <div><label className="block text-sm" htmlFor={`${prefix}-beneficiary`}>{tokenLabel} beneficiary</label><input id={`${prefix}-beneficiary`} className="mt-2 min-h-11 w-full rounded border border-[#bfc9b5] bg-white px-3" value={beneficiary} onChange={event => setBeneficiary(event.target.value)} placeholder="Original payer (default)" /><p className="mt-2 text-xs text-[var(--muted)]">Leave empty for the original payer, or enter a fixed wallet.</p></div>}
+        <div><label className="block text-sm" htmlFor={`${prefix}-memo`}>Memo (optional)</label><input id={`${prefix}-memo`} className="mt-2 min-h-11 w-full rounded border border-[#bfc9b5] bg-white px-3" maxLength={500} value={memo} onChange={event => setMemo(event.target.value)} /></div>
         <label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={editable} onChange={event => setEditable(event.target.checked)} />Allow an admin to edit this payer’s routing</label>
-        {editable && <div><label className="block text-sm" htmlFor={`${prefix}-admin`}>Address admin</label><input id={`${prefix}-admin`} className="mt-2 w-full" value={admin} onChange={event => setAdmin(event.target.value)} placeholder={wallet.address ?? '0x…'} /><p className="mt-2 text-xs">Defaults to your connected wallet. The admin can redirect future payments to another project or beneficiary.</p></div>}
-        {duplicates.length > 0 && <p className="text-sm">{duplicates.length} indexed address{duplicates.length === 1 ? ' already uses' : 'es already use'} this payment behavior and beneficiary. You can reuse an address above.</p>}
-        {factory.isPending && <p className="text-sm" role="status">Verifying the payer factory…</p>}
-        {factory.isError && <p className="text-sm" role="alert">Payer creation is unavailable: {message(factory.error)} <button type="button" className="underline" onClick={() => void factory.refetch()}>Retry verification</button></p>}
+        {editable && <div><label className="block text-sm" htmlFor={`${prefix}-admin`}>Address admin</label><input id={`${prefix}-admin`} className="mt-2 min-h-11 w-full rounded border border-[#bfc9b5] bg-white px-3" value={admin} onChange={event => setAdmin(event.target.value)} placeholder={wallet.address ?? '0x…'} /><p className="mt-2 text-xs text-[var(--muted)]">Defaults to your wallet. The admin can redirect future payments to another project or beneficiary.</p></div>}
+        {duplicates.length > 0 && <p className="text-xs text-[var(--muted)]">{duplicates.length} indexed address{duplicates.length === 1 ? ' already uses' : 'es already use'} this payment behavior and beneficiary. You can reuse an address above.</p>}
+        {factory.isPending && <p className="text-xs text-[var(--muted)]" role="status">Verifying the payer factory…</p>}
+        {factory.isError && <p className="text-sm" role="alert">Payer creation is unavailable: {message(factory.error)} <button type="button" className="quiet-button" onClick={() => void factory.refetch()}>Retry verification</button></p>}
         <button type="button" className="btn-primary min-h-11 px-5" disabled={!ready || !factory.data || factory.isError} onClick={() => void create()}>{!wallet.address ? 'Connect wallet' : preparing ? 'Preparing…' : txPhaseLabel(tx.phase, { idle: 'Review payer creation', pending: 'Confirming onchain…' })}</button>
       </fieldset>
     </details>

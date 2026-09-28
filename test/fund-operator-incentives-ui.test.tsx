@@ -52,7 +52,7 @@ describe('FUND success allocation belongs to the owner', () => {
   async function selectOwner() {
     const selection = host.querySelector('select')!
     await act(async () => { selection.value = 'operator-share'; selection.dispatchEvent(new Event('change', { bubbles: true })) })
-    await act(async () => host.querySelector<HTMLInputElement>('#fund-success-controls + p + label input')!.click())
+    await act(async () => host.querySelector<HTMLInputElement>('#fund-success-controls ~ label input[type="checkbox"]')!.click())
   }
   async function setInput(field: HTMLInputElement, value: string) {
     await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, value); field.dispatchEvent(new Event('input', { bubbles: true })) })

@@ -151,7 +151,7 @@ function ProjectActions({ chainId, projectId, intentId, state, client, details, 
     return <HomerunProjectLayout title={details?.name ?? 'FUND project'}
       location={details?.location}
       logo={projectLogo(details, 'Project logo')}
-      metadata={[`Network: ${displayChainName(chainId)}`, `FUND: #${projectId}`, 'Status: Verifying contracts']}
+      metadata={[<span key="status" id="project-status" className="project-status" role="status">Status: Verifying contracts</span>]}
       notice={<>{alsoDeploy}{notice}</>}
       payment={<ActionSection title="Pay">{pending}</ActionSection>}
       activity={<ProjectActivity chainId={chainId} projectId={projectId} />}

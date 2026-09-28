@@ -90,7 +90,7 @@ describe('project permission controls', () => {
   it('keeps standard Revnet permission lookup read-only', async () => {
     mocks.state = snapshot({ kind: 'revnet', owner: v6Address('REVOwner', 8453), isOwner: false, isRevnetOperator: true, canManagePermissions: false })
     await mount('permissions')
-    expect(host.textContent).toContain('Its standard control wallet cannot grant additional permissions')
+    expect(host.textContent).toContain('The control wallet cannot grant more')
     expect(Array.from(host.querySelectorAll('button')).some(node => node.textContent === 'Review permission changes')).toBe(false)
     expect(host.querySelector('fieldset')!.disabled).toBe(true)
   })

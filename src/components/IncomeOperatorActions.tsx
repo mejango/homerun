@@ -76,18 +76,18 @@ export function IncomeOperatorActions({ state, client }: { state: IncomeProjectS
     } catch (reason) { setError(message(reason)) } finally { setPreparing(false) }
   }
 
-  return <section className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7" aria-label="Change INCOME Operator">
-    <h3 className="mb-5 text-2xl">Change INCOME Operator</h3>
-    <p className="text-sm">The Owner can change the wallet receiving the Operator’s INCOME split. Update each current and upcoming stage on {displayChainName(state.chainId)}. Each stage requires its own transaction.</p>
-    {snapshot && <dl className="mt-4 grid gap-3 text-sm">{snapshot.stages.map(stage => <div key={stage.rulesetId.toString()} className="break-words"><dt>{stage.isCurrent ? 'Current' : 'Upcoming'} stage {stage.rulesetId.toString()}</dt><dd>{stage.operatorIndex === null ? 'No Operator token split configured' : <>{stage.splits[stage.operatorIndex].beneficiary}{validRecipient && isAddressEqual(stage.splits[stage.operatorIndex].beneficiary, recipient.trim() as Address) ? ' — pays the selected Operator' : ''}</>}</dd></div>)}</dl>}
+  return <section className="demo-section" aria-label="Change INCOME Operator">
+    <h2>Change INCOME Operator</h2>
+    <p>The Owner sets the wallet receiving the Operator’s INCOME split, one transaction per stage on {displayChainName(state.chainId)}.</p>
+    {snapshot && <dl className="demo-live-rows mt-4">{snapshot.stages.map(stage => <div key={stage.rulesetId.toString()}><dt>{stage.isCurrent ? 'Current' : 'Upcoming'} stage {stage.rulesetId.toString()}</dt><dd>{stage.operatorIndex === null ? 'No Operator token split configured' : <>{stage.splits[stage.operatorIndex].beneficiary}{validRecipient && isAddressEqual(stage.splits[stage.operatorIndex].beneficiary, recipient.trim() as Address) ? ' — pays the selected Operator' : ''}</>}</dd></div>)}</dl>}
     {query.isPending && <p className="mt-4 text-sm" role="status">Reading the current Owner permissions and INCOME recipients…</p>}
     {query.isError && <p className="mt-4 text-sm" role="alert">{message(query.error)} <button type="button" className="underline" onClick={() => void query.refetch()}>Retry</button></p>}
-    {snapshot && (!snapshot.isOwner || !accountMatches) && <p className="mt-4 text-sm">Connect the current Owner wallet to change the INCOME Operator. Receiving the Operator split does not grant Owner authority.</p>}
-    <label className="mt-5 grid gap-2 text-sm">New Operator wallet<input className="min-h-12 w-full rounded border border-[#bfc9b5] bg-white px-3 text-base" value={recipient} onChange={event => setRecipient(event.target.value)} autoComplete="off" spellCheck={false} disabled={busy} placeholder="0x…" /></label>
+    {snapshot && (!snapshot.isOwner || !accountMatches) && <p className="mt-4 text-xs text-[var(--muted)]">Connect the current Owner wallet to change the INCOME Operator. Receiving the Operator split does not grant Owner authority.</p>}
+    <label className="mt-5 grid gap-2 text-sm sm:max-w-md">New Operator wallet<input className="min-h-12 w-full rounded border border-[#bfc9b5] bg-white px-3 text-base" value={recipient} onChange={event => setRecipient(event.target.value)} autoComplete="off" spellCheck={false} disabled={busy} placeholder="0x…" /></label>
     {recipient.trim() && !validRecipient && <p className="mt-2 text-sm text-red-800">{isAddress(recipient.trim()) && isAddressEqual(recipient.trim() as Address, OPERATOR_BURN_ADDRESS) ? 'The burn address cannot be used as an Operator wallet.' : 'Enter a valid, nonzero wallet address.'}</p>}
-    {locked && <p className="mt-4 text-sm" role="alert">This existing Operator split is locked onchain. It cannot be changed before its lock expires. New INCOME launches use unlocked splits.</p>}
+    {locked && <p className="mt-4 text-sm" role="alert">This Operator split is locked onchain until its lock expires.</p>}
     {validRecipient && configured.length > 0 && remaining.length === 0 && !query.isError && <p className="mt-4 text-sm" role="status">All current and upcoming Operator splits on {displayChainName(state.chainId)} pay this wallet.</p>}
-    {validRecipient && remaining.length > 1 && <p className="mt-4 text-sm">{remaining.length} stages still need updating. Confirm each stage to keep this Operator when the next stage begins.</p>}
+    {validRecipient && remaining.length > 1 && <p className="mt-4 text-xs text-[var(--muted)]">{remaining.length} stages still need updating, one transaction each.</p>}
     <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={!address || !snapshot?.isOwner || !accountMatches || !validRecipient || !nextStage || locked || busy || query.isError} onClick={() => void submit()}>{preparing ? 'Preparing…' : txPhaseLabel(tx.phase, { idle: `Review ${nextStage?.isCurrent ? 'current' : 'upcoming'} stage change`, pending: 'Confirming onchain…' })}</button>
     {error && <p className="mt-4 text-sm text-red-800" role="alert">{error}</p>}
     <div className="mt-4 break-words text-sm" role="status" aria-live="polite">

@@ -229,31 +229,31 @@ export function FundAssetWithdrawals({ state, client, contextIndex, onConfigureA
   }
 
   const explorer = tx.hash && !tx.safeProposalHash ? explorerTxUrl(state.chainId, tx.hash) : null
-  const inputClass = 'min-h-12 w-full rounded border border-[#bfc9b5] bg-white px-3 text-base'
-  return <section className="grid gap-4 border-t border-[#c4cdbb] pt-5" aria-labelledby="fund-asset-withdrawals">
-    <h3 id="fund-asset-withdrawals" className="text-xl">Pay for the asset</h3>
-    <p className="text-sm">Close fundraising and FUND cash-outs, then set an explicit purchase allowance. The allowance is a contract withdrawal limit. The asset price and bootstrap operating budget in the model do not authorize spending.</p>
-    {!closed && <p role="status" className="text-sm">The active contract rules must close both contributions and cash-outs before purchase withdrawals are available.</p>}
+  const inputClass = 'min-h-11 w-full rounded border border-[#bfc9b5] bg-white px-3 text-base'
+  return <section className="grid gap-4 border-t border-[var(--line)] pt-6" aria-labelledby="fund-asset-withdrawals">
+    <h3 id="fund-asset-withdrawals" className="text-[15px] font-medium">Pay for the asset</h3>
+    <p className="text-sm">After closing fundraising and FUND cash-outs, withdraw purchase money through an explicit allowance. The model’s asset price and operating budget do not authorize spending.</p>
+    {!closed && <p role="status" className="text-xs text-[var(--muted)]">Available once the active rules close both contributions and cash-outs.</p>}
     {context ? <>
-      <dl className="grid gap-3 rounded border border-[#c4cdbb] p-4 text-sm sm:grid-cols-3">
+      <dl className="demo-live-rows">
         <div><dt>Configured allowance</dt><dd>{currentAllowance.data ? `${formatUnits(currentAllowance.data.configured, context.decimals)} ${context.symbol}` : 'Checking…'}</dd></div>
         <div><dt>Already withdrawn this ruleset</dt><dd>{currentAllowance.data ? `${formatUnits(currentAllowance.data.used, context.decimals)} ${context.symbol}` : 'Checking…'}</dd></div>
         <div><dt>Available now</dt><dd>{currentAllowance.data ? `${formatUnits(currentAllowance.data.available, context.decimals)} ${context.symbol}` : 'Checking…'}</dd></div>
       </dl>
       {currentAllowance.isError && <p role="alert" className="text-sm text-red-800">{message(currentAllowance.error)}</p>}
-      {context.surplusAllowances.some(allowance => allowance.currency !== context.currency) && <p className="text-sm">This panel uses allowances in the treasury token’s accounting currency. Review other allowance currencies in Juicebox.</p>}
-      <details className="rounded border border-[#c4cdbb] p-4">
-        <summary className="cursor-pointer text-sm font-medium">Configure a purchase allowance</summary>
+      {context.surplusAllowances.some(allowance => allowance.currency !== context.currency) && <p className="text-xs text-[var(--muted)]">Only allowances in the treasury token’s own currency are shown. Review other currencies in Juicebox.</p>}
+      <details>
+        <summary className="cursor-pointer text-sm">Configure a purchase allowance</summary>
         <div className="mt-4 grid gap-4">
           <label className="grid gap-2 text-sm">New allowance in {context.symbol}, before fees<input className={inputClass} value={allowanceAmount} onChange={event => { setAllowanceAmount(event.target.value); setAllowanceAcknowledged(false) }} inputMode="decimal" autoComplete="off" disabled={locked} /></label>
-          <p className="text-sm">A new ruleset starts a new allowance budget. Enter only the amount that may be withdrawn after that ruleset starts. Every linked chain is reviewed in the configuration plan.</p>
+          <p className="text-xs text-[var(--muted)]">A new ruleset starts a fresh budget. Enter only what may be withdrawn after it starts. Every linked chain is included in the review.</p>
           <label className="flex items-start gap-3 text-sm"><input type="checkbox" className="mt-1 size-4 shrink-0" checked={allowanceAcknowledged} onChange={event => setAllowanceAcknowledged(event.target.checked)} disabled={locked} />I have reconciled previous withdrawals and reviewed this allowance change.</label>
           <div className="flex flex-wrap gap-3">
-            <button type="button" className="btn-secondary min-h-11 w-fit px-4" onClick={() => void configure()} disabled={locked || !onConfigureAllowance || !state.permissions.queueRulesets || !closed || state.hasPendingRuleset || !state.rulesetSnapshot.configuration || !currentAllowance.data || configuredAmount <= 0n || !allowanceAcknowledged}>Review purchase allowance</button>
-            {currentAllowance.data && currentAllowance.data.configured > 0n && <button type="button" className="btn-secondary min-h-11 w-fit px-4" onClick={() => void configure(true)} disabled={locked || !onConfigureAllowance || !state.permissions.queueRulesets || !closed || state.hasPendingRuleset || !state.rulesetSnapshot.configuration || !allowanceAcknowledged}>Review removing purchase allowance</button>}
+            <button type="button" className="btn-secondary min-h-10 px-4" onClick={() => void configure()} disabled={locked || !onConfigureAllowance || !state.permissions.queueRulesets || !closed || state.hasPendingRuleset || !state.rulesetSnapshot.configuration || !currentAllowance.data || configuredAmount <= 0n || !allowanceAcknowledged}>Review purchase allowance</button>
+            {currentAllowance.data && currentAllowance.data.configured > 0n && <button type="button" className="btn-secondary min-h-10 px-4" onClick={() => void configure(true)} disabled={locked || !onConfigureAllowance || !state.permissions.queueRulesets || !closed || state.hasPendingRuleset || !state.rulesetSnapshot.configuration || !allowanceAcknowledged}>Review removing purchase allowance</button>}
           </div>
-          <p className="text-sm">Remove the purchase allowance once the payment is complete, before enabling success mints. This prevents a later ruleset from renewing a spent budget.</p>
-          {!state.permissions.queueRulesets && <p className="text-sm">This wallet does not have permission to configure the project’s rules.</p>}
+          <p className="text-xs text-[var(--muted)]">Remove the allowance once paid, before enabling success mints, so a later ruleset cannot renew a spent budget.</p>
+          {!state.permissions.queueRulesets && <p className="text-xs text-[var(--muted)]">This wallet does not have permission to configure the project’s rules.</p>}
         </div>
       </details>
       <div className="grid gap-4 sm:grid-cols-2">
@@ -262,10 +262,10 @@ export function FundAssetWithdrawals({ state, client, contextIndex, onConfigureA
         <label className="grid gap-2 text-sm">Fee token recipient<input className={inputClass} value={feeBeneficiaryInput} onChange={event => setFeeBeneficiaryInput(event.target.value)} autoComplete="off" spellCheck={false} disabled={locked || tx.phase === 'success'} /></label>
         <label className="grid gap-2 text-sm">Public purchase reference<input className={inputClass} value={purchaseReference} maxLength={200} onChange={event => setPurchaseReference(event.target.value)} autoComplete="off" disabled={locked || tx.phase === 'success'} /></label>
       </div>
-      <p className="text-sm">The review quotes the amount the purchase recipient receives after protocol fees. The fee token recipient receives any project tokens minted in exchange for the fee. Use a reference without personal information.</p>
-      <button type="button" className="btn-primary min-h-11 w-fit px-4" onClick={() => void withdraw()} disabled={locked || tx.phase === 'success' || !state.permissions.useAllowance || !closed || state.hasPendingRuleset || !state.rulesetSnapshot.configuration || !currentAllowance.data || requestedAmount <= 0n || requestedAmount > currentAllowance.data.available || !beneficiary || !feeBeneficiary || !purchaseReference.trim()}>{preparing ? 'Verifying the allowance and fee…' : txPhaseLabel(tx.phase, { idle: 'Review asset withdrawal', pending: 'Confirming withdrawal…' })}</button>
-      {!state.permissions.useAllowance && <p className="text-sm">This wallet does not have permission to withdraw the project’s surplus allowance.</p>}
-      {confirmedNet !== null && <button type="button" className="btn-secondary min-h-11 w-fit px-4" disabled={locked} onClick={() => { tx.reset(); setIntent(null); setConfirmedNet(null); setWithdrawalAmount(''); setBeneficiaryInput(''); setFeeBeneficiaryInput(''); setPurchaseReference(''); setError(null) }}>Prepare another withdrawal</button>}
+      <p className="text-xs text-[var(--muted)]">The review quotes what the recipient gets after protocol fees. Project tokens minted for the fee go to the fee token recipient. The reference is public; leave out personal information.</p>
+      <button type="button" className="btn-primary min-h-11 w-fit px-5" onClick={() => void withdraw()} disabled={locked || tx.phase === 'success' || !state.permissions.useAllowance || !closed || state.hasPendingRuleset || !state.rulesetSnapshot.configuration || !currentAllowance.data || requestedAmount <= 0n || requestedAmount > currentAllowance.data.available || !beneficiary || !feeBeneficiary || !purchaseReference.trim()}>{preparing ? 'Verifying the allowance and fee…' : txPhaseLabel(tx.phase, { idle: 'Review asset withdrawal', pending: 'Confirming withdrawal…' })}</button>
+      {!state.permissions.useAllowance && <p className="text-xs text-[var(--muted)]">This wallet does not have permission to withdraw the project’s surplus allowance.</p>}
+      {confirmedNet !== null && <button type="button" className="btn-secondary min-h-10 w-fit px-4" disabled={locked} onClick={() => { tx.reset(); setIntent(null); setConfirmedNet(null); setWithdrawalAmount(''); setBeneficiaryInput(''); setFeeBeneficiaryInput(''); setPurchaseReference(''); setError(null) }}>Prepare another withdrawal</button>}
     </> : <p className="text-sm">Select a verified treasury currency to configure or use a purchase allowance.</p>}
     {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
     <div role="status" aria-live="polite" className="break-words text-sm">

@@ -88,7 +88,7 @@ describe('project payer controls', () => {
   })
   it('blocks deployment when the canonical factory is unavailable and explains native-terminal limits', async () => {
     mocks.factory.mockResolvedValue({ acceptsNative: false }); await render()
-    expect(host.textContent).toContain('direct ETH transfers will revert')
+    expect(host.textContent).toContain('Direct ETH transfers will revert')
     mocks.factory.mockRejectedValue(new Error('The canonical Juicebox V6 payer factory could not be verified on this chain.'))
     await act(async () => { await client.refetchQueries({ queryKey: ['project-payer-factory'] }) }); await settle()
     expect(host.textContent).toContain('Payer creation is unavailable')
@@ -129,8 +129,8 @@ describe('project payer controls', () => {
   it('shows saved deployment success as a historical receipt without offering stale editable routing', async () => {
     localStorage.setItem(KEY, JSON.stringify({ ...saved(), settings: { ...saved().settings, owner: saved().account }, hash: HASH, phase: 'submitted' }))
     mocks.getReceipt.mockResolvedValue({ transactionHash: HASH }); await render()
-    expect(host.textContent).toContain('This receipt confirms the original deployment.')
-    expect(host.textContent).toContain('an admin may have changed editable settings')
+    expect(host.textContent).toContain('This confirms the original deployment.')
+    expect(host.textContent).toContain('an admin may have changed it')
     expect(button('Copy address')).toBeUndefined()
     expect(host.querySelector(`a[href*="${PAYER}"]`)).toBeNull()
     expect(host.querySelector(`a[href*="${HASH}"]`)).not.toBeNull()

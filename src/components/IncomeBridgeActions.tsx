@@ -117,15 +117,14 @@ export function IncomeBridgeActions({ state }: { state: IncomeProjectState }) {
       </div>
     );
   return (
-    <section className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7">
-      <h3 className="font-serif text-3xl">Move INCOME between chains</h3>
-      <p className="mt-3 text-sm">
-        Discover linked Revnets from their registered bridges, including earlier
-        movements that still need a destination claim.
+    <section className="demo-section">
+      <h2>Move INCOME between chains</h2>
+      <p>
+        Find linked Revnets, including earlier moves that still need a claim.
       </p>
       <button
         type="button"
-        className="btn-secondary mt-4 min-h-11 px-4"
+        className="btn-secondary mt-4 min-h-10 px-4"
         disabled={graph.isFetching}
         onClick={() => (enabled ? void graph.refetch() : setEnabled(true))}
       >

@@ -398,3 +398,5 @@
 .homerun-project-layout .demo-live-plan h3 { margin: 22px 0 6px; font: 500 15px/1.4 var(--sans); }
 /* Long hashes, addresses and error payloads wrap instead of widening the page. */
 .homerun-project-layout .demo-section, .homerun-project-layout [role="alert"], .homerun-project-layout [role="status"] { overflow-wrap: anywhere; }
+/* Browser fieldsets draw a box; project forms group without one. In the base layer so utilities (border-t, p-*) still win. */
+@layer base { .homerun-project-layout fieldset { min-width: 0; margin: 0; padding: 0; border: 0; } }

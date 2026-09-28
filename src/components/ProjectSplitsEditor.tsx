@@ -30,7 +30,7 @@ function dateInputValue(timestamp: string): string {
   return `${date.getFullYear().toString().padStart(4, '0')}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')}T${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}:${date.getSeconds().toString().padStart(2, '0')}`
 }
 type EditorState = { snapshot: ProjectSplitsSnapshot; rulesetId: bigint; group: ProjectSplitGroup; drafts: ProjectSplitDraft[]; allowHookChanges: boolean; allowBurn: boolean }
-const fieldClass = 'min-h-11 min-w-0 w-full rounded border border-smoke-300 bg-transparent px-3 py-2 text-base'
+const fieldClass = 'min-h-11 min-w-0 w-full rounded border border-[#bfc9b5] bg-white px-3 py-2 text-base'
 
 export function ProjectSplitsEditor({ chainId, projectId, phase, client, unavailable = false }: { chainId: JBChainId; projectId: bigint; phase: 'fund' | 'income'; client: PublicClient; unavailable?: boolean }) {
   const { address } = useWallet()
@@ -84,20 +84,20 @@ export function ProjectSplitsEditor({ chainId, projectId, phase, client, unavail
     finally { submitting.current = false; setPreparing(false) }
   }
 
-  return <section className="space-y-5" aria-label={`${phase.toUpperCase()} split recipients`}>
-    <div><h3 className="text-2xl">Splits</h3><p className="mt-2 text-sm text-smoke-700">Choose a stage to manage its recipients on {displayChainName(chainId)}. Each change applies to one group in that stage.</p></div>
+  return <section className="demo-section space-y-5" aria-label={`${phase.toUpperCase()} split recipients`}>
+    <div><h2>Splits</h2><p className="text-[var(--muted)]">Pick a stage and group on {displayChainName(chainId)}. Each edit changes one group in one stage.</p></div>
     {query.isPending && <p role="status">Reading project recipients and permissions…</p>}
-    {query.isError && <p role="alert" className="text-sm text-red-800">{message(query.error)} <button type="button" className="underline" onClick={() => void query.refetch()}>Retry</button></p>}
+    {query.isError && <p role="alert" className="text-sm text-red-800">{message(query.error)} <button type="button" className="quiet-button" onClick={() => void query.refetch()}>Retry</button></p>}
     {snapshot && stage && group && <>
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="grid gap-2 text-sm">Stage<select className={fieldClass} value={stage.rulesetId.toString()} onChange={event => setSelection({ rulesetId: event.target.value, groupId: group.groupId.toString() })}>{snapshot.stages.map(stage => <option key={stage.rulesetId.toString()} value={stage.rulesetId.toString()}>{stage.isCurrent ? 'Current' : 'Queued'} stage {stage.rulesetId.toString()}{!stage.isCurrent ? ` · ${lockLabel(stage.start.toString())}` : ''}</option>)}</select></label>
         <label className="grid gap-2 text-sm">Split group<select className={fieldClass} value={group.groupId.toString()} onChange={event => setSelection({ rulesetId: stage.rulesetId.toString(), groupId: event.target.value })}>{stage.groups.map(group => <option key={group.groupId.toString()} value={group.groupId.toString()}>{group.label}</option>)}</select></label>
       </div>
-      <p className="text-sm text-smoke-700">{group.kind === 'reserved' ? <>This stage reserves {stage.reservedPercent / 100}% of newly issued tokens. The shares below divide that reserved amount.</> : <>These shares divide payouts in this token. Withdrawal budgets are configured separately.</>}</p>
+      <p className="text-sm text-[var(--muted)]">{group.kind === 'reserved' ? <>This stage reserves {stage.reservedPercent / 100}% of new tokens. These shares divide that amount.</> : <>These shares divide payouts in this token. Withdrawal budgets are set separately.</>}</p>
       <SplitRows splits={group.splits} timestamp={snapshot.blockTimestamp} kind={group.kind} />
-      <p className="break-words text-sm text-smoke-700">{formatSplitPercent(1_000_000_000 - group.splits.reduce((sum, split) => sum + split.percent, 0))}% unallocated, sent to the onchain project Owner: <span className="font-mono">{snapshot.owner}</span>.</p>
-      {group.fallback.length > 0 && <details className="rounded border border-smoke-200 p-4 text-sm"><summary className="cursor-pointer">Default recipients</summary><p className="my-3">These apply when this stage has no explicit recipients. To avoid activating them unintentionally, keep at least one recipient when replacing this group.</p><SplitRows splits={group.fallback} timestamp={snapshot.blockTimestamp} kind={group.kind} /></details>}
-      {!snapshot.canEdit || !matches ? <p className="text-sm text-smoke-700">Connect the Owner or a wallet with permission to edit split groups.</p> : null}
+      <p className="break-words text-xs text-[var(--muted)]">{formatSplitPercent(1_000_000_000 - group.splits.reduce((sum, split) => sum + split.percent, 0))}% unallocated, sent to the onchain project Owner: <span className="font-mono">{snapshot.owner}</span>.</p>
+      {group.fallback.length > 0 && <details className="border-t border-[var(--line)] pt-4 text-sm"><summary className="cursor-pointer text-[15px] font-medium">Default recipients</summary><p className="my-3 text-xs text-[var(--muted)]">These apply when a stage has no recipients. Keep at least one recipient when replacing this group.</p><SplitRows splits={group.fallback} timestamp={snapshot.blockTimestamp} kind={group.kind} /></details>}
+      {!snapshot.canEdit || !matches ? <p className="text-xs text-[var(--muted)]">Connect the Owner or a wallet with permission to edit split groups.</p> : null}
       <button type="button" className="btn-secondary min-h-11 px-5" disabled={!canEdit} onClick={() => { setError(null); setEditor({ snapshot, rulesetId: stage.rulesetId, group, drafts: projectSplitDrafts(group), allowHookChanges: false, allowBurn: false }) }}>Edit recipients</button>
     </>}
     <ProjectAdminTransactionStatus tx={tx} />
@@ -108,10 +108,10 @@ export function ProjectSplitsEditor({ chainId, projectId, phase, client, unavail
           const hooked = !!original && !isAddressEqual(original.hook, zeroAddress)
           const locked = !!original && BigInt(original.lockedUntil) > editor.snapshot.blockTimestamp
           const immutable = busy || locked || (hooked && !editor.allowHookChanges)
-          return <fieldset key={draft.sourceIndex === undefined ? `new-${index}` : `old-${draft.sourceIndex}`} className="space-y-4 rounded border border-smoke-200 p-4" disabled={busy}>
-            <legend className="px-1 text-sm">Recipient {index + 1}</legend>
-            {hooked && <p className="break-words text-xs text-smoke-700">Hook: {original.hook}. Existing routing is preserved.</p>}
-            {locked && <p className="text-sm text-smoke-700">Locked until {lockLabel(original.lockedUntil)}. Its recipient and percentage must stay the same until then.</p>}
+          return <fieldset key={draft.sourceIndex === undefined ? `new-${index}` : `old-${draft.sourceIndex}`} className="space-y-4 border-t border-[var(--line)] pt-5 first:border-t-0 first:pt-0" disabled={busy}>
+            <legend className="text-[15px] font-medium">Recipient {index + 1}</legend>
+            {hooked && <p className="break-words text-xs text-[var(--muted)]">Hook: {original.hook}. Existing routing is preserved.</p>}
+            {locked && <p className="text-xs text-[var(--muted)]">Locked until {lockLabel(original.lockedUntil)}. Recipient and share cannot change until then.</p>}
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="grid gap-2 text-sm">Share (%)<input className={fieldClass} inputMode="decimal" maxLength={20} value={draft.percent} disabled={immutable} onChange={event => update(index, { percent: event.target.value })} /></label>
               <label className="grid gap-2 text-sm">Recipient type<select className={fieldClass} value={draft.recipient} disabled={immutable || hooked} onChange={event => update(index, { recipient: event.target.value as 'wallet' | 'project', preferAddToBalance: editor.group.kind === 'payout' ? false : draft.preferAddToBalance })}><option value="wallet">Wallet</option><option value="project">Juicebox project</option></select></label>
@@ -121,14 +121,14 @@ export function ProjectSplitsEditor({ chainId, projectId, phase, client, unavail
             {draft.recipient === 'project' && editor.group.kind === 'payout' && <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={draft.preferAddToBalance} disabled={immutable || hooked} onChange={event => update(index, { preferAddToBalance: event.target.checked })} />Add to the recipient project’s balance without issuing its tokens</label>}
             <label className="grid gap-2 text-sm">Locked until (your local time)<input type="datetime-local" step="1" className={fieldClass} value={dateInputValue(draft.lockedUntil)} disabled={busy || (hooked && !editor.allowHookChanges)} onChange={event => update(index, { lockedUntil: event.target.value ? Math.floor(new Date(event.target.value).valueOf() / 1_000).toString() : '' })} /></label>
             {!!draft.lockedUntil && !dateInputValue(draft.lockedUntil) && <p className="text-sm">Existing lock: {lockLabel(draft.lockedUntil)}.</p>}
-            <button type="button" className="min-h-11 text-sm underline" disabled={immutable} onClick={() => { setEditor(current => current ? { ...current, drafts: current.drafts.filter((_, row) => row !== index) } : null); setError(null) }}>Remove recipient {index + 1}</button>
+            <button type="button" className="quiet-button" disabled={immutable} onClick={() => { setEditor(current => current ? { ...current, drafts: current.drafts.filter((_, row) => row !== index) } : null); setError(null) }}>Remove recipient {index + 1}</button>
           </fieldset>
         })}
-        {editor.group.splits.some(split => !isAddressEqual(split.hook, zeroAddress)) && <label className="flex items-start gap-3 rounded border border-smoke-200 p-4 text-sm"><input type="checkbox" className="mt-1" checked={editor.allowHookChanges} disabled={busy} onChange={event => setEditor(current => current ? { ...current, allowHookChanges: event.target.checked } : null)} /><span>Allow changes to existing hook allocations. Changing or removing these shares may affect FUND rewards or Sticky distributions.</span></label>}
-        {editor.group.kind === 'reserved' && editor.drafts.some(draft => draft.recipient === 'wallet' && draft.beneficiary.toLowerCase() === RESERVED_TOKEN_BURN_ADDRESS.toLowerCase() && (draft.sourceIndex === undefined || isAddressEqual(editor.group.splits[draft.sourceIndex].hook, zeroAddress))) && <label className="flex items-start gap-3 rounded border border-smoke-200 p-4 text-sm"><input type="checkbox" className="mt-1" checked={editor.allowBurn} disabled={busy} onChange={event => setEditor(current => current ? { ...current, allowBurn: event.target.checked } : null)} /><span>Confirm burning reserved tokens sent directly to the burn address. These tokens are permanently destroyed instead of being received by a wallet.</span></label>}
+        {editor.group.splits.some(split => !isAddressEqual(split.hook, zeroAddress)) && <label className="flex items-start gap-3 border-t border-[var(--line)] pt-4 text-sm"><input type="checkbox" className="mt-1" checked={editor.allowHookChanges} disabled={busy} onChange={event => setEditor(current => current ? { ...current, allowHookChanges: event.target.checked } : null)} /><span>Allow changes to hook allocations. This may affect FUND rewards or Sticky distributions.</span></label>}
+        {editor.group.kind === 'reserved' && editor.drafts.some(draft => draft.recipient === 'wallet' && draft.beneficiary.toLowerCase() === RESERVED_TOKEN_BURN_ADDRESS.toLowerCase() && (draft.sourceIndex === undefined || isAddressEqual(editor.group.splits[draft.sourceIndex].hook, zeroAddress))) && <label className="flex items-start gap-3 border-t border-[var(--line)] pt-4 text-sm"><input type="checkbox" className="mt-1" checked={editor.allowBurn} disabled={busy} onChange={event => setEditor(current => current ? { ...current, allowBurn: event.target.checked } : null)} /><span>Burn reserved tokens sent to the burn address. They are permanently destroyed, not received by a wallet.</span></label>}
         <button type="button" className="btn-secondary min-h-11 px-5" disabled={busy || editor.drafts.length >= 64} onClick={() => setEditor(current => current ? { ...current, drafts: [...current.drafts, { percent: '', recipient: 'wallet', beneficiary: '', projectId: '', preferAddToBalance: false, lockedUntil: '' }] } : null)}>Add recipient</button>
-        <p className="text-sm text-smoke-700">Any unallocated share goes to the onchain project Owner. A lock protects the exact recipient and percentage within this stage until its expiry.</p>
-        {validation && <p className="text-sm text-smoke-700" role="status">{validation}</p>}
+        <p className="text-xs text-[var(--muted)]">Unallocated shares go to the project Owner. A lock fixes a recipient and share in this stage until it expires.</p>
+        {validation && <p className="text-sm text-[var(--muted)]" role="status">{validation}</p>}
         {error && <p className="text-sm text-red-800" role="alert">{error}</p>}
         <ProjectAdminTransactionStatus tx={tx} />
       </div>
@@ -137,5 +137,5 @@ export function ProjectSplitsEditor({ chainId, projectId, phase, client, unavail
 }
 
 function SplitRows({ splits, timestamp, kind }: { splits: readonly ProjectSplit[]; timestamp: bigint; kind: 'reserved' | 'payout' }) {
-  return splits.length ? <ul className="divide-y divide-smoke-200 rounded border border-smoke-200">{splits.map((split, index) => <li key={index} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:gap-4"><span className="shrink-0 font-medium sm:w-28">{formatSplitPercent(split.percent)}%</span><div className="min-w-0 break-words text-sm"><p>{recipient(split, kind)}</p>{kind === 'payout' && split.preferAddToBalance && <p className="mt-1 text-xs text-smoke-700">Add to project balance</p>}{BigInt(split.lockedUntil) > timestamp && <p className="mt-1 text-xs text-smoke-700">Locked until {lockLabel(split.lockedUntil)}</p>}</div></li>)}</ul> : <p className="rounded border border-smoke-200 p-4 text-sm">No split recipients. The entire share goes to the onchain project Owner.</p>
+  return splits.length ? <ul className="divide-y divide-[var(--line)] border-y border-[var(--line)]">{splits.map((split, index) => <li key={index} className="flex flex-col gap-2 py-3 sm:flex-row sm:gap-4"><span className="shrink-0 font-medium sm:w-28">{formatSplitPercent(split.percent)}%</span><div className="min-w-0 break-words text-sm"><p>{recipient(split, kind)}</p>{kind === 'payout' && split.preferAddToBalance && <p className="mt-1 text-xs text-[var(--muted)]">Add to project balance</p>}{BigInt(split.lockedUntil) > timestamp && <p className="mt-1 text-xs text-[var(--muted)]">Locked until {lockLabel(split.lockedUntil)}</p>}</div></li>)}</ul> : <p className="border-y border-[var(--line)] py-3 text-sm">No split recipients. The entire share goes to the project Owner.</p>
 }

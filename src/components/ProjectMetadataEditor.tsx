@@ -116,25 +116,25 @@ function ProjectMetadataEditorContent({ chainId, projectId, client, unavailable 
 
   return <div className="grid gap-3">
     {active?.canEdit && <button type="button" className="btn-secondary min-h-11 px-4 py-2 justify-self-start" disabled={!details.data || unavailable || !tx.ready || busy} onClick={open}>{label}</button>}
-    {active?.canEdit && details.isPending && <p className="text-sm" role="status">Loading the published details for editing…</p>}
-    {active?.canEdit && details.isError && <p className="text-sm" role="alert">{message(details.error)} <button type="button" className="underline" onClick={() => void details.refetch()}>Retry details</button></p>}
-    {address && snapshot.isError && <p className="text-sm" role="alert">{message(snapshot.error)} <button type="button" className="underline" onClick={() => void snapshot.refetch()}>Retry permissions</button></p>}
+    {active?.canEdit && details.isPending && <p className="text-xs text-[var(--muted)]" role="status">Loading the published details for editing…</p>}
+    {active?.canEdit && details.isError && <p className="text-sm" role="alert">{message(details.error)} <button type="button" className="quiet-button" onClick={() => void details.refetch()}>Retry details</button></p>}
+    {address && snapshot.isError && <p className="text-sm" role="alert">{message(snapshot.error)} <button type="button" className="quiet-button" onClick={() => void snapshot.refetch()}>Retry permissions</button></p>}
     <ProjectAdminTransactionStatus tx={tx} />
     {editing && <ModalShell title={review ? 'Review project details' : label} subtitle={`Project #${projectId} on ${displayChainName(chainId)}`} busy={preparing || (tx.busy && !tx.pending) || tx.phase === 'review'} onClose={() => { setEditing(null); setError(null) }} maxWidth="max-w-3xl" footer={<div className="flex flex-wrap justify-end gap-3">
       {review ? <><button type="button" className="btn-secondary min-h-11 px-4 py-2" disabled={busy} onClick={() => setReview(false)}>Back to details</button><button type="button" className="btn-primary min-h-11 px-4 py-2" disabled={busy || !tx.ready || unavailable} onClick={() => void publish()}>{preparing ? 'Publishing reviewed details…' : tx.pending ? 'Waiting for confirmation…' : 'Publish changes'}</button></> : <><button type="button" className="btn-secondary min-h-11 px-4 py-2" onClick={() => setEditing(null)}>Cancel</button><button type="submit" className="btn-primary min-h-11 px-4 py-2" form={`${id}-form`}>Review changes</button></>}
     </div>}>
       <div className="demo-shop-editor grid gap-6">
-        <p className="text-sm">These details apply to this phase on {displayChainName(chainId)}. Other phases and networks keep their own published details.</p>
+        <p className="text-xs text-[var(--muted)]">These details apply to this phase on {displayChainName(chainId)} only.</p>
         {review ? <>
-          <dl className="grid gap-4">{fieldKeys.map(key => <div key={key}><dt className="font-medium">{metadataFieldLabel(key)}</dt><dd className="whitespace-pre-line break-words">{editing.draft[key] || 'Not specified'}</dd></div>)}</dl>
+          <dl className="grid gap-4">{fieldKeys.map(key => <div key={key} className="border-b border-[var(--line)] pb-3"><dt className="text-[13px] text-[var(--muted)]">{metadataFieldLabel(key)}</dt><dd className="whitespace-pre-line break-words">{editing.draft[key] || 'Not specified'}</dd></div>)}</dl>
           <dl className="grid gap-3 sm:grid-cols-2">{(['cover', 'logo', ...(editing.document.supportsPlan ? ['owner', 'operator'] : [])] as MetadataImageKey[]).map(key => <div key={key}><dt className="capitalize">{key} image</dt><dd>{images[key]?.remove ? 'Remove image' : <><MetadataImagePreview label={`${key} image`} file={images[key]?.file} existing={editing.document.images[key]} />{images[key]?.file ? `Upload ${images[key]!.file!.name}` : editing.document.images[key] ? 'Keep current image' : 'No image'}</>}</dd></div>)}</dl>
-          <p className="text-sm">Profile addresses describe the people shown here. Ownership and payment recipients are managed separately under Owner and Operator controls. Operating estimates and minimum revenue describe the plan and do not trigger contract changes.</p>
+          <p className="text-xs text-[var(--muted)]">Profile addresses only describe the people shown. Ownership, payment recipients and contract terms don’t change.</p>
         </> : <form id={`${id}-form`} className="grid gap-7" onSubmit={event => { event.preventDefault(); reviewDetails() }} noValidate>
-          <fieldset className="grid gap-4"><legend className="mb-4 text-xl">Project details</legend>{basicFields.filter(key => editing.document.supportsPlan || key === 'name' || key === 'description').map(field)}<div className="grid gap-5 sm:grid-cols-2">{photo('cover', 'Cover image')}{photo('logo', 'Project logo')}</div></fieldset>
+          <fieldset className="grid gap-4"><legend className="mb-4 text-[15px] font-medium">Project details</legend>{basicFields.filter(key => editing.document.supportsPlan || key === 'name' || key === 'description').map(field)}<div className="grid gap-5 sm:grid-cols-2">{photo('cover', 'Cover image')}{photo('logo', 'Project logo')}</div></fieldset>
           {editing.document.supportsPlan && <>
-            <fieldset className="grid gap-4"><legend className="mb-4 text-xl">Ownership</legend>{field('ownerName')}{field('ownerIntroduction')}{field('ownerWallet')}<p className="text-sm">Associate this introduction with the Owner’s address. Transfer ownership under Owner controls.</p>{photo('owner', 'Owner photo')}</fieldset>
-            <fieldset className="grid gap-4"><legend className="mb-4 text-xl">Operator</legend>{field('operatorName')}{field('operatorIntroduction')}{field('operatorWallet')}<p className="text-sm">Associate this introduction with the Operator’s address. Change the paid Operator under Operator controls.</p>{photo('operator', 'Operator photo')}</fieldset>
-            <fieldset className="grid gap-4"><legend className="mb-4 text-xl">Published operating plan</legend><p className="text-sm">Amounts are in USD. These estimates describe the plan; they do not change contract terms or automatically enforce a minimum revenue.</p>{planFields.map(field)}</fieldset>
+            <fieldset className="grid gap-4 border-t border-[var(--line)] pt-6"><legend className="float-left mb-4 w-full text-[15px] font-medium">Ownership</legend>{field('ownerName')}{field('ownerIntroduction')}{field('ownerWallet')}<p className="text-xs text-[var(--muted)]">Shown with the Owner’s address. Transfer ownership under Control.</p>{photo('owner', 'Owner photo')}</fieldset>
+            <fieldset className="grid gap-4 border-t border-[var(--line)] pt-6"><legend className="float-left mb-4 w-full text-[15px] font-medium">Operator</legend>{field('operatorName')}{field('operatorIntroduction')}{field('operatorWallet')}<p className="text-xs text-[var(--muted)]">Shown with the Operator’s address. Change the paid Operator under Operator controls.</p>{photo('operator', 'Operator photo')}</fieldset>
+            <fieldset className="grid gap-4 border-t border-[var(--line)] pt-6"><legend className="float-left mb-4 w-full text-[15px] font-medium">Published operating plan</legend><p className="text-xs text-[var(--muted)]">Amounts in USD. Estimates only; they don’t change contract terms or enforce a minimum revenue.</p>{planFields.map(field)}</fieldset>
           </>}
         </form>}
         {error && <p role="alert" className="text-sm">{error}</p>}
@@ -149,9 +149,9 @@ function MetadataImageInput({ id, label, existing, value, disabled, onChange }: 
 }) {
   return <div className="ds-field"><label htmlFor={id}>{label}</label>{!value?.remove && <MetadataImagePreview label={label} existing={existing} file={value?.file} />}
     <input id={id} type="file" accept="image/jpeg,image/png,image/webp" disabled={disabled} onChange={event => { const file = event.target.files?.[0]; if (file) onChange({ file }); event.target.value = '' }} />
-    <p className="text-sm">{value?.remove ? 'Image will be removed.' : value?.file ? value.file.name : 'JPEG, PNG, or WebP, up to 25 MB.'}</p>
-    {(existing || value?.file) && !value?.remove && <button type="button" className="underline justify-self-start" disabled={disabled} onClick={() => onChange({ remove: true })}>Remove {label.toLowerCase()}</button>}
-    {(value?.remove || value?.file) && <button type="button" className="underline justify-self-start" disabled={disabled} onClick={() => onChange({})}>Keep original {label.toLowerCase()}</button>}
+    <p className="text-xs text-[var(--muted)]">{value?.remove ? 'Image will be removed.' : value?.file ? value.file.name : 'JPEG, PNG, or WebP, up to 25 MB.'}</p>
+    {(existing || value?.file) && !value?.remove && <button type="button" className="quiet-button justify-self-start" disabled={disabled} onClick={() => onChange({ remove: true })}>Remove {label.toLowerCase()}</button>}
+    {(value?.remove || value?.file) && <button type="button" className="quiet-button justify-self-start" disabled={disabled} onClick={() => onChange({})}>Keep original {label.toLowerCase()}</button>}
   </div>
 }
 

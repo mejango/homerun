@@ -34,6 +34,7 @@ vi.mock('@/components/ProjectOwnershipEditor', () => ({ ProjectOwnershipEditor: 
 vi.mock('@/components/ProjectPermissionsEditor', () => ({ ProjectPermissionsEditor: ({ chainId, projectId, unavailable }: { chainId: number; projectId: bigint; unavailable?: boolean }) => <section data-testid="permissions-editor" data-chain-id={chainId} data-project-id={projectId.toString()}><button disabled={unavailable}>Edit permissions</button></section> }))
 vi.mock('@/components/ProjectSplitsEditor', () => ({ ProjectSplitsEditor: ({ chainId, projectId, phase, unavailable }: { chainId: number; projectId: bigint; phase: string; unavailable?: boolean }) => <section data-testid="splits-editor" data-chain-id={chainId} data-project-id={projectId.toString()} data-phase={phase}><button disabled={unavailable}>Edit splits</button></section> }))
 vi.mock('wagmi', () => ({ usePublicClient: () => ({}) }))
+vi.mock('@/components/WalletButton', () => ({ WalletButton: () => <span>Wallet</span> }))
 vi.mock('@/hooks/useReviewedPermit2Signature', () => ({ useReviewedPermit2Signature: () => ({ signPermit2Async: vi.fn() }) }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address, isConnected: true }) }))
 vi.mock('@/components/InitialIncomeMint', () => ({ InitialIncomeMint: ({ fundProjectId, incomeProjectId, manifestUri }: { fundProjectId: bigint; incomeProjectId: bigint; manifestUri: string | null }) => <div>Initial INCOME FUND {fundProjectId.toString()} INCOME {incomeProjectId.toString()} manifest {manifestUri ?? 'none'}</div> }))
@@ -123,7 +124,7 @@ describe('INCOME transaction surfaces', () => {
     expect(host.textContent).not.toContain('Market')
     expect(host.querySelector('[data-account-section="you"]')?.textContent).toContain('Cash out INCOME')
   })
-  function section(title: string) { return [...host.querySelectorAll('section')].find(element => element.querySelector('h3')?.textContent === title)! }
+  function section(title: string) { return [...host.querySelectorAll('section')].find(element => element.querySelector('h2, h3')?.textContent === title)! }
   function pendingReserved() {
     const current = state()
     const snapshot: IncomeReservedSnapshot = { chainId: 1, projectId: 7n, blockNumber: 100n, blockHash: current.blockHash, controller: current.controller, owner: current.owner, tokenAddress: current.tokenAddress, rulesetId: 1n, pending: 8n * 10n ** 18n, splits: [{ percent: 1_000_000_000, beneficiary: current.owner, projectId: 0n, hook: zeroAddress, preferAddToBalance: false, lockedUntil: 0 }] }

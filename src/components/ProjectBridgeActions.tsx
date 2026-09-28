@@ -41,7 +41,7 @@ import {
   type ProjectBridgeMovement,
 } from "@/lib/project-bridge";
 import { verifyFundBridgeReceipt } from "@/lib/fund-bridge-receipts";
-import { readableError } from '@/lib/readable-error'
+import { readableError } from "@/lib/readable-error";
 
 const clients = new Map<JBChainId, PublicClient>();
 function clientFor(chainId: JBChainId): PublicClient {
@@ -55,7 +55,10 @@ function clientFor(chainId: JBChainId): PublicClient {
   return client;
 }
 function message(error: unknown) {
-  return readableError(error, "The bridge could not be verified. Refresh and try again.");
+  return readableError(
+    error,
+    "The bridge could not be verified. Refresh and try again.",
+  );
 }
 function positive(value: string) {
   try {
@@ -204,7 +207,7 @@ function BridgeStatus({ tx, chainId }: { tx: BridgeTx; chainId: number }) {
           The bridge action is not yet verified. {tx.verificationError}{" "}
           <button
             type="button"
-            className="underline"
+            className="quiet-button"
             onClick={tx.retryVerification}
           >
             Check again
@@ -317,63 +320,71 @@ export function ProjectBridgeActions<State extends BridgeProjectState>({
   const writesUnavailable = route.isError || !route.data || !accountMatches;
   const locked = Object.values(locks).some(Boolean);
   return (
-    <section className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7">
-      <button
-        type="button"
-        className="flex w-full items-center justify-between gap-4 text-left"
-        aria-expanded={expanded}
-        onClick={() => {
-          setActivated(true);
-          setExpanded((value) => !value);
-        }}
-      >
-        <span className="font-serif text-3xl">
-          Move {adapter.tokenLabel} between chains
-        </span>
-        <span aria-hidden="true">{expanded ? "−" : "+"}</span>
-      </button>
-      <div hidden={!expanded} className="mt-5">
-        <p className="mb-4 text-sm">{adapter.description}</p>
+    <section className="demo-section">
+      <h2>
+        <button
+          type="button"
+          className="flex w-full cursor-pointer items-center justify-between gap-4 border-0 bg-transparent p-0 text-left text-inherit [font:inherit] disabled:cursor-default disabled:bg-transparent"
+          aria-expanded={expanded}
+          onClick={() => {
+            setActivated(true);
+            setExpanded((value) => !value);
+          }}
+        >
+          <span>Move {adapter.tokenLabel} between chains</span>
+          <span aria-hidden="true" className="text-xl text-[var(--muted)]">
+            {expanded ? "−" : "+"}
+          </span>
+        </button>
+      </h2>
+      <div hidden={!expanded}>
+        <p className="mb-5">{adapter.description}</p>
         {!state.linkedPeers.length ? (
-          <p className="text-sm">This project has no verified linked chains.</p>
+          <p className="text-sm text-[var(--muted)]">
+            This project has no verified linked chains.
+          </p>
         ) : (
           <>
-            <label className="grid gap-2 text-sm">
-              Other chain
-              <select
-                className="min-h-12 rounded border border-[#bfc9b5] bg-white px-3 pr-10 text-base"
-                disabled={locked}
-                value={destination}
-                onChange={(event) => setDestination(Number(event.target.value))}
-              >
-                {state.linkedPeers.map((peer) => (
-                  <option key={peer.chainId} value={peer.chainId}>
-                    {displayChainName(peer.chainId)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {state.accountingContexts?.length > 1 && (
-              <label className="mt-4 grid gap-2 text-sm">
-                Treasury backing
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="grid gap-2 text-sm">
+                Other chain
                 <select
-                  className="min-h-12 rounded border border-[#bfc9b5] bg-white px-3 pr-10 text-base"
+                  className="min-h-11 w-full rounded border border-[#bfc9b5] bg-white px-3 pr-10 text-base"
                   disabled={locked}
-                  value={backingToken}
+                  value={destination}
                   onChange={(event) =>
-                    setBackingToken(event.target.value as Address)
+                    setDestination(Number(event.target.value))
                   }
                 >
-                  {state.accountingContexts.map((context) => (
-                    <option key={context.token} value={context.token}>
-                      {context.symbol}
+                  {state.linkedPeers.map((peer) => (
+                    <option key={peer.chainId} value={peer.chainId}>
+                      {displayChainName(peer.chainId)}
                     </option>
                   ))}
                 </select>
               </label>
-            )}
+              {state.accountingContexts?.length > 1 && (
+                <label className="grid gap-2 text-sm">
+                  Treasury backing
+                  <select
+                    className="min-h-11 w-full rounded border border-[#bfc9b5] bg-white px-3 pr-10 text-base"
+                    disabled={locked}
+                    value={backingToken}
+                    onChange={(event) =>
+                      setBackingToken(event.target.value as Address)
+                    }
+                  >
+                    {state.accountingContexts.map((context) => (
+                      <option key={context.token} value={context.token}>
+                        {context.symbol}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </div>
             {route.isFetching && (
-              <p className="mt-4 text-sm" role="status">
+              <p className="mt-4 text-xs text-[var(--muted)]" role="status">
                 Verifying linked project IDs and bridge contracts…
               </p>
             )}
@@ -383,7 +394,7 @@ export function ProjectBridgeActions<State extends BridgeProjectState>({
                 <button
                   type="button"
                   onClick={() => void route.refetch()}
-                  className="underline"
+                  className="quiet-button"
                 >
                   Try again
                 </button>
@@ -392,12 +403,12 @@ export function ProjectBridgeActions<State extends BridgeProjectState>({
             {displayedRoute && (
               <fieldset
                 disabled={writesUnavailable}
-                className="mt-5 grid min-w-0 gap-7 border-0 p-0"
+                className="mt-6 grid min-w-0 gap-6 border-0 border-t border-[var(--line)] p-0 pt-6"
               >
                 {writesUnavailable && (
-                  <p className="text-sm">
-                    New bridge actions are paused while this wallet’s route is
-                    verified. Submitted transactions remain tracked.
+                  <p className="text-xs text-[var(--muted)]">
+                    New moves are paused while this wallet’s route is verified.
+                    Submitted transactions stay tracked.
                   </p>
                 )}
                 <BridgePreparation
@@ -428,7 +439,7 @@ export function ProjectBridgeActions<State extends BridgeProjectState>({
           href={referenceLink(state)}
           target="_blank"
           rel="noreferrer"
-          className="mt-5 inline-block text-sm underline"
+          className="mt-6 inline-block text-xs text-[var(--muted)] underline"
         >
           Open this project in Juicebox
         </a>
@@ -602,19 +613,30 @@ function BridgePreparation<State extends BridgeProjectState>({
   }
   return (
     <div>
-      <h3 className="mb-3 text-2xl">Prepare a move</h3>
-      <p className="mb-4 text-sm">
-        {displayChainName(route.source.chainId)} project{" "}
-        {route.source.projectId.toString()} →{" "}
-        {displayChainName(route.destination.chainId)} project{" "}
-        {route.destination.projectId.toString()}
-      </p>
-      <p className="mb-4 text-sm">
-        Available: {formatUnits(route.source.erc20Balance, 18)}{" "}
-        {adapter.tokenLabel} ERC-20.{" "}
-        {route.source.creditBalance > 0n &&
-          `Use “Your ${adapter.tokenLabel}” to claim internal credits as ERC-20 before moving them.`}
-      </p>
+      <h3 className="mb-3 text-[15px] font-medium">Prepare a move</h3>
+      <dl className="demo-live-rows mb-5">
+        <div>
+          <dt>Route</dt>
+          <dd>
+            {displayChainName(route.source.chainId)} project{" "}
+            {route.source.projectId.toString()} →{" "}
+            {displayChainName(route.destination.chainId)} project{" "}
+            {route.destination.projectId.toString()}
+          </dd>
+        </div>
+        <div>
+          <dt>Available</dt>
+          <dd>
+            {formatUnits(route.source.erc20Balance, 18)} {adapter.tokenLabel}{" "}
+            ERC-20
+          </dd>
+        </div>
+      </dl>
+      {route.source.creditBalance > 0n && (
+        <p className="mb-4 text-xs text-[var(--muted)]">
+          {`Use “Your ${adapter.tokenLabel}” to claim internal credits as ERC-20 before moving them.`}
+        </p>
+      )}
       {!route.canPrepare && (
         <p className="mb-4 text-sm">{route.prepareIssue}</p>
       )}
@@ -622,7 +644,7 @@ function BridgePreparation<State extends BridgeProjectState>({
         <label className="grid gap-2 text-sm">
           {adapter.tokenLabel} to move
           <input
-            className="min-h-12 min-w-0 rounded border border-[#bfc9b5] bg-white px-3 text-base"
+            className="min-h-11 w-full min-w-0 rounded border border-[#bfc9b5] bg-white px-3 text-base"
             inputMode="decimal"
             value={amount}
             onChange={(event) => setAmount(event.target.value)}
@@ -631,11 +653,13 @@ function BridgePreparation<State extends BridgeProjectState>({
         </label>
         <div className="grid gap-2 text-sm">
           <span>Destination beneficiary</span>
-          <p className="break-all py-3">{address ?? "Connect your wallet"}</p>
+          <p className="break-all py-2.5 font-mono text-xs">
+            {address ?? "Connect your wallet"}
+          </p>
         </div>
       </div>
       {quote.data && (
-        <p className="mt-4 text-sm">
+        <p className="mt-4 text-xs text-[var(--muted)]">
           At least{" "}
           {formatUnits(
             quote.data.minTokensReclaimed,
@@ -840,29 +864,29 @@ function BridgeMovements<State extends BridgeProjectState>({
     }
   }
   return (
-    <div className="border-t border-[#c4cdbb] pt-5">
+    <div className="border-t border-[var(--line)] pt-6">
       <div className="flex items-center justify-between gap-3">
-        <h3 className="text-2xl">
+        <h3 className="text-[15px] font-medium">
           {incoming ? "Incoming" : "Outgoing"} {adapter.tokenLabel}
         </h3>
         <button
           type="button"
-          className="text-sm underline"
+          className="quiet-button"
           disabled={history.isFetching || busy}
           onClick={() => void history.refetch()}
         >
           Refresh
         </button>
       </div>
-      <p className="mt-2 text-sm">
+      <p className="mt-1 text-xs text-[var(--muted)]">
         {displayChainName(sourceChain)} → {displayChainName(destinationChain)}
       </p>
       {!address ? (
-        <p className="mt-4 text-sm">
+        <p className="mt-4 text-sm text-[var(--muted)]">
           Connect your wallet to view movements for your address.
         </p>
       ) : history.isPending ? (
-        <p className="mt-4 text-sm" role="status">
+        <p className="mt-4 text-xs text-[var(--muted)]" role="status">
           Reconstructing and verifying bridge proofs…
         </p>
       ) : history.isError ? (
@@ -871,21 +895,21 @@ function BridgeMovements<State extends BridgeProjectState>({
           Claims remain unavailable until the destination proof can be verified.
         </p>
       ) : !movements.length ? (
-        <p className="mt-4 text-sm">
+        <p className="mt-4 text-sm text-[var(--muted)]">
           No verified movements for your address on this route.
         </p>
       ) : (
-        <ul className="mt-4 grid gap-4">
+        <ul className="mt-4 divide-y divide-[var(--line)] border-y border-[var(--line)]">
           {movements.map((movement) => (
             <li
               key={`${movement.sourceSucker}:${movement.leaf.index}`}
-              className="rounded border border-[#c4cdbb] bg-white p-4"
+              className="py-4"
             >
               <p>
                 {formatUnits(movement.leaf.projectTokenCount, 18)}{" "}
                 {adapter.tokenLabel}
               </p>
-              <p className="mt-2 text-sm">
+              <p className="mt-1 text-sm text-[var(--muted)]">
                 {movement.status === "claimed"
                   ? "Claimed on the destination"
                   : movement.status === "claimable"
@@ -897,7 +921,7 @@ function BridgeMovements<State extends BridgeProjectState>({
               {movement.status === "claimable" ? (
                 <button
                   type="button"
-                  className="btn-secondary mt-3 min-h-11 px-4"
+                  className="btn-secondary mt-3 min-h-10 px-4"
                   disabled={busy || history.isError}
                   onClick={() => void act(movement, "claim")}
                 >
@@ -910,7 +934,7 @@ function BridgeMovements<State extends BridgeProjectState>({
                 ) ? (
                   <button
                     type="button"
-                    className="btn-secondary mt-3 min-h-11 px-4"
+                    className="btn-secondary mt-3 min-h-10 px-4"
                     disabled={busy || history.isError}
                     onClick={() => void act(movement, "relay")}
                   >

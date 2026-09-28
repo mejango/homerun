@@ -71,7 +71,7 @@ it('keeps submitted trackers through a wallet switch and disables incompatible n
   await render()
   expect(runtime.mounted).toBe(mounted)
   expect(runtime.unmounted).toBe(0)
-  expect(host.textContent).toContain('Submitted transactions remain tracked')
+  expect(host.textContent).toContain('Submitted transactions stay tracked')
   expect(host.querySelector('fieldset')?.disabled).toBe(true)
 })
 it('shows proof failure and the canonical project fallback without claim or relay controls', async () => {

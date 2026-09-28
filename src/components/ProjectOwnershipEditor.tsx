@@ -47,19 +47,18 @@ export function ProjectOwnershipEditor({ chainId, projectId, client, unavailable
     } catch (reason) { setError(message(reason)); void query.refetch() } finally { setPreparing(false) }
   }
 
-  return <section className="rounded-md border border-[#c4cdbb] p-5 sm:p-7" aria-label="Project ownership">
-    <h3 className="text-2xl">{state ? isRevnet ? 'INCOME control' : 'FUND ownership' : 'Project ownership'}</h3>
-    <p className="mt-2 text-sm">Project #{projectId.toString()} · {displayChainName(chainId)}</p>
+  return <section className="demo-section" aria-label="Project ownership">
+    <h2>{state ? isRevnet ? 'INCOME control' : 'FUND ownership' : 'Project ownership'}</h2>
     {state && <>
-      <dl className="mt-4 grid gap-2 text-sm"><div><dt className="font-medium">{isRevnet ? 'Project NFT owner · REVOwner' : 'Current project owner'}</dt><dd className="mt-1 break-all">{state.owner}</dd></div></dl>
-      <p className="mt-3 text-sm">{isRevnet ? 'The revnet contract holds the project NFT. Its current control wallet can move the configured management permissions to another wallet.' : 'The project NFT gives its wallet control over this project. This is separate from holding FUND or INCOME tokens.'}</p>
-      {isRevnet && state.isRevnetOperator && <p className="mt-3 break-words text-sm">Connected control wallet: {address}</p>}
+      <dl className="demo-live-rows"><div><dt>Project</dt><dd>#{projectId.toString()} on {displayChainName(chainId)}</dd></div><div><dt>{isRevnet ? 'Project NFT owner · REVOwner' : 'Current project owner'}</dt><dd className="break-all">{state.owner}</dd></div>{isRevnet && state.isRevnetOperator && <div><dt>Connected control wallet</dt><dd className="break-all">{address}</dd></div>}</dl>
+      <p className="mt-4 text-xs text-[var(--muted)]">{isRevnet ? 'The revnet contract holds the project NFT. Its control wallet can move the management permissions to another wallet.' : 'The project NFT controls this project. It is separate from holding FUND or INCOME.'}</p>
     </>}
+    {!state && <p className="text-sm text-[var(--muted)]">Project #{projectId.toString()} on {displayChainName(chainId)}</p>}
     {query.isPending && client && !unavailable && <p className="mt-4 text-sm" role="status">Reading project ownership…</p>}
-    {query.isError && <p className="mt-4 text-sm text-red-800" role="alert">{message(query.error)} <button className="underline" onClick={() => void query.refetch()}>Retry</button></p>}
-    {!client || unavailable ? <p className="mt-4 text-sm">Project ownership is temporarily unavailable.</p> : !address ? <p className="mt-4 text-sm">Connect your wallet to manage project ownership.</p> : state && !state.canTransfer ? <p className="mt-4 text-sm">{isRevnet ? 'Connect the current INCOME control wallet to transfer its management permissions. Receiving an economic Operator split does not give this authority.' : 'Connect the current project owner or an approved project NFT operator to transfer ownership.'}</p> : null}
-    {state?.canTransfer && <form className="mt-5 grid gap-4" onSubmit={event => { event.preventDefault(); void submit() }}>
-      <label className="grid gap-2 text-sm">{isRevnet ? 'New control wallet' : 'New project owner wallet'}<input className="min-h-12 w-full rounded border border-[#bfc9b5] bg-transparent px-3 text-base" placeholder="0x…" value={recipient} onChange={event => { setRecipient(event.target.value); setConfirmed(false); setError(null) }} autoComplete="off" spellCheck={false} disabled={busy} /></label>
+    {query.isError && <p className="mt-4 text-sm text-red-800" role="alert">{message(query.error)} <button type="button" className="quiet-button" onClick={() => void query.refetch()}>Retry</button></p>}
+    {!client || unavailable ? <p className="mt-4 text-sm text-[var(--muted)]">Project ownership is temporarily unavailable.</p> : !address ? <p className="mt-4 text-sm text-[var(--muted)]">Connect your wallet to manage project ownership.</p> : state && !state.canTransfer ? <p className="mt-4 text-sm text-[var(--muted)]">{isRevnet ? 'Connect the INCOME control wallet to transfer its permissions. An Operator split does not give this authority.' : 'Connect the project owner or an approved project NFT operator to transfer ownership.'}</p> : null}
+    {state?.canTransfer && <form className="mt-6 grid gap-4 border-t border-[var(--line)] pt-6" onSubmit={event => { event.preventDefault(); void submit() }}>
+      <label className="grid gap-2 text-sm">{isRevnet ? 'New control wallet' : 'New project owner wallet'}<input className="min-h-11 w-full rounded border border-[#bfc9b5] bg-white px-3 text-base" placeholder="0x…" value={recipient} onChange={event => { setRecipient(event.target.value); setConfirmed(false); setError(null) }} autoComplete="off" spellCheck={false} disabled={busy} /></label>
       {recipient.trim() && !valid && <p className="text-sm text-red-800">Enter a valid, nonzero wallet address.</p>}
       <label className="flex items-start gap-3 text-sm"><input className="mt-1" type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} disabled={busy || !different} /><span>{isRevnet ? 'I understand this transfers the connected wallet’s control permissions to the selected wallet.' : 'I understand the new owner will control this project on this chain.'}</span></label>
       <button className="btn-primary min-h-11 justify-self-start px-5" type="submit" disabled={!different || !confirmed || busy || !tx.ready || query.isError || unavailable}>{preparing ? 'Preparing…' : 'Review ownership change'}</button>

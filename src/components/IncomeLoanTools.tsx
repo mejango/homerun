@@ -122,23 +122,23 @@ export function IncomeLoanTools({ state, client }: Props) {
   const validInput = action === 'transfer' ? !!incomeLoanRecipient(recipient) && !!address && !isAddressEqual(incomeLoanRecipient(recipient)!, address)
     : action === 'reallocate' ? parsedCollateral !== null && parsedAdditional !== null && (collateral > 0n || additional > 0n)
       : collateral > 0n
-  return <section className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7" aria-label="Manage INCOME loans">
-    <h3 className="mb-5 text-2xl">Manage INCOME loans</h3>
-    <p className="mb-5 text-sm">Manage loan NFTs owned by your wallet. Each change is quoted from the contracts and reviewed before you sign.</p>
+  return <section className="demo-section" aria-label="Manage INCOME loans">
+    <h2>Manage INCOME loans</h2>
+    <p className="mb-5">Change loan NFTs your wallet owns. Each change is quoted and reviewed before you sign.</p>
     <div className="grid gap-4 sm:grid-cols-2">
       <Field label="Loan NFT ID" value={loanInput} onChange={setLoanInput} />
-      <label className="grid gap-2 text-sm">Action<select className="min-h-12 rounded border border-[#bfc9b5] bg-white px-3 pr-9" value={action} onChange={event => setAction(event.target.value as LoanAction)}><option value="partialRepay">Return some collateral</option><option value="reallocate">Refinance excess collateral</option><option value="transfer">Transfer loan NFT</option></select></label>
+      <label className="grid gap-2 text-sm">Action<select className="min-h-12 w-full rounded border border-[#bfc9b5] bg-white px-3 pr-9" value={action} onChange={event => setAction(event.target.value as LoanAction)}><option value="partialRepay">Return some collateral</option><option value="reallocate">Refinance excess collateral</option><option value="transfer">Transfer loan NFT</option></select></label>
     </div>
     {loan.isFetching && !loan.data && <p className="mt-4 text-sm" role="status">Reading this loan…</p>}
-    {loan.data && <p className="mt-4 text-sm">Collateral: {formatUnits(loan.data.loan.collateral, 18)} INCOME. Outstanding principal: {formatUnits(loan.data.loan.amount, loan.data.sourceContext.decimals)} {loan.data.sourceContext.symbol}.</p>}
+    {loan.data && <dl className="demo-live-rows mt-4"><div><dt>Collateral</dt><dd>{formatUnits(loan.data.loan.collateral, 18)} INCOME</dd></div><div><dt>Outstanding principal</dt><dd>{formatUnits(loan.data.loan.amount, loan.data.sourceContext.decimals)} {loan.data.sourceContext.symbol}</dd></div></dl>}
     {loan.isError && <p className="mt-4 text-sm text-red-800" role="alert">{errorMessage(loan.error)}</p>}
     <div className="mt-5 grid gap-4 sm:grid-cols-2">
       {action === 'transfer' ? <Field label="Recipient address" value={recipient} onChange={setRecipient} address /> : <Field label={action === 'reallocate' ? 'INCOME collateral to move to a new loan' : 'INCOME collateral to return to your wallet'} value={collateralInput} onChange={setCollateralInput} />}
       {action === 'reallocate' && <Field label="Additional INCOME from your wallet" value={additionalInput} onChange={setAdditionalInput} />}
     </div>
-    {action === 'reallocate' && <p className="mt-4 text-sm">The original debt must remain fully backed. The new loan uses the same currency, with a 2.5% prepaid source fee plus applicable protocol and REV fees. Borrowing minima are shown before fees.</p>}
-    {action === 'partialRepay' && <p className="mt-4 text-sm">The contracts calculate how much debt must be repaid for this collateral return, including accrued source fees. If the remaining collateral has no borrowing value, the loan closes and all collateral is returned.</p>}
-    {prerequisite.phase === 'success' && <p className="mt-4 text-sm">Prerequisite confirmed. Continue to review the loan change.</p>}
+    {action === 'reallocate' && <p className="mt-4 text-xs text-[var(--muted)]">The original debt stays fully backed. The new loan pays a 2.5% prepaid source fee plus protocol and REV fees; minima are shown before fees.</p>}
+    {action === 'partialRepay' && <p className="mt-4 text-xs text-[var(--muted)]">The contracts set the debt owed for this return, including fees. If the rest has no borrowing value, the loan closes and returns all collateral.</p>}
+    {prerequisite.phase === 'success' && <p className="mt-4 text-sm">Prerequisite confirmed. Review the loan change next.</p>}
     <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={!address || busy || !loan.data || loan.isError || !validInput} onClick={() => void submit()}>{preparing ? 'Preparing…' : txPhaseLabel(prerequisite.busy ? prerequisite.phase : tx.phase, { idle: 'Review loan change', pending: 'Confirming onchain…' })}</button>
     {error && <p className="mt-4 text-sm text-red-800" role="alert">{error}</p>}
     <TransactionStatus tx={prerequisite} chainId={state.chainId} /><TransactionStatus tx={tx} chainId={state.chainId} />

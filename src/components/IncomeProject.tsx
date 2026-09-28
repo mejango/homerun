@@ -22,6 +22,7 @@ import { useSafeTx, txPhaseLabel, type TxRequest } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { displayChainName, explorerTxUrl } from '@/lib/chainDisplay'
 import { HomerunProjectLayout, OwnersTabs } from '@/components/HomerunProjectLayout'
+import { ProjectPageShell } from '@/components/ProjectPage'
 import { ProjectParticipants } from '@/components/ProjectParticipants'
 import { ProjectPayerAddresses } from '@/components/ProjectPayerAddresses'
 import { ProjectShop } from '@/components/ProjectShop'
@@ -52,7 +53,7 @@ function units(value: bigint, decimals = 18) { return formatUnits(value, decimal
 type IncomeTx = ReturnType<typeof useSafeTx>
 
 function Panel({ title, children }: { title: string; children: ReactNode }) {
-  return <section className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7"><h3 className="mb-5 text-2xl">{title}</h3>{children}</section>
+  return <section className="demo-section"><h2>{title}</h2>{children}</section>
 }
 function Field({ label, value, onChange, text = false }: { label: string; value: string; onChange: (value: string) => void; text?: boolean }) {
   return <label className="grid gap-2 text-sm">{label}<input className="min-h-12 w-full rounded border border-[#bfc9b5] bg-white px-3 text-base" value={value} onChange={event => onChange(event.target.value)} inputMode={text ? 'text' : 'decimal'} autoComplete="off" /></label>
@@ -148,7 +149,7 @@ export function IncomeProjectRuntime({ chainId, projectId, fundProjectId, bindin
   const details = useQuery({ queryKey: ['fund-project-metadata', displayState?.projectUri], enabled: !!displayState?.projectUri, queryFn: () => fetchFundProjectMetadata(displayState!.projectUri), staleTime: 300_000, retry: 1 })
   const notice = projectId === undefined ? null : <>
     {query.isPending && <p role="status">Reading the INCOME contracts…</p>}
-    {query.isError && <div role="alert"><p>INCOME could not be verified. Its transactions are unavailable.</p><p className="mt-2 text-sm">{message(query.error)}</p><button type="button" className="btn-secondary mt-4" onClick={() => void query.refetch()}>Try again</button></div>}
+    {query.isError && <div role="alert"><p>INCOME could not be verified. Its transactions are unavailable.</p><p className="mt-2 text-xs text-[var(--muted)]">{message(query.error)}</p><button type="button" className="btn-secondary mt-4" onClick={() => void query.refetch()}>Try again</button></div>}
     {bindingUnavailable && <p role="status">The FUND connection is being reverified. Pending INCOME transactions remain tracked; new actions wait for verification.</p>}
     {fundProjectId === undefined && source.isError && <p className="mb-4 text-sm" role="alert">The original FUND connection could not be discovered. INCOME transactions remain available. <button type="button" className="underline" onClick={() => void source.refetch()}>Retry connection</button></p>}
   </>
@@ -157,11 +158,11 @@ export function IncomeProjectRuntime({ chainId, projectId, fundProjectId, bindin
 }
 
 export function IncomeProject({ chainId, projectId, fundProjectId }: { chainId: JBChainId; projectId: bigint; fundProjectId?: bigint }) {
-  return <IncomeProjectRuntime chainId={chainId} projectId={projectId} fundProjectId={fundProjectId}>{slots => <HomerunProjectLayout
+  return <IncomeProjectRuntime chainId={chainId} projectId={projectId} fundProjectId={fundProjectId}>{slots => <ProjectPageShell><HomerunProjectLayout
     title={slots.title}
     location={slots.location}
     logo={slots.logoUrl && <Image unoptimized src={slots.logoUrl} width={112} height={112} alt={`${slots.title} logo`} />}
-    metadata={[`Network: ${displayChainName(chainId)}`, `INCOME: #${projectId}`, `Status: ${slots.state?.metadata.pausePay ? 'Payments paused' : slots.state ? 'Revenue open' : 'Verifying contracts'}`, slots.treasuryMetric, slots.supplyMetric]}
+    metadata={[<span key="status" id="project-status" className="project-status" role="status">Status: {slots.state?.metadata.pausePay ? 'Payments paused' : slots.state ? 'Revenue open' : 'Verifying contracts'}</span>, slots.treasuryMetric, slots.supplyMetric]}
     notice={slots.notice}
     payment={slots.payment}
     activity={slots.activity}
@@ -169,9 +170,9 @@ export function IncomeProject({ chainId, projectId, fundProjectId }: { chainId: 
     stages={slots.stages}
     owners={<OwnersTabs accountsYou={slots.accountsYou} accountsAll={slots.accountsAll} settlement={slots.settlement} splits={slots.splits} loans={slots.loans} control={slots.control} permissions={slots.permissions} />}
     shop={slots.shop}
-    extras={slots.extras}
-    operators={<div className="grid gap-7">{slots.operators}<Panel title="INCOME administration"><p>INCOME follows its deployed revnet schedule. Allocations and loan operations are available to their beneficiaries under Owners.</p>{slots.fundProjectId && <a className="mt-4 inline-block underline" href={`/project/${chainId}/${slots.fundProjectId}`}>Open FUND Owner controls →</a>}</Panel></div>}
-  />}</IncomeProjectRuntime>
+    extras={<div className="demo-owner-sections">{slots.extras}<Panel title="Contracts"><dl className="demo-live-rows"><div><dt>Network</dt><dd>{displayChainName(chainId)}</dd></div><div><dt>INCOME project</dt><dd>#{projectId.toString()}</dd></div>{slots.fundProjectId && <div><dt>FUND project</dt><dd>#{slots.fundProjectId.toString()}</dd></div>}{slots.state && <div><dt>Project owner</dt><dd>{slots.state.owner}</dd></div>}{slots.state && <div><dt>Controller</dt><dd>{slots.state.controller}</dd></div>}{slots.state?.tokenAddress && <div><dt>INCOME ERC-20</dt><dd>{slots.state.tokenAddress}</dd></div>}</dl></Panel></div>}
+    operators={<div className="demo-owner-sections">{slots.operators}<Panel title="INCOME administration"><p>INCOME follows its deployed revnet schedule. Beneficiaries manage allocations and loans under Owners.</p>{slots.fundProjectId && <a className="quiet-button mt-4 inline-block" href={`/project/${chainId}/${slots.fundProjectId}`}>Open FUND Owner controls →</a>}</Panel></div>}
+  /></ProjectPageShell>}</IncomeProjectRuntime>
 }
 
 /** Public asset roles belong to FUND; INCOME governance and wallet permissions are separate. */
@@ -201,12 +202,12 @@ function StandaloneIncomeOverview({ chainId, slots }: { chainId: JBChainId; slot
   })
   const details = slots.details?.plan ? slots.details : fundDetails.data ?? slots.details
   const owner = currentFund?.knownOwnerWrapper ? currentFund.owner : null
-  return <div className="grid gap-7">
+  return <div className="demo-owner-sections">
     <Panel title="About"><p className="whitespace-pre-line">{slots.description ?? details?.description ?? 'Revenue funds this project’s treasury and issues INCOME according to its current onchain rules.'}</p>{client && slots.projectId && <div className="mt-5"><ProjectMetadataEditor chainId={chainId} projectId={slots.projectId} client={client} unavailable={slots.writesUnavailable} inheritedMetadataUri={currentFund?.projectUri} label="Edit INCOME details" /></div>}</Panel>
     {slots.overview}
     <CurrentOwnerProfile chainId={chainId} owner={owner ?? undefined} details={details} unavailable={binding.isError || fund.isError || !!currentFund && (!currentFund.knownOwnerWrapper || currentFund.blockNumber < (confirmedFund.data ?? 0n))} />
     <CurrentOperatorProfile chainId={chainId} incomeProjectId={slots.projectId} fundDetails={details} bindingUnavailable={slots.bindingUnavailable} />
-    {(binding.isError || fund.isError || fundDetails.isError) && <p role="status" className="text-sm">The FUND Owner and Operator details could not be refreshed.</p>}
+    {(binding.isError || fund.isError || fundDetails.isError) && <p role="status" className="text-xs text-[var(--muted)]">The FUND Owner and Operator details could not be refreshed.</p>}
   </div>
 }
 
@@ -220,7 +221,7 @@ function IncomeActions({ state, client, fundProjectId, writesUnavailable, bindin
   const context = primary.find(item => item.token === selectedToken) ?? primary[0]
   const ready = !!state && !!client
   const gate = (content: ReactNode) => <fieldset aria-label="INCOME transactions" disabled={writesUnavailable} className="m-0 grid min-w-0 gap-7 border-0 p-0">{content}</fieldset>
-  const currency = ready && primary.length > 0 && <label className="mb-5 grid gap-2 text-sm">INCOME treasury currency<select className="min-h-11 rounded border border-[#bfc9b5] bg-white px-3 pr-9" value={context?.token} onChange={event => setSelectedToken(event.target.value as Address)}>{primary.map(item => <option key={item.token} value={item.token}>{item.symbol}</option>)}</select></label>
+  const currency = ready && primary.length > 0 && <label className="grid gap-2 text-sm">INCOME treasury currency<select className="min-h-11 rounded border border-[#bfc9b5] bg-white px-3 pr-9" value={context?.token} onChange={event => setSelectedToken(event.target.value as Address)}>{primary.map(item => <option key={item.token} value={item.token}>{item.symbol}</option>)}</select></label>
   return children({
     projectId, fundProjectId, state, title, description, details, logoUrl, location, notice, writesUnavailable, bindingUnavailable,
     control: ready ? <ProjectOwnershipEditor chainId={chainId} projectId={state.projectId} client={client} unavailable={writesUnavailable} /> : <Panel title="INCOME control"><p>Reading project ownership…</p></Panel>,
@@ -229,12 +230,12 @@ function IncomeActions({ state, client, fundProjectId, writesUnavailable, bindin
     supplyMetric: state && <span>INCOME supply: <DisplayTokenAmount value={state.totalSupply} /></span>,
     payment: gate(<>{ready && context ? <IncomePayment state={state} client={client} context={context} /> : <p>{projectId ? 'Loading INCOME payment options…' : 'INCOME has not been launched.'}</p>}</>),
     activity: projectId && <ProjectActivity chainId={chainId} projectId={projectId} />,
-    overview: state && <Panel title="Revenue"><dl className="grid gap-5 sm:grid-cols-2"><div><dt>INCOME supply</dt><dd><DisplayTokenAmount value={state.totalSupply} /> INCOME</dd></div><div><dt>Payments</dt><dd>{state.metadata.pausePay ? 'Paused' : 'Open'}</dd></div>{state.accountingContexts.map(item => <div key={`${item.terminal}:${item.token}`}><dt>Treasury</dt><dd><DisplayTokenAmount value={item.balance} decimals={item.decimals} /> {item.symbol}</dd></div>)}</dl><p className="mt-4 text-sm">Verified at block {state.blockNumber.toString()}. INCOME is separate from FUND and does not grant an asset-sale claim.</p></Panel>,
-    stages: state && <div className="grid gap-7"><LiveProjectActions token="INCOME" state={{cashOutsEnabled: state.cashOutsAvailable, hasInitialAllocation: !!fundProjectId}} /><Panel title="INCOME schedule"><dl className="grid gap-4"><div><dt>Current ruleset</dt><dd>{state.ruleset.id.toString()}</dd></div><div><dt>Started</dt><dd>{new Date(Number(state.ruleset.start) * 1_000).toLocaleString()}</dd></div><div><dt>Cash-outs and loans</dt><dd>{state.cashOutsAvailable ? 'Available under the current contract terms' : `Unlock ${new Date(Number(state.cashOutDelay) * 1_000).toLocaleString()}`}</dd></div></dl><p className="mt-4">Initial INCOME allocations and ongoing Sticky rewards are separate. Sticky rewards vest in four weekly rounds after a claim is materialized.</p></Panel></div>,
-    accountsYou: gate(ready && <><Panel title="Your INCOME"><p className="break-words text-2xl"><DisplayTokenAmount value={state.totalBalance} /> INCOME</p><p className="mt-2 text-sm"><DisplayTokenAmount value={state.creditBalance} /> credits / <DisplayTokenAmount value={state.erc20Balance} /> ERC-20 tokens</p></Panel><IncomeTokenActions state={state} client={client} />{fundProjectId && <InitialIncomeMint chainId={state.chainId} fundProjectId={fundProjectId} incomeProjectId={state.projectId} manifestUri={details?.incomeManifestUri ?? null} />}<IncomeHolderRewards state={state} client={client} fundProjectId={fundProjectId} />{context && <>{currency}<IncomeCashOut state={state} client={client} context={context} /></>}</>),
+    overview: state && <Panel title="Revenue"><dl className="demo-live-rows"><div><dt>INCOME supply</dt><dd><DisplayTokenAmount value={state.totalSupply} /> INCOME</dd></div><div><dt>Payments</dt><dd>{state.metadata.pausePay ? 'Paused' : 'Open'}</dd></div>{state.accountingContexts.map(item => <div key={`${item.terminal}:${item.token}`}><dt>Treasury</dt><dd><DisplayTokenAmount value={item.balance} decimals={item.decimals} /> {item.symbol}</dd></div>)}</dl><p>Verified at block {state.blockNumber.toString()}. INCOME carries no claim on asset-sale proceeds.</p></Panel>,
+    stages: state && <div className="demo-owner-sections"><LiveProjectActions token="INCOME" state={{cashOutsEnabled: state.cashOutsAvailable, hasInitialAllocation: !!fundProjectId}} /><Panel title="INCOME schedule"><dl className="demo-live-rows"><div><dt>Current ruleset</dt><dd>{state.ruleset.id.toString()}</dd></div><div><dt>Started</dt><dd>{new Date(Number(state.ruleset.start) * 1_000).toLocaleString()}</dd></div><div><dt>Cash-outs and loans</dt><dd>{state.cashOutsAvailable ? 'Available' : `Unlock ${new Date(Number(state.cashOutDelay) * 1_000).toLocaleString()}`}</dd></div></dl><p>Sticky rewards are separate from initial allocations and vest over four weekly rounds after a claim.</p></Panel></div>,
+    accountsYou: gate(ready && <><Panel title="Your INCOME"><dl className="demo-live-rows"><div><dt>INCOME</dt><dd><DisplayTokenAmount value={state.totalBalance} /></dd></div><div><dt>Credits</dt><dd><DisplayTokenAmount value={state.creditBalance} /></dd></div><div><dt>ERC-20 tokens</dt><dd><DisplayTokenAmount value={state.erc20Balance} /></dd></div></dl></Panel><IncomeTokenActions state={state} client={client} />{fundProjectId && <InitialIncomeMint chainId={state.chainId} fundProjectId={fundProjectId} incomeProjectId={state.projectId} manifestUri={details?.incomeManifestUri ?? null} />}<IncomeHolderRewards state={state} client={client} fundProjectId={fundProjectId} />{context && <>{currency}<IncomeCashOut state={state} client={client} context={context} /></>}</>),
     accountsAll: projectId && <ProjectParticipants chainId={chainId} projectId={projectId} tokenLabel="INCOME" />,
     settlement: gate(ready && <IncomeBridgeActions state={state} />),
-    splits: <div className="grid gap-7">{ready && <ProjectSplitsEditor chainId={chainId} projectId={state.projectId} phase="income" client={client} unavailable={writesUnavailable} />}{gate(ready && <><IncomeReservedTokens state={state} client={client} /><IncomeAutoIssue state={state} client={client} /></>)}</div>,
+    splits: <div className="demo-owner-sections">{ready && <ProjectSplitsEditor chainId={chainId} projectId={state.projectId} phase="income" client={client} unavailable={writesUnavailable} />}{gate(ready && <><IncomeReservedTokens state={state} client={client} /><IncomeAutoIssue state={state} client={client} /></>)}</div>,
     loans: gate(ready && <>{currency}{context && <IncomeBorrow state={state} client={client} context={context} />}<IncomeRepay state={state} client={client} /><IncomeLoanTools state={state} client={client} /></>),
     shop: projectId && <ProjectShop chainId={chainId} projectId={projectId} tokenLabel="INCOME" />,
     extras: projectId && <ProjectPayerAddresses chainId={chainId} projectId={projectId} tokenLabel="INCOME" />,
@@ -249,7 +250,7 @@ function IncomeHolderRewards({ state, client, fundProjectId }: { state: IncomePr
   if (state.rewards) return <IncomeRewards state={state} client={client} />
   if (!fundId) return null
   return <Panel title="Ongoing FUND rewards">
-    <p>The owner holds the reserved share of new INCOME until it is split further. The initial INCOME allocation is settled by the owner and requires no staking.</p>
+    <p>The owner holds the reserved share of new INCOME until it is split further. The initial INCOME allocation needs no staking.</p>
   </Panel>
 }
 
@@ -291,10 +292,10 @@ function IncomeCashOut({ state, client, context }: { state: IncomeProjectState; 
     } catch (reason) { setError(message(reason)) } finally { setPreparing(false) }
   }
   return <Panel title="Cash out INCOME">
-    <p className="mb-5 text-sm">Burn INCOME for available revenue reserves. The live quote includes the revnet’s hooks and applicable fees.</p>
+    <p className="mb-5">Burn INCOME for revenue reserves. The quote includes hooks and fees.</p>
     <Field label="INCOME to cash out" value={input} onChange={setInput} />
-    <button type="button" className="mt-2 text-sm underline" onClick={() => setInput(units(state.totalBalance))}>Use full balance</button>
-    {quote.data && <p className="mt-4 text-sm">At least {units(quote.data.minimumReturn, context.decimals)} {context.symbol} with 1% maximum slippage.</p>}
+    <button type="button" className="quiet-button mt-2" onClick={() => setInput(units(state.totalBalance))}>Use full balance</button>
+    {quote.data && <p className="mt-4 text-xs text-[var(--muted)]">At least {units(quote.data.minimumReturn, context.decimals)} {context.symbol} with 1% maximum slippage.</p>}
     {quote.isError && <p role="alert" className="mt-3 text-sm">{message(quote.error)}</p>}
     <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={!address || preparing || tx.busy || tx.phase === 'review' || !state.cashOutsAvailable || count <= 0n || count > state.totalBalance || !quote.data || quote.data.minimumReturn <= 0n} onClick={() => void submit()}>{preparing ? 'Preparing…' : txPhaseLabel(tx.phase, { idle: 'Review cash-out', pending: 'Confirming onchain…' })}</button>
     {error && <p role="alert" className="mt-3 text-sm text-red-800">{error}</p>}<Status tx={tx} chainId={state.chainId} />
@@ -330,10 +331,10 @@ function IncomeTokenActions({ state, client }: { state: IncomeProjectState; clie
     } catch (reason) { setError(message(reason)) } finally { setPreparing(false) }
   }
   return <Panel title="Manage INCOME tokens">
-    <label className="mb-4 grid gap-2 text-sm">Action<select className="min-h-11 rounded border border-[#bfc9b5] bg-white px-3 pr-9" value={action} onChange={event => setAction(event.target.value)}><option value="transferTokens">Transfer INCOME tokens</option><option value="burn">Burn without receiving funds</option></select></label>
+    <label className="mb-4 grid gap-2 text-sm sm:max-w-xs">Action<select className="min-h-11 rounded border border-[#bfc9b5] bg-white px-3 pr-9" value={action} onChange={event => setAction(event.target.value)}><option value="transferTokens">Transfer INCOME tokens</option><option value="burn">Burn without receiving funds</option></select></label>
     <div className="grid gap-4 sm:grid-cols-2"><Field label="INCOME amount" value={input} onChange={setInput} />{transfer && <Field label="Recipient address" value={recipient} onChange={setRecipient} text />}</div>
-    <p className="mt-3 text-sm">Available: {units(balance)} INCOME</p>
-    {action === 'burn' && <p className="mt-3 text-sm">Burning permanently reduces your balance. Use cash out to receive treasury funds.</p>}
+    <p className="mt-3 text-xs text-[var(--muted)]">Available: {units(balance)} INCOME</p>
+    {action === 'burn' && <p className="mt-3 text-xs text-[var(--muted)]">Burning is permanent and pays nothing. Cash out to receive treasury funds.</p>}
     <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={!address || !destination || count <= 0n || count > balance || preparing || tx.busy || tx.phase === 'review'} onClick={() => void submit()}>{preparing ? 'Preparing…' : txPhaseLabel(tx.phase, { idle: 'Review transaction', pending: 'Confirming onchain…' })}</button>
     {error && <p role="alert" className="mt-3 text-sm text-red-800">{error}</p>}<Status tx={tx} chainId={state.chainId} />
   </Panel>
@@ -378,10 +379,10 @@ function IncomeBorrow({ state, client, context }: { state: IncomeProjectState; c
   }
   return <Panel title="Borrow against INCOME">
     <Field label="INCOME collateral" value={input} onChange={setInput} />
-    <p className="mt-4 text-sm">Borrowing locks your INCOME claim in a loan NFT. Repaying restores the collateral. The minimum prepaid source fee is 2.5%; protocol and REV fees also apply.</p>
-    {quote.data && <p className="mt-3 text-sm">Currently borrowable before fees: {units(quote.data.borrowableNow, context.decimals)} {context.symbol}. The transaction protects this quote with 1% slippage.</p>}
+    <p className="mt-4 text-xs text-[var(--muted)]">Your INCOME is locked in a loan NFT until repaid. Fees: 2.5% prepaid source fee plus protocol and REV fees.</p>
+    {quote.data && <p className="mt-3 text-sm">Borrowable before fees: {units(quote.data.borrowableNow, context.decimals)} {context.symbol}, protected with 1% slippage.</p>}
     {quote.isError && <p role="alert" className="mt-3 text-sm">{message(quote.error)}</p>}
-    {grant.phase === 'success' && <p className="mt-3 text-sm">Collateral permission confirmed. Continue to review the loan.</p>}
+    {grant.phase === 'success' && <p className="mt-3 text-sm">Collateral permission confirmed. Review the loan next.</p>}
     <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={!address || preparing || tx.busy || grant.busy || tx.phase === 'review' || grant.phase === 'review' || count <= 0n || count > state.totalBalance || !state.cashOutsAvailable || !quote.data || quote.data.borrowableNow <= 0n} onClick={() => void submit()}>{preparing ? 'Preparing…' : txPhaseLabel(grant.busy ? grant.phase : tx.phase, { idle: 'Review borrowing', pending: 'Confirming onchain…' })}</button>
     {error && <p role="alert" className="mt-3 text-sm text-red-800">{error}</p>}<Status tx={grant} chainId={state.chainId} /><Status tx={tx} chainId={state.chainId} />
   </Panel>
@@ -426,9 +427,9 @@ function IncomeRepay({ state, client }: { state: IncomeProjectState; client: Pub
   }
   return <Panel title="Repay an INCOME loan">
     <Field label="Loan NFT ID" value={input} onChange={setInput} />
-    {loan.data && <p className="mt-4 text-sm">Return {units(loan.data.loan.collateral)} INCOME by spending at most {units(loan.data.repayCeiling, loan.data.sourceContext.decimals)} {loan.data.sourceContext.symbol}, including accrued fees and a small refundable buffer.</p>}
+    {loan.data && <p className="mt-4 text-sm">Return {units(loan.data.loan.collateral)} INCOME for at most {units(loan.data.repayCeiling, loan.data.sourceContext.decimals)} {loan.data.sourceContext.symbol}, including fees and a refundable buffer.</p>}
     {loan.isError && <p role="alert" className="mt-3 text-sm">{message(loan.error)}</p>}
-    {approval.phase === 'success' && <p className="mt-3 text-sm">Approval confirmed. Continue to review repayment.</p>}
+    {approval.phase === 'success' && <p className="mt-3 text-sm">Approval confirmed. Review the repayment next.</p>}
     <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={!address || !loan.data || loan.isError || preparing || tx.busy || approval.busy || tx.phase === 'review' || approval.phase === 'review'} onClick={() => void submit()}>{preparing ? 'Preparing…' : txPhaseLabel(approval.busy ? approval.phase : tx.phase, { idle: 'Review full repayment', pending: 'Confirming onchain…' })}</button>
     {error && <p role="alert" className="mt-3 text-sm text-red-800">{error}</p>}<Status tx={approval} chainId={state.chainId} /><Status tx={tx} chainId={state.chainId} />
   </Panel>
@@ -452,7 +453,7 @@ function IncomeAutoIssue({ state, client }: { state: IncomeProjectState; client:
     } catch (reason) { setError(message(reason)) } finally { setPreparing(false) }
   }
   return <Panel title="Collect a scheduled allocation">
-    <p className="mb-5 text-sm">Anyone can trigger an existing stage allocation after it unlocks. Tokens always go to the beneficiary recorded by the revnet.</p>
+    <p className="mb-5">Anyone can trigger an unlocked stage allocation. Tokens always go to its recorded beneficiary.</p>
     <div className="grid gap-4 sm:grid-cols-2"><Field label="Stage ruleset ID" value={stage} onChange={setStage} /><Field label="Beneficiary address (defaults to your wallet)" value={beneficiary} onChange={setBeneficiary} text /></div>
     <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={!address || !target || stageId <= 0n || preparing || tx.busy || tx.phase === 'review'} onClick={() => void submit()}>{preparing ? 'Preparing…' : txPhaseLabel(tx.phase, { idle: 'Review allocation', pending: 'Confirming onchain…' })}</button>
     {error && <p role="alert" className="mt-3 text-sm text-red-800">{error}</p>}<Status tx={tx} chainId={state.chainId} />
@@ -485,12 +486,12 @@ function IncomeRewards({ state, client }: { state: IncomeProjectState; client: P
   }
   const busy = preparing || tx.busy || tx.phase === 'review'
   return <Panel title="FUND-holder INCOME rewards">
-    <p className="mb-4 text-sm">FUND remains in your wallet. Claim any FUND credits, then self-delegate once to activate future rewards. Receiving more FUND after activation automatically increases your voting power for later snapshots.</p>
-    <p className="mb-4 text-sm">Each round uses historical delegated voting power. Activating after its snapshot does not earn that round retroactively; delegating to someone else gives them the reward weight. Historical rewards begin vesting when claimed.</p>
-    <dl className="grid gap-4 text-sm sm:grid-cols-2"><div><dt>Reward activation</dt><dd>{activated ? 'Self-delegated' : 'Not self-delegated'}</dd></div><div><dt>Current voting power</dt><dd>{units(rewards.votes)} FUND</dd></div><div><dt>Currently collectible</dt><dd>{units(rewards.collectable)} INCOME</dd></div><div><dt>Vesting duration after claim</dt><dd>{units(rewards.vestingRounds * rewards.roundDuration / 86_400n, 0)} days</dd></div></dl>
-    <p className="mt-4 text-sm">Current funding becomes claimable after {new Date(Number(rewards.nextRoundStart) * 1_000).toLocaleString()}.{rewards.claimDuration > 0n ? ` Unclaimed rounds expire after ${units(rewards.claimDuration / 86_400n, 0)} days.` : ' Unclaimed rounds do not expire.'}</p>
+    <p className="mb-4">FUND stays in your wallet. Claim any FUND credits, then self-delegate once to earn future rewards.</p>
+    <p className="mb-4 text-xs text-[var(--muted)]">Rounds use past voting power: activating late does not earn earlier rounds, and delegating to someone else gives them the reward weight.</p>
+    <dl className="demo-live-rows"><div><dt>Reward activation</dt><dd>{activated ? 'Self-delegated' : 'Not self-delegated'}</dd></div><div><dt>Current voting power</dt><dd>{units(rewards.votes)} FUND</dd></div><div><dt>Currently collectible</dt><dd>{units(rewards.collectable)} INCOME</dd></div><div><dt>Vesting duration after claim</dt><dd>{units(rewards.vestingRounds * rewards.roundDuration / 86_400n, 0)} days</dd></div></dl>
+    <p className="mt-4 text-xs text-[var(--muted)]">Current funding becomes claimable after {new Date(Number(rewards.nextRoundStart) * 1_000).toLocaleString()}.{rewards.claimDuration > 0n ? ` Unclaimed rounds expire after ${units(rewards.claimDuration / 86_400n, 0)} days.` : ' Unclaimed rounds do not expire.'}</p>
     {rewards.fundCreditBalance > 0n && <p className="mt-3 text-sm">{units(rewards.fundCreditBalance)} FUND credits must be claimed as ERC-20 tokens before they can earn future rewards.</p>}
-    <div className="mt-5 flex flex-wrap gap-3"><button type="button" className="btn-primary min-h-11 px-5" disabled={!address || busy || (activated && rewards.fundCreditBalance === 0n)} onClick={() => void submit('activate')}>{rewards.fundCreditBalance > 0n ? 'Claim FUND credits' : 'Activate rewards'}</button><button type="button" className="btn-secondary min-h-11 px-5" disabled={!address || busy} onClick={() => void submit('vest')}>Begin vesting</button><button type="button" className="btn-secondary min-h-11 px-5" disabled={!address || busy || rewards.collectable <= 0n} onClick={() => void submit('collect')}>Collect vested INCOME</button></div>
+    <div className="mt-5 flex flex-wrap gap-3"><button type="button" className="btn-primary min-h-11 px-5" disabled={!address || busy || (activated && rewards.fundCreditBalance === 0n)} onClick={() => void submit('activate')}>{rewards.fundCreditBalance > 0n ? 'Claim FUND credits' : 'Activate rewards'}</button><button type="button" className="btn-secondary min-h-10 px-4" disabled={!address || busy} onClick={() => void submit('vest')}>Begin vesting</button><button type="button" className="btn-secondary min-h-10 px-4" disabled={!address || busy || rewards.collectable <= 0n} onClick={() => void submit('collect')}>Collect vested INCOME</button></div>
     {error && <p role="alert" className="mt-3 text-sm text-red-800">{error}</p>}<Status tx={tx} chainId={state.chainId} />
   </Panel>
 }
