@@ -11,7 +11,7 @@ vi.mock('@/lib/bendystraw', () => ({
   getProjectActivity: mocks.group,
 }))
 
-import { ProjectActivity } from '../src/components/ProjectActivity'
+import { ProjectActivity, activityAge, groupActivity } from '../src/components/ProjectActivity'
 
 type Page = { items: BsActivityEvent[]; totalCount: number }
 
@@ -73,7 +73,7 @@ describe('indexed project activity', () => {
   }
 
   function eventIds() {
-    return [...host.querySelectorAll('li pre')].map(node => (JSON.parse(node.textContent!) as BsActivityEvent).id)
+    return [...host.querySelectorAll<HTMLElement>('li[data-event-id]')].map(node => node.dataset.eventId)
   }
 
   async function click(label: string) {
@@ -91,7 +91,6 @@ describe('indexed project activity', () => {
     expect(mocks.exact).toHaveBeenCalledWith(1, 7, 20, 0)
     expect(mocks.group).not.toHaveBeenCalled()
     expect(eventIds()).toEqual(['event-1'])
-    expect(host.textContent).toContain('Activity on this project’s network')
     expect(host.textContent).not.toContain('No activity indexed yet')
   })
 
@@ -107,7 +106,6 @@ describe('indexed project activity', () => {
     await settle()
     await settle()
     expect(mocks.group).toHaveBeenCalledWith('verified-linked-projects', 20, 1, 0)
-    expect(host.textContent).toContain('Activity across this project’s linked chains')
     expect(eventIds()).toEqual(['event-2'])
   })
 
@@ -119,7 +117,7 @@ describe('indexed project activity', () => {
       : { items: [event(1), event(0)], totalCount: 6 }))
     mocks.group.mockRejectedValue(new Error('Linked-chain index unavailable'))
     await render()
-    await click('Load more activity')
+    await click('Load more')
     expect(eventIds()).toEqual(['event-3', 'event-2', 'event-1', 'event-0'])
     await act(async () => lookup.resolve(project({ suckerGroupId: 'verified-linked-projects' })))
     await settle()
@@ -128,7 +126,7 @@ describe('indexed project activity', () => {
     expect(eventIds()).toEqual(['event-3', 'event-2', 'event-1', 'event-0'])
     expect(host.textContent).toContain('Showing the last indexed events')
     expect(host.textContent).not.toContain('No activity indexed yet')
-    const loadMore = [...host.querySelectorAll('button')].find(node => node.textContent === 'Load more activity')!
+    const loadMore = [...host.querySelectorAll('button')].find(node => node.textContent === 'Load more')!
     expect(loadMore.disabled).toBe(true)
   })
 
@@ -143,7 +141,7 @@ describe('indexed project activity', () => {
       ? { items: [event(10), event(9)], totalCount: 4 }
       : { items: [event(8), event(7)], totalCount: 4 }))
     await render()
-    await click('Load more activity')
+    await click('Load more')
     expect(mocks.exact).toHaveBeenLastCalledWith(1, 7, 20, 4)
     await act(async () => lookup.resolve(project({ suckerGroupId: 'verified-linked-projects' })))
     await settle()
@@ -152,7 +150,7 @@ describe('indexed project activity', () => {
     await act(async () => lateExactPage.resolve({ items: [event(0)], totalCount: 6 }))
     await settle()
     expect(eventIds()).toEqual(['event-10', 'event-9'])
-    await click('Load more activity')
+    await click('Load more')
     expect(mocks.group).toHaveBeenLastCalledWith('verified-linked-projects', 20, 1, 2)
     expect(eventIds()).toEqual(['event-10', 'event-9', 'event-8', 'event-7'])
   })
@@ -180,21 +178,22 @@ describe('indexed project activity', () => {
       ? { items: [event(3), event(2)], totalCount: 4 }
       : { items: [event(1), event(0)], totalCount: 4 }))
     await render()
-    await click('Load more activity')
+    await click('Load more')
     expect(mocks.exact).toHaveBeenLastCalledWith(1, 7, 20, 2)
     expect(eventIds()).toEqual(['event-3', 'event-2', 'event-1', 'event-0'])
     mocks.exact.mockResolvedValue({ items: [event(4), event(3)], totalCount: 5 })
-    await click('Refresh activity')
+    await act(async () => { await client.refetchQueries({ queryKey: ['project-activity'] }) })
+    await settle()
     expect(mocks.exact).toHaveBeenLastCalledWith(1, 7, 20, 0)
     expect(eventIds()).toEqual(['event-4', 'event-3', 'event-2', 'event-1', 'event-0'])
-    expect([...host.querySelectorAll('button')].some(node => node.textContent === 'Load more activity')).toBe(false)
+    expect([...host.querySelectorAll('button')].some(node => node.textContent === 'Load more')).toBe(false)
   })
 
   it('retains loaded history after background and older-page failures without showing a false empty state', async () => {
     mocks.exact.mockResolvedValue({ items: [event(2), event(1)], totalCount: 4 })
     await render()
     mocks.exact.mockRejectedValue(new Error('Activity index offline'))
-    await click('Load more activity')
+    await click('Load more')
     expect(host.textContent).toContain('Could not load more activity')
     expect(eventIds()).toEqual(['event-2', 'event-1'])
     await act(async () => { await client.invalidateQueries({ queryKey: ['project-activity'] }) })
@@ -211,7 +210,7 @@ describe('indexed project activity', () => {
       return Promise.resolve({ items: [event(projectId, { projectId })], totalCount: projectId === 7 ? 2 : 1 })
     })
     await render()
-    await click('Load more activity')
+    await click('Load more')
     expect(host.textContent).toContain('Loading…')
     await render(8)
     expect(eventIds()).toEqual(['event-8'])
@@ -237,13 +236,37 @@ describe('indexed project activity', () => {
     mocks.exact.mockResolvedValue({ items: [
       event(3, { txHash: 'javascript:alert(1)' }),
       event(2, { txHash: '0x123' }),
-      event(1, { chainId: 8453 }),
+      event(1, { chainId: 8453, from: '0x2222222222222222222222222222222222222222' }),
     ], totalCount: 3 })
     await render()
     const links = [...host.querySelectorAll<HTMLAnchorElement>('li a')]
     expect(links).toHaveLength(1)
     expect(links[0].href).toBe(`https://basescan.org/tx/${event(1).txHash}`)
     expect(links[0].rel).toBe('noopener noreferrer')
-    expect([...host.querySelectorAll('li')].filter(row => row.textContent?.includes('Transaction link unavailable'))).toHaveLength(2)
+    expect([...host.querySelectorAll('li')].filter(row => !row.querySelector('a'))).toHaveLength(2)
+  })
+
+  it('ages events the way Juicebox Money does', () => {
+    const now = 1_000_000_000
+    expect(activityAge(now - 30, now)).toBe('now')
+    expect(activityAge(now - 300, now)).toBe('5m ago')
+    expect(activityAge(now - 7_200, now)).toBe('2h ago')
+    expect(activityAge(now - 3 * 86_400, now)).toBe('3d ago')
+    expect(activityAge(now + 60, now)).toBe('now')
+  })
+
+  it('folds one transaction into one row, and one launch across chains into one row, but never payments', () => {
+    const tx = `0x${'a'.repeat(64)}`
+    const launch = [
+      event(10, { txHash: tx }),
+      event(9, { txHash: tx, projectCreateEvent: null, rulesetQueuedEvent: {} as never }),
+      event(8, { chainId: 8453, txHash: `0x${'b'.repeat(64)}` }),
+      event(7, { chainId: 8453, txHash: `0x${'b'.repeat(64)}`, projectCreateEvent: null, rulesetQueuedEvent: {} as never }),
+    ]
+    const rows = groupActivity(launch)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].chains.map(chain => chain.chainId)).toEqual([1, 8453])
+    const paid = { projectCreateEvent: null, payEvent: { amount: '1' } as never }
+    expect(groupActivity([event(2, paid), event(1, { ...paid, chainId: 8453 })])).toHaveLength(2)
   })
 })

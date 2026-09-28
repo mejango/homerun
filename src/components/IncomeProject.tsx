@@ -152,7 +152,7 @@ export function IncomeProjectRuntime({ chainId, projectId, fundProjectId, bindin
     {fundProjectId === undefined && source.isError && <p className="mb-4 text-sm" role="alert">The original FUND connection could not be discovered. INCOME transactions remain available. <button type="button" className="underline" onClick={() => void source.refetch()}>Retry connection</button></p>}
   </>
   // This component stays in the same tree position while a linked ID/read loads.
-  return <IncomeActions state={displayState} client={client} fundProjectId={resolvedFundId} writesUnavailable={writesUnavailable} bindingUnavailable={bindingUnavailable} notice={notice} title={details.data?.name ?? `Revenue project ${projectId ?? ''}`} description={details.data?.description ?? null} details={details.data} logoUrl={details.data?.logoUrl ?? null} location={details.data?.location ?? null} projectId={projectId} chainId={chainId}>{children}</IncomeActions>
+  return <IncomeActions state={displayState} client={client} fundProjectId={resolvedFundId} writesUnavailable={writesUnavailable} bindingUnavailable={bindingUnavailable} notice={notice} title={details.data?.name ?? `Revenue project ${projectId ?? ''}`} description={details.data?.description ?? null} details={details.data} logoUrl={details.data?.logoUrl ?? details.data?.coverUrl ?? null} location={details.data?.location ?? null} projectId={projectId} chainId={chainId}>{children}</IncomeActions>
 }
 
 export function IncomeProject({ chainId, projectId, fundProjectId }: { chainId: JBChainId; projectId: bigint; fundProjectId?: bigint }) {

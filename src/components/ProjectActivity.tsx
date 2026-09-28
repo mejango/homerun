@@ -9,6 +9,7 @@ import {
   type BsActivityEvent,
 } from '@/lib/bendystraw'
 import { displayChainName, displayChainSlug, explorerTxUrl } from '@/lib/chainDisplay'
+import { ChainIcon } from '@/components/ChainIcon'
 
 const ACTIVITY_PAGE = 20
 const ACTIVITY_POLL_MS = 15_000
@@ -49,24 +50,71 @@ function eventTitle(event: BsActivityEvent): string {
   return 'Project activity'
 }
 
-function EventRow({ event }: { event: BsActivityEvent }) {
-  const txUrl = /^0x[\da-f]{64}$/i.test(event.txHash) ? explorerTxUrl(event.chainId, event.txHash) : null
-  const timestamp = Number.isFinite(event.timestamp) ? new Date(event.timestamp * 1_000) : null
-  const validDate = timestamp && Number.isFinite(timestamp.getTime()) ? timestamp : null
-  return <li className="grid min-w-0 gap-3 border-b border-[#d5dccd] py-4 last:border-0">
-    <div className="flex flex-wrap items-baseline justify-between gap-2">
-      <span className="font-medium">{eventTitle(event)}</span>
-      {validDate && <time className="text-sm" dateTime={validDate.toISOString()}>{validDate.toLocaleString()}</time>}
+/** Compact age, as Juicebox Money's feed shows it: "now", "5m ago", "3d ago". */
+export function activityAge(seconds: number, now = Date.now() / 1_000): string {
+  const elapsed = Math.max(0, now - seconds)
+  if (elapsed < 60) return 'now'
+  for (const [unit, size] of [['y', 31_536_000], ['mo', 2_592_000], ['d', 86_400], ['h', 3_600], ['m', 60]] as const) {
+    if (elapsed >= size) return `${Math.floor(elapsed / size)}${unit} ago`
+  }
+  return 'now'
+}
+
+/** Events that say nothing chain-local, so one launch relayed to several chains reads as one row. */
+const STRUCTURAL = ['projectCreateEvent', 'rulesetQueuedEvent', 'deployErc20Event', 'projectTransferEvent', 'setUriEvent', 'operatorPermissionsSetEvent'] as const
+const CROSS_CHAIN_WINDOW = 6 * 3_600
+
+type ActivityRow = { events: BsActivityEvent[]; chains: { chainId: number; txHash: string }[] }
+
+/**
+ * Juicebox Money's feed shape: one row per transaction, and one row for the same
+ * structural transaction on several chains. Money events never merge across chains.
+ */
+export function groupActivity(events: BsActivityEvent[]): ActivityRow[] {
+  const byTx = new Map<string, BsActivityEvent[]>()
+  for (const event of events) {
+    const key = `${event.chainId}:${event.projectId}:${event.txHash}`
+    byTx.set(key, [...(byTx.get(key) ?? []), event])
+  }
+  const rows: (ActivityRow & { signature: string | null })[] = []
+  for (const group of byTx.values()) {
+    const lead = group[0]
+    const structural = group.every(event => STRUCTURAL.some(key => event[key]))
+    const signature = structural ? `${lead.from}|${group.map(eventTitle).sort().join('|')}` : null
+    const host = signature && rows.find(row => row.signature === signature
+      && Math.abs(row.events[0].timestamp - lead.timestamp) <= CROSS_CHAIN_WINDOW
+      && !row.chains.some(chain => chain.chainId === lead.chainId))
+    if (host) host.chains.push({ chainId: lead.chainId, txHash: lead.txHash })
+    else rows.push({ events: group, chains: [{ chainId: lead.chainId, txHash: lead.txHash }], signature })
+  }
+  return rows.map(({ events, chains }) => ({ events, chains }))
+}
+
+function EventRow({ row }: { row: ActivityRow }) {
+  const [lead] = row.events
+  const titles = [...new Set(row.events.map(eventTitle))]
+  const created = titles.indexOf('Project created')
+  if (created > 0) titles.unshift(...titles.splice(created, 1))
+  const [title, ...actions] = titles
+  const txUrl = (chain: { chainId: number; txHash: string }) => /^0x[\da-f]{64}$/i.test(chain.txHash) ? explorerTxUrl(chain.chainId, chain.txHash) : null
+  const valid = Number.isFinite(lead.timestamp) && Number.isFinite(new Date(lead.timestamp * 1_000).getTime())
+  const when = valid ? new Date(lead.timestamp * 1_000).toLocaleString() : undefined
+  const age = valid ? activityAge(lead.timestamp) : ''
+  return <li data-event-id={lead.id} className="min-w-0 py-3.5">
+    <div className="flex min-w-0 items-center justify-between gap-3">
+      <span className="min-w-0 truncate text-sm text-ink">{title}</span>
+      <span className="flex shrink-0 items-center gap-1.5 text-xs text-smoke-500">
+        <span title={when} suppressHydrationWarning>{age}</span>
+        {row.chains.map(chain => {
+          const url = txUrl(chain)
+          const mark = <ChainIcon chainId={chain.chainId} size={14} />
+          return url
+            ? <a key={chain.chainId} href={url} target="_blank" rel="noopener noreferrer" aria-label={`View transaction on ${displayChainName(chain.chainId)}`} className="no-underline opacity-90 hover:opacity-100">{mark}</a>
+            : <span key={chain.chainId}>{mark}</span>
+        })}
+      </span>
     </div>
-    <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
-      <span>{displayChainName(event.chainId)} / Project {event.projectId}</span>
-      {txUrl ? <a href={txUrl} target="_blank" rel="noopener noreferrer" className="break-all underline underline-offset-4">View transaction ↗</a>
-        : <span>Transaction link unavailable</span>}
-    </div>
-    <details className="min-w-0 text-sm">
-      <summary className="cursor-pointer">Event details</summary>
-      <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-all rounded border border-[#cbd7db] bg-[#edf2f4] p-3 text-xs">{JSON.stringify(event, null, 2)}</pre>
-    </details>
+    {actions.length > 0 && <p className="mt-1 text-xs text-smoke-500">{actions.join(', ')}</p>}
   </li>
 }
 
@@ -133,17 +181,13 @@ function ActivityFeed({ chainId, projectId, suckerGroupId }: { chainId: number; 
   }
 
   return <section aria-labelledby={heading} className="contract-panel">
-    <div className="flex flex-wrap items-baseline justify-between gap-3">
-      <h2 id={heading}>Activity</h2>
-      <button type="button" className="btn-secondary" disabled={newest.isFetching} onClick={() => void newest.refetch()}>{newest.isFetching ? 'Refreshing…' : 'Refresh activity'}</button>
-    </div>
-    <p className="my-4 text-sm">{suckerGroupId ? 'Activity across this project’s linked chains.' : 'Activity on this project’s network.'} Recent transactions can take time to appear in the index.</p>
-    {newest.isPending && <p role="status">{events.length ? 'Loading linked-chain activity. Showing this project’s available history.' : 'Loading project activity…'}</p>}
-    {newest.isError && <p role="status">{events.length ? 'Activity could not refresh. Showing the last indexed events.' : 'Activity is temporarily unavailable. Refresh to try again.'}</p>}
-    {!newest.isPending && !newest.isError && events.length === 0 && <p>No activity indexed yet. A new project may still be catching up.</p>}
-    {events.length > 0 && <ol className="m-0 grid min-w-0 list-none p-0">{events.map(event => <EventRow key={event.id} event={event} />)}</ol>}
-    {loadMoreError && <p role="status" className="my-3 text-sm">Could not load more activity. Your loaded history is still available.</p>}
-    {events.length < total && <button type="button" className="btn-secondary mt-4" disabled={loadingMore || !newest.data || appliedScope.current !== scope} onClick={() => void loadMore()}>{loadingMore ? 'Loading…' : 'Load more activity'}</button>}
+    <h2 id={heading}>Activity</h2>
+    {newest.isPending && <p role="status" className="mt-3 text-sm text-smoke-500">{events.length ? 'Loading linked-chain activity…' : 'Loading activity…'}</p>}
+    {newest.isError && <p role="status" className="mt-3 text-sm text-smoke-500">{events.length ? 'Activity could not refresh. Showing the last indexed events.' : 'Activity is temporarily unavailable.'}</p>}
+    {!newest.isPending && !newest.isError && events.length === 0 && <p className="mt-3 text-sm text-smoke-500">No activity yet. New transactions can take a minute to appear.</p>}
+    {events.length > 0 && <ol className="m-0 mt-2 min-w-0 list-none divide-y divide-[#e1e3d9] p-0">{groupActivity(events).map(row => <EventRow key={row.events[0].id} row={row} />)}</ol>}
+    {loadMoreError && <p role="status" className="mt-3 text-xs text-smoke-500">Could not load more activity.</p>}
+    {events.length < total && <button type="button" className="mt-3 min-h-8 text-xs font-medium text-smoke-700 underline underline-offset-2 hover:text-ink disabled:opacity-60" disabled={loadingMore || !newest.data || appliedScope.current !== scope} onClick={() => void loadMore()}>{loadingMore ? 'Loading…' : 'Load more'}</button>}
   </section>
 }
 
