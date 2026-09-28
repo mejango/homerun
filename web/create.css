@@ -45,6 +45,7 @@
 .create-field .photo-picker { display: flex; align-self: flex-start; align-items: center; gap: 12px; position: relative; padding: 10px 16px 10px 12px; border: 1px dashed #aaa; border-radius: var(--radius); background: #fff; color: #222; cursor: pointer; }
 .photo-picker > span:first-child { font: 22px/1 var(--serif); color: #333; }
 .photo-picker small { display: block; margin-top: 5px; font-size: 10px; font-weight: 400; color: #666; }
+.create-cover-photo-preview { width: 240px; max-width: 100%; height: auto; aspect-ratio: 16 / 10; border-radius: var(--radius); object-fit: cover; }
 .photo-picker input { position: absolute; opacity: 0; inset: 0; width: 100%; cursor: pointer; }
 .photo-picker:focus-within { outline: 2px solid #222; outline-offset: 3px; }
 #remove-photo { align-self: start; font-size: 11px; }

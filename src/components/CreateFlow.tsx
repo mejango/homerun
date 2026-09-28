@@ -383,7 +383,7 @@ export default function CreateFlow({ renderDeploy, lockedChains }: CreateFlowPro
                 <label className="photo-picker" htmlFor="create-photo"><span aria-hidden="true">＋</span><span>{photoBusy.photo ? 'Preparing photo…' : 'Choose a photo'}<small>JPG, PNG or WebP | up to 8 MB</small></span>
                   <input id="create-photo" ref={photoInput} type="file" accept="image/jpeg,image/png,image/webp" aria-describedby={errors.photo ? 'photo-error' : undefined} onChange={event => { void choosePhoto('photo', event.target.files?.[0]); }} />
                 </label>
-                {photo && <button id="remove-photo" className="quiet-button" type="button" onClick={() => removePhoto('photo')}>Remove photo</button>}
+                {photo && <><Image unoptimized src={photo} alt="Your cover photo" width={240} height={150} className="create-cover-photo-preview" /><button id="remove-photo" className="quiet-button" type="button" onClick={() => removePhoto('photo')}>Remove photo</button></>}
                 {errors.photo && <p className="create-error" id="photo-error">{errors.photo}</p>}
               </div>
             </>}

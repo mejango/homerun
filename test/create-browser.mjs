@@ -434,8 +434,10 @@ try {
     await currentStep(0);
     await page.locator('#draft-photo').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#draft-photo').evaluate(img => img.complete && img.naturalWidth > 0), true);
+    assert.equal(await page.locator('.create-cover-photo-preview').evaluate(img => img.complete && img.naturalWidth > 0), true);
     await page.locator('#remove-photo').click();
     assert.equal(await page.locator('#draft-photo').count(), 0);
+    assert.equal(await page.locator('.create-cover-photo-preview').count(), 0);
     for (let index = 0; index < 4; index++) await next();
   });
   await check('Operator introductions and compressed pictures survive review, download, and reload', async () => {
