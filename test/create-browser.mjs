@@ -526,6 +526,7 @@ try {
     assert.equal(await page.locator('.create-operator-photo-preview').count(), 0);
     assert.equal(await page.evaluate(() => localStorage.getItem('homerun:fund-launch:v1')), null);
     assert.equal(await page.evaluate(() => localStorage.getItem('homerun:created-projects:v1')), null);
+    assert.notEqual(await page.locator('#draft-goal').textContent(), '—', 'Blank multisig signers must not blank the money preview.');
     await page.locator('#create-back').click(); await currentStep(0);
     await input('name').fill('Another project');
     await page.locator('#start-over').click();

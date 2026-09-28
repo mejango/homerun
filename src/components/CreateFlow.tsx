@@ -217,7 +217,9 @@ export default function CreateFlow({ renderDeploy, lockedChains }: CreateFlowPro
 
   const normalized = useMemo(() => normalize(raw), [raw]);
   const summary = useMemo(() => {
-    try { return creationSummary({ ...raw, name: String(raw.name || '').trim() || 'Untitled' }) as unknown as Summary; }
+    // The preview reads only the Fundraise and Income steps; other unfinished steps must not blank it.
+    const modeled = Object.fromEntries([...groups[2], ...groups[3]].map(key => [key, raw[key]]));
+    try { return creationSummary({ ...CREATE_DEFAULTS, ...modeled, name: 'Untitled', ownerMode: 'existing', operatorMode: 'existing' }) as unknown as Summary; }
     catch { return null; }
   }, [raw]);
   const photo = normalized.errors.photo ? '' : normalized.values.photo;
@@ -304,8 +306,8 @@ export default function CreateFlow({ renderDeploy, lockedChains }: CreateFlowPro
   }
 
   function downloadDraft() {
-    if (!summary) return;
-    const url = URL.createObjectURL(new Blob([JSON.stringify(deploymentDraft(summary.values), null, 2)], { type: 'application/json' }));
+    if (!normalized.valid) return;
+    const url = URL.createObjectURL(new Blob([JSON.stringify(deploymentDraft(normalized.values), null, 2)], { type: 'application/json' }));
     const link = document.createElement('a');
     link.href = url;
     link.download = 'homerun-setup-draft.json';
@@ -519,7 +521,7 @@ export default function CreateFlow({ renderDeploy, lockedChains }: CreateFlowPro
               <div id="create-contract-actions">
                 {normalized.valid ? renderDeploy?.(normalized.values) : <p className="create-error" role="status">Correct the setup fields before preparing the FUND transaction.{Object.entries(normalized.errors).map(([key, error]) => <span key={key} style={{ display: 'block' }}>{error}</span>)}</p>}
               </div>
-              <details className="create-terms"><summary>Keep a setup draft</summary><p>The downloadable draft contains your modeling assumptions and planned settings. It is not a deployed project or a transaction.</p><button type="button" id="download-setup" className="quiet-button" disabled={!summary} onClick={downloadDraft}>Download setup draft</button></details>
+              <details className="create-terms"><summary>Keep a setup draft</summary><p>The downloadable draft contains your modeling assumptions and planned settings. It is not a deployed project or a transaction.</p><button type="button" id="download-setup" className="quiet-button" disabled={!normalized.valid} onClick={downloadDraft}>Download setup draft</button></details>
             </>}
           </section>
           {errors.form && <p id="create-form-error" className="create-error" role="alert">{errors.form}</p>}
