@@ -119,7 +119,7 @@ describe('the preview of a project that is not created yet', () => {
     expect(host.textContent).toContain(wallet)
     expect(host.querySelector('img[alt*="cover"]')?.getAttribute('src')).toBe('data:image/jpeg;base64,/9j/previews')
     expect(button('Edit')).toBeTruthy()
-    expect(button('Create')).toBeTruthy()
+    expect(button('Make it real')).toBeTruthy()
   })
 
   it('shows the owner\u2019s picture as the owner, never as a logo the published page has not got', async () => {
@@ -241,7 +241,7 @@ describe('the preview of a project that is not created yet', () => {
 
   it('publishes the intent and opens its page', async () => {
     await render()
-    await act(async () => { button('Create')!.click() })
+    await act(async () => { button('Make it real')!.click() })
     const review = runtime.review.mock.calls[0][0]
     expect(review.kind).toBe('authorization')
     expect(review.calls[0].functionName).toBe('launchFundFor')
@@ -262,7 +262,7 @@ describe('the preview of a project that is not created yet', () => {
       ownerMode: 'create', ownerSigners: signers, ownerThreshold: 2, ownerWallet: '',
     })))
     await render()
-    await act(async () => { button('Create')!.click() })
+    await act(async () => { button('Make it real')!.click() })
     const review = runtime.review.mock.calls[0][0]
     expect(review.calls).toHaveLength(2)
     expect(review.calls[0].functionName).toBe('createProxyWithNonce')
@@ -284,8 +284,8 @@ describe('the preview of a project that is not created yet', () => {
     runtime.address = undefined
     runtime.openSignIn.mockImplementation(async () => { runtime.address = wallet })
     await render()
-    expect([...host.querySelector('.planned-bar')!.querySelectorAll('button')].map(item => item.textContent)).toEqual(['Create', 'Edit'])
-    await act(async () => { button('Create')!.click() })
+    expect([...host.querySelector('.planned-bar')!.querySelectorAll('button')].map(item => item.textContent)).toEqual(['Make it real', 'Edit'])
+    await act(async () => { button('Make it real')!.click() })
     expect(runtime.openSignIn).toHaveBeenCalledTimes(1)
     expect(runtime.publishIntent).toHaveBeenCalled()
     expect(navigate.push).toHaveBeenCalledWith(`/intent/${intentId}`)
@@ -294,17 +294,17 @@ describe('the preview of a project that is not created yet', () => {
   it('leaves the setup alone when the visitor closes the chooser without a wallet', async () => {
     runtime.address = undefined
     await render()
-    await act(async () => { button('Create')!.click() })
+    await act(async () => { button('Make it real')!.click() })
     expect(runtime.openSignIn).toHaveBeenCalled()
     expect(runtime.publishIntent).not.toHaveBeenCalled()
     expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()
-    expect(button('Create')).toBeTruthy()
+    expect(button('Make it real')).toBeTruthy()
   })
 
   it('says a Safe or passkey connection has to create with a transaction', async () => {
     runtime.safe = true
     await render()
-    await act(async () => { button('Create')!.click() })
+    await act(async () => { button('Make it real')!.click() })
     expect(alert()?.textContent).toContain('create with a transaction')
     expect(runtime.publishIntent).not.toHaveBeenCalled()
   })
@@ -321,7 +321,7 @@ describe('the preview of a project that is not created yet', () => {
     }
     localStorage.setItem(FUND_LAUNCH_KEY, encodeLaunchSession(unsigned))
     await render()
-    await act(async () => { button('Create')!.click() })
+    await act(async () => { button('Make it real')!.click() })
     const session = decodeLaunchSession(localStorage.getItem(FUND_LAUNCH_KEY)!)
     expect(session.transport).toBe('intent')
     expect(session.intentId).toBe(intentId)
@@ -340,7 +340,7 @@ describe('the preview of a project that is not created yet', () => {
     }
     localStorage.setItem(FUND_LAUNCH_KEY, encodeLaunchSession(submitted))
     await render()
-    await act(async () => { button('Create')!.click() })
+    await act(async () => { button('Make it real')!.click() })
     expect(decodeLaunchSession(localStorage.getItem(FUND_LAUNCH_KEY)!).transport).toBe('direct')
     expect(runtime.signMessage).not.toHaveBeenCalled()
     expect(alert()?.textContent).toContain('A saved launch already exists')
@@ -350,7 +350,7 @@ describe('the preview of a project that is not created yet', () => {
     const { JBCenterRequestError } = await import('@bananapus/nana-sdk-core/jbcenter')
     runtime.prepareIntent.mockRejectedValue(new JBCenterRequestError('upstream 503 from provider', 503, 'unavailable'))
     await render()
-    await act(async () => { button('Create')!.click() })
+    await act(async () => { button('Make it real')!.click() })
     expect(alert()?.textContent).not.toContain('upstream 503 from provider')
     expect(alert()?.textContent?.length).toBeGreaterThan(0)
     expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()
@@ -362,6 +362,6 @@ describe('the preview of a project that is not created yet', () => {
     await render()
     expect(host.textContent).toContain('This project’s setup could not be read in this browser.')
     expect(host.querySelector<HTMLAnchorElement>('a[href="/create"]')).toBeTruthy()
-    expect(button('Create')).toBeUndefined()
+    expect(button('Make it real')).toBeUndefined()
   })
 })

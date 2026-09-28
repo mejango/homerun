@@ -46,6 +46,9 @@
 .homerun-project-layout .planned-bar p + p { margin-top: 8px; }
 .homerun-project-layout .planned-bar .planned-bar-terms { overflow-wrap: anywhere; color: var(--muted); }
 .homerun-project-layout .planned-bar-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-top: 12px; }
+.homerun-project-layout .planned-bar-actions > .btn-secondary { min-height: 46px; padding: 12px 18px; border-radius: var(--radius); font: 500 13px/1.4 var(--sans); }
+.homerun-project-layout .planned-bar-actions ~ p { margin-top: 14px; font-size: 13px; line-height: 1.5; }
+.homerun-project-layout .planned-bar-actions ~ p[role="status"] { color: var(--muted); }
 .homerun-project-layout .hpl-activity { margin-top: 28px; min-width: 0; }
 .homerun-project-layout .hpl-main { flex: 1 1 0; min-width: 0; }
 .homerun-project-layout .hpl-navigation-main { min-width: 0; border-bottom: 1px solid var(--line); }

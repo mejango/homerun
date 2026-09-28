@@ -1354,7 +1354,7 @@ function PrettyCall({
         </p>
       ) : null}
       <div className="flex flex-wrap items-center gap-2">
-        <span className="chip flex items-center gap-1.5 bg-bluebs-50 text-bluebs-700">
+        <span className="chip inline-flex items-center gap-1.5 rounded-md bg-bluebs-50 px-2 py-0.5 text-bluebs-700">
           <ChainIcon chainId={call.chainId} size={16} />
           {chainName(call.chainId)}
         </span>

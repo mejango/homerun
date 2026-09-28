@@ -59,6 +59,8 @@ export interface CreateFlowProps {
   lockedChains?: readonly number[] | null;
   /** Supply the live FUND creation controls from a client component. */
   renderDeploy?: (values: CreateValues) => ReactNode;
+  /** Resume a launch from an imported deployment record. */
+  onImportRecord?: (text: string) => void;
 }
 
 const labels = ['Asset', 'Management', 'Fundraise', 'Income', 'Review & create'];
@@ -75,6 +77,34 @@ const money = (value: number) => new Intl.NumberFormat('en-US', { style: 'curren
 const number = (value: number) => new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(value);
 const normalize = (raw: RawValues): Normalized => normalizeCreateDraft(raw) as unknown as Normalized;
 const initialValues = (): RawValues => ({ ...CREATE_DEFAULTS, networks: [...CREATE_DEFAULTS.networks] }) as RawValues;
+
+/** Rebuild form values from a saved or imported draft, migrating older drafts. */
+function restoreDraft(source: Record<string, unknown>, version: number): RawValues {
+  const next = initialValues();
+  for (const key of Object.keys(CREATE_DEFAULTS) as FieldName[]) {
+    if (Object.hasOwn(source, key)) next[key] = source[key] as RawValues[FieldName];
+  }
+  for (const role of ['owner', 'operator'] as const) {
+    if (!Object.hasOwn(source, `${role}Mode`) && source[`${role}Wallet`]) next[`${role}Mode`] = 'existing';
+    if (!Array.isArray(next[`${role}Signers`])) next[`${role}Signers`] = ['', '', ''];
+  }
+  if (!Object.hasOwn(source, 'ownerIsOperator') && source.operatorWallet) next.ownerIsOperator = String(source.operatorWallet).toLowerCase() === String(source.ownerWallet ?? source.operatorWallet).toLowerCase();
+  if (!Object.hasOwn(source, 'ownerWallet')) {
+    next.ownerWallet = typeof source.operatorWallet === 'string' ? source.operatorWallet : '';
+    if (next.ownerWallet) next.ownerMode = 'existing';
+  }
+  if (!Object.hasOwn(source, 'networks') && typeof source.network === 'string') next.networks = [source.network];
+  if (!Array.isArray(next.networks)) next.networks = [...CREATE_DEFAULTS.networks];
+  if (!['production', 'testnet'].includes(String(next.networkEnvironment))) next.networkEnvironment = 'production';
+  if ((version < 2 && [[75, 15], [81, 6]].some(([operators, holders]) => Number(next.operatorSplitPercent) === operators && Number(next.stickySplitPercent) === holders))
+    || (version < 3 && Number(next.operatorSplitPercent) === 68 && Number(next.stickySplitPercent) === 13)) {
+    next.operatorSplitPercent = CREATE_DEFAULTS.operatorSplitPercent;
+    next.stickySplitPercent = CREATE_DEFAULTS.stickySplitPercent;
+  }
+  if (next.name === 'Untitled Homerun') next.name = 'Untitled';
+  next.revnetOperatorEnabled = true;
+  return next;
+}
 
 type FieldProps = {
   name: FieldName; label: string; value: string | number | boolean | readonly string[]; error?: string;
@@ -141,13 +171,14 @@ function IncomeSplit({ summary }: { summary: Summary | null }) {
   </div>;
 }
 
-export default function CreateFlow({ renderDeploy, lockedChains }: CreateFlowProps) {
+export default function CreateFlow({ renderDeploy, lockedChains, onImportRecord }: CreateFlowProps) {
   const [raw, setRaw] = useState<RawValues>(initialValues);
   const [step, setStep] = useState(0);
   const [furthest, setFurthest] = useState(0);
   const [errors, setErrors] = useState<Errors>({});
   const [hydrated, setHydrated] = useState(false);
   const [storageNotice, setStorageNotice] = useState('');
+  const [importError, setImportError] = useState('');
   const [photoBusy, setPhotoBusy] = useState({ photo: false, ownerPhoto: false, operatorPhoto: false });
   const heading = useRef<HTMLHeadingElement>(null);
   const photoRequest = useRef({ photo: 0, ownerPhoto: 0, operatorPhoto: 0 });
@@ -161,28 +192,7 @@ export default function CreateFlow({ renderDeploy, lockedChains }: CreateFlowPro
     try {
       const saved = JSON.parse(localStorage.getItem(CREATE_DRAFT_KEY) || 'null');
       if (saved?.raw && typeof saved.raw === 'object' && !Array.isArray(saved.raw)) {
-        for (const key of Object.keys(CREATE_DEFAULTS) as FieldName[]) {
-          if (Object.hasOwn(saved.raw, key)) next[key] = saved.raw[key];
-        }
-        for (const role of ['owner', 'operator'] as const) {
-          if (!Object.hasOwn(saved.raw, `${role}Mode`) && saved.raw[`${role}Wallet`]) next[`${role}Mode`] = 'existing';
-          if (!Array.isArray(next[`${role}Signers`])) next[`${role}Signers`] = ['', '', ''];
-        }
-        if (!Object.hasOwn(saved.raw, 'ownerIsOperator') && saved.raw.operatorWallet) next.ownerIsOperator = String(saved.raw.operatorWallet).toLowerCase() === String(saved.raw.ownerWallet ?? saved.raw.operatorWallet).toLowerCase();
-        if (!Object.hasOwn(saved.raw, 'ownerWallet')) {
-          next.ownerWallet = typeof saved.raw.operatorWallet === 'string' ? saved.raw.operatorWallet : '';
-          if (next.ownerWallet) next.ownerMode = 'existing';
-        }
-        if (!Object.hasOwn(saved.raw, 'networks') && typeof saved.raw.network === 'string') next.networks = [saved.raw.network];
-        if (!Array.isArray(next.networks)) next.networks = [...CREATE_DEFAULTS.networks];
-        if (!['production', 'testnet'].includes(String(next.networkEnvironment))) next.networkEnvironment = 'production';
-        if (((saved.incomeDefaultsVersion ?? 0) < 2 && [[75, 15], [81, 6]].some(([operators, holders]) => Number(next.operatorSplitPercent) === operators && Number(next.stickySplitPercent) === holders))
-          || ((saved.incomeDefaultsVersion ?? 0) < 3 && Number(next.operatorSplitPercent) === 68 && Number(next.stickySplitPercent) === 13)) {
-          next.operatorSplitPercent = CREATE_DEFAULTS.operatorSplitPercent;
-          next.stickySplitPercent = CREATE_DEFAULTS.stickySplitPercent;
-        }
-        if (next.name === 'Untitled Homerun') next.name = 'Untitled';
-        next.revnetOperatorEnabled = true;
+        Object.assign(next, restoreDraft(saved.raw, saved.incomeDefaultsVersion ?? 0));
         const savedStep = Number.isInteger(saved.step) ? Math.min(LAST_STEP, Math.max(0, saved.step)) : 0;
         setStep(savedStep);
         setFurthest(savedStep);
@@ -307,14 +317,34 @@ export default function CreateFlow({ renderDeploy, lockedChains }: CreateFlowPro
     if (input) input.value = '';
   }
 
-  function downloadDraft() {
-    if (!normalized.valid) return;
-    const url = URL.createObjectURL(new Blob([JSON.stringify(deploymentDraft(normalized.values), null, 2)], { type: 'application/json' }));
+  function exportDraft() {
+    // `form` is what Import reads back; the rest documents a complete setup.
+    const draft = { ...(normalized.valid ? deploymentDraft(normalized.values) : { kind: 'homerun-deployment-preview' }), form: raw };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(draft, null, 2)], { type: 'application/json' }));
     const link = document.createElement('a');
     link.href = url;
     link.download = 'homerun-setup-draft.json';
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function importFile(file: File) {
+    setImportError('');
+    try {
+      if (file.size > 16_000_000) throw new Error('This file is too large.');
+      const text = await file.text();
+      const imported = JSON.parse(text);
+      if (imported?.form && typeof imported.form === 'object' && !Array.isArray(imported.form)) {
+        setRaw(restoreDraft(imported.form, 3));
+        setErrors({});
+        setFurthest(LAST_STEP);
+        navigate(0);
+      } else if (imported?.version === 1 && imported.input && onImportRecord) {
+        onImportRecord(text);
+        setFurthest(LAST_STEP);
+        navigate(LAST_STEP);
+      } else throw new Error('Choose a Homerun setup draft or deployment record.');
+    } catch (cause) { setImportError(cause instanceof SyntaxError ? 'This file is not valid JSON.' : cause instanceof Error ? cause.message : 'Import failed.'); }
   }
 
   function reset() {
@@ -367,6 +397,13 @@ export default function CreateFlow({ renderDeploy, lockedChains }: CreateFlowPro
     <div className="create-intro"><h1>Design the rules</h1></div>
     <div id="create-workspace" className="create-workspace">
       <section className="create-editor" aria-label="Design the rules">
+        <div className="create-file-actions">
+          <label className="create-file-pill"><span aria-hidden="true">↑</span> Import
+            <input id="import-setup" type="file" accept="application/json,.json" disabled={locked} onChange={event => { const file = event.target.files?.[0]; if (file) void importFile(file); event.target.value = ''; }} />
+          </label>
+          <button type="button" id="download-setup" className="create-file-pill" onClick={exportDraft}><span aria-hidden="true">↓</span> Export</button>
+          {importError && <span className="create-error" role="alert">{importError}</span>}
+        </div>
         <nav className="create-steps" aria-label="Setup steps">
           {labels.map((label, index) => <button key={label} type="button" data-create-step={index}
             disabled={locked || index > furthest || photoBusy.photo || photoBusy.ownerPhoto || photoBusy.operatorPhoto} aria-current={index === step ? 'step' : undefined}
@@ -523,7 +560,7 @@ export default function CreateFlow({ renderDeploy, lockedChains }: CreateFlowPro
               <div id="create-contract-actions">
                 {normalized.valid ? renderDeploy?.(normalized.values) : <p className="create-error" role="status">Correct the setup fields before preparing the FUND transaction.{Object.entries(normalized.errors).map(([key, error]) => <span key={key} style={{ display: 'block' }}>{error}</span>)}</p>}
               </div>
-              <details className="create-terms"><summary>Keep a setup draft</summary><p>The downloadable draft contains your modeling assumptions and planned settings. It is not a deployed project or a transaction.</p><button type="button" id="download-setup" className="quiet-button" disabled={!normalized.valid} onClick={downloadDraft}>Download setup draft</button></details>
+
             </>}
           </section>
           {errors.form && <p id="create-form-error" className="create-error" role="alert">{errors.form}</p>}

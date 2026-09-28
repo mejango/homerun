@@ -55,7 +55,7 @@ describe('Create submission recovery', () => {
     await act(async () => cancel.click())
     expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()
     expect(localStorage.getItem('homerun:create-draft:v1')).toBe('keep this draft')
-    expect(host.textContent).toContain('Show preview')
+    expect(host.textContent).toContain('Preview your project')
   })
 
   it('shows pre-wallet errors outside the collapsed recovery controls', async () => {
@@ -137,10 +137,7 @@ describe('Create submission recovery', () => {
     imported.statuses[8453] = { phase: 'confirmed', hash: `0x${'ab'.repeat(32)}`, projectId: '19' }
     const record = JSON.stringify(imported, (_key, value) => typeof value === 'bigint' ? value.toString() : value)
     localStorage.clear()
-    await act(async () => root.render(<FundDeploy />))
-    const input = host.querySelector('input[type="file"]')!
-    Object.defineProperty(input, 'files', { value: [{ size: record.length, text: async () => record }] })
-    await act(async () => input.dispatchEvent(new Event('change', { bubbles: true })))
+    await act(async () => root.render(<FundDeploy importedRecord={record} />))
     expect(saved().statuses[8453].phase).toBe('pending')
     expect(saved().statuses[8453].projectId).toBeUndefined()
     expect(host.textContent).toContain('Check confirmation')

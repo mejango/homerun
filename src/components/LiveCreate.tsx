@@ -147,7 +147,7 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
   </section>
 }
 
-export function FundDeploy({ values, onLockChange }: { values?: CreateValues; onLockChange?: (chains: readonly number[] | null) => void }) {
+export function FundDeploy({ values, onLockChange, importedRecord, onRecordUsed }: { values?: CreateValues; onLockChange?: (chains: readonly number[] | null) => void; importedRecord?: string | null; onRecordUsed?: () => void }) {
   const router = useRouter()
   const { address, isCenterWallet } = useWallet()
   const [session, setSession] = useState<FundLaunchSession | null>(null)
@@ -259,12 +259,12 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
     const url = URL.createObjectURL(new Blob([encodeLaunchSession(session)], { type: 'application/json' }))
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'homerun-fund-launch.json'; anchor.click(); URL.revokeObjectURL(url)
   }
-  async function restore(file: File) {
+  function restore(text: string) {
     setError('')
     try {
-      if (file.size > 1_000_000) throw new Error('The deployment record is too large.')
+      if (text.length > 1_000_000) throw new Error('The deployment record is too large.')
       if (localStorage.getItem(FUND_LAUNCH_KEY)) throw new Error('A saved launch already exists. Reload to resume it.')
-      const imported = decodeLaunchSession(await file.text())
+      const imported = decodeLaunchSession(text)
       // Imported progress is a recovery hint. Re-verify claimed confirmations
       // against their exact onchain transaction before showing a created project.
       const statuses = Object.fromEntries(Object.entries(imported.statuses).map(([chainId, status]) => [chainId, status.phase === 'confirmed'
@@ -273,6 +273,11 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
       persist({ ...imported, statuses })
     } catch (cause) { setError(message(cause)) }
   }
+  useEffect(() => {
+    if (!loaded || !importedRecord) return
+    onRecordUsed?.()
+    restore(importedRecord)
+  })
   const complete = !!session && Object.values(session.statuses).every(status => status.phase === 'confirmed')
   const signingChain = running ? session?.input.chainIds.find(id => session.statuses[id].phase === 'signing') : undefined
   const activeChain = session?.input.chainIds.find(id => session.statuses[id].phase !== 'confirmed')
@@ -284,7 +289,7 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
       ? <p role="alert">This project is already published on {session!.input.chainIds.map(displayChainName).join(', ')}. Finish it before changing networks.</p>
       : <p role="alert">This launch already has wallet authorizations for {session!.input.chainIds.map(displayChainName).join(', ')}. Continue completes that saved launch; changing the selection above cannot replace signed requests.</p>)}
     {!session ? <>
-      <button type="button" className="create-primary" disabled={preparing || !loaded} onClick={() => router.push('/create/preview')}>Show preview</button>
+      <button type="button" className="create-primary" disabled={preparing || !loaded} onClick={() => router.push('/create/preview')}>Preview your project</button>
       <p className="text-sm">The preview is the project page this creates. Nothing is created until you press Make it real there.</p>
       {needsTransaction && <button type="button" className="quiet-button" disabled={preparing || !loaded || !address} onClick={() => void prepare()}>Create with a transaction</button>}
     </>
@@ -316,17 +321,18 @@ export function FundDeploy({ values, onLockChange }: { values?: CreateValues; on
       </>}
     {(error || invalid) && <p role="alert">{error || invalid}</p>}
     {!session && error && <button type="button" onClick={() => setError('')}>Try again</button>}
-    <details className="fund-launch-recovery"><summary>Deployment recovery</summary>
-      {!session ? <label>Restore a deployment record<input type="file" accept="application/json,.json" disabled={!loaded || preparing} onChange={event => { const file = event.target.files?.[0]; if (file) void restore(file); event.target.value = '' }} /></label>
-        : <><p>{session.name}. Owner <code>{session.input.owner}</code>. This saved launch retains its original settings.</p><button type="button" onClick={download}>Download deployment record</button>
+    {session && <details className="fund-launch-recovery"><summary>Deployment recovery</summary>
+        <><p>{session.name}. Owner <code>{session.input.owner}</code>. This saved launch retains its original settings.</p><button type="button" onClick={download}>Download deployment record</button>
           {session.transport !== 'relayr' && session.transport !== 'intent' && requests.map(request => <LaunchChain key={`${session.input.salt}:${request.chainId}`} session={session} request={request} status={session.statuses[request.chainId]} runId={running && activeChain === request.chainId ? runId : 0} onStopped={stopDirect} onFeedback={directFeedback} update={(status, expectedPhase) => setSession(updateLaunchStatus(session.input.salt, request.chainId, status, expectedPhase))} refreshFee={fee => setSession(refreshLaunchCreationFee(session.input.salt, request.chainId, fee))} />)}
           {complete && <button type="button" onClick={() => { try { archiveLaunch(session.input.salt); setSession(null); setProgress('') } catch (cause) { setError(message(cause)) } }}>Finish this launch and start another</button>}
-        </>}
-    </details>
+        </>
+    </details>}
   </div>
 }
 
 export default function LiveCreate() {
   const [lockedChains, setLockedChains] = useState<readonly number[] | null>(null)
-  return <CreateFlow lockedChains={lockedChains} renderDeploy={values => <FundDeploy values={values} onLockChange={setLockedChains} />} />
+  const [record, setRecord] = useState<string | null>(null)
+  return <CreateFlow lockedChains={lockedChains} onImportRecord={setRecord}
+    renderDeploy={values => <FundDeploy values={values} onLockChange={setLockedChains} importedRecord={record} onRecordUsed={() => setRecord(null)} />} />
 }

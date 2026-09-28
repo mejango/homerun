@@ -86,6 +86,11 @@
 #create-next { margin-left: auto; }
 .draft-status { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 13px; font-size: 10px; color: #647060; }
 .draft-status button { font-size: 10px; }
+.create-file-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 16px; }
+.create-file-pill { position: relative; display: inline-flex; align-items: center; gap: 4px; min-height: 28px; padding: 0 12px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: #647060; font: 500 11px/1 var(--sans); cursor: pointer; }
+.create-file-pill:hover, .create-file-pill:focus-within { border-color: #9aa894; color: #293e35; }
+.create-file-pill input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.create-file-actions .create-error { margin: 0; font-size: 11px; }
 .create-aside { position: sticky; top: 25px; padding-top: 2px; }
 .draft-preview { padding: 23px; border: 1px solid #cfd3c4; border-radius: var(--radius); background: #eeeee4; box-shadow: 4px 5px 0 #e2e3d852; }
 .asset-art { height: 160px; margin: 0 -10px 20px; overflow: hidden; }

@@ -33,8 +33,6 @@ const operatorWallet = `0x${'a1'.repeat(20)}`;
 const networkIDs = ['ethereum', 'optimism', 'base', 'arbitrum'];
 const revenuePlan = 'Members pay for tool hire and repairs.\nWeekend <workshops> earn extra revenue & support maintenance.';
 async function downloadSetup() {
-  const details = page.locator('details').filter({ has: page.locator('#download-setup') });
-  if (!(await details.evaluate(node => node.open))) await details.locator('summary').click();
   const pending = page.waitForEvent('download');
   await page.locator('#download-setup').click();
   const result = await pending;
@@ -258,8 +256,8 @@ try {
     assert.match(await page.locator('#create-review').textContent(), /\$1,025\.65/);
     assert.equal(await page.locator('#create-next').count(), 0);
     await page.getByRole('heading', { name: 'Create your project', exact: true }).waitFor();
-    await page.getByRole('button', { name: 'Show preview', exact: true }).click({ trial: true });
-    assert.equal(await page.getByRole('button', { name: 'Show preview', exact: true }).isDisabled(), false);
+    await page.getByRole('button', { name: 'Preview your project', exact: true }).click({ trial: true });
+    assert.equal(await page.getByRole('button', { name: 'Preview your project', exact: true }).isDisabled(), false);
     assert.equal(await environment().inputValue(), 'production');
     assert.deepEqual(await environment().locator('option').allTextContents(), ['Mainnets', 'Testnets']);
     assert.deepEqual(await selectedNetworks(), networkIDs);
@@ -297,6 +295,11 @@ try {
     const setup = await downloadSetup();
     assert.equal(setup.networkEnvironment, 'testnet');
     assert.deepEqual(setup.plannedNetworks.map(chain => chain.chainId), [11155111, 84532]);
+    await network('ethereum').click();
+    await page.locator('#import-setup').setInputFiles({ name: 'homerun-setup-draft.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(setup)) });
+    await currentStep(0);
+    await page.locator('[data-create-step="4"]').click();
+    assert.deepEqual(await selectedNetworks(), ['ethereum', 'base'], 'Import restores the exported form.');
     await network('ethereum').click();
     await network('base').click();
     await currentStep(4);
@@ -368,7 +371,7 @@ try {
     assert.equal(setup.income.minimumRevenue.consequences, consequences);
   });
   await check('Live entry requires a wallet and sign-in cannot create a fake deployment', async () => {
-    const prepare = page.getByRole('button', { name: 'Show preview', exact: true });
+    const prepare = page.getByRole('button', { name: 'Preview your project', exact: true });
     assert.equal(await prepare.isDisabled(), false);
     assert.equal(await page.getByRole('button', { name: 'Create with a transaction', exact: true }).count(), 0);
     assert.match(await page.locator('#create-contract-actions').textContent(), /INCOME.*separate later actions/);

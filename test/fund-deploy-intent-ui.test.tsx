@@ -113,23 +113,23 @@ describe('creating a FUND without a transaction', () => {
 
   it('offers one way forward, the preview', async () => {
     await render()
-    expect(button('Show preview')).toBeTruthy()
+    expect(button('Preview your project')).toBeTruthy()
     expect(button('Create project')).toBeUndefined()
     expect(button('Create without a transaction')).toBeUndefined()
     expect(button('Create with a transaction')).toBeUndefined()
-    await act(async () => button('Show preview')!.click())
+    await act(async () => button('Preview your project')!.click())
     expect(navigate.push).toHaveBeenCalledWith('/create/preview')
   })
 
   it('offers the preview on mainnet too', async () => {
     await render({ networks: ['ethereum', 'base'] })
-    expect(button('Show preview')).toBeTruthy()
+    expect(button('Preview your project')).toBeTruthy()
   })
 
   it('keeps the transaction path for a connection Center cannot verify', async () => {
     runtime.safe = true
     await render()
-    expect(button('Show preview')).toBeTruthy()
+    expect(button('Preview your project')).toBeTruthy()
     expect(button('Create with a transaction')).toBeTruthy()
     runtime.safe = false
     runtime.centerWallet = true
@@ -140,7 +140,7 @@ describe('creating a FUND without a transaction', () => {
   it('shows the preview before a wallet is connected', async () => {
     runtime.wallet = undefined
     await render()
-    expect(button('Show preview')!.disabled).toBe(false)
+    expect(button('Preview your project')!.disabled).toBe(false)
   })
 
   it('shows a published project as published, with its page and no chain transactions', async () => {

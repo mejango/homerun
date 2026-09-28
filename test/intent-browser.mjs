@@ -334,7 +334,7 @@ try {
   // on mount and the header reports the account without opening the chooser.
   await page.locator('.site-header').getByRole('button', { name: /^Signed in/ }).waitFor()
 
-  const preview = page.getByRole('button', { name: 'Show preview', exact: true })
+  const preview = page.getByRole('button', { name: 'Preview your project', exact: true })
   await preview.waitFor()
   assert.equal(await page.getByRole('button', { name: 'Create with a transaction', exact: true }).count(), 0)
   await preview.click()
@@ -350,7 +350,7 @@ try {
   await page.getByRole('button', { name: 'Edit', exact: true }).click()
   await page.waitForURL(`${appOrigin}/create`)
   await page.getByRole('heading', { name: 'Create your project', exact: true }).waitFor()
-  await page.getByRole('button', { name: 'Show preview', exact: true }).click()
+  await page.getByRole('button', { name: 'Preview your project', exact: true }).click()
   await page.waitForURL(`${appOrigin}/create/preview`)
 
   await page.getByRole('button', { name: 'Make it real', exact: true }).click()
