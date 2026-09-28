@@ -32,6 +32,7 @@ import { fetchFundProjectMetadata, type FundProjectMetadata } from '@/lib/fund-p
 import { SiteIntegration } from './SiteIntegration'
 import { DemoStageHistory, PhaseCopy, ProjectOverviewView, ProjectPageShell, ProjectPhoto, ProjectRaiseStats } from '@/components/ProjectPage'
 import { liveFundPhase } from '@/lib/fund-phase'
+import { FundingProgress } from '@/components/FundingProgress'
 import { ActionSection, CashOutPanel, HolderActions, OperatorActions, PaymentPanel, errorMessage } from '@/components/live-transactions'
 
 /** Every displayed balance and every permission is resolved from this chain. */
@@ -142,6 +143,7 @@ function ProjectActions({ chainId, projectId, intentId, state, client, details, 
   const { address, isConnected } = useWallet()
   const [contextIndex, setContextIndex] = useState(0)
   const [paymentToken, setPaymentToken] = useState<'fund' | 'income'>('fund')
+  const [accountAction, setAccountAction] = useState<'cashout' | 'tokens' | null>(null)
   const paymentChoice = useRef(false)
   useEffect(() => { if (income.projectId && !paymentChoice.current) setPaymentToken('income') }, [income.projectId])
   if (!state || !client) {
@@ -185,15 +187,28 @@ function ProjectActions({ chainId, projectId, intentId, state, client, details, 
   // The goal is published, never enforced, and only comparable to a dollar treasury.
   const goal = plan && plan.purchaseBudget !== null && plan.opsReserve !== null ? plan.purchaseBudget + plan.opsReserve : null
   const dollars = !!context && /^USDC?$/i.test(context.symbol)
+  const raised = context ? Number(formatUnits(context.balance, context.decimals)) : 0
+  const compact = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: Math.abs(value) < 1_000 ? 2 : 1 }).format(value)
+  const raisedMetric = context && (dollars
+    ? <span key="raised" data-header-metric="raised" title={`Raised: ${money(raised)}`}>Raised: {compact(raised)}</span>
+    : <span key="raised" data-header-metric="raised">FUND treasury: <DisplayTokenAmount value={context.balance} decimals={context.decimals} /> {context.symbol}</span>)
   const progress = context && (dollars && goal
-    ? <ProjectRaiseStats raised={Number(formatUnits(context.balance, context.decimals))} goal={goal} historical={live.phase !== 'raising'} goalLabel="Published goal" />
+    ? <ProjectRaiseStats raised={raised} goal={goal} historical={live.phase !== 'raising'} goalLabel="Published goal" />
     : <div className="project-raise-stats"><dl><div><dt>FUND treasury</dt><dd><DisplayTokenAmount value={context.balance} decimals={context.decimals} /> {context.symbol}</dd></div><div><dt>FUND supply</dt><dd><DisplayTokenAmount value={state.totalSupply} /></dd></div></dl></div>)
   const emptyIncome = <ActionSection title="INCOME"><p>INCOME has not been verified for this project yet. Its launch and recovery controls are under Operators.</p></ActionSection>
   return <HomerunProjectLayout
     title={name ?? 'FUND project'}
     location={details?.location}
     logo={projectLogo(details, name ? `${name} logo` : 'Project logo')}
-    metadata={[`Network: ${displayChainName(state.chainId)}`, `FUND: #${state.projectId}`, income.projectId && `INCOME: #${income.projectId}`, <span key="status" id="project-status" className="project-status" data-project-phase={live.phase ?? undefined} role="status">Status: {live.status}</span>, supported && context && <span>FUND treasury: <DisplayTokenAmount value={context.balance} decimals={context.decimals} /> {context.symbol}</span>, supported && <span>FUND supply: <DisplayTokenAmount value={state.totalSupply} /></span>, income.treasuryMetric].filter(Boolean)}
+    metadata={[
+      <span key="status" id="project-status" className="project-status" data-project-phase={live.phase ?? undefined} role="status">Status: {live.status}</span>,
+      supported && raisedMetric,
+      supported && !dollars && <span key="supply">FUND supply: <DisplayTokenAmount value={state.totalSupply} /></span>,
+      supported && dollars && goal !== null && <span key="goal" data-header-metric="goal" title={`Published goal: ${money(goal)}`}>Goal: {compact(goal)}</span>,
+      supported && dollars && goal && <span key="funded" data-header-metric="funded">Funded: {Math.round((raised / goal) * 100)}%</span>,
+      income.treasuryMetric,
+    ].filter(Boolean)}
+    headerProgress={supported && dollars && goal ? <FundingProgress raised={raised} goal={goal} historical={live.phase !== 'raising'} compact /> : undefined}
     notice={<>{alsoDeploy}{notice}{!supported && <p role="alert">This project uses contract settings outside Homerun’s verified FUND integration. Transactions are unavailable here. {state.issues.join(' ')}</p>}{!isConnected && <p>Connect your wallet to contribute, use your tokens, or access operator actions.</p>}{writesUnavailable && <p role="status">New transactions are paused while current project permissions and balances are being verified. Submitted transactions continue to be tracked below.</p>}</>}
     payment={<>
       {income.projectId && <div className="mb-5 flex gap-3" role="group" aria-label="Payment token"><button type="button" className={paymentToken === 'fund' ? 'btn-primary' : 'btn-secondary'} aria-pressed={paymentToken === 'fund'} onClick={() => { paymentChoice.current = true; setPaymentToken('fund') }}>FUND</button><button type="button" className={paymentToken === 'income' ? 'btn-primary' : 'btn-secondary'} aria-pressed={paymentToken === 'income'} onClick={() => { paymentChoice.current = true; setPaymentToken('income') }}>INCOME</button></div>}
@@ -225,16 +240,41 @@ function ProjectActions({ chainId, projectId, intentId, state, client, details, 
       {income.stages}
     </div>}
     owners={<OwnersTabs
-      accountsYou={<div className="grid gap-7">{gate(<ActionSection title="Your FUND">{address ? <><p className="mb-3 break-words text-2xl"><DisplayTokenAmount value={totalBalance} /> FUND</p><p className="mb-6 text-sm"><DisplayTokenAmount value={state.creditBalance} /> internal credits / <DisplayTokenAmount value={state.erc20Balance} /> ERC-20 tokens. Both count as FUND without staking.</p></> : <p className="mb-5">Connect a wallet to read your holdings.</p>}<fieldset disabled={!address} className="min-w-0 border-0 p-0"><HolderActions state={state} client={client} /></fieldset></ActionSection>)}{gate(context && <>{currency}<CashOutPanel state={state} client={client} contextIndex={contextIndex} /></>)}{income.projectId ? income.accountsYou : emptyIncome}</div>}
-      accountsAll={<div className="grid gap-7"><ProjectParticipants chainId={state.chainId} projectId={state.projectId} tokenLabel="FUND" />{income.projectId ? income.accountsAll : emptyIncome}</div>}
+      accountsYou={<div className="demo-owner-sections">
+        <section className="demo-section demo-account" aria-label="Your FUND">
+          <h2>Your position</h2>
+          {!address && <p>Connect a wallet to see your FUND and act on it.</p>}
+          <dl className="demo-account-balances">
+            <div>
+              <dt>FUND</dt>
+              <dd>{address ? <DisplayTokenAmount value={totalBalance} /> : '—'}</dd>
+              {address && state.creditBalance > 0n && <dd className="text-xs"><DisplayTokenAmount value={state.creditBalance} /> as unclaimed credits</dd>}
+              <dd className="mt-3 flex flex-wrap gap-2" role="group" aria-label="FUND actions">
+                {context && <button type="button" className="btn-secondary min-h-10 px-3 text-sm" aria-pressed={accountAction === 'cashout'} onClick={() => setAccountAction(accountAction === 'cashout' ? null : 'cashout')}>Cash out FUND</button>}
+                <button type="button" className="btn-secondary min-h-10 px-3 text-sm" aria-pressed={accountAction === 'tokens'} onClick={() => setAccountAction(accountAction === 'tokens' ? null : 'tokens')}>Transfer or burn FUND</button>
+              </dd>
+            </div>
+            <div>
+              <dt>INCOME</dt>
+              <dd>{income.projectId ? 'See below' : 'Not issued yet'}</dd>
+            </div>
+          </dl>
+          {/* Hidden, never unmounted: each form tracks its own submitted transaction. */}
+          <div hidden={accountAction !== 'cashout'} className="mt-6">{gate(context && <>{currency}<CashOutPanel state={state} client={client} contextIndex={contextIndex} /></>)}</div>
+          <div hidden={accountAction !== 'tokens'} className="mt-6">{gate(<fieldset disabled={!address} className="min-w-0 border-0 p-0"><HolderActions state={state} client={client} /></fieldset>)}</div>
+        </section>
+        {income.projectId && income.accountsYou}
+      </div>}
+      accountsAll={<div className="demo-owner-sections"><ProjectParticipants chainId={state.chainId} projectId={state.projectId} tokenLabel="FUND" />{income.projectId && income.accountsAll}</div>}
       settlement={<div className="grid gap-7">{gate(<FundBridgeActions state={state} />)}{income.projectId && income.settlement}</div>}
       splits={<div className="grid gap-7">{publishedToken}<ProjectSplitsEditor chainId={chainId} projectId={projectId} phase="fund" client={client} unavailable={writesUnavailable} />{income.projectId ? income.splits : emptyIncome}</div>}
       loans={income.projectId ? income.loans : <ActionSection title="Loans"><p>Loans use INCOME as collateral. They become available after a verified INCOME launch under its contract terms.</p></ActionSection>}
       control={<div className="grid gap-7"><ProjectOwnershipEditor chainId={chainId} projectId={projectId} client={client} unavailable={writesUnavailable} />{income.projectId && income.control}</div>}
       permissions={<div className="grid gap-7"><ProjectPermissionsEditor chainId={chainId} projectId={projectId} client={client} unavailable={writesUnavailable} />{income.projectId && income.permissions}</div>}
     />}
-    shop={<div className="grid gap-7"><section><h2 className="mb-5 text-3xl">FUND shop</h2><ProjectShop chainId={state.chainId} projectId={state.projectId} tokenLabel="FUND" /></section>{income.projectId && <section><h2 className="mb-5 text-3xl">INCOME shop</h2>{income.shop}</section>}</div>}
-    extras={<div className="grid gap-7"><ProjectPayerAddresses chainId={state.chainId} projectId={state.projectId} tokenLabel="FUND" />{income.extras}<ActionSection title="Contracts"><dl className="grid gap-3 break-all"><div><dt>Project owner</dt><dd>{state.owner}</dd></div><div><dt>Operator</dt><dd>{state.operator ?? 'Not verified'}</dd></div><div><dt>Controller</dt><dd>{state.controller}</dd></div>{state.tokenAddress && <div><dt>FUND ERC-20</dt><dd>{state.tokenAddress}</dd></div>}</dl></ActionSection><SiteIntegration configuration={{ mode: 'live-project', source: 'verified contract reads and published project metadata', chainId: state.chainId, fundProjectId: state.projectId.toString(), incomeProjectId: income.projectId?.toString() ?? null, project: { name: name ?? null, location: details?.location ?? null }, publishedPlan: plan ?? null }} /></div>}
+    // The FUND shop keeps its tree position when INCOME appears, so it is never remounted.
+    shop={<div className="demo-owner-sections"><section className="demo-section">{income.projectId && <h2>FUND shop</h2>}<ProjectShop chainId={state.chainId} projectId={state.projectId} tokenLabel="FUND" /></section>{income.projectId && <section className="demo-section"><h2>INCOME shop</h2>{income.shop}</section>}</div>}
+    extras={<div className="grid gap-7"><ProjectPayerAddresses chainId={state.chainId} projectId={state.projectId} tokenLabel="FUND" />{income.extras}<ActionSection title="Contracts"><dl className="demo-live-rows"><div><dt>Network</dt><dd>{displayChainName(state.chainId)}</dd></div><div><dt>FUND project</dt><dd>#{state.projectId.toString()}</dd></div>{income.projectId && <div><dt>INCOME project</dt><dd>#{income.projectId.toString()}</dd></div>}<div><dt>Project owner</dt><dd>{state.owner}</dd></div><div><dt>Operator</dt><dd>{state.operator ?? 'Not verified'}</dd></div><div><dt>Controller</dt><dd>{state.controller}</dd></div>{state.tokenAddress && <div><dt>FUND ERC-20</dt><dd>{state.tokenAddress}</dd></div>}</dl></ActionSection><SiteIntegration configuration={{ mode: 'live-project', source: 'verified contract reads and published project metadata', chainId: state.chainId, fundProjectId: state.projectId.toString(), incomeProjectId: income.projectId?.toString() ?? null, project: { name: name ?? null, location: details?.location ?? null }, publishedPlan: plan ?? null }} /></div>}
     operators={<div className="grid gap-7">{income.projectId ? income.operators : null}{gate(<ActionSection title="Operator actions">{!isOperator && <p className="mb-5">Connect a wallet with verified project permissions to manage this project. Contract permissions are checked again before every transaction.</p>}<fieldset disabled={!isOperator} className="min-w-0 border-0 p-0"><OperatorActions state={state} client={client} contextIndex={contextIndex} /></fieldset></ActionSection>)}<IncomeLaunch state={state} client={client} name={name} plannedAllocation={plan && plan.operatorSplitPercent !== null && plan.fundHolderSplitPercent !== null ? { reservedPercent: plan.operatorSplitPercent + plan.fundHolderSplitPercent } : undefined} launchUnavailable={blocked} embedExistingProject={false} /></div>}
   />
 }

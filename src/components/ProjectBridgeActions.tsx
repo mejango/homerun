@@ -41,6 +41,7 @@ import {
   type ProjectBridgeMovement,
 } from "@/lib/project-bridge";
 import { verifyFundBridgeReceipt } from "@/lib/fund-bridge-receipts";
+import { readableError } from '@/lib/readable-error'
 
 const clients = new Map<JBChainId, PublicClient>();
 function clientFor(chainId: JBChainId): PublicClient {
@@ -54,9 +55,7 @@ function clientFor(chainId: JBChainId): PublicClient {
   return client;
 }
 function message(error: unknown) {
-  return error instanceof Error
-    ? error.message
-    : "The bridge could not be verified. Refresh and try again.";
+  return readableError(error, "The bridge could not be verified. Refresh and try again.");
 }
 function positive(value: string) {
   try {

@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useId, useState } from 'react'
 import { formatUnits } from 'viem'
-import { displayChainName, explorerAddressUrl } from '@/lib/chainDisplay'
+import { explorerAddressUrl } from '@/lib/chainDisplay'
 import {
   formatParticipantBalance,
   getProjectParticipants,
@@ -28,12 +28,12 @@ function ParticipantsList({ chainId, projectId, tokenLabel }: { chainId: number;
   })
   const page = query.data
 
-  return <section aria-labelledby={heading} className="contract-panel min-w-0">
+  return <section aria-labelledby={heading} className="demo-section min-w-0">
     <div className="flex flex-wrap items-baseline justify-between gap-3">
       <h2 id={heading}>{tokenLabel} holders</h2>
-      <button type="button" className="btn-secondary" disabled={query.isFetching} onClick={() => void query.refetch()}>{query.isFetching ? 'Refreshing…' : 'Refresh holders'}</button>
+      <button type="button" className="quiet-button" disabled={query.isFetching} onClick={() => void query.refetch()}>{query.isFetching ? 'Refreshing…' : 'Refresh holders'}</button>
     </div>
-    <p className="my-4 text-sm">{displayChainName(chainId)} / Project {projectId}. Balances include wallet tokens and unclaimed credits. Recent changes may take time to appear.</p>
+    <p>Balances include wallet tokens and unclaimed credits. Recent changes can take a minute to appear.</p>
     {query.isPending && <p role="status">Loading {tokenLabel} holders…</p>}
     {query.isError && <p role="status">{page ? 'Holder balances could not refresh. Showing the last indexed page.' : 'Holder balances are temporarily unavailable. Refresh to try again.'}</p>}
     {page && <>
@@ -60,6 +60,6 @@ function ParticipantsList({ chainId, projectId, tokenLabel }: { chainId: number;
 /** Indexed display only. FUND and verified linked INCOME projects are separate scopes. */
 export function ProjectParticipants({ chainId, projectId, tokenLabel = 'FUND' }: { chainId: number; projectId: string | number | bigint; tokenLabel?: string }) {
   const id = indexedParticipantProjectId(chainId, projectId)
-  if (id === null) return <section className="contract-panel"><h2>{tokenLabel} holders</h2><p>This project identity is not supported by the index.</p></section>
+  if (id === null) return <section className="demo-section"><h2>{tokenLabel} holders</h2><p>This project identity is not supported by the index.</p></section>
   return <ParticipantsList key={`${chainId}:${id}:${tokenLabel}`} chainId={chainId} projectId={id} tokenLabel={tokenLabel} />
 }

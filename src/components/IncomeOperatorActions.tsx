@@ -9,8 +9,9 @@ import { displayChainName, explorerTxUrl } from '@/lib/chainDisplay'
 import { assertSameIncomeOperatorSnapshot, buildIncomeOperatorTx, readIncomeOperatorSnapshot, verifyIncomeOperatorReceipt, type IncomeOperatorSnapshot } from '@/lib/income-operator'
 import type { IncomeProjectState } from '@/lib/income-state'
 import { isOperatorWallet, OPERATOR_BURN_ADDRESS, PROJECT_OPERATOR_PROFILE_QUERY } from '@/lib/project-operator-profile'
+import { readableError } from '@/lib/readable-error'
 
-function message(error: unknown) { return error instanceof Error ? error.message : 'The INCOME Operator could not be verified.' }
+function message(error: unknown) { return readableError(error, 'The INCOME Operator could not be verified.') }
 
 export function IncomeOperatorActions({ state, client }: { state: IncomeProjectState; client: PublicClient }) {
   const { address } = useWallet()

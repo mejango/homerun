@@ -396,3 +396,5 @@
 .homerun-project-layout .demo-live-rows dd { margin: 0; font-size: 14px; font-weight: 500; text-align: right; overflow-wrap: anywhere; }
 .homerun-project-layout .demo-section > .demo-live-rows + p { margin-top: 12px; color: var(--muted); font-size: 12px; }
 .homerun-project-layout .demo-live-plan h3 { margin: 22px 0 6px; font: 500 15px/1.4 var(--sans); }
+/* Long hashes, addresses and error payloads wrap instead of widening the page. */
+.homerun-project-layout .demo-section, .homerun-project-layout [role="alert"], .homerun-project-layout [role="status"] { overflow-wrap: anywhere; }

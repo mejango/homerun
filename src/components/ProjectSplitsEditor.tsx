@@ -10,8 +10,9 @@ import { displayChainName } from '@/lib/chainDisplay'
 import { assertSameProjectSplitsSnapshot, buildProjectSplitsTx, formatSplitPercent, isReservedTokenBurn, RESERVED_TOKEN_BURN_ADDRESS, projectSplitDrafts, readProjectSplitsSnapshot, type ProjectSplit, type ProjectSplitDraft, type ProjectSplitGroup, type ProjectSplitsSnapshot } from '@/lib/project-splits-edit'
 import { ProjectAdminTransactionStatus } from './ProjectAdminTransactionStatus'
 import { ModalShell } from './ui/ModalShell'
+import { readableError } from '@/lib/readable-error'
 
-function message(reason: unknown) { return reason instanceof Error ? reason.message : 'Project splits could not be verified.' }
+function message(reason: unknown) { return readableError(reason, 'Project splits could not be verified.') }
 function recipient(split: ProjectSplit, kind: ProjectSplitGroup['kind']): string {
   if (isReservedTokenBurn(split, kind)) return 'Burn tokens (permanently destroyed)'
   if (!isAddressEqual(split.hook, zeroAddress)) return `Hook ${split.hook} · beneficiary ${split.beneficiary}${split.projectId ? ` · project ${split.projectId}` : ''}`

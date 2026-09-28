@@ -12,11 +12,12 @@ import { parseAmount } from '@/lib/fund-contracts'
 import { v6Address } from '@/lib/income-contracts'
 import { readIncomeLoan, type IncomeProjectState } from '@/lib/income-state'
 import { assertSameIncomeLoan, buildIncomePartialRepayment, incomeLoanRecipient, prepareIncomeLoanReallocation, prepareIncomeLoanTransfer, prepareIncomePartialRepayment } from '@/lib/income-loan-tools'
+import { readableError } from '@/lib/readable-error'
 
 type Props = { state: IncomeProjectState; client: PublicClient }
 type LoanAction = 'transfer' | 'reallocate' | 'partialRepay'
 function numberInput(value: string) { try { return parseAmount(value.trim(), 18) } catch { return null } }
-function errorMessage(error: unknown) { return error instanceof Error ? error.message : 'This loan transaction could not be prepared.' }
+function errorMessage(error: unknown) { return readableError(error, 'This loan transaction could not be prepared.') }
 function loanIdInput(value: string) { return /^\d{1,78}$/.test(value.trim()) ? BigInt(value.trim()) : 0n }
 function Field({ label, value, onChange, address = false }: { label: string; value: string; onChange: (value: string) => void; address?: boolean }) {
   return <label className="grid gap-2 text-sm">{label}<input className="min-h-12 w-full rounded border border-[#bfc9b5] bg-white px-3 text-base" value={value} onChange={event => onChange(event.target.value)} inputMode={address ? 'text' : 'decimal'} autoComplete="off" /></label>

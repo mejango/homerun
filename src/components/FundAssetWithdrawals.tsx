@@ -12,6 +12,7 @@ import { explorerTxUrl } from '@/lib/chainDisplay'
 import { buildFundUseAllowance, FUND_CASH_OUTS_DISABLED, parseAmount, type FundTransaction } from '@/lib/fund-contracts'
 import { assertFundStateForWrite, readFundProjectState, readLinkedFundProjects, type FundAccountingContext, type FundProjectState } from '@/lib/fund-state'
 import { wagmiConfig } from '@/providers/Providers'
+import { readableError } from '@/lib/readable-error'
 
 export type FundAssetAllowanceConfiguration = { amount: bigint; currency: number; contextIndex: number }
 
@@ -43,7 +44,7 @@ type WithdrawalIntent = {
 }
 
 function message(error: unknown): string {
-  return error instanceof Error ? error.message : 'The withdrawal could not be verified. Refresh the project and try again.'
+  return readableError(error, 'The withdrawal could not be verified. Refresh the project and try again.')
 }
 
 function serial(value: unknown): string {

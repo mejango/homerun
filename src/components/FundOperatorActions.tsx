@@ -18,12 +18,13 @@ import {
 import { assertFundStateForWrite, readFundProjectState, readLinkedFundProjects, type FundProjectState } from '@/lib/fund-state'
 import { waitForSafeExecutionHash } from '@/lib/safe-connector'
 import { wagmiConfig } from '@/providers/Providers'
+import { readableError } from '@/lib/readable-error'
 
 type Props = { state: FundProjectState; client: PublicClient; contextIndex: number }
 type Tx = ReturnType<typeof useSafeTx>
 
 function message(error: unknown): string {
-  return error instanceof Error ? error.message : 'The transaction could not be prepared. Refresh the verified project state and try again.'
+  return readableError(error, 'The transaction could not be prepared. Refresh the verified project state and try again.')
 }
 
 function amountOrZero(value: string, decimals: number): bigint {

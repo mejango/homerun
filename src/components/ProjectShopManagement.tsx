@@ -214,8 +214,8 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
 
   const lastHash = session?.completed.at(-1)?.executionHash
   const link = lastHash ? explorerTxUrl(chainId, lastHash) : session?.pending?.hash && !session.pending.safe ? explorerTxUrl(chainId, session.pending.hash) : null
-  const toolbar = session ? <button type="button" className="btn-secondary" onClick={() => setOpen(true)}>{complete ? 'Shop update complete' : 'Resume shop update'}</button>
-    : snapshot?.canAdd && <button type="button" className="btn-primary" disabled={!canStart || busy} onClick={add}>Add items for sale</button>
+  const toolbar = session ? <button type="button" className="ds-button ds-button-secondary" onClick={() => setOpen(true)}>{complete ? 'Shop update complete' : 'Resume shop update'}</button>
+    : snapshot?.canAdd && <button type="button" className="ds-button ds-button-primary" disabled={!canStart || busy} onClick={add}>Add items for sale</button>
   const notice = <>
     {storageError && <p role="alert" className="mb-4 text-sm">{storageError}</p>}
     {address && state.isError && <p role="status" className="mb-4 text-sm">Shop permissions could not be checked. <button type="button" className="underline" onClick={() => void state.refetch()}>Try again</button></p>}

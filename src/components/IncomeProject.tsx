@@ -44,8 +44,9 @@ import {
   readIncomeAutoIssuance, readIncomeLoan, readIncomeProjectState,
   type IncomeAccountingContext, type IncomeProjectState,
 } from '@/lib/income-state'
+import { readableError } from '@/lib/readable-error'
 
-function message(reason: unknown) { return reason instanceof Error ? reason.message : 'The transaction could not be prepared. Refresh and try again.' }
+function message(reason: unknown) { return readableError(reason, 'The transaction could not be prepared. Refresh and try again.') }
 function amount(value: string, decimals = 18) { try { return parseAmount(value.trim(), decimals) } catch { return 0n } }
 function units(value: bigint, decimals = 18) { return formatUnits(value, decimals) }
 type IncomeTx = ReturnType<typeof useSafeTx>

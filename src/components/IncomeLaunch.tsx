@@ -23,6 +23,7 @@ import { parseIncomeGlobalDraft, readIncomeGlobalDraft, saveIncomeGlobalDraft, s
 import { jbCenterIpfs } from '@/lib/jbcenter-ipfs'
 import { isSafeConnection, waitForSafeExecutionHash } from '@/lib/safe-connector'
 import { wagmiConfig } from '@/providers/Providers'
+import { readableError } from '@/lib/readable-error'
 
 const JOURNAL_EVENT = 'homerun-income-launch-recovery'
 const inputClass = 'min-h-12 w-full rounded border border-[#bfc9b5] bg-white px-3 text-base'
@@ -32,7 +33,7 @@ type Review = { plan: PreparedIncomeLaunch; input: LaunchInput }
 type SnapshotProgress = Parameters<NonNullable<FundGlobalSnapshotInput['onProgress']>>[0]
 export type PlannedIncomeAllocation = { reservedPercent: number | null }
 type IncomeLaunchProps = { state: FundProjectState; client: PublicClient; name?: string; launchUnavailable?: boolean; plannedAllocation?: PlannedIncomeAllocation; embedExistingProject?: boolean }
-function message(reason: unknown) { return reason instanceof Error ? reason.message : 'INCOME could not be prepared. Try again.' }
+function message(reason: unknown) { return readableError(reason, 'INCOME could not be prepared. Try again.') }
 function changed() { window.dispatchEvent(new Event(JOURNAL_EVENT)) }
 function download(text: string, filename: string) { const url = URL.createObjectURL(new Blob([text], { type: 'application/json' })); const link = document.createElement('a'); link.href = url; link.download = filename; link.click(); setTimeout(() => URL.revokeObjectURL(url), 0) }
 function sameRequest(left: PreparedIncomeLaunch['request'], right: PreparedIncomeLaunch['request']) { return left.chainId === right.chainId && isAddressEqual(left.address, right.address) && (left.value ?? 0n) === (right.value ?? 0n) && encodeFunctionData({ abi: left.abi, functionName: left.functionName, args: left.args }) === encodeFunctionData({ abi: right.abi, functionName: right.functionName, args: right.args }) }

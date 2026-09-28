@@ -11,6 +11,7 @@ import { useWallet } from '@/hooks/useWallet'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { readFundProjectState, type FundProjectState } from '@/lib/fund-state'
 import { buildFundAllowlistChange, buildFundAllowlistOpen, parseAmount } from '@/lib/fund-contracts'
+import { readableError } from '@/lib/readable-error'
 
 /** Reject rounded, negative, exponent and over-precise financial inputs. */
 function positiveAmount(value: string, decimals: number): bigint {
@@ -20,7 +21,7 @@ function positiveAmount(value: string, decimals: number): bigint {
 }
 
 export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'Unable to prepare this transaction. Refresh the project and try again.'
+  return readableError(error, 'Unable to prepare this transaction. Refresh the project and try again.')
 }
 
 function units(value: bigint, decimals = 18): string {
@@ -88,7 +89,7 @@ export function PaymentPanel({ state, client, contextIndex, chainSelector, onBus
   const { address } = useWallet()
   // The hook reverts for anyone not on the list; say so before a doomed review instead of after.
   if (state.allowlist && !state.allowlist.open && address && state.allowlist.accountAllowed === false) {
-    return <div className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7"><h2 className="mb-3 text-3xl">Contribute</h2><p role="status">Your wallet is not on this FUND’s allowlist. The owner or their allowlist operator adds contributors before they can pay.</p></div>
+    return <div className="pay-panel"><h2 className="mb-2 text-base font-medium">Contribute</h2><p role="status">Your wallet is not on this FUND’s allowlist. The owner or their allowlist operator adds contributors before they can pay.</p></div>
   }
   return <ProjectPayment chainSelector={chainSelector} onBusyChange={onBusyChange} chainId={state.chainId} projectId={state.projectId} tokenLabel="FUND" title="Contribute" context={context} paused={state.metadata.pausePay} reservedPercent={state.metadata.reservedPercent} rulesetId={state.ruleset.id.toString()} verify={async (account, minimumBlock) => {
     const current = await freshState(client, state, account, minimumBlock)

@@ -100,7 +100,7 @@ function EventRow({ row }: { row: ActivityRow }) {
   const valid = Number.isFinite(lead.timestamp) && Number.isFinite(new Date(lead.timestamp * 1_000).getTime())
   const when = valid ? new Date(lead.timestamp * 1_000).toLocaleString() : undefined
   const age = valid ? activityAge(lead.timestamp) : ''
-  return <li data-event-id={lead.id} className="min-w-0 py-3.5">
+  return <li data-event-id={lead.id} className="min-w-0"><div className="py-3.5">
     <div className="flex min-w-0 items-center justify-between gap-3">
       <span className="min-w-0 truncate text-sm text-ink">{title}</span>
       <span className="flex shrink-0 items-center gap-1.5 text-xs text-smoke-500">
@@ -115,7 +115,7 @@ function EventRow({ row }: { row: ActivityRow }) {
       </span>
     </div>
     {actions.length > 0 && <p className="mt-1 text-xs text-smoke-500">{actions.join(', ')}</p>}
-  </li>
+  </div></li>
 }
 
 function ActivityFeed({ chainId, projectId, suckerGroupId }: { chainId: number; projectId: number; suckerGroupId: string | null }) {
@@ -180,12 +180,12 @@ function ActivityFeed({ chainId, projectId, suckerGroupId }: { chainId: number; 
     }
   }
 
-  return <section aria-labelledby={heading} className="contract-panel">
-    <h2 id={heading}>Activity</h2>
+  return <section aria-labelledby={heading} className="demo-activity">
+    <div className="demo-activity-heading"><h2 id={heading}>Activity</h2></div>
     {newest.isPending && <p role="status" className="mt-3 text-sm text-smoke-500">{events.length ? 'Loading linked-chain activity…' : 'Loading activity…'}</p>}
     {newest.isError && <p role="status" className="mt-3 text-sm text-smoke-500">{events.length ? 'Activity could not refresh. Showing the last indexed events.' : 'Activity is temporarily unavailable.'}</p>}
     {!newest.isPending && !newest.isError && events.length === 0 && <p className="mt-3 text-sm text-smoke-500">No activity yet. New transactions can take a minute to appear.</p>}
-    {events.length > 0 && <ol className="m-0 mt-2 min-w-0 list-none divide-y divide-[#e1e3d9] p-0">{groupActivity(events).map(row => <EventRow key={row.events[0].id} row={row} />)}</ol>}
+    {events.length > 0 && <ol className="min-w-0">{groupActivity(events).map(row => <EventRow key={row.events[0].id} row={row} />)}</ol>}
     {loadMoreError && <p role="status" className="mt-3 text-xs text-smoke-500">Could not load more activity.</p>}
     {events.length < total && <button type="button" className="mt-3 min-h-8 text-xs font-medium text-smoke-700 underline underline-offset-2 hover:text-ink disabled:opacity-60" disabled={loadingMore || !newest.data || appliedScope.current !== scope} onClick={() => void loadMore()}>{loadingMore ? 'Loading…' : 'Load more'}</button>}
   </section>
@@ -210,7 +210,7 @@ function ProjectActivitySource({ chainId, projectId }: { chainId: number; projec
 export function ProjectActivity({ chainId, projectId }: { chainId: number; projectId: string | number | bigint }) {
   const id = Number(projectId)
   if (!Number.isSafeInteger(id) || id <= 0 || !/^\d+$/.test(String(projectId)) || displayChainSlug(chainId) === null) {
-    return <section className="contract-panel"><h2>Activity</h2><p>This project identity is not supported by the index.</p></section>
+    return <section className="demo-activity"><div className="demo-activity-heading"><h2>Activity</h2></div><p>This project identity is not supported by the index.</p></section>
   }
   return <ProjectActivitySource key={`${chainId}:${id}`} chainId={chainId} projectId={id} />
 }

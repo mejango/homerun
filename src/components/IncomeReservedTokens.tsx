@@ -8,8 +8,9 @@ import { useWallet } from '@/hooks/useWallet'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { assertIncomeReservedProject, assertSameIncomeReservedTokens, buildSendIncomeReservedTokensTx, readIncomeReservedTokens, verifyIncomeReservedReceipt, type IncomeReservedSnapshot } from '@/lib/income-reserved'
 import type { IncomeProjectState } from '@/lib/income-state'
+import { readableError } from '@/lib/readable-error'
 
-function message(error: unknown) { return error instanceof Error ? error.message : 'Reserved INCOME could not be verified.' }
+function message(error: unknown) { return readableError(error, 'Reserved INCOME could not be verified.') }
 function recipient(split: IncomeReservedSnapshot['splits'][number]) {
   const beneficiary = isAddressEqual(split.beneficiary, zeroAddress) ? 'the caller' : split.beneficiary
   if (!isAddressEqual(split.hook, zeroAddress)) return `Hook ${split.hook}, beneficiary ${split.beneficiary}`

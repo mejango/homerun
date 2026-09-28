@@ -8,6 +8,7 @@ import Image from 'next/image'
 import { usePublicClient } from 'wagmi'
 import type { PublicClient } from 'viem'
 import { useWallet } from '@/hooks/useWallet'
+import { ShopIcon } from '@/components/ShopItemEditor'
 import { explorerAddressUrl, explorerTokenUrl } from '@/lib/chainDisplay'
 import { readProjectShop, readShopCustomers, shopTierAvailability, shopTierName, shopTierPrice, type ProjectShopState } from '@/lib/project-shop'
 import { readShopItemMetadata } from '@/lib/shop-item-metadata'
@@ -33,10 +34,10 @@ function ProjectShopContent({ chainId, projectId, tokenLabel }: { chainId: JBCha
     setTab(selected)
     document.getElementById(`${id}-${selected}`)?.focus()
   }
-  return <ProjectShopManagement chainId={chainId} projectId={projectId} client={client} unavailable={shop.isPending || shop.isError}>{management => <section aria-label={`${tokenLabel} shop`} className="min-w-0">
-    <div className="flex flex-wrap items-start justify-between gap-4">
-    <div role="tablist" aria-label="Shop" className="mb-6 flex gap-6 border-b border-[#d7ddcf]">
-      {(['inventory', 'customers'] as const).map(value => <button key={value} type="button" role="tab" id={`${id}-${value}`} aria-controls={`${id}-${value}-panel`} aria-selected={tab === value} tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)} onKeyDown={event => onKey(event, value === 'inventory' ? 'customers' : 'inventory')} className={`min-h-11 border-b-2 px-1 py-3 text-sm ${tab === value ? 'border-[#42664d] text-[#2d4035]' : 'border-transparent text-[#687562]'}`}>{value === 'inventory' ? 'Inventory' : 'Customers'}</button>)}
+  return <ProjectShopManagement chainId={chainId} projectId={projectId} client={client} unavailable={shop.isPending || shop.isError}>{management => <section aria-label={`${tokenLabel} shop`} className="demo-project-shop min-w-0">
+    <div className="ds-toolbar">
+    <div role="tablist" aria-label="Shop" className="ds-tabs">
+      {(['inventory', 'customers'] as const).map(value => <button key={value} type="button" role="tab" id={`${id}-${value}`} aria-controls={`${id}-${value}-panel`} aria-selected={tab === value} tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)} onKeyDown={event => onKey(event, value === 'inventory' ? 'customers' : 'inventory')}>{value === 'inventory' ? 'Inventory' : 'Customers'}</button>)}
     </div>
     {management.toolbar}
     </div>
@@ -44,7 +45,7 @@ function ProjectShopContent({ chainId, projectId, tokenLabel }: { chainId: JBCha
     {shop.isPending && <p role="status" className="text-sm">Reading the project’s shop…</p>}
     {shop.isError && <div role="alert" className="text-sm"><p>The shop could not be verified. Inventory is unavailable until the reads recover.</p><button type="button" className="btn-secondary mt-4" onClick={() => void shop.refetch()}>Try again</button></div>}
     <div id={`${id}-inventory-panel`} role="tabpanel" aria-labelledby={`${id}-inventory`} hidden={tab !== 'inventory'}>
-      {!shop.isPending && !shop.isError && shop.data === null && <div className="rounded-md border border-[#d7ddcf] p-6"><h2 className="mb-3 text-3xl">No items yet</h2><p className="text-sm">Offer stays, experiences, merchandise, or other items alongside this {tokenLabel === 'project' ? 'project' : `${tokenLabel} project`}.</p></div>}
+      {!shop.isPending && !shop.isError && shop.data === null && <div className="ds-empty"><ShopIcon /><h2>No items yet</h2><p>Offer stays, experiences, merchandise, or other items alongside this {tokenLabel === 'project' ? 'project' : `${tokenLabel} project`}.</p></div>}
       {shop.data && !shop.isError && <Inventory shop={shop.data} itemActions={management.itemActions} />}
     </div>
     <div id={`${id}-customers-panel`} role="tabpanel" aria-labelledby={`${id}-customers`} hidden={tab !== 'customers'}>
