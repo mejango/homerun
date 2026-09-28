@@ -387,3 +387,12 @@
     padding-inline: 16px;
   }
 }
+
+/* Live figures in the demo's voice: a quiet label left, the value right, hairline rows. */
+.homerun-project-layout .demo-live-rows { display: grid; margin: 0; }
+.homerun-project-layout .demo-live-rows > div { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.homerun-project-layout .demo-live-rows > div:first-child { border-top: 1px solid var(--line); }
+.homerun-project-layout .demo-live-rows dt { color: var(--muted); font-size: 13px; }
+.homerun-project-layout .demo-live-rows dd { margin: 0; font-size: 14px; font-weight: 500; text-align: right; overflow-wrap: anywhere; }
+.homerun-project-layout .demo-section > .demo-live-rows + p { margin-top: 12px; color: var(--muted); font-size: 12px; }
+.homerun-project-layout .demo-live-plan h3 { margin: 22px 0 6px; font: 500 15px/1.4 var(--sans); }

@@ -354,7 +354,7 @@ function AssetIllustration({ type }: { type: string }) {
   return <canvas id="created-asset-sketch" ref={canvas} aria-hidden="true" />;
 }
 
-function ProjectPhoto({
+export function ProjectPhoto({
   name,
   photo,
   demo,
@@ -843,6 +843,64 @@ function Allocation({ p }: { p: Projection }) {
   );
 }
 
+const phaseTitles: Record<ProjectPhase, [string, string]> = {
+  raising: [
+    "Raise the money.",
+    "Buy the asset and set aside cash to run it.",
+  ],
+  funded: ["Buy the asset.", "The raise is closed. The purchase is next."],
+  refunding: [
+    "Return the remaining money.",
+    "Contributors share the cash left after expenses.",
+  ],
+  refunded: ["Refunds complete.", "No asset was purchased."],
+  earning: [
+    "Collect revenue. Pay the bills.",
+    "Revenue comes in. Expenses use the bootstrap operating budget first, then operator INCOME cash-outs.",
+  ],
+  liquidated: [
+    "Sell the asset. Share the proceeds.",
+    "Net sale cash goes to FUND holders.",
+  ],
+};
+
+/** A stage's headline and what it means, shared by every project page. */
+export function PhaseCopy({ phase, revenueDescription, revenuePlan }: {
+  phase: ProjectPhase; revenueDescription?: string; revenuePlan?: { minimumRevenue: number; consequences: string } | null
+}) {
+  return (
+    <div className="phase-copy">
+      <h2 id="scenario-title" tabIndex={-1}>
+        {phaseTitles[phase][0]}
+      </h2>
+      <p>{phaseTitles[phase][1]}</p>
+      {phase === "earning" && revenueDescription && (
+        <p className="revenue-description">{revenueDescription}</p>
+      )}
+      {phase === "earning" && revenuePlan && (
+        <dl className="revenue-plan">
+          <div>
+            <dt>Minimum monthly revenue</dt>
+            <dd>
+              {revenuePlan.minimumRevenue > 0
+                ? money(revenuePlan.minimumRevenue)
+                : "No minimum set"}
+            </dd>
+          </div>
+          {revenuePlan.consequences && (
+            <div>
+              <dt>If revenue falls below the minimum</dt>
+              <dd className="whitespace-pre-line">
+                {revenuePlan.consequences}
+              </dd>
+            </div>
+          )}
+        </dl>
+      )}
+    </div>
+  );
+}
+
 function PhasePanel({
   p,
   inputs,
@@ -857,57 +915,9 @@ function PhasePanel({
   const phase = p.phase as ProjectPhase;
   const sold = phase === "liquidated";
   const complete = phase === "refunded";
-  const titles: Record<ProjectPhase, [string, string]> = {
-    raising: [
-      "Raise the money.",
-      "Buy the asset and set aside cash to run it.",
-    ],
-    funded: ["Buy the asset.", "The raise is closed. The purchase is next."],
-    refunding: [
-      "Return the remaining money.",
-      "Contributors share the cash left after expenses.",
-    ],
-    refunded: ["Refunds complete.", "No asset was purchased."],
-    earning: [
-      "Collect revenue. Pay the bills.",
-      "Revenue comes in. Expenses use the bootstrap operating budget first, then operator INCOME cash-outs.",
-    ],
-    liquidated: [
-      "Sell the asset. Share the proceeds.",
-      "Net sale cash goes to FUND holders.",
-    ],
-  };
   return (
     <div id="phase-panel" className="phase-panel">
-      <div className="phase-copy">
-        <h2 id="scenario-title" tabIndex={-1}>
-          {titles[phase][0]}
-        </h2>
-        <p>{titles[phase][1]}</p>
-        {phase === "earning" && revenueDescription && (
-          <p className="revenue-description">{revenueDescription}</p>
-        )}
-        {phase === "earning" && revenuePlan && (
-          <dl className="revenue-plan">
-            <div>
-              <dt>Minimum monthly revenue</dt>
-              <dd>
-                {revenuePlan.minimumRevenue > 0
-                  ? money(revenuePlan.minimumRevenue)
-                  : "No minimum set"}
-              </dd>
-            </div>
-            {revenuePlan.consequences && (
-              <div>
-                <dt>If revenue falls below the minimum</dt>
-                <dd className="whitespace-pre-line">
-                  {revenuePlan.consequences}
-                </dd>
-              </div>
-            )}
-          </dl>
-        )}
-      </div>
+      <PhaseCopy phase={phase} revenueDescription={revenueDescription} revenuePlan={revenuePlan} />
       {phase === "raising" && (
         <>
           <Progress

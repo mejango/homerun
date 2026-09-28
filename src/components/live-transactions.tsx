@@ -42,8 +42,8 @@ function TransactionStatus({ tx, chainId }: { tx: Tx; chainId: number }) {
 }
 
 export function ActionSection({ title, children }: { title: string; children: ReactNode }) {
-  return <section className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7">
-    <h2 className="mb-5 text-3xl">{title}</h2>{children}
+  return <section className="demo-section">
+    <h2>{title}</h2>{children}
   </section>
 }
 

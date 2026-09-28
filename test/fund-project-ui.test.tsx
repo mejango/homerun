@@ -130,7 +130,7 @@ describe('live FUND transaction tracking survives refreshed data', () => {
   }
   /** The one figure both pages read out of the same published minimum. */
   function minimumRevenue(plan: Element) {
-    const heading = [...plan.querySelectorAll('h4')].find(node => node.textContent === 'Minimum monthly revenue')
+    const heading = [...plan.querySelectorAll('dt')].find(node => node.textContent === 'Minimum monthly revenue')
     expect(heading, 'Missing the minimum monthly revenue').toBeDefined()
     return heading!.nextElementSibling?.textContent
   }
