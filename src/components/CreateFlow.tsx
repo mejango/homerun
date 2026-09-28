@@ -70,6 +70,7 @@ const groups: FieldName[][] = [
   ['revenueDescription', 'minimumRevenue', 'minimumRevenueConsequences', 'monthlyRent', 'monthlyCosts', 'rentGrowthPercent', 'costGrowthPercent', 'operatorSplitPercent', 'stickySplitPercent'],
   ['networks', 'networkEnvironment', 'revnetOperatorEnabled'],
 ];
+const UNMODELED: FieldName[] = ['fundTokenName', 'fundTicker', 'revenueDescription', 'minimumRevenue', 'minimumRevenueConsequences'];
 const money = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: Number.isInteger(value) ? 0 : 2 }).format(value);
 const number = (value: number) => new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(value);
 const normalize = (raw: RawValues): Normalized => normalizeCreateDraft(raw) as unknown as Normalized;
@@ -217,8 +218,8 @@ export default function CreateFlow({ renderDeploy, lockedChains }: CreateFlowPro
 
   const normalized = useMemo(() => normalize(raw), [raw]);
   const summary = useMemo(() => {
-    // The preview reads only the Fundraise and Income steps; other unfinished steps must not blank it.
-    const modeled = Object.fromEntries([...groups[2], ...groups[3]].map(key => [key, raw[key]]));
+    // The preview reads only the inputs the model uses; any other unfinished field must not blank it.
+    const modeled = Object.fromEntries([...groups[2], ...groups[3]].filter(key => !UNMODELED.includes(key)).map(key => [key, raw[key]]));
     try { return creationSummary({ ...CREATE_DEFAULTS, ...modeled, name: 'Untitled', ownerMode: 'existing', operatorMode: 'existing' }) as unknown as Summary; }
     catch { return null; }
   }, [raw]);
@@ -265,8 +266,9 @@ export default function CreateFlow({ renderDeploy, lockedChains }: CreateFlowPro
   function formatField(name: FieldName) {
     if (![...groups[2], ...groups[3]].includes(name)) return;
     const result = normalize(raw);
-    const value = result.values[name];
-    if (!result.errors[name] && typeof value === 'number') update(name, number(value));
+    const value = result.values[name], error = result.errors[name];
+    if (error) setErrors(previous => ({ ...previous, [name]: error }));
+    else if (typeof value === 'number') update(name, number(value));
   }
 
   async function choosePhoto(name: 'photo' | 'ownerPhoto' | 'operatorPhoto', file: File | undefined) {

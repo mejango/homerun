@@ -200,6 +200,11 @@ try {
     await page.reload({ waitUntil: 'domcontentloaded' });
     await currentStep(3);
     assert.equal(await input('revenueDescription').inputValue(), revenuePlan);
+    await input('minimumRevenue').fill('123,32');
+    await input('monthlyRent').click();
+    assert.equal(await input('minimumRevenue').getAttribute('aria-invalid'), 'true', 'A malformed amount is flagged on blur.');
+    assert.notEqual(await page.locator('#draft-goal').textContent(), '—', 'An unmodeled field must not blank the preview.');
+    await input('minimumRevenue').fill('0');
   });
   await check('INCOME allocations prevent over-allocation and show the customer remainder', async () => {
     assert.equal(await page.locator('label[for="create-stickySplitPercent"]').textContent(), 'To FUND stakers');
