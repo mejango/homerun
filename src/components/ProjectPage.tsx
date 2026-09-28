@@ -1712,69 +1712,99 @@ function DemoOverview({
   const profileChainId = project ? plannedNetworks(project.values)[0]?.chainId : undefined;
   const { details } = management;
   return (
+    <ProjectOverviewView
+      about={<><p className="whitespace-pre-wrap">{details.description}</p>{editDetails}</>}
+      photo={<ProjectPhoto name={name} photo={details.photo} demo={!project && !details.photo} />}
+      phase={phase}
+      progress={p && (
+        <ProjectRaiseStats
+          raised={p.raised}
+          goal={p.raiseGoal}
+          historical={phase !== "raising"}
+          raisedLabel={["earning", "liquidated", "refunded"].includes(phase) ? "Originally raised" : "Raised"}
+          revenue={p.purchaseCompleted ? [["Revenue received", money(p.cumulativeRent)], ["INCOME treasury", money(p.revCash)]] : undefined}
+        />
+      )}
+      profiles={<>
+        <OperatorProfile
+          role="Owner"
+          name={details.ownerName}
+          introduction={details.ownerIntroduction}
+          photoUrl={details.ownerPhoto}
+          address={management.ownerAddress || null}
+          chainId={profileChainId}
+        />
+        <OperatorProfile
+          name={details.operatorName}
+          introduction={details.operatorIntroduction}
+          photoUrl={details.operatorPhoto}
+          address={management.operatorAddress || null}
+          chainId={profileChainId}
+          addressLabel={management.operatorAddress.toLowerCase() === founderHausAccount.toLowerCase() ? "paloma.eth" : "Address"}
+        />
+      </>}
+      after={
+        <div className="demo-model-note">
+          <p>
+            {project ? "Local project preview." : "Illustrative demo."} Figures
+            and actions are modeling previews. Ongoing rewards assume all FUND
+            participates in Sticky and rewards are fully vested; weekly reward
+            vesting is not modeled.
+          </p>
+        </div>
+      }
+    />
+  );
+}
+
+/** Raised against a goal, as the Overview's Progress section shows it. */
+export function ProjectRaiseStats({ raised, goal, historical, raisedLabel = "Raised", goalLabel = "Raise goal", format = money, revenue }: {
+  raised: number; goal: number; historical: boolean; raisedLabel?: string; goalLabel?: string
+  format?: (value: number) => string; revenue?: [string, ReactNode][]
+}) {
+  return (
+    <div id="project-raise-stats" className="project-raise-stats" aria-label="Fundraising overview">
+      <dl>
+        <div>
+          <dt>{raisedLabel}</dt>
+          <dd id="project-raised">{format(raised)}</dd>
+        </div>
+        <div>
+          <dt>{goalLabel}</dt>
+          <dd id="project-goal">{format(goal)}</dd>
+        </div>
+      </dl>
+      <FundingProgress raised={raised} goal={goal} historical={historical} />
+      <p>
+        <strong id="project-funded">{percent(goal > 0 ? (raised / goal) * 100 : 0)}</strong>{" "}
+        funded
+      </p>
+      {revenue && (
+        <dl className="demo-revenue-stats">
+          {revenue.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
+        </dl>
+      )}
+    </div>
+  );
+}
+
+/** The Overview tab every project page shares; each source supplies its own figures. */
+export function ProjectOverviewView({ about, photo, progress, phase, profiles, after }: {
+  about: ReactNode; photo?: ReactNode; progress?: ReactNode; phase: ProjectPhase | null; profiles: ReactNode; after?: ReactNode
+}) {
+  return (
     <div className="demo-overview">
       <section className="demo-section demo-description">
         <h2>About</h2>
-        <p className="whitespace-pre-wrap">{details.description}</p>
-        {editDetails}
+        {about}
       </section>
-      <ProjectPhoto
-        name={name}
-        photo={details.photo}
-        demo={!project && !details.photo}
-      />
+      {photo}
       <section className="demo-section demo-overview-progress">
         <div>
           <h2>Progress</h2>
-          {p && (
-            <div
-              id="project-raise-stats"
-              className="project-raise-stats"
-              aria-label="Fundraising overview"
-            >
-              <dl>
-                <div>
-                  <dt>
-                    {["earning", "liquidated", "refunded"].includes(phase)
-                      ? "Originally raised"
-                      : "Raised"}
-                  </dt>
-                  <dd id="project-raised">{money(p.raised)}</dd>
-                </div>
-                <div>
-                  <dt>Raise goal</dt>
-                  <dd id="project-goal">{money(p.raiseGoal)}</dd>
-                </div>
-              </dl>
-              <FundingProgress
-                raised={p.raised}
-                goal={p.raiseGoal}
-                historical={phase !== "raising"}
-              />
-              <p>
-                <strong id="project-funded">
-                  {percent(
-                    p.raiseGoal > 0 ? (p.raised / p.raiseGoal) * 100 : 0,
-                  )}
-                </strong>{" "}
-                funded
-              </p>
-              {p.purchaseCompleted && (
-                <dl className="demo-revenue-stats">
-                  <div>
-                    <dt>Revenue received</dt>
-                    <dd>{money(p.cumulativeRent)}</dd>
-                  </div>
-                  <div>
-                    <dt>INCOME treasury</dt>
-                    <dd>{money(p.revCash)}</dd>
-                  </div>
-                </dl>
-              )}
-            </div>
-          )}
+          {progress}
         </div>
-        <ProjectJourney phase={phase} />
+        {phase && <ProjectJourney phase={phase} />}
       </section>
       <section className="demo-section">
         <h2>Representation</h2>
@@ -1792,35 +1822,13 @@ function DemoOverview({
           </div>
         </div>
       </section>
-      <OperatorProfile
-        role="Owner"
-        name={details.ownerName}
-        introduction={details.ownerIntroduction}
-        photoUrl={details.ownerPhoto}
-        address={management.ownerAddress || null}
-        chainId={profileChainId}
-      />
-      <OperatorProfile
-        name={details.operatorName}
-        introduction={details.operatorIntroduction}
-        photoUrl={details.operatorPhoto}
-        address={management.operatorAddress || null}
-        chainId={profileChainId}
-        addressLabel={management.operatorAddress.toLowerCase() === founderHausAccount.toLowerCase() ? "paloma.eth" : "Address"}
-      />
-      <div className="demo-model-note">
-        <p>
-          {project ? "Local project preview." : "Illustrative demo."} Figures
-          and actions are modeling previews. Ongoing rewards assume all FUND
-          participates in Sticky and rewards are fully vested; weekly reward
-          vesting is not modeled.
-        </p>
-      </div>
+      {profiles}
+      {after}
     </div>
   );
 }
 
-function DemoStageHistory({
+export function DemoStageHistory({
   p,
   phase,
 }: {
@@ -2271,13 +2279,9 @@ export function DemoProjectPage({ project, planned }: { project?: CreatedProject
     />
   );
   return (
-    <>
-      <a className="skip-link" href="#main">
-        Skip to content
-      </a>
-      <header className="site-header">
-        <Brand />
-        <div className="flex flex-wrap items-center justify-end gap-3">
+    <ProjectPageShell
+      ready={ready}
+      headerActions={
           <button
             id="reset-example"
             type="button"
@@ -2303,11 +2307,8 @@ export function DemoProjectPage({ project, planned }: { project?: CreatedProject
           >
             Reset {project ? "preview" : "example"} ↺
           </button>
-          <WalletButton />
-        </div>
-      </header>
-      <main id="main" tabIndex={-1}>
-        <div className="simulator" data-ready={ready}>
+      }
+    >
           <HomerunProjectLayout
             title={name}
             location={location}
@@ -2653,6 +2654,27 @@ export function DemoProjectPage({ project, planned }: { project?: CreatedProject
               </section>
             }
           />
+    </ProjectPageShell>
+  );
+}
+
+/** The frame every project page shares: the demo, a planned project and a live one. */
+export function ProjectPageShell({ headerActions, ready = true, children }: { headerActions?: ReactNode; ready?: boolean; children: ReactNode }) {
+  return (
+    <>
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
+      <header className="site-header">
+        <Brand />
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          {headerActions}
+          <WalletButton />
+        </div>
+      </header>
+      <main id="main" tabIndex={-1}>
+        <div className="simulator" data-ready={ready}>
+          {children}
         </div>
       </main>
       <footer>
