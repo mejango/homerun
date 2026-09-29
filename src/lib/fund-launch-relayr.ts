@@ -534,7 +534,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       payments = relayrPaymentOptions(journal.quote!, destinations)
     }
     if (!payments.length) throw new Error('Relayr returned no usable payment options for this launch. Retry to request a new quote; nothing was paid.')
-    onProgress('Choose a quoted funding chain for the launch payment.')
+    onProgress('Choose where to pay for the launch.')
     const paymentChainId = await requireFundingChainSelection(payments.map(payment => ({ chainId: payment.chain, label: relayrPaymentLabel(payment) })), startChainId)
     const payment = payments.find(option => option.chain === paymentChainId)
     if (!payment) throw new Error('The selected funding chain is not available in this quote. No payment was sent.')
