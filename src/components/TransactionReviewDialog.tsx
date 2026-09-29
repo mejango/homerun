@@ -1413,6 +1413,27 @@ function PrettyCall({
             {nativeValue(call.value)}
           </dd>
         </div>
+        {call.safeTxGas !== undefined ? (
+          <div>
+            <dt className="text-xs font-medium text-smoke-600">Safe gas</dt>
+            <dd className="mt-1 font-mono text-xs text-ink">
+              {call.safeTxGas.toLocaleString('en-US')}
+            </dd>
+            {call.safeTxGas !== 0n ? (
+              <dd className="mt-1 text-xs leading-relaxed text-smoke-600">
+                If this call fails, the Safe still executes and uses this nonce.
+              </dd>
+            ) : null}
+          </div>
+        ) : null}
+        {call.gas !== undefined ? (
+          <div>
+            <dt className="text-xs font-medium text-smoke-600">Gas limit</dt>
+            <dd className="mt-1 font-mono text-xs text-ink">
+              {call.gas.toLocaleString('en-US')}
+            </dd>
+          </div>
+        ) : null}
       </dl>
 
       {fn ? (
@@ -1512,9 +1533,12 @@ function ReviewModal({
   /** Some authorizations are signed as a plain message rather than typed data. */
   const signsMessage =
     (request.authorization as { kind?: string } | undefined)?.kind === 'message'
+  const walletAdds = request.calls.some(call => call.gas !== undefined)
+    ? 'Your wallet adds the nonce and network fees.'
+    : 'Your wallet adds the nonce, gas limit, and network fees.'
   const defaultDescription = isAuthorization
     ? 'This authorization commits to the exact destination, native value, and calldata below. A Safe or relayer can submit that call onchain after you continue.'
-    : 'This is the exact destination, native value, and calldata the app will ask your wallet to send. Your wallet adds the nonce, gas limit, and network fees.'
+    : `This is the exact destination, native value, and calldata the app will ask your wallet to send. ${walletAdds}`
 
   return (
     <ModalDialog
@@ -1657,7 +1681,7 @@ function FundingChainSelectionModal({
   pending: PendingFundingChainSelection
   onFinish: (chainId: number | null) => void
 }) {
-  const [selected, setSelected] = useState('')
+  const [selected, setSelected] = useState(String(pending.initialChainId ?? ''))
   const selectedOption = pending.options.find(
     option => String(option.chainId) === selected,
   )
@@ -1675,7 +1699,7 @@ function FundingChainSelectionModal({
       <div className="card w-full max-w-lg overflow-hidden shadow-2xl">
         <header className="flex items-start justify-between gap-4 border-b border-smoke-200 px-5 py-4 sm:px-6">
           <h2 id={titleId} className="font-agrandir text-xl font-medium text-ink">
-            Choose a funding chain
+            Choose where to pay
           </h2>
           <ModalCloseButton
             onClick={() => onFinish(null)}
@@ -1685,14 +1709,13 @@ function FundingChainSelectionModal({
         </header>
         <div className="px-5 py-5 sm:px-6">
           <p id={descriptionId} className="text-sm leading-relaxed text-smoke-700">
-            Choose which chain to pay from. Each option shows its quoted cost.
-            You will review the payment before sending it.
+            {"One payment covers every chain. You'll review it before your wallet sends it."}
           </p>
           <label
             htmlFor={selectId}
             className="mt-5 block text-sm font-medium text-ink"
           >
-            Funding chain
+            Pay on
           </label>
           <select
             id={selectId}
@@ -1724,7 +1747,7 @@ function FundingChainSelectionModal({
             }}
             className="btn-primary min-h-[44px] px-5 text-sm"
           >
-            Continue
+            Continue to payment review
           </button>
         </footer>
       </div>

@@ -34,7 +34,8 @@ vi.mock('@/hooks/useWallet', () => ({
     address: mocks.account,
   }),
 }))
-vi.mock('@/lib/transaction-review', () => ({
+vi.mock('@/lib/transaction-review', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/transaction-review')>()),
   requestContractTransactionReview: mocks.requestReview,
 }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
@@ -197,6 +198,7 @@ describe('useSafeTx', () => {
     })
 
     expect(hook.ref.current!.phase).toBe('idle')
+    expect(hook.ref.current!.error).toBeNull()
     expect(mocks.switchChain).not.toHaveBeenCalled()
     expect(mocks.publicClient.simulateContract).not.toHaveBeenCalled()
     expect(mocks.writeContract).not.toHaveBeenCalled()

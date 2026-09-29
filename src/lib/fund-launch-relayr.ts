@@ -127,6 +127,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
   onProgress: (message: string) => void
 }): Promise<void> {
   assertNoViewAs()
+  // Signing moves the wallet to each destination, so the fee picker prefers the chain it started on.
+  const startChainId = getAccount(wagmiConfig).chainId
   if (!canRelayrLaunch(session) || isSafeConnection(wagmiConfig)) {
     throw new Error('Relayed creation requires an ordinary wallet and supported chains from the same network environment.')
   }
@@ -533,7 +535,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     }
     if (!payments.length) throw new Error('Relayr returned no usable payment options for this launch. Retry to request a new quote; nothing was paid.')
     onProgress('Choose a quoted funding chain for the launch payment.')
-    const paymentChainId = await requireFundingChainSelection(payments.map(payment => ({ chainId: payment.chain, label: relayrPaymentLabel(payment) })))
+    const paymentChainId = await requireFundingChainSelection(payments.map(payment => ({ chainId: payment.chain, label: relayrPaymentLabel(payment) })), startChainId)
     const payment = payments.find(option => option.chain === paymentChainId)
     if (!payment) throw new Error('The selected funding chain is not available in this quote. No payment was sent.')
     requireAccount()

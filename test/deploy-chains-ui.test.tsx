@@ -25,7 +25,9 @@ vi.mock('@/lib/jbcenter-client', () => ({ jbCenterClient: {
   getIntent: runtime.getIntent, requestDeploy: runtime.requestDeploy,
   requestRelay: runtime.requestRelay, recordDeployment: runtime.recordDeployment,
 } }))
-vi.mock('@/lib/transaction-review', () => ({ requireTransactionReview: runtime.review }))
+vi.mock('@/lib/transaction-review', async importOriginal => ({
+  ...await importOriginal<typeof import('@/lib/transaction-review')>(), requireTransactionReview: runtime.review,
+}))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address, openSignIn: runtime.openSignIn }) }))
 vi.mock('@wagmi/core', () => ({
@@ -38,6 +40,7 @@ vi.mock('@wagmi/core', () => ({
 
 import { SAFE_PROXY_CREATION_CODE } from '@bananapus/nana-sdk-core/safe'
 import { SAFE_FACTORY, multisigCreationData, predictMultisig } from '../src/lib/create-multisig'
+import { TransactionReviewCancelledError } from '../src/lib/transaction-review'
 import { DeployChains } from '../src/components/DeployChains'
 
 const launch = (chainId: number, owner: string = wallet) => ({
@@ -274,6 +277,16 @@ describe('choosing the chains a published project is deployed on', () => {
     await act(async () => { button('Deploy selected')!.click() })
     await settle()
     expect(alert()).toBe('The wallet did not send the transaction.')
+  })
+
+  it('says a closed review sent nothing, not that the wallet failed', async () => {
+    runtime.review.mockRejectedValue(new TransactionReviewCancelledError())
+    await render(intent([1]))
+    await act(async () => { rowFor(1)!.click() })
+    await act(async () => { button('Deploy selected')!.click() })
+    await settle()
+    expect(runtime.send).not.toHaveBeenCalled()
+    expect(alert()).toBe('Review closed. Nothing was sent.')
   })
 
   it('says the transaction reverted on the chain it was sent to', async () => {

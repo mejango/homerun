@@ -13,7 +13,10 @@ import { useWallet } from '@/hooks/useWallet'
 import { submitReviewedContractWrite } from '@/lib/contract-write'
 import { gasWithHeadroom } from '@bananapus/nana-sdk-core/review'
 import { getViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
-import { requestContractTransactionReview } from '@/lib/transaction-review'
+import {
+  requestContractTransactionReview,
+  TransactionReviewCancelledError,
+} from '@/lib/transaction-review'
 import { wagmiConfig } from '@/providers/Providers'
 import {
   isSafeConnection,
@@ -367,8 +370,4 @@ export function useSafeTx(chainId: number) {
     send,
     reset,
   }
-}
-
-class TransactionReviewCancelledError extends Error {
-  readonly name = 'TransactionReviewCancelledError'
 }

@@ -18,7 +18,7 @@ import {
   checkRelayRequest, readLaunchedProjectId, relayCostLabel, relaySetupSafes, watchDeployRefusal, type FundRelayRequest,
 } from '@/lib/fund-intent'
 import { holdDeployment, loadHeldDeployments, releaseDeployment } from '@/lib/relay-held'
-import { requireTransactionReview } from '@/lib/transaction-review'
+import { requireTransactionReview, TransactionReviewCancelledError } from '@/lib/transaction-review'
 import { displayChainName } from '@/lib/chainDisplay'
 import { ChainIcon } from '@/components/ChainIcon'
 import { projectPath } from '@/lib/urn'
@@ -49,6 +49,7 @@ const deployStopped = (chainId: number) =>
 /** Only this app's own sentences are shown; everything else reads as one fixed sentence. */
 function fixedSentence(cause: unknown, chainIds: readonly number[]): string {
   if (cause instanceof EnsureDeployedError) return DEPLOY_FAILED
+  if (cause instanceof TransactionReviewCancelledError) return cause.message
   if (cause instanceof JBCenterRequestError || !(cause instanceof Error)) return DEPLOY_UNAVAILABLE
   const own = new Set<string>([
     CONNECT_MESSAGE, WALLET_MESSAGE, OVER_FEE_MESSAGE, NO_CLIENT_MESSAGE,
@@ -58,9 +59,11 @@ function fixedSentence(cause: unknown, chainIds: readonly number[]): string {
   return own.has(cause.message) ? cause.message : DEPLOY_UNAVAILABLE
 }
 
-/** A wallet's own refusal text is never shown, whichever step the wallet refused. */
+/** A wallet's own refusal text is never shown, whichever step the wallet refused. A closed review sent nothing and says so. */
 async function fromWallet<T>(action: () => Promise<T>): Promise<T> {
-  try { return await action() } catch { throw new Error(WALLET_MESSAGE) }
+  try { return await action() } catch (cause) {
+    throw cause instanceof TransactionReviewCancelledError ? cause : new Error(WALLET_MESSAGE)
+  }
 }
 
 function RelayCost({ intentId, chainId }: { intentId: string; chainId: number }) {
