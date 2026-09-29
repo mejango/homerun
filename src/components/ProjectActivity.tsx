@@ -14,7 +14,6 @@ import { SkeletonLines } from '@/components/ui/Skeleton'
 import { PERSIST } from '@/lib/query-persist'
 
 const ACTIVITY_PAGE = 20
-const ACTIVITY_POLL_MS = 15_000
 
 /** Same newest-page/older-page merge as Juicebox Money's ActivityList. */
 export function mergeActivityEvents<T extends BsActivityEvent>(current: T[], incoming: T[]): T[] {
@@ -140,9 +139,9 @@ function ActivityFeed({ chainId, projectId, suckerGroupId }: { chainId: number; 
     queryKey: ['project-activity', chainId, projectId, suckerGroupId],
     meta: PERSIST,
     queryFn: () => fetchPage(),
+    // As in Juicebox Money, activity loads with the page and after this visit's own
+    // confirmed transactions (refreshIndexedProject), not on a timer.
     staleTime: 10_000,
-    refetchInterval: ACTIVITY_POLL_MS,
-    refetchIntervalInBackground: false,
     retry: 1,
   })
   const refresh = newest.refetch
@@ -200,7 +199,6 @@ function ProjectActivitySource({ chainId, projectId }: { chainId: number; projec
     meta: PERSIST,
     queryFn: () => getProject(chainId, projectId),
     staleTime: 30_000,
-    refetchInterval: 30_000,
     retry: 1,
   })
   const indexed = project.data

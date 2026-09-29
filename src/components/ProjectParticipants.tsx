@@ -24,8 +24,6 @@ function ParticipantsList({ chainId, projectId, tokenLabel }: { chainId: number;
     meta: PERSIST,
     queryFn: () => getProjectParticipants(chainId, projectId, offset),
     staleTime: 30_000,
-    refetchInterval: 60_000,
-    refetchIntervalInBackground: false,
     retry: 1,
   })
   const page = query.data
