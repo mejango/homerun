@@ -17,7 +17,8 @@ export function FundPaymentNetworks({ state, children }: {
   const [selected, setSelected] = useState(state.chainId)
   const [busy, setBusy] = useState(false)
   const networks = useQuery({
-    queryKey: ['fund-pay-networks', state.chainId, state.projectId.toString(), state.account ?? null, state.blockNumber.toString()],
+    queryKey: ['fund-pay-networks', state.chainId, state.projectId.toString(), state.account ?? null],
+    staleTime: 60_000,
     queryFn: () => readFundPayNetworks(jbCenterPublicClient, state),
     enabled: !!state.linkedPeers?.length,
     retry: false,
@@ -36,7 +37,6 @@ export function FundPaymentNetworks({ state, children }: {
         if (project) { setPicked(project); setSelected(project.chainId) }
       }} />
     </label>
-    {networks.isFetching && <p className="mt-2 text-xs" role="status">Checking available chains…</p>}
     {(networks.isError || !!networks.data?.unavailable) && <p className="mt-2 text-xs">Some linked chains are not available yet. <button type="button" className="underline" onClick={() => void networks.refetch()}>Check again</button></p>}
   </div>
   return client ? <div key={`${active.chainId}:${active.projectId}`}>{children(active, client, selector, setBusy)}</div> : <p>Connecting to the payment network…</p>

@@ -209,14 +209,17 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
   return <section id="pay-panel" className="pay-panel">
     <h3 className="sr-only">{title}</h3>
     {chainSelector ?? <p className="payment-chain-label mb-2">{tokenLabel === 'FUND' ? 'Fund' : 'Pay'} on {displayChainName(chainId)}</p>}
+    <fieldset disabled={busy} className="m-0 mb-4 min-w-0 border-0 p-0">
+      <div className="pay-amount-control">
+        <input value={input} onChange={event => setInput(event.target.value)} inputMode="decimal" autoComplete="off" placeholder="0" maxLength={24} aria-label={`Amount in ${context.symbol}`} />
+        <select className="pay-currency" aria-label="Payment currency" value={context.token} onChange={event => setSelectedToken(event.target.value as Address)}>{(tokenOptions.data?.length ? tokenOptions.data : [accountingContext]).map(option => <option key={option.token} value={option.token}>{option.symbol}</option>)}</select>
+      </div>
+    </fieldset>
     <button type="button" className="btn-primary min-h-12 w-full px-5" disabled={paused || !!blocked} onClick={() => setOpen(true)}>{paused ? 'Payments paused' : checking ? 'Checking…' : `Pay on ${displayChainName(chainId)}`}</button>
     {blocked && !paused && <p className="mt-2 text-sm text-[var(--muted)]">{blocked}</p>}
     {!open && <><Status tx={approval} chainId={chainId} /><Status tx={routerApproval} chainId={chainId} /><Status tx={tx} chainId={chainId} /></>}
     {open && <ModalShell title={`Pay: ${tokenLabel}`} subtitle={displayChainName(chainId)} onClose={() => setOpen(false)} maxWidth="max-w-lg">
-    <fieldset disabled={busy} className="m-0 min-w-0 border-0 p-0">
-      <label className="mb-5 grid gap-2 text-sm">Pay with<select className="min-h-11 rounded border border-[#bfc9b5] bg-white px-3 pr-9" value={context.token} onChange={event => setSelectedToken(event.target.value as Address)}>{(tokenOptions.data?.length ? tokenOptions.data : [accountingContext]).map(option => <option key={option.token} value={option.token}>{option.symbol}</option>)}</select></label>
-      <label className="grid gap-2 text-sm">Amount in {context.symbol}<input className="min-h-12 w-full rounded border border-[#bfc9b5] bg-white px-3 text-base" value={input} onChange={event => setInput(event.target.value)} inputMode="decimal" autoComplete="off" /></label>
-    </fieldset>
+    <p className="text-sm">Paying <strong>{input || '0'} {context.symbol}</strong></p>
     <div className="mt-5 text-sm" aria-live="polite">
       {paused ? <p>This project has paused payments.</p> : zeroAllocation ? <p>This payment gives you no {tokenLabel}. All new tokens are allocated to the reserved recipients.</p> : quoted ? <><p>Minimum <strong><DisplayTokenAmount value={minimum} /> {tokenLabel}</strong></p><p className="mt-2">{quote.data?.kind === 'direct-swap' ? 'Best quoted rate through Uniswap. Buys existing tokens; no reserved tokens are issued.' : 'Through the project payment terminal, using its current rules and buyback hook.'} 1% maximum slippage.</p></> : <p>{quote.isFetching ? 'Comparing payment and market quotes…' : `Enter an amount to see your ${tokenLabel} quote.`}</p>}
     </div>

@@ -414,7 +414,7 @@ describe('INCOME transaction surfaces', () => {
     const panel = section('Pay the project')
     await act(async () => panel.querySelector('button')!.click())
     const pay = panel.querySelector('dialog')!
-    await setInput(pay.querySelector('input')!, '1')
+    await setInput(panel.querySelector('input')!, '1')
     expect(pay.textContent).toContain('gives you no INCOME')
     const button = [...pay.querySelectorAll('button')].find(button => button.textContent === 'Review payment')!
     expect(button.disabled).toBe(false)
@@ -432,7 +432,7 @@ describe('INCOME transaction surfaces', () => {
     const panel = section('Pay the project')
     await act(async () => panel.querySelector('button')!.click())
     const pay = panel.querySelector('dialog')!
-    await setInput(pay.querySelector('input')!, '1')
+    await setInput(panel.querySelector('input')!, '1')
     expect([...pay.querySelectorAll('button')].find(button => button.textContent === 'Review payment')?.disabled).toBe(true)
     expect(runtime.send).not.toHaveBeenCalled()
   })
