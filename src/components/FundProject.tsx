@@ -39,6 +39,7 @@ import { FundingProgress } from '@/components/FundingProgress'
 import { Revalidating } from '@/components/ui/Revalidating'
 import { Skeleton, SkeletonLines } from '@/components/ui/Skeleton'
 import { ActionSection, CashOutPanel, HolderActions, OperatorActions, PaymentPanel } from '@/components/live-transactions'
+import { WritesChecking } from '@/components/writes-checking'
 
 /** Every displayed balance and every permission is resolved from this chain. */
 
@@ -86,6 +87,9 @@ export function FundProject({ chainId, projectId, intentId, seed }: { chainId: J
   const accountMatches = query.data?.account
     ? !!address && isAddressEqual(query.data.account, address)
     : !address
+  // Writes open once this visit has one verified read for this wallet. A failed refresh
+  // closes FUND writes again (the admin editors do not all re-read at review); the page
+  // itself keeps showing the last verified figures, and submitted transactions stay tracked.
   const readsUnavailable = query.isError || query.isPlaceholderData || !query.data || query.data.blockNumber < (confirmed.data ?? 0n)
   const writesUnavailable = readsUnavailable || !accountMatches
   // The index answers in about a second, the verified contract read in several:
@@ -210,7 +214,7 @@ function ProjectActions({ chainId, projectId, intentId, indexedOwner, state, cli
   const supported = state.supportedController && state.supportedTerminals && state.knownOwnerWrapper
   const name = details?.name ?? undefined, plan = details && publishedPlan(details)
   const blocked = writesUnavailable || !supported
-  const gate = (children: ReactNode) => <fieldset disabled={blocked} className="grid min-w-0 gap-7 border-0 p-0" aria-label="Project transactions">{children}</fieldset>
+  const gate = (children: ReactNode) => <WritesChecking.Provider value={supported && unconfirmed}><fieldset disabled={blocked} className="grid min-w-0 gap-7 border-0 p-0" aria-label="Project transactions">{children}</fieldset></WritesChecking.Provider>
   const publishedToken = plan ? <FundTokenTermsSection terms={{
     tokenName: plan.tokenName, tokenSymbol: plan.tokenSymbol, ownerFundPercent: plan.operatorFundPercent,
     operatorSplitPercent: plan.operatorSplitPercent, fundHolderSplitPercent: plan.fundHolderSplitPercent,

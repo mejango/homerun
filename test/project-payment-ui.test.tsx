@@ -38,6 +38,7 @@ vi.mock('@/hooks/useSafeTx', () => ({
 }))
 
 import { ProjectPayment } from '@/components/ProjectPayment'
+import { WritesChecking } from '@/components/writes-checking'
 
 const TERMINAL = '0x3333333333333333333333333333333333333333' as Address
 const TOKEN = '0x5555555555555555555555555555555555555555' as Address
@@ -153,6 +154,12 @@ describe('shared payment execution', () => {
     props.context = { token: TOKEN, terminal: TERMINAL, decimals: 6, symbol: 'USDC' }
     runtime.options.mockResolvedValue([{ ...props.context, viaRouter: false }])
   }
+
+  it('labels the Pay button while the page is still checking its first verified read', async () => {
+    flushSync(() => root.render(<QueryClientProvider client={cache}><WritesChecking.Provider value={true}><ProjectPayment {...props} /></WritesChecking.Provider></QueryClientProvider>))
+    expect([...host.querySelectorAll('button')].some(button => button.textContent === 'Checking…')).toBe(true)
+    expect([...host.querySelectorAll('button')].some(button => button.textContent?.startsWith('Pay on '))).toBe(false)
+  })
 
   it('freezes the refreshed terminal minimum and explicitly reviews a decreased quote', async () => {
     await ready()

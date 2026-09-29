@@ -5,7 +5,8 @@ import { buildPayTx, buildPermit2ApproveTx, uniswapV4Deployment } from '@bananap
 import { addPermit2SignatureToDirectPaySwap, buildDirectPaySwapTx } from '@bananapus/nana-sdk-core/v6/direct-pay'
 import { permit2AllowanceNeedsRefresh, permit2SignatureNeedsOnchainFallback, readPermit2Allowance, shouldUsePermit2Signature } from '@bananapus/nana-sdk-core/v6/permit2'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { WritesChecking } from '@/components/writes-checking'
+import { useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { erc20Abi, formatUnits, isAddressEqual, zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { ModalShell } from '@/components/ui/ModalShell'
@@ -64,6 +65,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
   context: PaymentContext; paused: boolean; reservedPercent: number; rulesetId: string
   verify: (account: Address, minimumBlock?: bigint) => Promise<{ blockNumber: bigint }>
 }) {
+  const checking = useContext(WritesChecking)
   const { address, openSignIn } = useWallet()
   // The route query and all writes use the same chain-bound Wagmi client.
   const client = usePublicClient({ chainId }) as PublicClient | undefined
@@ -204,7 +206,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
   return <section id="pay-panel" className="pay-panel">
     <h3 className="sr-only">{title}</h3>
     {chainSelector ?? <p className="payment-chain-label mb-2">{tokenLabel === 'FUND' ? 'Fund' : 'Pay'} on {displayChainName(chainId)}</p>}
-    <button type="button" className="btn-primary min-h-12 w-full px-5" disabled={paused} onClick={() => setOpen(true)}>{paused ? 'Payments paused' : `Pay on ${displayChainName(chainId)}`}</button>
+    <button type="button" className="btn-primary min-h-12 w-full px-5" disabled={paused} onClick={() => setOpen(true)}>{paused ? 'Payments paused' : checking ? 'Checking…' : `Pay on ${displayChainName(chainId)}`}</button>
     {!open && <><Status tx={approval} chainId={chainId} /><Status tx={routerApproval} chainId={chainId} /><Status tx={tx} chainId={chainId} /></>}
     {open && <ModalShell title={`Pay: ${tokenLabel}`} subtitle={displayChainName(chainId)} onClose={() => setOpen(false)} maxWidth="max-w-lg">
     <fieldset disabled={busy} className="m-0 min-w-0 border-0 p-0">
