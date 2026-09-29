@@ -21,6 +21,7 @@ import { holdDeployment, loadHeldDeployments, releaseDeployment } from '@/lib/re
 import { requireTransactionReview } from '@/lib/transaction-review'
 import { displayChainName } from '@/lib/chainDisplay'
 import { ChainIcon } from '@/components/ChainIcon'
+import { projectPath } from '@/lib/urn'
 
 const STEP_LABELS: Record<EnsureDeployedStep['status'], string> = {
   queued: 'Queued',
@@ -258,7 +259,7 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
         const name = <span className="flex items-center gap-2.5"><ChainIcon chainId={chainId} size={20} />{displayChainName(chainId)}</span>
         if (projectId) return <li key={chainId} className="flex min-h-12 items-center justify-between gap-3 py-2">
           <span className="flex items-center gap-3"><span className="w-4" aria-hidden="true">✓</span>{name}</span>
-          <a className="text-sm underline" href={`/project/${chainId}/${projectId}`} aria-label={`Deployed on ${displayChainName(chainId)}`}>View</a>
+          <a className="text-sm underline" href={projectPath(chainId, projectId)} aria-label={`Deployed on ${displayChainName(chainId)}`}>View</a>
         </li>
         return <li key={chainId} className="flex min-h-12 items-center justify-between gap-3 py-2">
           <label className="flex cursor-pointer items-center gap-3">

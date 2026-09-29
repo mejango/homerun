@@ -15,6 +15,7 @@ import { DemoProjectPage, type CreatedProject } from '@/components/ProjectPage'
 import type { CreateValues } from '@/components/CreateFlow'
 import { CREATE_DEFAULTS, modelCreatedProject } from '../../web/create-model.mjs'
 import { networkSelectionForChainIds } from '../../web/create-networks.mjs'
+import { projectPath } from '@/lib/urn'
 
 const UNREADABLE = 'The project details could not be loaded. The terms below are read from the signed project creation.'
 
@@ -88,7 +89,7 @@ export function IntentProject({ intentId }: { intentId: string }) {
     // linked project never opens on half of itself.
     if (!deployment || running) return
     // The project's own address is the link to share; the page finds its intent itself.
-    router.replace(`/project/${deployment.chainId}/${deployment.projectId}`)
+    router.replace(projectPath(deployment.chainId, deployment.projectId))
   }, [deployment, running, router, intentId])
 
   const details = useQuery({

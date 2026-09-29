@@ -21,8 +21,13 @@ export function parseUrn(
   return { chainId: chainId as JBChainId, projectId }
 }
 
-export function toUrn(chainId: number, projectId: number): string {
+export function toUrn(chainId: number, projectId: number | bigint | string): string {
   return `${displayChainSlug(chainId) ?? chainId}:${projectId}`
+}
+
+/** A deployed project's own address on Homerun, e.g. `/op:11`. */
+export function projectPath(chainId: number, projectId: number | bigint | string): string {
+  return `/${toUrn(chainId, projectId)}`
 }
 
 export function chainName(chainId: number): string {

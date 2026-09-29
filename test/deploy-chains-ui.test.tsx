@@ -163,7 +163,7 @@ describe('choosing the chains a published project is deployed on', () => {
   it('links a chain that is already created and offers no checkbox for it', async () => {
     await render(intent([10, 8453], { deployments: [deployment(8453, '42')] }))
     expect(rowFor(8453)).toBeNull()
-    const link = [...host.querySelectorAll('a')].find(item => item.getAttribute('href') === '/project/8453/42')
+    const link = [...host.querySelectorAll('a')].find(item => item.getAttribute('href') === '/base:42')
     expect(link?.getAttribute('aria-label')).toBe('Deployed on Base')
   })
 

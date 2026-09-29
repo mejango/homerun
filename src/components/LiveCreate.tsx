@@ -21,6 +21,7 @@ import { SUPPORTED_CHAINS } from '@/lib/chains'
 import { plannedNetworks } from '../../web/create-networks.mjs'
 import { isSafeConnection, waitForSafeExecutionHash } from '@/lib/safe-connector'
 import { intentPath } from '@bananapus/nana-sdk-core/jbcenter'
+import { projectPath } from '@/lib/urn'
 
 const message = (error: unknown) => error instanceof Error ? error.message : 'The request could not be completed.'
 function publicClient(chainId: number): PublicClient {
@@ -137,7 +138,7 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
     <h3>{chain.name}</h3>
     <p role="status">{status.phase === 'confirmed' ? 'FUND deployment verified onchain.' : status.phase === 'pending' ? status.safe ? 'Safe proposal awaiting execution.' : 'Transaction submitted; confirmation pending.' : status.phase === 'signing' ? 'Deployment review or wallet confirmation in progress.' : status.phase === 'reverted' ? 'The deployment reverted. No project was created by this transaction.' : 'Ready for transaction review.'}</p>
     {status.hash && <p><a target="_blank" rel="noreferrer" href={status.executionHash || !status.safe ? `${chain.blockExplorers.default.url}/tx/${status.executionHash ?? status.hash}` : 'https://app.safe.global/transactions/queue'}>{status.safe && !status.executionHash ? 'View Safe queue' : 'View transaction'}: {status.hash.slice(0, 12)}…</a></p>}
-    {status.phase === 'confirmed' && <a className="create-primary" href={`/project/${request.chainId}/${status.projectId}`}>Open FUND project ↗</a>}
+    {status.phase === 'confirmed' && <a className="create-primary" href={projectPath(request.chainId, status.projectId!)}>Open FUND project ↗</a>}
     {(status.phase === 'ready' || status.phase === 'reverted') && <button type="button" disabled={tx.busy || tx.phase === 'review' || verifying || Object.values(session.statuses).some(row => row.phase === 'signing')} onClick={() => void launch()}>Review and deploy FUND</button>}
     {status.phase === 'pending' && status.hash && <button type="button" disabled={verifying} onClick={() => void verify(status.hash!, status.safe ?? false, status.executionHash)}>{verifying ? 'Checking execution…' : 'Check confirmation'}</button>}
     {status.phase === 'signing' && !tx.busy && <><p>This launch stopped before a transaction hash was saved. Check your wallet history before continuing.</p><label htmlFor={`recover-${request.chainId}`}>Submitted transaction hash (executed transaction)</label><input id={`recover-${request.chainId}`} value={recoveryHash} onChange={event => setRecoveryHash(event.target.value)} /><button type="button" disabled={!/^0x[\da-f]{64}$/i.test(recoveryHash) || verifying} onClick={() => { update({ phase: 'pending', hash: recoveryHash as Hex, executionHash: recoveryHash as Hex, safe: recoverySafe }); void verify(recoveryHash as Hex, recoverySafe, recoveryHash as Hex) }}>Verify this transaction</button><label><input type="checkbox" checked={recoverySafe} onChange={event => setRecoverySafe(event.target.checked)} /> This was executed by my Safe</label><button type="button" onClick={() => { tx.reset(); update({ phase: 'ready' }, 'signing') }}>I cancelled without submitting</button></>}
@@ -317,7 +318,7 @@ export function FundDeploy({ values, onLockChange, importedRecord, onRecordUsed 
         {!complete && canCancelLaunch(session) && <button type="button" className="quiet-button" disabled={running || preparing} onClick={() => {
           void cancelUnsubmittedLaunch(session.input.salt).then(() => { setSession(null); setError(''); setProgress(''); onLockChange?.(null) }).catch(cause => setError(message(cause)))
         }}>Cancel creation and edit details</button>}
-        {complete && <a className="create-primary" href={`/project/${session.input.chainIds[0]}/${session.statuses[session.input.chainIds[0]].projectId}`}>Open project ↗</a>}
+        {complete && <a className="create-primary" href={projectPath(session.input.chainIds[0], session.statuses[session.input.chainIds[0]].projectId!)}>Open project ↗</a>}
       </>}
     {(error || invalid) && <p role="alert">{error || invalid}</p>}
     {!session && error && <button type="button" onClick={() => setError('')}>Try again</button>}

@@ -72,7 +72,7 @@ describe('Create submission recovery', () => {
     expect(navigate.replace).toHaveBeenCalledWith('/create/success')
     await act(async () => root.render(<CreateSuccess />))
     expect(host.textContent).toContain('Project created successfully')
-    expect(host.querySelector('a')?.getAttribute('href')).toBe('/project/8453/42')
+    expect(host.querySelector('a')?.getAttribute('href')).toBe('/base:42')
   })
 
   it('does not claim success for an unfinished deployment', async () => {

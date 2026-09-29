@@ -33,6 +33,7 @@ import {
   type PreparedStickyCreate,
   type StickyCreatedRecord,
 } from "@/lib/sticky-create";
+import { projectPath } from '@/lib/urn'
 
 export type StickyCreateProps = {
   state: FundProjectState;
@@ -269,7 +270,7 @@ export function StickyCreate({
         description:
           "SHARE represents staked FUND in this Homerun project. Initial INCOME ownership follows the prior finalized FUND snapshot.",
         symbol: "SHARE",
-        homepage: `https://homerun.money/project/${state.chainId}/${state.projectId}`,
+        homepage: `https://homerun.money${projectPath(state.chainId, state.projectId)}`,
         homerun: {
           kind: "sticky-share",
           chainId: state.chainId,

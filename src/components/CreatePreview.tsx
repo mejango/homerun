@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { getAccount, getPublicClient, signMessage } from '@wagmi/core'
@@ -187,7 +188,7 @@ export default function CreatePreview() {
   if (!loaded) return shell(<p role="status">Reading your setup…</p>)
   if (!values || !model) return shell(<div className="grid justify-items-start gap-4" role="alert">
     <p>{NO_SETUP}</p>
-    <a className="btn-secondary" href="/create">Back to the form</a>
+    <Link className="btn-secondary" href="/create">Back to the form</Link>
   </div>)
 
   const planned = plannedMultisigs(values)

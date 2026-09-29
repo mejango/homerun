@@ -20,6 +20,7 @@ import {
 } from '@/lib/bendystraw'
 import { displayChainName, displayChainSlug, explorerAddressUrl, explorerTxUrl } from '@/lib/chainDisplay'
 import styles from './AccountView.module.css'
+import { projectPath } from '@/lib/urn'
 
 type Network = 'mainnet' | 'testnet'
 const TABS = ['Activity', 'Holdings', 'Projects'] as const
@@ -46,7 +47,7 @@ function validProject(ref: { chainId: number; projectId: number }) {
 }
 function projectHref(ref: { chainId: number; projectId: number }, isRevnet?: boolean | null) {
   if (!validProject(ref) || typeof isRevnet !== 'boolean') return null
-  return `/${isRevnet ? 'income' : 'project'}/${ref.chainId}/${ref.projectId}`
+  return isRevnet ? `/income/${ref.chainId}/${ref.projectId}` : projectPath(ref.chainId, ref.projectId)
 }
 function shortAddress(address: string) { return `${address.slice(0, 6)}…${address.slice(-4)}` }
 

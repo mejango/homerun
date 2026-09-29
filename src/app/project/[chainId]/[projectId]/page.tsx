@@ -1,9 +1,7 @@
-import type { Metadata } from 'next'
-import { notFound } from 'next/navigation'
+import { notFound, permanentRedirect } from 'next/navigation'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
-import { FundProject } from '@/components/FundProject'
-import { displayChainName } from '@/lib/chainDisplay'
 import { FUND_CHAIN_IDS } from '@/lib/fund-contracts'
+import { projectPath } from '@/lib/urn'
 
 const INTENT_ID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i
 
@@ -19,19 +17,10 @@ function projectRoute(chainId: string, projectId: string) {
   return { chainId: chain as JBChainId, projectId }
 }
 
-export async function generateMetadata({ params }: Pick<ProjectRouteProps, 'params'>): Promise<Metadata> {
-  const route = await params
-  const { chainId, projectId } = projectRoute(route.chainId, route.projectId)
-  return {
-    title: `FUND ${projectId} on ${displayChainName(chainId)}`,
-    description: 'Fund an asset and manage your FUND holdings through verified Juicebox contracts.',
-    alternates: { canonical: `https://homerun.money/project/${chainId}/${projectId}` },
-  }
-}
-
-export default async function ProjectPage({ params, searchParams }: ProjectRouteProps) {
-  const route = await params
+/** Project pages live at `/<chain>:<id>`; older links forward there. */
+export default async function LegacyProjectPage({ params, searchParams }: ProjectRouteProps) {
+  const route = projectRoute((await params).chainId, (await params).projectId)
   const query = await searchParams
-  const intent = typeof query.intent === 'string' && INTENT_ID.test(query.intent) ? query.intent : undefined
-  return <FundProject key={`${route.chainId}:${route.projectId}`} {...projectRoute(route.chainId, route.projectId)} intentId={intent} />
+  const intent = typeof query.intent === 'string' && INTENT_ID.test(query.intent) ? `?intent=${query.intent}` : ''
+  permanentRedirect(`${projectPath(route.chainId, route.projectId)}${intent}`)
 }

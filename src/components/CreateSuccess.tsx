@@ -1,8 +1,10 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { loadLaunchSession, type FundLaunchSession } from '@/lib/fund-launch-session'
 import { displayChainName } from '@/lib/chainDisplay'
+import { projectPath } from '@/lib/urn'
 
 export default function CreateSuccess() {
   const [session, setSession] = useState<FundLaunchSession | null>(null)
@@ -17,13 +19,13 @@ export default function CreateSuccess() {
   if (!session) return <section>
     <h1 className="text-4xl sm:text-5xl">Check your deployment</h1>
     <p className="my-6">There is no completed launch saved in this browser.</p>
-    <a className="create-primary" href="/create/recover">Resume creation</a>
+    <Link className="create-primary" href="/create/recover">Resume creation</Link>
   </section>
   const chainId = session.input.chainIds[0]
   return <section aria-labelledby="creation-success-title">
     <p className="mb-4 text-lg" role="status">Project created successfully</p>
     <h1 id="creation-success-title" className="text-4xl sm:text-6xl">{session.name} is ready.</h1>
     <p className="my-6">Your FUND raise is live on {session.input.chainIds.map(displayChainName).join(', ')}.</p>
-    <a className="create-primary" href={`/project/${chainId}/${session.statuses[chainId].projectId}`}>View project on Homerun ↗</a>
+    <a className="create-primary" href={projectPath(chainId, session.statuses[chainId].projectId!)}>View project on Homerun ↗</a>
   </section>
 }

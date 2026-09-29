@@ -117,7 +117,7 @@ describe('account project discovery', () => {
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 320)) })
     await settle()
     expect(mocks.search).toHaveBeenCalledExactlyOnceWith('Neighbor', 24, { network: 'mainnet' })
-    expect(host.querySelector('a[href="/project/1/7"]')?.textContent).toBe('<img src=x onerror=alert(1)>')
+    expect(host.querySelector('a[href="/eth:7"]')?.textContent).toBe('<img src=x onerror=alert(1)>')
     expect(host.querySelector('a[href="/income/8453/8"]')?.textContent).toBe('Neighborhood INCOME')
     expect(host.querySelector('img, script')).toBeNull()
     expect(host.textContent).not.toContain('Old version')
@@ -137,7 +137,7 @@ describe('account project discovery', () => {
       { chainId: 1, projectId: 7, version: 6 }, { chainId: 8453, projectId: 8, version: 6 },
     ], { network: 'mainnet' })
     expect(section('Owned or published').textContent).not.toContain('Somebody else')
-    expect(section('Token holdings').querySelector('a[href="/project/1/7"]')).not.toBeNull()
+    expect(section('Token holdings').querySelector('a[href="/eth:7"]')).not.toBeNull()
     expect(section('Token holdings').querySelector('a[href="/income/8453/8"]')).not.toBeNull()
     expect(section('Token holdings').textContent).toContain('5 project tokens')
     expect(section('Token holdings').textContent).toContain('3 credits / 2 ERC-20')
@@ -172,7 +172,7 @@ describe('account project discovery', () => {
     await act(async () => { await client.invalidateQueries({ queryKey: ['account-projects'] }) })
     await settle()
     expect(section('Owned or published').textContent).toContain('Showing the last indexed data')
-    expect(section('Owned or published').querySelector('a[href="/project/1/7"]')).not.toBeNull()
+    expect(section('Owned or published').querySelector('a[href="/eth:7"]')).not.toBeNull()
     expect(section('Token holdings').textContent).toContain('Showing the last indexed data')
     expect(section('Token holdings').textContent).toContain('5 project tokens')
   })
@@ -204,7 +204,7 @@ describe('account project discovery', () => {
     expect(mocks.owned).toHaveBeenCalledWith([ACCOUNT_A], { network: 'testnet' })
     expect(mocks.holdings).toHaveBeenCalledWith(ACCOUNT_A, { network: 'testnet' })
     expect(host.textContent).not.toContain('Mainnet FUND')
-    expect(host.querySelector('a[href="/project/11155111/7"]')?.textContent).toBe('Testnet FUND')
+    expect(host.querySelector('a[href="/sep:7"]')?.textContent).toBe('Testnet FUND')
   })
 
   it('does not query an invalid explicit account or silently replace it with the connected wallet', async () => {
