@@ -25,6 +25,8 @@
   --color-split-50: #f8f0df;
   --color-split-800: #79542b;
   --color-error-500: #a23e31;
+  /* jbm's completed-step mark; a light sage keeps the ink check readable on Homerun's paper. */
+  --color-melon-400: #cfdcc8;
   --font-sans: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-agrandir: Georgia, 'Times New Roman', serif;
 }
@@ -47,6 +49,7 @@ dialog.ui-modal-host::backdrop { all: revert-layer; }
     border-color: currentColor;
   }
   :is(.modal-dialog, .ui-modal-host) :where(h1, h2, h3, h4, p, dl, dd, figure, ul, ol, pre) { margin: 0; }
+  :is(.modal-dialog, .ui-modal-host) :where(ol, ul, menu) { list-style: none; padding: 0; }
   :is(.modal-dialog, .ui-modal-host) :where(h1, h2, h3, h4) { font-size: inherit; font-weight: inherit; }
   :is(.modal-dialog, .ui-modal-host) :where(button, input, select, textarea) { font: inherit; color: inherit; }
   :is(.modal-dialog, .ui-modal-host) :where(button) { padding: 0; }
