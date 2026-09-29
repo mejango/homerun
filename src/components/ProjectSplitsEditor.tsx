@@ -10,6 +10,7 @@ import { displayChainName } from '@/lib/chainDisplay'
 import { assertSameProjectSplitsSnapshot, buildProjectSplitsTx, formatSplitPercent, isReservedTokenBurn, RESERVED_TOKEN_BURN_ADDRESS, projectSplitDrafts, readProjectSplitsSnapshot, type ProjectSplit, type ProjectSplitDraft, type ProjectSplitGroup, type ProjectSplitsSnapshot } from '@/lib/project-splits-edit'
 import { ProjectAdminTransactionStatus } from './ProjectAdminTransactionStatus'
 import { ModalShell } from './ui/ModalShell'
+import { TxConfirmDialog } from './ui/TxConfirmDialog'
 import { readableError } from '@/lib/readable-error'
 
 function message(reason: unknown) { return readableError(reason, 'Project splits could not be verified.') }
@@ -39,10 +40,12 @@ export function ProjectSplitsEditor({ chainId, projectId, phase, client, unavail
   const [editor, setEditor] = useState<EditorState | null>(null)
   const [preparing, setPreparing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Juicebox Money's confirm dialog, over the editor card: the recipients as they will be saved, then one action.
+  const [reviewing, setReviewing] = useState(false)
   const submitting = useRef(false)
   const query = useQuery({ queryKey: ['project-splits-edit', chainId, projectId.toString(), phase, address ?? null], queryFn: () => readProjectSplitsSnapshot(client, { chainId, projectId, phase, account: address }), retry: 1 })
   const onConfirmed = useCallback(async () => {
-    setEditor(null); setError(null)
+    setError(null)
     for (const key of ['project-splits-edit', 'project-operator-profile', 'income-operator', 'income-reserved', 'income-sticky-binding', 'fund-project', 'income-project']) await cache.invalidateQueries({ queryKey: [key, chainId, projectId.toString()] })
     for (const key of ['sticky-project', 'sticky-rewards']) await cache.invalidateQueries({ queryKey: [key, chainId] })
   }, [cache, chainId, projectId])
@@ -55,10 +58,12 @@ export function ProjectSplitsEditor({ chainId, projectId, phase, client, unavail
   const canEdit = !!snapshot?.canEdit && matches && !query.isError && !unavailable && tx.ready && !busy && !tx.pending
   const holdOpen = preparing || ['review', 'simulating', 'signing'].includes(tx.phase)
   let validation: string | null = null
+  let preview: readonly ProjectSplit[] = []
   if (editor) {
-    try { buildProjectSplitsTx(editor.snapshot, editor.rulesetId, editor.group.groupId, editor.drafts, { allowHookChanges: editor.allowHookChanges, allowBurn: editor.allowBurn }) }
+    try { preview = buildProjectSplitsTx(editor.snapshot, editor.rulesetId, editor.group.groupId, editor.drafts, { allowHookChanges: editor.allowHookChanges, allowBurn: editor.allowBurn }).args[2][0].splits as readonly ProjectSplit[] }
     catch (reason) { validation = message(reason) }
   }
+  const previewStage = editor?.snapshot.stages.find(item => item.rulesetId === editor.rulesetId)
   function update(index: number, patch: Partial<ProjectSplitDraft>) { setEditor(current => current ? { ...current, drafts: current.drafts.map((draft, row) => row === index ? { ...draft, ...patch } : draft) } : null); setError(null) }
   async function submit() {
     if (!editor || !address || !canEdit || validation || submitting.current) return
@@ -101,7 +106,29 @@ export function ProjectSplitsEditor({ chainId, projectId, phase, client, unavail
       <button type="button" className="btn-secondary min-h-11 px-5" disabled={!canEdit} onClick={() => { setError(null); setEditor({ snapshot, rulesetId: stage.rulesetId, group, drafts: projectSplitDrafts(group), allowHookChanges: false, allowBurn: false }) }}>Edit recipients</button>
     </>}
     <ProjectAdminTransactionStatus tx={tx} />
-    {editor && <ModalShell title={`Edit ${editor.group.label.toLowerCase()}`} subtitle={`${phase.toUpperCase()} · stage ${editor.rulesetId} · ${displayChainName(chainId)}`} maxWidth="max-w-3xl" busy={holdOpen} onClose={() => setEditor(null)} footer={<div className="flex flex-wrap justify-end gap-3"><button type="button" className="btn-secondary min-h-11 px-5" onClick={() => setEditor(null)} disabled={holdOpen}>Close</button><button type="button" className="btn-primary min-h-11 px-5" onClick={() => void submit()} disabled={!canEdit || !!validation}>{preparing ? 'Preparing…' : tx.pending ? 'Awaiting confirmation…' : 'Review changes'}</button></div>}>
+    {editor && <ModalShell title={`Edit ${editor.group.label.toLowerCase()}`} subtitle={`${phase.toUpperCase()} · stage ${editor.rulesetId} · ${displayChainName(chainId)}`} maxWidth="max-w-3xl" busy={holdOpen} onClose={() => setEditor(null)} footer={<div className="flex flex-wrap justify-end gap-3"><button type="button" className="btn-secondary min-h-11 px-5" onClick={() => setEditor(null)} disabled={holdOpen}>Close</button><button type="button" className="btn-primary min-h-11 px-5" onClick={() => { tx.reset(); setError(null); setReviewing(true) }} disabled={!canEdit || !!validation}>{tx.pending ? 'Awaiting confirmation…' : 'Review changes'}</button></div>}>
+      <TxConfirmDialog
+        open={reviewing}
+        eyebrow={`${phase.toUpperCase()} splits`}
+        title={tx.phase === 'success' ? 'Recipients saved' : `Save ${editor.group.label.toLowerCase()}`}
+        rows={[
+          { label: 'Rules', value: previewStage?.isCurrent ? 'Current rules' : previewStage ? `Starting ${lockLabel(previewStage.start.toString())}` : `Stage ${editor.rulesetId.toString()}` },
+          { label: 'On', value: displayChainName(chainId) },
+          { label: 'Recipients', value: String(preview.length), strong: true },
+          { label: 'Remaining to the owner', value: `${formatSplitPercent(1_000_000_000 - preview.reduce((sum, split) => sum + split.percent, 0))}%` },
+        ]}
+        steps={[{ key: 'save', title: 'Save the recipients', detail: editor.group.kind === 'reserved' && previewStage?.isCurrent ? 'Also decides where pending reserved tokens go when next distributed.' : 'Only this group and stage change.' }]}
+        activeIndex={busy ? 0 : -1}
+        action="Confirm & save"
+        onConfirm={() => void submit()}
+        busy={preparing || (tx.busy && !tx.pending)}
+        complete={tx.phase === 'success'}
+        error={error ?? validation}
+        onClose={() => { setReviewing(false); if (tx.phase === 'success') setEditor(null) }}
+      >
+        {preview.length > 0 && <ul className="space-y-1 text-sm">{preview.map((split, index) => <li key={index} className="break-words">{formatSplitPercent(split.percent)}% to {recipient(split, editor.group.kind)}{BigInt(split.lockedUntil) > editor.snapshot.blockTimestamp ? `, locked until ${lockLabel(split.lockedUntil.toString())}` : ''}</li>)}</ul>}
+        <ProjectAdminTransactionStatus tx={tx} />
+      </TxConfirmDialog>
       <div className="space-y-5">
         {editor.drafts.map((draft, index) => {
           const original = draft.sourceIndex === undefined ? undefined : editor.group.splits[draft.sourceIndex]

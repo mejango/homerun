@@ -1,3 +1,4 @@
+import './dialog-shim'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -8,7 +9,7 @@ import type { ProjectAuthorityState } from '../src/lib/project-authority'
 const mocks = vi.hoisted(() => ({ state: null as unknown, send: vi.fn(), read: vi.fn(), reverify: vi.fn(), refetch: vi.fn(), busy: false }))
 vi.mock('@tanstack/react-query', () => ({ useQuery: () => ({ data: mocks.state, isPending: false, isError: false, refetch: mocks.refetch }) }))
 vi.mock('../src/hooks/useWallet', () => ({ useWallet: () => ({ address: '0x1111111111111111111111111111111111111111' }) }))
-vi.mock('../src/hooks/useProjectAdminTx', () => ({ useProjectAdminTx: () => ({ ready: true, busy: mocks.busy, send: mocks.send }) }))
+vi.mock('../src/hooks/useProjectAdminTx', () => ({ useProjectAdminTx: () => ({ ready: true, busy: mocks.busy, pending: false, phase: 'idle', send: mocks.send, reset: vi.fn() }) }))
 vi.mock('../src/components/ProjectAdminTransactionStatus', () => ({ ProjectAdminTransactionStatus: () => null }))
 vi.mock('../src/lib/project-authority', async () => ({ ...await vi.importActual('../src/lib/project-authority'), readProjectAuthority: mocks.read, reverifyProjectAuthority: mocks.reverify }))
 import { ProjectOwnershipEditor } from '../src/components/ProjectOwnershipEditor'
@@ -54,6 +55,7 @@ describe('project permission controls', () => {
     await act(async () => checkbox('I understand ROOT').click())
     expect(button('Review permission changes').disabled).toBe(false)
     await act(async () => button('Review permission changes').click())
+    await act(async () => button('Confirm & save').click())
     expect(mocks.send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ functionName: 'setPermissionsFor', args: [OWNER, { operator: DELEGATE, projectId: 7n, permissionIds: [1] }] }), expect.objectContaining({ reviewNotice: expect.stringContaining('ROOT authorizes every Juicebox project permission') }))
   })
 
@@ -64,6 +66,7 @@ describe('project permission controls', () => {
     expect(host.textContent).toContain('Unrecognized project permissions 255 are preserved')
     await act(async () => checkbox('Edit payout and reserved token splits').click())
     await act(async () => button('Review permission changes').click())
+    await act(async () => button('Confirm & save').click())
     expect(mocks.send.mock.calls[0][0].args[1]).toEqual({ operator: DELEGATE, projectId: 7n, permissionIds: [19, 255] })
   })
 
@@ -83,6 +86,7 @@ describe('project permission controls', () => {
     await mount('permissions')
     await act(async () => checkbox('Edit project details').click())
     await act(async () => button('Review permission changes').click())
+    await act(async () => button('Confirm & save').click())
     expect(mocks.send).not.toHaveBeenCalled()
     expect(host.textContent).toContain('permissions changed after review')
   })
@@ -103,6 +107,7 @@ describe('project ownership controls', () => {
     expect(button('Review ownership change').disabled).toBe(true)
     await act(async () => checkbox('I understand the new owner').click())
     await act(async () => button('Review ownership change').click())
+    await act(async () => button('Confirm & transfer').click())
     expect(mocks.send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ functionName: 'safeTransferFrom', args: [OWNER, DELEGATE, 7n] }), expect.objectContaining({ reviewNotice: expect.stringContaining('Other chains require separate ownership transfers') }))
   })
 
@@ -115,7 +120,33 @@ describe('project ownership controls', () => {
     await act(async () => checkbox('I understand this transfers').click())
     mocks.read.mockResolvedValue({ ...mocks.state as object, identity: 'changed' })
     await act(async () => button('Review ownership change').click())
+    await act(async () => button('Confirm & transfer').click())
     expect(mocks.send).not.toHaveBeenCalled()
     expect(host.textContent).toContain('Project ownership or permissions changed')
   })
 })
+
+describe('confirm dialogs', () => {
+  it('shows what changes for which wallet before any transaction', async () => {
+    await mount('permissions')
+    await act(async () => checkbox('Edit project details').click())
+    await act(async () => button('Review permission changes').click())
+    const dialog = host.querySelector('[data-tx-confirm]')!
+    expect(dialog.textContent).toContain(DELEGATE)
+    expect(dialog.textContent).toContain('GrantEdit project details')
+    expect(dialog.textContent).toContain('RevokeNone')
+    expect(mocks.send).not.toHaveBeenCalled()
+  })
+
+  it('shows the transfer from and to before any transaction', async () => {
+    await mount('ownership')
+    await change(host.querySelector('input')!, DELEGATE)
+    await act(async () => checkbox('I understand the new owner').click())
+    await act(async () => button('Review ownership change').click())
+    const dialog = host.querySelector('[data-tx-confirm]')!
+    expect(dialog.textContent).toContain(`From${OWNER}`)
+    expect(dialog.textContent).toContain(`To${DELEGATE}`)
+    expect(mocks.send).not.toHaveBeenCalled()
+  })
+})
+

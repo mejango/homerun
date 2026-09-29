@@ -199,9 +199,14 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
   }, [confirm, key, refresh])
 
   const pending = !!record
+  /** Clears a settled result before the next review. A pending update is never cleared. */
+  const reset = useCallback(() => {
+    if (inFlight.current || record) return
+    resetTx(); setResolution(null); setStatus(null); setError(null)
+  }, [record, resetTx])
   const phase: TxPhase = pending ? (working && tx.phase !== 'idle' ? tx.phase : 'pending') : resolution?.status === 'confirmed' ? 'success' : resolution?.status === 'reverted' ? 'error' : tx.phase
   return {
-    send, recover, ready: ready && !storageError, busy: working || pending || tx.busy || tx.phase === 'review', pending,
+    send, recover, reset, ready: ready && !storageError, busy: working || pending || tx.busy || tx.phase === 'review', pending,
     phase, error: storageError ?? error ?? tx.error, status, hash: record?.safe ? null : record?.hash ?? resolution?.hash ?? null,
     safe: record?.safe ?? tx.isSafe, chainId, pendingLabel: record?.label ?? null,
     /** Recovery is read-only and may be used even while a transaction is pending. */

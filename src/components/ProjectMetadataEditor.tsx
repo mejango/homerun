@@ -8,6 +8,7 @@ import { useWallet } from '@/hooks/useWallet'
 import { useProjectAdminTx } from '@/hooks/useProjectAdminTx'
 import { ProjectAdminTransactionStatus } from '@/components/ProjectAdminTransactionStatus'
 import { ModalShell } from '@/components/ui/ModalShell'
+import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
 import { displayChainName } from '@/lib/chainDisplay'
 import { assertNoViewAs } from '@/lib/viewAs'
 import {
@@ -51,7 +52,6 @@ function ProjectMetadataEditorContent({ chainId, projectId, client, unavailable 
     return state
   }
   const tx = useProjectAdminTx({ chainId, projectId, onConfirmed: async () => {
-    setEditing(null); setImages({}); setReview(false)
     await cache.invalidateQueries({ queryKey: ['project-metadata-edit', chainId, projectId.toString()] })
     await cache.invalidateQueries({ queryKey: ['fund-project-metadata'] })
   } })
@@ -85,7 +85,7 @@ function ProjectMetadataEditorContent({ chainId, projectId, client, unavailable 
     if (!editing) return
     try {
       const draft = validateProjectMetadataDraft(editing.document, editing.draft, images)
-      setEditing({ ...editing, draft }); setReview(true); setError(null)
+      tx.reset(); setEditing({ ...editing, draft }); setReview(true); setError(null)
     } catch (reason) { setError(message(reason)) }
   }
   async function publish() {
@@ -120,24 +120,45 @@ function ProjectMetadataEditorContent({ chainId, projectId, client, unavailable 
     {active?.canEdit && details.isError && <p className="text-sm" role="alert">{message(details.error)} <button type="button" className="quiet-button" onClick={() => void details.refetch()}>Retry details</button></p>}
     {address && snapshot.isError && <p className="text-sm" role="alert">{message(snapshot.error)} <button type="button" className="quiet-button" onClick={() => void snapshot.refetch()}>Retry permissions</button></p>}
     <ProjectAdminTransactionStatus tx={tx} />
-    {editing && <ModalShell title={review ? 'Review project details' : label} subtitle={`Project #${projectId} on ${displayChainName(chainId)}`} busy={preparing || (tx.busy && !tx.pending) || tx.phase === 'review'} onClose={() => { setEditing(null); setError(null) }} maxWidth="max-w-3xl" footer={<div className="flex flex-wrap justify-end gap-3">
-      {review ? <><button type="button" className="btn-secondary min-h-11 px-4 py-2" disabled={busy} onClick={() => setReview(false)}>Back to details</button><button type="button" className="btn-primary min-h-11 px-4 py-2" disabled={busy || !tx.ready || unavailable} onClick={() => void publish()}>{preparing ? 'Publishing reviewed details…' : tx.pending ? 'Waiting for confirmation…' : 'Publish changes'}</button></> : <><button type="button" className="btn-secondary min-h-11 px-4 py-2" onClick={() => setEditing(null)}>Cancel</button><button type="submit" className="btn-primary min-h-11 px-4 py-2" form={`${id}-form`}>Review changes</button></>}
+    {editing && <ModalShell title={label} subtitle={`Project #${projectId} on ${displayChainName(chainId)}`} busy={preparing || (tx.busy && !tx.pending) || tx.phase === 'review'} onClose={() => { setEditing(null); setError(null) }} maxWidth="max-w-3xl" footer={<div className="flex flex-wrap justify-end gap-3">
+      <button type="button" className="btn-secondary min-h-11 px-4 py-2" onClick={() => setEditing(null)}>Cancel</button><button type="submit" className="btn-primary min-h-11 px-4 py-2" form={`${id}-form`} disabled={busy}>{tx.pending ? 'Waiting for confirmation…' : 'Review changes'}</button>
     </div>}>
       <div className="demo-shop-editor grid gap-6">
         <p className="text-xs text-[var(--muted)]">These details apply to this phase on {displayChainName(chainId)} only.</p>
-        {review ? <>
-          <dl className="grid gap-4">{fieldKeys.map(key => <div key={key} className="border-b border-[var(--line)] pb-3"><dt className="text-[13px] text-[var(--muted)]">{metadataFieldLabel(key)}</dt><dd className="whitespace-pre-line break-words">{editing.draft[key] || 'Not specified'}</dd></div>)}</dl>
-          <dl className="grid gap-3 sm:grid-cols-2">{(['cover', 'logo', ...(editing.document.supportsPlan ? ['owner', 'operator'] : [])] as MetadataImageKey[]).map(key => <div key={key}><dt className="capitalize">{key} image</dt><dd>{images[key]?.remove ? 'Remove image' : <><MetadataImagePreview label={`${key} image`} file={images[key]?.file} existing={editing.document.images[key]} />{images[key]?.file ? `Upload ${images[key]!.file!.name}` : editing.document.images[key] ? 'Keep current image' : 'No image'}</>}</dd></div>)}</dl>
-          <p className="text-xs text-[var(--muted)]">Profile addresses only describe the people shown. Ownership, payment recipients and contract terms don’t change.</p>
-        </> : <form id={`${id}-form`} className="grid gap-7" onSubmit={event => { event.preventDefault(); reviewDetails() }} noValidate>
+        <TxConfirmDialog
+          open={review}
+          eyebrow="Project details"
+          title={tx.phase === 'success' ? 'Details published' : 'Publish project details'}
+          rows={[
+            { label: 'Project', value: `#${projectId.toString()} on ${displayChainName(chainId)}` },
+            { label: 'Changes', value: String(fieldKeys.filter(key => editing.draft[key] !== editing.document.draft[key]).length + (['cover', 'logo', 'owner', 'operator'] as MetadataImageKey[]).filter(key => images[key]?.remove || images[key]?.file).length), strong: true },
+          ]}
+          steps={[{ key: 'publish', title: 'Publish the new details', detail: 'Pins them to IPFS, then points this project at them.' }]}
+          activeIndex={busy ? 0 : -1}
+          action="Confirm & publish"
+          actionDisabled={!tx.ready || unavailable}
+          onConfirm={() => void publish()}
+          busy={preparing || (tx.busy && !tx.pending) || tx.phase === 'review'}
+          complete={tx.phase === 'success'}
+          error={error}
+          onClose={() => { setReview(false); if (tx.phase === 'success') { setEditing(null); setImages({}) } }}
+        >
+          <dl className="grid gap-3 text-sm">
+            {fieldKeys.filter(key => editing.draft[key] !== editing.document.draft[key]).map(key => <div key={key}><dt className="text-smoke-600">{metadataFieldLabel(key)}</dt><dd className="whitespace-pre-line break-words">{editing.document.draft[key] || 'Not specified'} → {editing.draft[key] || 'Not specified'}</dd></div>)}
+            {(['cover', 'logo', 'owner', 'operator'] as MetadataImageKey[]).filter(key => images[key]?.remove || images[key]?.file).map(key => <div key={key}><dt className="capitalize text-smoke-600">{key} image</dt><dd>{images[key]?.remove ? 'Removed' : `New: ${images[key]!.file!.name}`}</dd></div>)}
+          </dl>
+          <p className="text-xs text-smoke-600">Profile addresses only describe the people shown. Ownership, payment recipients and contract terms don’t change.</p>
+          <ProjectAdminTransactionStatus tx={tx} />
+        </TxConfirmDialog>
+        <form id={`${id}-form`} className="grid gap-7" onSubmit={event => { event.preventDefault(); reviewDetails() }} noValidate>
           <fieldset className="grid gap-4"><legend className="mb-4 text-[15px] font-medium">Project details</legend>{basicFields.filter(key => editing.document.supportsPlan || key === 'name' || key === 'description').map(field)}<div className="grid gap-5 sm:grid-cols-2">{photo('cover', 'Cover image')}{photo('logo', 'Project logo')}</div></fieldset>
           {editing.document.supportsPlan && <>
             <fieldset className="grid gap-4 border-t border-[var(--line)] pt-6"><legend className="float-left mb-4 w-full text-[15px] font-medium">Ownership</legend>{field('ownerName')}{field('ownerIntroduction')}{field('ownerWallet')}<p className="text-xs text-[var(--muted)]">Shown with the Owner’s address. Transfer ownership under Control.</p>{photo('owner', 'Owner photo')}</fieldset>
             <fieldset className="grid gap-4 border-t border-[var(--line)] pt-6"><legend className="float-left mb-4 w-full text-[15px] font-medium">Operator</legend>{field('operatorName')}{field('operatorIntroduction')}{field('operatorWallet')}<p className="text-xs text-[var(--muted)]">Shown with the Operator’s address. Change the paid Operator under Operator controls.</p>{photo('operator', 'Operator photo')}</fieldset>
             <fieldset className="grid gap-4 border-t border-[var(--line)] pt-6"><legend className="float-left mb-4 w-full text-[15px] font-medium">Published operating plan</legend><p className="text-xs text-[var(--muted)]">Amounts in USD. Estimates only; they don’t change contract terms or enforce a minimum revenue.</p>{planFields.map(field)}</fieldset>
           </>}
-        </form>}
-        {error && <p role="alert" className="text-sm">{error}</p>}
+        </form>
+        {error && !review && <p role="alert" className="text-sm">{error}</p>}
         <ProjectAdminTransactionStatus tx={tx} />
       </div>
     </ModalShell>}

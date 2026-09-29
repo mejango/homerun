@@ -8,7 +8,7 @@ import type { ProjectAdminSendOptions } from '../src/hooks/useProjectAdminTx'
 
 const runtime = vi.hoisted(() => ({ address: undefined as Address | undefined, snapshot: undefined as ProjectSplitsSnapshot | undefined, queryError: false, read: vi.fn(), send: vi.fn(), invalidate: vi.fn(), busy: false, pending: false, phase: 'idle', ready: true, confirmed: undefined as undefined | (() => Promise<void>) }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address }) }))
-vi.mock('@/hooks/useProjectAdminTx', () => ({ useProjectAdminTx: ({ onConfirmed }: { onConfirmed: () => Promise<void> }) => { runtime.confirmed = onConfirmed; return { send: runtime.send, busy: runtime.busy, pending: runtime.pending, phase: runtime.phase, ready: runtime.ready } } }))
+vi.mock('@/hooks/useProjectAdminTx', () => ({ useProjectAdminTx: ({ onConfirmed }: { onConfirmed: () => Promise<void> }) => { runtime.confirmed = onConfirmed; return { send: runtime.send, busy: runtime.busy, pending: runtime.pending, phase: runtime.phase, ready: runtime.ready, reset: () => {} } } }))
 vi.mock('@/components/ProjectAdminTransactionStatus', () => ({ ProjectAdminTransactionStatus: () => <div>{runtime.pending ? 'Saved project update pending' : ''}</div> }))
 vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => ({ invalidateQueries: runtime.invalidate }), useQuery: () => ({ data: runtime.snapshot, isError: runtime.queryError, isPending: false, error: new Error('RPC unavailable'), refetch: vi.fn() }) }))
 vi.mock('@/lib/project-splits-edit', async original => ({ ...await original<typeof import('../src/lib/project-splits-edit')>(), readProjectSplitsSnapshot: runtime.read }))
@@ -71,10 +71,20 @@ describe('project split editing', () => {
     expect(runtime.send).not.toHaveBeenCalled()
     if (mode === 'saved-pending') expect(host.textContent).toContain('Saved project update pending')
   })
+  it('lists the recipients as they will be saved in the confirm dialog before sending', async () => {
+    await render(); await click('Edit recipients')
+    await input('dialog fieldset input[placeholder="0x…"]', NEXT)
+    await click('Review changes')
+    const dialog = host.querySelector('[data-tx-confirm]')!
+    expect(dialog.textContent).toContain('Save reserved tokens')
+    expect(dialog.textContent).toContain(`30% to ${NEXT}`)
+    expect(dialog.textContent).toContain('Remaining to the owner0%')
+    expect(runtime.send).not.toHaveBeenCalled()
+  })
   it('reviews only the selected queued group and revalidates before sending', async () => {
     await render(); await input('select', '100'); await click('Edit recipients')
     await input('dialog fieldset input[placeholder="0x…"]', NEXT)
-    await click('Review changes')
+    await click('Review changes'); await click('Confirm & save')
     expect(runtime.read).toHaveBeenCalledTimes(2)
     const [request, options] = runtime.send.mock.calls[0]
     expect(request.functionName).toBe('setSplitGroupsOf')
@@ -88,13 +98,13 @@ describe('project split editing', () => {
     expect(options.reviewNotice).not.toContain('pending reserved tokens')
   })
   it('makes the impact on pending reserved issuance clear for the current stage', async () => {
-    await render(); await click('Edit recipients'); await input('dialog fieldset input[placeholder="0x…"]', NEXT); await click('Review changes')
+    await render(); await click('Edit recipients'); await input('dialog fieldset input[placeholder="0x…"]', NEXT); await click('Review changes'); await click('Confirm & save')
     expect(runtime.send.mock.calls[0][1].reviewNotice).toContain('pending reserved tokens')
   })
   it('rejects changed chain recipients before opening wallet review', async () => {
     await render(); await click('Edit recipients'); await input('dialog fieldset input[placeholder="0x…"]', NEXT)
     runtime.read.mockImplementation(async () => { const fresh = snapshot(); fresh.stages[0].groups[0].splits[0] = { ...fresh.stages[0].groups[0].splits[0], beneficiary: OWNER }; return fresh })
-    await click('Review changes')
+    await click('Review changes'); await click('Confirm & save')
     expect(runtime.send).not.toHaveBeenCalled()
     expect(host.textContent).toContain('changed during review')
   })
@@ -124,7 +134,7 @@ describe('project split editing', () => {
     expect(host.textContent).toContain('Clearing this group would activate its default recipients')
   })
   it('allows closing a pending Safe update and refreshes Operators only after confirmation', async () => {
-    await render(); await click('Edit recipients'); await input('dialog fieldset input[placeholder="0x…"]', NEXT); await click('Review changes')
+    await render(); await click('Edit recipients'); await input('dialog fieldset input[placeholder="0x…"]', NEXT); await click('Review changes'); await click('Confirm & save')
     runtime.pending = true; runtime.busy = true; runtime.phase = 'pending'; await render()
     expect(button('Close').disabled).toBe(false)
     expect(runtime.invalidate).not.toHaveBeenCalled()
@@ -142,7 +152,7 @@ describe('project split editing', () => {
     expect(button('Review changes').disabled).toBe(true)
     expect(host.textContent).toContain('permanently destroyed')
     await act(async () => host.querySelector<HTMLInputElement>('dialog input[type="checkbox"]')!.click())
-    await click('Review changes')
+    await click('Review changes'); await click('Confirm & save')
     expect(runtime.send.mock.calls[0][1].reviewNotice).toContain('Burn tokens (permanently destroyed)')
   })
 })

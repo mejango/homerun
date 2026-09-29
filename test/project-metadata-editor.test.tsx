@@ -1,3 +1,4 @@
+import './dialog-shim'
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -23,7 +24,7 @@ vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.accou
 vi.mock('@/hooks/useProjectAdminTx', () => ({
   useProjectAdminTx: ({ chainId, onConfirmed }: { chainId: number; onConfirmed: () => void | Promise<unknown> }) => {
     runtime.onConfirmed = onConfirmed
-    return { ...runtime.tx, chainId, send: runtime.send, recover: runtime.recover }
+    return { ...runtime.tx, chainId, send: runtime.send, recover: runtime.recover, reset: () => {} }
   },
 }))
 vi.mock('@/lib/viewAs', () => ({ assertNoViewAs: runtime.viewAs }))
@@ -36,7 +37,8 @@ vi.mock('@/lib/project-metadata-edit', async importOriginal => {
     reverifyProjectMetadataEdit: vi.fn(actual.reverifyProjectMetadataEdit),
   }
 })
-vi.mock('@/components/ui/ModalShell', () => ({
+vi.mock('@/components/ui/ModalShell', async importOriginal => ({
+  ...await importOriginal<typeof import('@/components/ui/ModalShell')>(),
   ModalShell: ({ title, subtitle, children, footer }: { title: ReactNode; subtitle: ReactNode; children: ReactNode; footer: ReactNode }) => <div role="dialog"><h2>{title}</h2><p>{subtitle}</p>{children}{footer}</div>,
 }))
 
@@ -178,14 +180,13 @@ describe('live project metadata editor', () => {
     expect(host.textContent).toContain('Change the paid Operator under Operator controls.')
     expect(host.textContent).not.toContain('Purchase budget')
     await review()
-    expect(host.textContent).toContain('Review project details')
+    expect(host.querySelector('[data-tx-confirm]')?.textContent).toContain('Publish project details')
     expect(host.textContent).toContain('Project #7 on Base')
     expect(host.textContent).toContain('These details apply to this phase on Base only.')
     expect(host.textContent).toContain('Profile addresses only describe the people shown.')
-    expect(host.querySelector('form')).toBeNull()
     expect(runtime.publish).not.toHaveBeenCalled()
     expect(runtime.send).not.toHaveBeenCalled()
-    await click('Publish changes')
+    await click('Confirm & publish')
     expect(runtime.publish).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ raw: fundMetadata() }), expect.objectContaining({ name: 'Updated garden', ownerIntroduction: 'The community owns the garden.', ownerWallet: DELEGATE, operatorWallet: OWNER }), {})
     expect(vi.mocked(reverifyProjectMetadataEdit).mock.invocationCallOrder[0]).toBeLessThan(runtime.publish.mock.invocationCallOrder[0])
     expect(runtime.publish.mock.invocationCallOrder[0]).toBeLessThan(runtime.send.mock.invocationCallOrder[0])
@@ -198,27 +199,27 @@ describe('live project metadata editor', () => {
   it('preserves a concurrent metadata update by rejecting the stale URI before pinning or submitting', async () => {
     await open(); await change('Description', 'My draft'); await review()
     runtime.uri = 'ipfs://bafyconcurrent'
-    await click('Publish changes')
+    await click('Confirm & publish')
     expect(host.textContent).toContain('Project details changed while you were editing. Reload to preserve the latest update.')
     expect(runtime.publish).not.toHaveBeenCalled()
     expect(runtime.send).not.toHaveBeenCalled()
-    expect(button('Back to details')?.disabled).toBe(false)
+    expect(host.querySelector<HTMLButtonElement>('[data-tx-confirm] button[aria-label="Close"]')?.disabled).toBe(false)
   })
 
   it('rejects a lagging RPC before publishing when another update confirmed after review opened', async () => {
     await open(); await change('Description', 'My draft'); await review()
     cache.setQueryData(['project-admin-confirmed-block', 8453, '7'], 101n)
-    await click('Publish changes')
+    await click('Confirm & publish')
     expect(host.textContent).toContain('The RPC is behind the last confirmed project update. Wait for it to catch up before editing.')
     expect(runtime.publish).not.toHaveBeenCalled()
     expect(runtime.send).not.toHaveBeenCalled()
-    expect(button('Back to details')?.disabled).toBe(false)
+    expect(host.querySelector<HTMLButtonElement>('[data-tx-confirm] button[aria-label="Close"]')?.disabled).toBe(false)
   })
 
   it('rechecks authority after publishing if project ownership changes before wallet review', async () => {
     await open(); await review()
     runtime.publish.mockImplementation(async () => { runtime.owner = DELEGATE; return { uri: 'ipfs://bafyupdated' } })
-    await click('Publish changes')
+    await click('Confirm & publish')
     expect(runtime.publish).toHaveBeenCalledOnce()
     expect(runtime.send).toHaveBeenCalledOnce()
     expect(reverifyProjectMetadataEdit).toHaveBeenCalledTimes(2)
@@ -229,9 +230,9 @@ describe('live project metadata editor', () => {
   it('does not submit a completed metadata upload after navigating to a different project', async () => {
     let resolveUpload!: (result: { uri: string }) => void
     runtime.publish.mockImplementation(() => new Promise<{ uri: string }>(resolve => { resolveUpload = resolve }))
-    await open(); await review(); await click('Publish changes')
+    await open(); await review(); await click('Confirm & publish')
     await settle(() => expect(runtime.publish).toHaveBeenCalledOnce())
-    expect(button('Publishing reviewed details…')?.disabled).toBe(true)
+    expect(button('Confirm & publish')?.disabled).toBe(true)
     await act(async () => root.render(<QueryClientProvider client={cache}><ProjectMetadataEditor chainId={8453} projectId={8n} client={client} /></QueryClientProvider>))
     expect(host.querySelector('[role="dialog"]')).toBeNull()
     await act(async () => resolveUpload({ uri: 'ipfs://bafyupdated' }))
@@ -240,16 +241,16 @@ describe('live project metadata editor', () => {
     await settle(() => expect(button('Edit project details')?.disabled).toBe(false))
     await click('Edit project details')
     expect(host.textContent).toContain('Project #8 on Base')
-    expect(host.textContent).not.toContain('Review project details')
+    expect(host.querySelector('[data-tx-confirm]')).toBeNull()
   })
 
   it('blocks duplicate submissions while pending and keeps review open until confirmation', async () => {
     runtime.send.mockImplementation(async (request: TxRequest, options: ProjectAdminSendOptions) => {
       await options.reverify(request)
-      runtime.tx = { ...runtime.tx, pending: true, phase: 'success', safe: true, pendingLabel: 'Update project details' }
+      runtime.tx = { ...runtime.tx, pending: true, phase: 'pending', safe: true, pendingLabel: 'Update project details' }
       return EXECUTION_HASH
     })
-    await open(); await review(); await click('Publish changes')
+    await open(); await review(); await click('Confirm & publish')
     expect(button('Waiting for confirmation…')?.disabled).toBe(true)
     expect(button('Edit project details')?.disabled).toBe(true)
     expect(host.textContent).toContain('Check Safe for signatures and execution.')
@@ -260,6 +261,10 @@ describe('live project metadata editor', () => {
     expect(host.querySelector('[role="dialog"]')).not.toBeNull()
     runtime.tx = { ...runtime.tx, pending: false, phase: 'success', status: 'Update project details confirmed.' }
     await act(async () => { await runtime.onConfirmed!() })
+    // The real hook re-renders on its resolution; the mock's new state needs a render to show.
+    await act(async () => root.render(<QueryClientProvider client={cache}><ProjectMetadataEditor chainId={8453} projectId={7n} client={client} /></QueryClientProvider>))
+    expect(host.querySelector('[data-tx-confirm]')?.textContent).toContain('Details published')
+    await click('Done')
     expect(host.querySelector('[role="dialog"]')).toBeNull()
     expect(host.textContent).toContain('Update project details confirmed.')
   })
@@ -267,10 +272,10 @@ describe('live project metadata editor', () => {
   it('blocks invalid profile associations and operating estimates during review', async () => {
     await open(); await change('Owner profile address', 'paloma.eth'); await review()
     expect(host.textContent).toContain('Owner profile address must be a nonzero Ethereum address.')
-    expect(button('Publish changes')).toBeUndefined()
+    expect(host.querySelector('[data-tx-confirm]')).toBeNull()
     await change('Owner profile address', OWNER); await change('Minimum monthly revenue', '-1'); await review()
     expect(host.textContent).toContain('Minimum monthly revenue must be between 0 and 1000000000000')
-    expect(button('Publish changes')).toBeUndefined()
+    expect(host.querySelector('[data-tx-confirm]')).toBeNull()
     expect(runtime.publish).not.toHaveBeenCalled()
     expect(runtime.send).not.toHaveBeenCalled()
   })
@@ -285,7 +290,7 @@ describe('live project metadata editor', () => {
     expect(field('Description').value).toBe('Our income phase.')
     expect(field('About Ownership').value).toBe('We own the land.')
     expect(field('Expected monthly revenue').value).toBe('4000')
-    await review(); await click('Publish changes')
+    await review(); await click('Confirm & publish')
     const [document] = runtime.publish.mock.calls[0]
     expect(document.raw).toMatchObject({ name: income.name, homerun: { type: 'income', manifestUri: 'ipfs://bafymanifest', operatorBps: 6000, fundHolderBps: 2500 } })
     expect(document.raw.homerun).not.toHaveProperty('kind')
@@ -309,7 +314,7 @@ describe('live project metadata editor', () => {
     expect(field('About Ownership').value).toBe('')
     expect(field('Expected monthly revenue').value).toBe('')
     expect(field('Location').value).toBe('')
-    await review(); await click('Publish changes')
+    await review(); await click('Confirm & publish')
     const [document, draft] = runtime.publish.mock.calls[0]
     expect(document.raw).toEqual(income)
     expect(draft).toMatchObject({ ownerName: 'New trust', ownerIntroduction: '', monthlyRent: '', location: '' })
