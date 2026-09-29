@@ -22,7 +22,7 @@ vi.mock('../src/lib/fee-buyback-client', () => ({
     options: {},
   }),
 }))
-vi.mock('../src/lib/fee-buyback', async importOriginal => ({
+vi.mock('@bananapus/nana-sdk-core/v6/fee-buyback', async importOriginal => ({
   ...(await importOriginal<object>()),
   checkFeeBuyback: (...args: unknown[]) => mocks.check(...args),
 }))

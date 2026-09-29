@@ -7,6 +7,7 @@ import type { RelayrEntry, RelayrPayment, RelayrQuote, RelayrTransactionRecord }
 
 const m = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111' as Address,
+  chainId: undefined as number | undefined,
   safe: false,
   fee: vi.fn(),
   review: vi.fn(),
@@ -21,11 +22,13 @@ const m = vi.hoisted(() => ({
   multisigCheck: vi.fn(),
 }))
 vi.mock('@/lib/create-multisig', async original => ({ ...await original<typeof import('@/lib/create-multisig')>(), checkCreateMultisigs: m.multisigCheck }))
-vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: m.account }) }))
+vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: m.account, chainId: m.chainId }) }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {},
   SUPPORTED_CHAINS: [1, 10, 8453, 42161, 11155111, 11155420, 84532, 421614].map(id => ({ id, name: `Chain ${id}` })),
 }))
-vi.mock('@/lib/transaction-review', () => ({ requireFundingChainSelection: m.funding, requireTransactionReview: m.review }))
+vi.mock('@/lib/transaction-review', async importOriginal => ({
+  ...await importOriginal<typeof import('@/lib/transaction-review')>(), requireFundingChainSelection: m.funding, requireTransactionReview: m.review,
+}))
 vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => m.safe }))
 vi.mock('@/lib/wallet-core', () => ({ publicClient: m.client }))
 vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original<typeof import('@bananapus/nana-sdk-core/v6')>(), getProjectCreationFee: m.fee }))
@@ -43,7 +46,7 @@ vi.mock('@/lib/relayr', async importOriginal => ({
   },
 }))
 
-import { relayrPaymentDetails, RELAYR_PAYMENT_ADDRESS, RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_SELECTOR } from '@/lib/relayr'
+import { relayrPaymentDetails, relayrPaymentLabel, RELAYR_PAYMENT_ADDRESS, RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_SELECTOR } from '@/lib/relayr'
 import { predictMultisig, MULTICALL3, CREATE_BATCH_ABI, unbundleMultisigLaunch, type CreateMultisig } from '@/lib/create-multisig'
 import { canRelayrLaunch, runRelayrLaunch } from '@/lib/fund-launch-relayr'
 import { FUND_LAUNCH_KEY, canCancelLaunch, cancelUnsubmittedLaunch, loadLaunchSession, saveLaunch as saveLaunchSession, type FundLaunchSession as LaunchSession } from '@/lib/fund-launch-session'
@@ -102,6 +105,7 @@ beforeEach(() => {
   vi.resetAllMocks()
   vi.spyOn(Date, 'now').mockReturnValue(NOW * 1000)
   m.account = ACCOUNT
+  m.chainId = undefined
   m.safe = false
   m.pending.mockReturnValue(null)
   storage = new Map()
@@ -233,9 +237,24 @@ describe('relayed launch execution and recovery', () => {
     ] }))
     m.funding.mockResolvedValue(11155111)
     await run()
-    expect(m.funding).toHaveBeenCalledExactlyOnceWith([{ chainId: 11155111, label: expect.stringContaining('Sepolia') }])
+    expect(m.funding).toHaveBeenCalledExactlyOnceWith([{ chainId: 11155111, label: expect.stringContaining('Sepolia') }], undefined)
     expect(m.pay.mock.calls[0][0].chain).toBe(11155111)
     expect(loadLaunchSession()?.relayr?.paymentChainId).toBe(11155111)
+  })
+
+  it('prefers the chain the wallet started on, not the destination signing left it on', async () => {
+    m.chainId = 8453
+    const prepare = m.forward.getMockImplementation()!
+    m.forward.mockImplementation(async (call, account, nonce) => {
+      const prepared = await prepare(call, account, nonce)
+      return { ...prepared, sign: async () => { m.chainId = call.chainId; return prepared.sign() } }
+    })
+    await run()
+    expect(m.chainId).toBe(10)
+    expect(m.funding).toHaveBeenCalledExactlyOnceWith([
+      { chainId: 8453, label: relayrPaymentLabel(paymentFor(8453)) },
+      { chainId: 1, label: relayrPaymentLabel(paymentFor(1)) },
+    ], 8453)
   })
 
   it('validates quote destination bindings before presenting its funding choices', async () => {
@@ -560,6 +579,11 @@ describe('Relayr quote authentication', () => {
     ]) expect(() => relayrPaymentDetails({ ...payment, ...change }, BUNDLE, NOW)).toThrow()
     expect(() => relayrPaymentDetails(payment, '00000000-0000-0000-0000-000000000002', NOW)).toThrow(/bundle/)
     expect(() => relayrPaymentDetails(payment, BUNDLE, NOW + 601)).toThrow()
+  })
+
+  it('words a funding option as its chain and quoted fee', () => {
+    expect(relayrPaymentLabel({ ...paymentFor(8453), amount: '123456789012345' })).toBe('Base (~0.000123 ETH)')
+    expect(relayrPaymentLabel({ ...paymentFor(1), amount: '1000000000000000' })).toBe('Ethereum (0.001 ETH)')
   })
 })
 

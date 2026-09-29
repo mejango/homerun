@@ -29,6 +29,7 @@ export type PendingFundingChainSelection = {
   kind: 'funding'
   id: number
   options: readonly FundingChainOption[]
+  initialChainId: number | null
   resolve: (chainId: number | null) => void
 }
 
@@ -94,12 +95,13 @@ export function TransactionReviewProvider({ children }: PropsWithChildren) {
   )
 
   const enqueueFundingChainSelection = useCallback(
-    (options: readonly FundingChainOption[]) =>
+    (options: readonly FundingChainOption[], initialChainId: number | null) =>
       new Promise<number | null>(resolve => {
         enqueueDialog({
           kind: 'funding',
           id: nextId.current++,
           options: options.map(option => ({ ...option })),
+          initialChainId,
           resolve,
         })
       }),

@@ -34,7 +34,8 @@ vi.mock('@/hooks/useWallet', () => ({
     address: mocks.account,
   }),
 }))
-vi.mock('@/lib/transaction-review', () => ({
+vi.mock('@/lib/transaction-review', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/transaction-review')>()),
   requestContractTransactionReview: mocks.requestReview,
 }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
@@ -197,6 +198,7 @@ describe('useSafeTx', () => {
     })
 
     expect(hook.ref.current!.phase).toBe('idle')
+    expect(hook.ref.current!.error).toBeNull()
     expect(mocks.switchChain).not.toHaveBeenCalled()
     expect(mocks.publicClient.simulateContract).not.toHaveBeenCalled()
     expect(mocks.writeContract).not.toHaveBeenCalled()
@@ -407,12 +409,16 @@ describe('useSafeTx', () => {
     })
 
     expect(mocks.requestReview).toHaveBeenCalledWith(
-      { ...request, account: ALICE },
+      { ...request, account: ALICE, safeTxGas: 0n },
       {
         label: 'Transfer',
         description: 'Safe nonce guidance',
         confirmLabel: 'Agree & continue to Safe',
       },
+    )
+    // The Safe app signs the sent gas as safeTxGas: 0 makes a failed call revert.
+    expect(mocks.writeContract).toHaveBeenCalledWith(
+      expect.objectContaining({ gas: 0n }),
     )
     await act(async () => {
       await Promise.resolve()

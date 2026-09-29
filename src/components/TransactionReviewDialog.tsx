@@ -1322,16 +1322,25 @@ function specialArgumentView(
     const steps = describeSplitGroups(call.chainId, value)
     if (steps) return <UrPlanView steps={steps} />
   }
-  if (fn.name === 'multiSend' && inputName === 'transactions' && call.calls?.length) {
-    return (
-      <div className="mt-2 space-y-3">
-        {call.calls.map((inner, index) => (
-          <PrettyCall key={index} call={inner} index={index} total={call.calls!.length} nested />
-        ))}
-      </div>
-    )
+  if (inputName === 'transactions' && nestsCallsInArgument(fn) && call.calls?.length) {
+    return <NestedCalls calls={call.calls} />
   }
   return null
+}
+
+/** MultiSend's `transactions` argument is where its decoded calls show. */
+function nestsCallsInArgument(fn: AbiFunction | null): boolean {
+  return fn?.name === 'multiSend' && fn.inputs.some(input => input.name === 'transactions')
+}
+
+function NestedCalls({ calls }: { calls: readonly TransactionReviewCall[] }) {
+  return (
+    <div className="mt-2 space-y-3">
+      {calls.map((inner, index) => (
+        <PrettyCall key={index} call={inner} index={index} total={calls.length} nested />
+      ))}
+    </div>
+  )
 }
 
 function functionFromCall(call: TransactionReviewCall): AbiFunction | null {
@@ -1367,6 +1376,8 @@ function PrettyCall({
   const args = call.args ?? []
   const byteLength = Math.max(0, (call.data.length - 2) / 2)
   const contractName = knownContractName(call)
+  // Decoded calls show in MultiSend's `transactions` argument, and below any other call.
+  const batched = call.calls?.length && !nestsCallsInArgument(fn) ? call.calls : null
   return (
     <section className="rounded-xl border border-smoke-200 bg-white p-4 sm:p-5">
       {total > 1 ? (
@@ -1413,6 +1424,27 @@ function PrettyCall({
             {nativeValue(call.value)}
           </dd>
         </div>
+        {call.safeTxGas !== undefined ? (
+          <div>
+            <dt className="text-xs font-medium text-smoke-600">Safe gas</dt>
+            <dd className="mt-1 font-mono text-xs text-ink">
+              {call.safeTxGas.toLocaleString('en-US')}
+            </dd>
+            {call.safeTxGas !== 0n ? (
+              <dd className="mt-1 text-xs leading-relaxed text-smoke-600">
+                If this call fails, the Safe still executes and uses this nonce.
+              </dd>
+            ) : null}
+          </div>
+        ) : null}
+        {call.gas !== undefined ? (
+          <div>
+            <dt className="text-xs font-medium text-smoke-600">Gas limit</dt>
+            <dd className="mt-1 font-mono text-xs text-ink">
+              {call.gas.toLocaleString('en-US')}
+            </dd>
+          </div>
+        ) : null}
       </dl>
 
       {fn ? (
@@ -1477,6 +1509,13 @@ function PrettyCall({
         </div>
       )}
 
+      {batched ? (
+        <div className="mt-5 border-t border-smoke-200 pt-4">
+          <p className="text-xs font-medium text-smoke-600">Calls it makes, in order</p>
+          <NestedCalls calls={batched} />
+        </div>
+      ) : null}
+
       <p className="mt-3 text-[11px] text-smoke-500">
         Calldata: {byteLength.toLocaleString()} byte{byteLength === 1 ? '' : 's'}
       </p>
@@ -1512,9 +1551,17 @@ function ReviewModal({
   /** Some authorizations are signed as a plain message rather than typed data. */
   const signsMessage =
     (request.authorization as { kind?: string } | undefined)?.kind === 'message'
+  // The wallet sets a gas limit unless every call carries the one it sends.
+  const gasReviewed = request.calls.every(
+    call => call.gas !== undefined || call.safeTxGas !== undefined,
+  )
   const defaultDescription = isAuthorization
     ? 'This authorization commits to the exact destination, native value, and calldata below. A Safe or relayer can submit that call onchain after you continue.'
-    : 'This is the exact destination, native value, and calldata the app will ask your wallet to send. Your wallet adds the nonce, gas limit, and network fees.'
+    : `This is the exact destination, native value, and calldata the app will ask your wallet to send. ${
+        gasReviewed
+          ? 'Your wallet adds the nonce and network fees.'
+          : 'Your wallet shows the gas limit and network fees before you send.'
+      }`
 
   return (
     <ModalDialog
@@ -1657,7 +1704,7 @@ function FundingChainSelectionModal({
   pending: PendingFundingChainSelection
   onFinish: (chainId: number | null) => void
 }) {
-  const [selected, setSelected] = useState('')
+  const [selected, setSelected] = useState(String(pending.initialChainId ?? ''))
   const selectedOption = pending.options.find(
     option => String(option.chainId) === selected,
   )
@@ -1675,7 +1722,7 @@ function FundingChainSelectionModal({
       <div className="card w-full max-w-lg overflow-hidden shadow-2xl">
         <header className="flex items-start justify-between gap-4 border-b border-smoke-200 px-5 py-4 sm:px-6">
           <h2 id={titleId} className="font-agrandir text-xl font-medium text-ink">
-            Choose a funding chain
+            Choose where to pay
           </h2>
           <ModalCloseButton
             onClick={() => onFinish(null)}
@@ -1685,14 +1732,13 @@ function FundingChainSelectionModal({
         </header>
         <div className="px-5 py-5 sm:px-6">
           <p id={descriptionId} className="text-sm leading-relaxed text-smoke-700">
-            Choose which chain to pay from. Each option shows its quoted cost.
-            You will review the payment before sending it.
+            One payment covers every chain. You’ll review it before your wallet sends it.
           </p>
           <label
             htmlFor={selectId}
             className="mt-5 block text-sm font-medium text-ink"
           >
-            Funding chain
+            Pay on
           </label>
           <select
             id={selectId}
@@ -1724,7 +1770,7 @@ function FundingChainSelectionModal({
             }}
             className="btn-primary min-h-[44px] px-5 text-sm"
           >
-            Continue
+            Continue to payment review
           </button>
         </footer>
       </div>

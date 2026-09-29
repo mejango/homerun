@@ -24,7 +24,7 @@ import { wagmiConfig } from '@/providers/Providers'
 import { buildFundLaunch, type FundTransaction } from '@/lib/fund-contracts'
 import { verifyFundLaunch } from '@/lib/fund-launch-verification'
 import { loadLaunchSession, saveLaunch as saveLaunchSession, type LaunchStatus as LaunchChainStatus, type FundLaunchSession as LaunchSession } from '@/lib/fund-launch-session'
-import { gasWithHeadroom } from '@/lib/gas'
+import { gasWithHeadroom } from '@bananapus/nana-sdk-core/review'
 import {
   prepareForwardedTx,
   TRUSTED_FORWARDER_ABI,
@@ -127,6 +127,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
   onProgress: (message: string) => void
 }): Promise<void> {
   assertNoViewAs()
+  // Signing moves the wallet to each destination, so the fee picker prefers the chain it started on.
+  const startChainId = getAccount(wagmiConfig).chainId
   if (!canRelayrLaunch(session) || isSafeConnection(wagmiConfig)) {
     throw new Error('Relayed creation requires an ordinary wallet and supported chains from the same network environment.')
   }
@@ -532,8 +534,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       payments = relayrPaymentOptions(journal.quote!, destinations)
     }
     if (!payments.length) throw new Error('Relayr returned no usable payment options for this launch. Retry to request a new quote; nothing was paid.')
-    onProgress('Choose a quoted funding chain for the launch payment.')
-    const paymentChainId = await requireFundingChainSelection(payments.map(payment => ({ chainId: payment.chain, label: relayrPaymentLabel(payment) })))
+    onProgress('Choose where to pay for the launch.')
+    const paymentChainId = await requireFundingChainSelection(payments.map(payment => ({ chainId: payment.chain, label: relayrPaymentLabel(payment) })), startChainId)
     const payment = payments.find(option => option.chain === paymentChainId)
     if (!payment) throw new Error('The selected funding chain is not available in this quote. No payment was sent.')
     requireAccount()

@@ -2,7 +2,7 @@
 import { webcrypto } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import registry from '@/lib/bendystraw-operation-registry.json'
-import { bendystrawOperationId } from '@/lib/bendystraw-operation-id'
+import { bendystrawOperationId } from '@bananapus/nana-sdk-core/bendystraw-operations'
 import { resolvePersistedBendystrawRequest } from '@/lib/bendystraw-proxy'
 import { POST } from '@/app/api/bendystraw/[net]/query/route'
 
