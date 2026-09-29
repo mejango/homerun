@@ -32,6 +32,7 @@ import { fetchFundProjectMetadata, type FundProjectMetadata } from '@/lib/fund-p
 import { SiteIntegration } from './SiteIntegration'
 import { getProject } from '@/lib/bendystraw'
 import { PERSIST } from '@/lib/query-persist'
+import type { ProjectSeed } from '@/lib/project-seed'
 import { DemoStageHistory, PhaseCopy, ProjectOverviewView, ProjectPageShell, ProjectPhoto, ProjectRaiseStats } from '@/components/ProjectPage'
 import { liveFundPhase } from '@/lib/fund-phase'
 import { FundingProgress } from '@/components/FundingProgress'
@@ -56,7 +57,7 @@ function projectLogo(details: { logoUrl: string | null; coverUrl: string | null 
   const src = details?.logoUrl ?? details?.coverUrl
   return src ? <Image unoptimized src={src} width={112} height={112} alt={alt} /> : null
 }
-export function FundProject({ chainId, projectId, intentId }: { chainId: JBChainId; projectId: string; intentId?: string }) {
+export function FundProject({ chainId, projectId, intentId, seed }: { chainId: JBChainId; projectId: string; intentId?: string; seed?: ProjectSeed }) {
   const id = BigInt(projectId)
   const client = usePublicClient({ chainId }) as PublicClient | undefined
   const { address } = useWallet()
@@ -94,6 +95,7 @@ export function FundProject({ chainId, projectId, intentId }: { chainId: JBChain
     queryKey: ['indexed-project', chainId, Number(projectId)],
     enabled: Number.isSafeInteger(Number(projectId)),
     queryFn: () => getProject(chainId, Number(projectId)),
+    initialData: seed?.indexed ?? undefined,
     staleTime: 30_000,
     retry: 1,
     meta: PERSIST,
@@ -103,6 +105,8 @@ export function FundProject({ chainId, projectId, intentId }: { chainId: JBChain
     queryKey: ['fund-project-metadata', metadataUri],
     enabled: !!metadataUri,
     queryFn: () => fetchFundProjectMetadata(metadataUri!),
+    // The server read these details for this URI; the verified URI refetches if it differs.
+    initialData: metadataUri && metadataUri === seed?.indexed?.metadataUri ? seed.details ?? undefined : undefined,
     staleTime: 300_000,
     meta: PERSIST,
     retry: 1,
