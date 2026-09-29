@@ -1,13 +1,32 @@
+import { act, createElement } from 'react'
+import { createRoot } from 'react-dom/client'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+type FakeConnector = { id: string; name: string; getProvider?: () => Promise<unknown> }
+type Account = { connector?: FakeConnector }
+
 const runtime = vi.hoisted(() => ({
-  connector: { id: 'injected', name: 'Browser wallet' },
+  connector: undefined as FakeConnector | undefined,
+  onChange: undefined as ((account: Account) => void) | undefined,
+  unwatch: vi.fn(),
+  clients: new Map<number, unknown>(),
 }))
 
 vi.mock('wagmi/actions', () => ({
   getAccount: () => ({ connector: runtime.connector }),
+  getPublicClient: (_config: unknown, { chainId }: { chainId: number }) => runtime.clients.get(chainId),
+  watchAccount: (_config: unknown, { onChange }: { onChange: (account: Account) => void }) => {
+    runtime.onChange = onChange
+    return runtime.unwatch
+  },
 }))
+// The SDK's own wait runs; the spy records what the adapter hands it.
+vi.mock('@bananapus/nana-sdk-core/safe-service', async importOriginal => {
+  const sdk = await importOriginal<typeof import('@bananapus/nana-sdk-core/safe-service')>()
+  return { ...sdk, waitForSafeExecutionHash: vi.fn(sdk.waitForSafeExecutionHash) }
+})
 
+import { waitForSafeExecutionHash as sdkWait } from '@bananapus/nana-sdk-core/safe-service'
 import {
   isSafeConnection,
   SAFE_NONCE_GUIDANCE,
@@ -16,26 +35,114 @@ import {
   safeQueueUrl,
   safeServiceBase,
   swapDeadline,
+  useSafeConnection,
   waitForSafeExecutionHash,
+  watchSafeWalletPeer,
 } from '@/lib/safe-connector'
 
+const CONFIG = {} as never
 const SAFE = '0x1111111111111111111111111111111111111111' as const
 const PROPOSAL = `0x${'ab'.repeat(32)}` as const
 const EXECUTION = `0x${'cd'.repeat(32)}` as const
 
-describe('Safe connector transaction boundaries', () => {
-  beforeEach(() => {
-    runtime.connector = { id: 'injected', name: 'Browser wallet' }
+/** A WalletConnect connection whose session names `url` as the peer. */
+const walletConnect = (url: string): FakeConnector => ({
+  id: 'walletConnect',
+  name: 'WalletConnect',
+  getProvider: async () => ({ session: { peer: { metadata: { url } } } }),
+})
+/** Connects `connector` and lets the watcher read its session. */
+async function connect(connector: FakeConnector | undefined) {
+  runtime.connector = connector
+  await act(async () => {
+    runtime.onChange!({ connector })
+    await new Promise(resolve => setTimeout(resolve, 0))
+  })
+}
+
+beforeEach(() => {
+  runtime.clients.clear()
+  // Every test starts watching a disconnected wallet, with no peer recorded.
+  runtime.connector = undefined
+  watchSafeWalletPeer(CONFIG)
+})
+
+describe('Safe connection', () => {
+  it('does not take a wallet named like Safe for one', () => {
+    runtime.connector = { id: 'injected', name: 'SafePal' }
+    expect(isSafeConnection(CONFIG)).toBe(false)
+    runtime.connector = { id: 'app.safepal', name: 'SafePal Wallet' }
+    expect(isSafeConnection(CONFIG)).toBe(false)
   })
 
-  it('identifies Safe connectors and explains the authoritative nonce selector', () => {
+  it('is the Safe app connector', () => {
     runtime.connector = { id: 'safe', name: 'Safe' }
-    expect(isSafeConnection({} as never)).toBe(true)
+    expect(isSafeConnection(CONFIG)).toBe(true)
+  })
+
+  it('is Safe{Wallet} over WalletConnect, and no other peer', async () => {
+    await connect(walletConnect('https://app.safe.global'))
+    expect(isSafeConnection(CONFIG)).toBe(true)
+    await connect(walletConnect('https://www.safepal.com'))
+    expect(isSafeConnection(CONFIG)).toBe(false)
+    await connect(walletConnect('https://app.safe.global.example'))
+    expect(isSafeConnection(CONFIG)).toBe(false)
+  })
+
+  it('checks the connection once when it starts watching, and returns the unwatch', async () => {
+    runtime.connector = walletConnect('https://app.safe.global')
+    let unwatch!: () => void
+    await act(async () => {
+      unwatch = watchSafeWalletPeer(CONFIG)
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
+    expect(isSafeConnection(CONFIG)).toBe(true)
+    expect(unwatch).toBe(runtime.unwatch)
+  })
+
+  it('keeps Safe{Wallet} while it reads the session again after a chain switch', async () => {
+    await connect(walletConnect('https://app.safe.global'))
+    // Gas chosen during the read must still be the Safe's.
+    runtime.onChange!({ connector: { ...runtime.connector!, getProvider: () => new Promise(() => {}) } })
+    expect(isSafeConnection(CONFIG)).toBe(true)
+  })
+
+  it('keeps the newest answer when an earlier session read finishes later', async () => {
+    let finish!: (provider: unknown) => void
+    runtime.onChange!({
+      connector: { id: 'walletConnect', name: 'WalletConnect', getProvider: () => new Promise(resolve => { finish = resolve }) },
+    })
+    await connect(walletConnect('https://www.safepal.com'))
+    finish({ session: { peer: { metadata: { url: 'https://app.safe.global' } } } })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+    expect(isSafeConnection(CONFIG)).toBe(false)
+  })
+
+  it('forgets Safe{Wallet} when a session cannot be read', async () => {
+    await connect(walletConnect('https://app.safe.global'))
+    await connect({ id: 'walletConnect', name: 'WalletConnect', getProvider: async () => { throw new Error('No session') } })
+    expect(isSafeConnection(CONFIG)).toBe(false)
+  })
+
+  it('renders again once Safe{Wallet} is recognized', async () => {
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    const Probe = () => String(useSafeConnection(CONFIG))
+    await act(async () => root.render(createElement(Probe)))
+    expect(host.textContent).toBe('false')
+    await connect(walletConnect('https://app.safe.global'))
+    expect(host.textContent).toBe('true')
+    await act(async () => root.unmount())
+  })
+
+  it('explains the authoritative nonce selector and links the Safe queue', () => {
     expect(SAFE_NONCE_GUIDANCE).toMatch(/next available/i)
     expect(SAFE_NONCE_GUIDANCE).toMatch(/queued nonces/i)
     expect(safeQueueUrl(8453, SAFE)).toContain(`safe=base:${SAFE}`)
   })
+})
 
+describe('Safe connector transaction boundaries', () => {
   it('gives swaps a 20-minute deadline for EOAs and 30 days for Safe signature collection', () => {
     const nowMs = 1_700_000_000_000
     const nowSec = 1_700_000_000
@@ -44,6 +151,26 @@ describe('Safe connector transaction boundaries', () => {
     // Safe: co-signer collection routinely outlives 20 minutes — match the
     // 30-day Permit2 windows so the executed swap doesn't revert on deadline.
     expect(swapDeadline(true, nowMs)).toBe(BigInt(nowSec + 30 * 24 * 60 * 60))
+  })
+
+  it('reads the chain through the watched config, so an execution hash resolves without the service', async () => {
+    const client = { getTransaction: vi.fn(async () => ({ hash: EXECUTION })) }
+    runtime.clients.set(8453, client)
+    await expect(
+      waitForSafeExecutionHash(8453, EXECUTION, { pollingIntervalMs: 1 }),
+    ).resolves.toBe(EXECUTION)
+    expect(sdkWait).toHaveBeenCalledWith(8453, EXECUTION, { pollingIntervalMs: 1, client })
+    expect(client.getTransaction).toHaveBeenCalledWith({ hash: EXECUTION })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('lets an explicit client win over the watched config', async () => {
+    const watchedClient = { getTransaction: vi.fn() }
+    runtime.clients.set(8453, watchedClient)
+    const client = { getTransaction: vi.fn(async () => ({ hash: EXECUTION })) }
+    await expect(waitForSafeExecutionHash(8453, EXECUTION, { client })).resolves.toBe(EXECUTION)
+    expect(sdkWait).toHaveBeenCalledWith(8453, EXECUTION, { client })
+    expect(watchedClient.getTransaction).not.toHaveBeenCalled()
   })
 
   it('resolves a proposal identifier to the mined execution hash before receipt polling', async () => {

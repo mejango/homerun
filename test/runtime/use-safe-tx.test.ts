@@ -42,6 +42,7 @@ vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@/lib/safe-connector', () => ({
   isSafeConnection: () => mocks.safeConnection,
   SAFE_NONCE_GUIDANCE: 'Safe nonce guidance',
+  useSafeConnection: () => mocks.safeConnection,
   waitForSafeExecutionHash: mocks.waitForSafeExecutionHash,
 }))
 
@@ -431,6 +432,7 @@ describe('useSafeTx', () => {
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     )
     expect(hook.ref.current).toMatchObject({
+      isSafe: true,
       hash: EXECUTION_HASH,
       safeProposalHash: null,
       safeNonceGuidance: null,
