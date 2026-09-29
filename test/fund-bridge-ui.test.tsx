@@ -1,3 +1,4 @@
+import './dialog-shim'
 import { act, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
@@ -13,13 +14,17 @@ const runtime = vi.hoisted(() => ({
   mounted: 0, unmounted: 0,
   enabled: [] as boolean[],
   cache: { invalidateQueries: vi.fn() },
+  idle: false,
+  quote: undefined as unknown,
 }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address, isConnected: !!runtime.address }) }))
 vi.mock('@/hooks/useSafeTx', () => ({
   txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,
   useSafeTx: () => {
     useEffect(() => { runtime.mounted++; return () => { runtime.unmounted++ } }, [])
-    return { phase: 'pending', busy: true, error: null, hash: null, safeProposalHash: null, receipt: null, isSafe: false, send: vi.fn(), reset: vi.fn() }
+    return runtime.idle
+      ? { phase: 'idle', busy: false, error: null, hash: null, safeProposalHash: null, receipt: null, isSafe: false, send: vi.fn(), reset: vi.fn() }
+      : { phase: 'pending', busy: true, error: null, hash: null, safeProposalHash: null, receipt: null, isSafe: false, send: vi.fn(), reset: vi.fn() }
   },
 }))
 vi.mock('@tanstack/react-query', () => ({
@@ -30,6 +35,7 @@ vi.mock('@tanstack/react-query', () => ({
       return { data: options.enabled && runtime.routeAvailable ? runtime.route : undefined, isError: runtime.routeError, isFetching: false, error: new Error('Route unavailable'), refetch: vi.fn() }
     }
     if (options.queryKey[1] === 'movements') return { data: runtime.historyError ? undefined : { route: runtime.route, movements: [] }, isError: runtime.historyError, error: new Error('Missing destination root proof'), isPending: false, isFetching: false, refetch: vi.fn() }
+    if (options.queryKey[1] === 'quote') return { data: runtime.quote, isError: false, isFetching: false }
     return { data: undefined, isError: false, isFetching: false }
   },
 }))
@@ -48,6 +54,7 @@ beforeEach(() => {
   runtime.address = '0x1111111111111111111111111111111111111111'
   runtime.route = makeRoute(); runtime.routeAvailable = true; runtime.routeError = false; runtime.historyError = false
   runtime.mounted = 0; runtime.unmounted = 0; runtime.enabled = []
+  runtime.idle = false; runtime.quote = undefined
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
 afterEach(async () => { await act(async () => { root.unmount() }); host.remove() })
@@ -83,3 +90,26 @@ it('keeps receipt tracking mounted when refreshed route verification fails', asy
   expect(runtime.unmounted).toBe(0)
   expect(host.querySelector('fieldset')?.disabled).toBe(true)
 })
+
+it('reviews a move in the confirm dialog, listing its approval before any prompt', async () => {
+  runtime.idle = true
+  const route = makeRoute()
+  runtime.route = { ...route, canPrepare: true, prepareIssue: undefined, source: { ...route.source, erc20Balance: 10n * 10n ** 18n } } as unknown as FundBridgeRoute
+  runtime.quote = { allowance: 0n, minTokensReclaimed: 5_000_000n, netReclaimAmount: 5_100_000n }
+  await render()
+  const input = [...host.querySelectorAll('label')].find(label => label.textContent?.startsWith('FUND to move'))!.querySelector('input')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '2')
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Review move')!.click())
+  const dialog = host.querySelector('[data-tx-confirm]')!
+  expect(dialog.textContent).toContain('Move FUND to Optimism')
+  expect(dialog.textContent).toContain('2 FUND')
+  expect(dialog.textContent).toContain('Backing at least5 USDC')
+  expect([...dialog.querySelectorAll('li[data-state]')].map(step => step.textContent)).toEqual([
+    expect.stringContaining('Approve FUND'), expect.stringContaining('Prepare the move'),
+  ])
+  expect([...dialog.querySelectorAll('button')].some(button => button.textContent === 'Approve FUND')).toBe(true)
+})
+

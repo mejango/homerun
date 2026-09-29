@@ -13,10 +13,10 @@ import {
 import { USDC_ADDRESSES, type JBChainId } from "@bananapus/nana-sdk-core";
 import {
   useSafeTx,
-  txPhaseLabel,
   type TxRequest,
   type TxSendOptions,
 } from "@/hooks/useSafeTx";
+import { TxConfirmDialog } from "@/components/ui/TxConfirmDialog";
 import { useWallet } from "@/hooks/useWallet";
 import {
   displayChainName,
@@ -432,6 +432,8 @@ function BridgePreparation<State extends BridgeProjectState>({
   const [amount, setAmount] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [preparing, setPreparing] = useState(false);
+  // The confirm dialog, with the steps it opened with (an approval confirming mid-flow keeps its row).
+  const [review, setReview] = useState<{ needsApproval: boolean } | null>(null);
   const preparationLock = useRef(false);
   const approval = useBridgeTransaction(route.source.chainId);
   const tx = useBridgeTransaction(route.source.chainId);
@@ -658,25 +660,101 @@ function BridgePreparation<State extends BridgeProjectState>({
           !isAddress(beneficiary) ||
           isAddressEqual(beneficiary as Address, zeroAddress)
         }
-        onClick={() => void submit()}
+        onClick={() => {
+          setError(null);
+          setReview({
+            needsApproval: !!quote.data && quote.data.allowance < count,
+          });
+        }}
       >
-        {preparing
-          ? "Preparing…"
-          : txPhaseLabel(approval.locked ? approval.phase : tx.phase, {
-              idle:
-                quote.data && quote.data.allowance < count
-                  ? `Review ${adapter.tokenLabel} approval`
-                  : "Review bridge preparation",
-              pending: "Confirming onchain…",
-            })}
+        Review move
       </button>
-      {error && (
+      {error && !review && (
         <p className="mt-4 text-sm" role="alert">
           {error}
         </p>
       )}
-      <BridgeStatus tx={approval} chainId={route.source.chainId} />
-      <BridgeStatus tx={tx} chainId={route.source.chainId} />
+      {!review && (
+        <>
+          <BridgeStatus tx={approval} chainId={route.source.chainId} />
+          <BridgeStatus tx={tx} chainId={route.source.chainId} />
+        </>
+      )}
+      <TxConfirmDialog
+        open={!!review}
+        eyebrow="Move between chains"
+        title={
+          tx.verified === "prepared"
+            ? "Move prepared"
+            : `Move ${adapter.tokenLabel} to ${displayChainName(route.destination.chainId)}`
+        }
+        rows={[
+          {
+            label: "Move",
+            value: `${formatUnits(count, 18)} ${adapter.tokenLabel}`,
+            strong: true,
+          },
+          {
+            label: "From",
+            value: `${displayChainName(route.source.chainId)} project ${route.source.projectId.toString()}`,
+          },
+          {
+            label: "To",
+            value: `${displayChainName(route.destination.chainId)} project ${route.destination.projectId.toString()}`,
+          },
+          ...(quote.data
+            ? [
+                {
+                  label: "Backing at least",
+                  value: `${formatUnits(quote.data.minTokensReclaimed, route.sourceContext.decimals)} ${route.sourceContext.symbol}`,
+                  strong: true,
+                },
+              ]
+            : []),
+          ...(address
+            ? [{ label: "Beneficiary", value: address, mono: true }]
+            : []),
+        ]}
+        steps={[
+          ...(review?.needsApproval
+            ? [
+                {
+                  key: "approve",
+                  title: `Approve ${adapter.tokenLabel}`,
+                  detail:
+                    "Lets the registered bridge move exactly this amount.",
+                },
+              ]
+            : []),
+          {
+            key: "prepare",
+            title: "Prepare the move",
+            detail:
+              "Relaying it and claiming on the destination follow as separate transactions below.",
+          },
+        ]}
+        activeIndex={
+          review?.needsApproval && approval.verified !== "approved"
+            ? 0
+            : review?.needsApproval
+              ? 1
+              : 0
+        }
+        action={
+          review?.needsApproval && approval.verified !== "approved"
+            ? `Approve ${adapter.tokenLabel}`
+            : "Confirm & prepare"
+        }
+        actionDisabled={!quote.data || count <= 0n}
+        onConfirm={() => void submit()}
+        busy={busy && !approval.safeProposalHash && !tx.safeProposalHash}
+        complete={tx.verified === "prepared"}
+        error={error}
+        onClose={() => setReview(null)}
+      >
+        <BridgeStatus tx={approval} chainId={route.source.chainId} />
+        <BridgeStatus tx={tx} chainId={route.source.chainId} />
+      </TxConfirmDialog>
     </div>
   );
 }
