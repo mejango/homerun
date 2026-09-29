@@ -19,6 +19,7 @@ import {
 } from '@/lib/fund-intent'
 import { holdDeployment, loadHeldDeployments, releaseDeployment } from '@/lib/relay-held'
 import { requireTransactionReview, TransactionReviewCancelledError } from '@/lib/transaction-review'
+import { isSafeConnection } from '@/lib/safe-connector'
 import { displayChainName } from '@/lib/chainDisplay'
 import { ChainIcon } from '@/components/ChainIcon'
 import { projectPath } from '@/lib/urn'
@@ -37,6 +38,7 @@ const DEPLOY_UNAVAILABLE = 'This deploy could not start right now. Try again sho
 const DEPLOY_FAILED = 'This project could not be deployed. Try again in a few minutes.'
 const CONNECT_MESSAGE = 'Connect a wallet to deploy the networks you pay for.'
 const WALLET_MESSAGE = 'The wallet did not send the transaction.'
+const SAFE_MESSAGE = 'Deploying from a Safe isn’t supported here. Connect an ordinary wallet to deploy these networks.'
 const OVER_FEE_MESSAGE = 'The deploy asked for more than the creation fee.'
 const NO_CLIENT_MESSAGE = 'No network connection is configured for this chain.'
 const reverted = (chainId: number) => `The transaction reverted on ${displayChainName(chainId)}.`
@@ -52,7 +54,7 @@ function fixedSentence(cause: unknown, chainIds: readonly number[]): string {
   if (cause instanceof TransactionReviewCancelledError) return cause.message
   if (cause instanceof JBCenterRequestError || !(cause instanceof Error)) return DEPLOY_UNAVAILABLE
   const own = new Set<string>([
-    CONNECT_MESSAGE, WALLET_MESSAGE, OVER_FEE_MESSAGE, NO_CLIENT_MESSAGE,
+    CONNECT_MESSAGE, WALLET_MESSAGE, SAFE_MESSAGE, OVER_FEE_MESSAGE, NO_CLIENT_MESSAGE,
     RELAY_UNREADABLE_MESSAGE, RELAY_EXPIRED_MESSAGE, SAFES_UNREADABLE_MESSAGE, NO_LAUNCH_MESSAGE,
     ...chainIds.map(reverted),
   ])
@@ -134,6 +136,8 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
     const forwarded = checkRelayRequest(intent, request)
     const account = getAccount(wagmiConfig).address
     if (!account) throw new Error(CONNECT_MESSAGE)
+    // A Safe proposes rather than sends, and a Safe app cannot switch chains.
+    if (isSafeConnection(wagmiConfig)) throw new Error(SAFE_MESSAGE)
     const client = getPublicClient(wagmiConfig, { chainId: request.chainId as JBChainId })
     if (!client) throw new Error(NO_CLIENT_MESSAGE)
     const fee = await client.readContract({

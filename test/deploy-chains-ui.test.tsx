@@ -20,6 +20,7 @@ const runtime = vi.hoisted(() => ({
   review: vi.fn(), send: vi.fn(), switchChain: vi.fn(), receipt: vi.fn(), gasPrice: vi.fn(),
   readContract: vi.fn(), getCode: vi.fn(),
   address: '0x1111111111111111111111111111111111111111' as string | undefined, openSignIn: vi.fn(),
+  safe: false,
 }))
 vi.mock('@/lib/jbcenter-client', () => ({ jbCenterClient: {
   getIntent: runtime.getIntent, requestDeploy: runtime.requestDeploy,
@@ -27,6 +28,9 @@ vi.mock('@/lib/jbcenter-client', () => ({ jbCenterClient: {
 } }))
 vi.mock('@/lib/transaction-review', async importOriginal => ({
   ...await importOriginal<typeof import('@/lib/transaction-review')>(), requireTransactionReview: runtime.review,
+}))
+vi.mock('@/lib/safe-connector', async importOriginal => ({
+  ...await importOriginal<typeof import('@/lib/safe-connector')>(), isSafeConnection: () => runtime.safe,
 }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address, openSignIn: runtime.openSignIn }) }))
@@ -287,6 +291,22 @@ describe('choosing the chains a published project is deployed on', () => {
     await settle()
     expect(runtime.send).not.toHaveBeenCalled()
     expect(alert()).toBe('Review closed. Nothing was sent.')
+  })
+
+  it('refuses a Safe before switching chains or reviewing anything', async () => {
+    runtime.safe = true
+    try {
+      await render(intent([1]))
+      await act(async () => { rowFor(1)!.click() })
+      await act(async () => { button('Deploy selected')!.click() })
+      await settle()
+      expect(runtime.switchChain).not.toHaveBeenCalled()
+      expect(runtime.review).not.toHaveBeenCalled()
+      expect(runtime.send).not.toHaveBeenCalled()
+      expect(alert()).toBe('Deploying from a Safe isn’t supported here. Connect an ordinary wallet to deploy these networks.')
+    } finally {
+      runtime.safe = false
+    }
   })
 
   it('says the transaction reverted on the chain it was sent to', async () => {
