@@ -240,25 +240,23 @@ describe('shared project layout', () => {
     expect(selected('Project sections')).toBe('Stages')
   })
 
-  it('opens management deep links after project controls load and keeps pending work mounted', async () => {
-    window.history.replaceState(window.history.state, '', '#owners/permissions')
-    await render()
-    expect(selected('Ownership sections')).toBe('Accounts')
-    await render({ owners: <OwnersTabs accountsYou={<Panel name="you" />} accountsAll={<Panel name="all" />} settlement={null} splits={<Panel name="splits" />} loans={null} control={<Panel name="control" />} permissions={<Panel name="permissions" />} /> })
-    expect(selected('Ownership sections')).toBe('Permissions')
-    const draft = input('permissions')!
-    draft.value = 'reviewed permission changes'
-    await click('Ownership sections', 'Control')
-    expect(window.location.hash).toBe('#owners/control')
-    await act(async () => window.dispatchEvent(new Event('receipt:permissions')))
+  it('opens owner deep links and keeps pending work mounted across tabs', async () => {
+    window.history.replaceState(window.history.state, '', '#owners/splits')
+    await render({ owners: <OwnersTabs accountsYou={<Panel name="you" />} accountsAll={<Panel name="all" />} settlement={null} splits={<Panel name="splits" />} loans={<Panel name="loans" />} /> })
+    expect(selected('Ownership sections')).toBe('Splits')
+    const draft = input('splits')!
+    draft.value = 'reviewed split changes'
+    await click('Ownership sections', 'Loans')
+    expect(window.location.hash).toBe('#owners/loans')
+    await act(async () => window.dispatchEvent(new Event('receipt:splits')))
     await click('Project sections', 'Overview')
     await click('Project sections', 'Owners')
-    await click('Ownership sections', 'Permissions')
-    expect(input('permissions')).toBe(draft)
-    expect(draft.value).toBe('reviewed permission changes')
-    expect(host.querySelector('[aria-label="permissions receipt"]')?.textContent).toBe('confirmed')
-    expect(unmounts.permissions ?? 0).toBe(0)
-    expect(window.location.hash).toBe('#owners/permissions')
+    await click('Ownership sections', 'Splits')
+    expect(input('splits')).toBe(draft)
+    expect(draft.value).toBe('reviewed split changes')
+    expect(host.querySelector('[aria-label="splits receipt"]')?.textContent).toBe('confirmed')
+    expect(unmounts.splits ?? 0).toBe(0)
+    expect(window.location.hash).toBe('#owners/splits')
   })
 
   it('uses roving focus with arrows, Home and End and valid panel relationships', async () => {

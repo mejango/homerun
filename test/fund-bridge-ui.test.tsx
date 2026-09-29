@@ -44,7 +44,6 @@ function makeRoute(): FundBridgeRoute {
   return { source, destination, sourceSucker: '0x2222222222222222222222222222222222222222', destinationSucker: '0x3333333333333333333333333333333333333333', sourceToken: '0x4444444444444444444444444444444444444444', destinationToken: '0x5555555555555555555555555555555555555555', sourceContext: { symbol: 'USDC', decimals: 6 }, destinationContext: { symbol: 'USDC', decimals: 6 }, canPrepare: false, prepareIssue: 'Claim FUND credits as ERC20 tokens before bridging.', transport: 'ccip', baseFee: 1n } as unknown as FundBridgeRoute
 }
 async function render() { await act(async () => { root.render(<FundBridgeActions state={runtime.route!.source} />) }) }
-async function expand() { await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-expanded]')!.click() }) }
 beforeEach(() => {
   runtime.address = '0x1111111111111111111111111111111111111111'
   runtime.route = makeRoute(); runtime.routeAvailable = true; runtime.routeError = false; runtime.historyError = false
@@ -53,19 +52,13 @@ beforeEach(() => {
 })
 afterEach(async () => { await act(async () => { root.unmount() }); host.remove() })
 
-it('defers bridge reads until expanded and preserves pending trackers when collapsed', async () => {
+it('reads the route and mounts trackers as soon as the section renders', async () => {
   await render()
-  expect(runtime.enabled.every(value => !value)).toBe(true)
-  expect(runtime.mounted).toBe(0)
-  await expand()
   expect(runtime.enabled.at(-1)).toBe(true)
   expect(runtime.mounted).toBe(6)
-  await expand()
-  expect(runtime.unmounted).toBe(0)
-  expect(host.querySelector('button[aria-expanded]')?.getAttribute('aria-expanded')).toBe('false')
 })
 it('keeps submitted trackers through a wallet switch and disables incompatible new actions', async () => {
-  await render(); await expand()
+  await render()
   const mounted = runtime.mounted
   runtime.address = '0x9999999999999999999999999999999999999999'; runtime.routeAvailable = false
   await render()
@@ -76,13 +69,13 @@ it('keeps submitted trackers through a wallet switch and disables incompatible n
 })
 it('shows proof failure and the canonical project fallback without claim or relay controls', async () => {
   runtime.historyError = true
-  await render(); await expand()
+  await render()
   expect(host.textContent).toContain('Claims remain unavailable until the destination proof can be verified')
   expect([...host.querySelectorAll('button')].some(button => /Review destination claim|Review relay fee/.test(button.textContent ?? ''))).toBe(false)
   expect(host.querySelector<HTMLAnchorElement>('a[href="https://juicebox.money/base:17"]')).not.toBeNull()
 })
 it('keeps receipt tracking mounted when refreshed route verification fails', async () => {
-  await render(); await expand()
+  await render()
   const mounted = runtime.mounted
   runtime.routeAvailable = false; runtime.routeError = true
   await render()

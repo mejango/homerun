@@ -7,8 +7,6 @@ export type FundTokenTerms = {
   fundHolderSplitPercent: number | null
 }
 
-const share = (value: number | null) => value === null ? 'not specified' : `${value}%`
-
 /**
  * The FUND token and the terms its holders start with. One block, on the Owners
  * tab, on the live project page and on the preview and intent pages alike.
@@ -23,10 +21,10 @@ export function FundTokenTermsSection({ terms }: { terms: FundTokenTerms }) {
       <div><dt>Token name</dt><dd>{tokenName ?? 'Not specified'}</dd></div>
       <div><dt>Ticker</dt><dd>{tokenSymbol ?? 'Not specified'}</dd></div>
     </dl>}
-    <h3>Starting token terms</h3>
-    <p>The initial 500,000 INCOME is allocated to all FUND holders at the published snapshot, including inactive ERC20 balances and unclaimed token credits. Claiming that allocation requires no activation, staking or vesting. Ongoing FUND rewards are separate and require eligible Sticky staking.</p>
-    <p>Planned Owner FUND share: {share(ownerFundPercent)}. The Owner may distribute these FUND tokens at their discretion. Current balances and supply determine actual ownership.</p>
-    {allocated && <p>Planned new INCOME allocation: {operatorSplitPercent}% operators / {fundHolderSplitPercent}% eligible FUND stakers / {100 - operatorSplitPercent - fundHolderSplitPercent}% customers.</p>}
-    <p>Borrowing or cashing out INCOME does not sell FUND. Neither token has a promised repayment date.</p>
+    <ul className="demo-token-terms">
+      {ownerFundPercent !== null && <li>The owner receives {ownerFundPercent}% of FUND once the asset is bought.</li>}
+      <li>When INCOME launches, 500,000 INCOME is split across FUND holders.</li>
+      {allocated && <li>New INCOME goes {operatorSplitPercent}% to operators, {fundHolderSplitPercent}% to FUND stakers and {100 - operatorSplitPercent - fundHolderSplitPercent}% to customers.</li>}
+    </ul>
   </section>
 }

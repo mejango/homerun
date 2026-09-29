@@ -261,15 +261,11 @@ export type ProjectBridgeAdapter<State extends BridgeProjectState> = {
 export function ProjectBridgeActions<State extends BridgeProjectState>({
   state,
   adapter,
-  initiallyExpanded = false,
 }: {
   state: State;
   adapter: ProjectBridgeAdapter<State>;
-  initiallyExpanded?: boolean;
 }) {
   const { address } = useWallet();
-  const [expanded, setExpanded] = useState(initiallyExpanded);
-  const [activated, setActivated] = useState(initiallyExpanded);
   const [destination, setDestination] = useState<number>(
     state.linkedPeers[0]?.chainId ?? 0,
   );
@@ -299,7 +295,7 @@ export function ProjectBridgeActions<State extends BridgeProjectState>({
       backingToken ?? null,
       address ?? null,
     ],
-    enabled: activated && expanded && destination > 0,
+    enabled: destination > 0,
     queryFn: () =>
       adapter.readRoute(
         clientFor,
@@ -319,121 +315,107 @@ export function ProjectBridgeActions<State extends BridgeProjectState>({
     : !address;
   const writesUnavailable = route.isError || !route.data || !accountMatches;
   const locked = Object.values(locks).some(Boolean);
+  if (!state.linkedPeers.length)
+    return (
+      <section className="demo-section">
+        <h2>Move {adapter.tokenLabel} between chains</h2>
+        <p>
+          This project is only on {displayChainName(state.chainId)} so far. Once
+          it launches on another chain, you can move {adapter.tokenLabel} there
+          from here.
+        </p>
+      </section>
+    );
   return (
     <section className="demo-section">
-      <h2>
-        <button
-          type="button"
-          className="flex w-full cursor-pointer items-center justify-between gap-4 border-0 bg-transparent p-0 text-left text-inherit [font:inherit] disabled:cursor-default disabled:bg-transparent"
-          aria-expanded={expanded}
-          onClick={() => {
-            setActivated(true);
-            setExpanded((value) => !value);
-          }}
-        >
-          <span>Move {adapter.tokenLabel} between chains</span>
-          <span aria-hidden="true" className="text-xl text-[var(--muted)]">
-            {expanded ? "−" : "+"}
-          </span>
-        </button>
-      </h2>
-      <div hidden={!expanded}>
+      <h2>Move {adapter.tokenLabel} between chains</h2>
+      <div>
         <p className="mb-5">{adapter.description}</p>
-        {!state.linkedPeers.length ? (
-          <p className="text-sm text-[var(--muted)]">
-            This project has no verified linked chains.
-          </p>
-        ) : (
-          <>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className="grid gap-2 text-sm">
-                Other chain
-                <select
-                  className="min-h-11 w-full rounded border border-[#bfc9b5] bg-white px-3 pr-10 text-base"
-                  disabled={locked}
-                  value={destination}
-                  onChange={(event) =>
-                    setDestination(Number(event.target.value))
-                  }
-                >
-                  {state.linkedPeers.map((peer) => (
-                    <option key={peer.chainId} value={peer.chainId}>
-                      {displayChainName(peer.chainId)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {state.accountingContexts?.length > 1 && (
-                <label className="grid gap-2 text-sm">
-                  Treasury backing
-                  <select
-                    className="min-h-11 w-full rounded border border-[#bfc9b5] bg-white px-3 pr-10 text-base"
-                    disabled={locked}
-                    value={backingToken}
-                    onChange={(event) =>
-                      setBackingToken(event.target.value as Address)
-                    }
-                  >
-                    {state.accountingContexts.map((context) => (
-                      <option key={context.token} value={context.token}>
-                        {context.symbol}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-            </div>
-            {route.isFetching && (
-              <p className="mt-4 text-xs text-[var(--muted)]" role="status">
-                Verifying linked project IDs and bridge contracts…
-              </p>
-            )}
-            {route.isError && (
-              <p role="alert" className="mt-4 text-sm">
-                The bridge route could not be verified. {message(route.error)}{" "}
-                <button
-                  type="button"
-                  onClick={() => void route.refetch()}
-                  className="quiet-button"
-                >
-                  Try again
-                </button>
-              </p>
-            )}
-            {displayedRoute && (
-              <fieldset
-                disabled={writesUnavailable}
-                className="mt-6 grid min-w-0 gap-6 border-0 border-t border-[var(--line)] p-0 pt-6"
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="grid gap-2 text-sm">
+            Other chain
+            <select
+              className="min-h-11 w-full rounded border border-[#bfc9b5] bg-white px-3 pr-10 text-base"
+              disabled={locked}
+              value={destination}
+              onChange={(event) => setDestination(Number(event.target.value))}
+            >
+              {state.linkedPeers.map((peer) => (
+                <option key={peer.chainId} value={peer.chainId}>
+                  {displayChainName(peer.chainId)}
+                </option>
+              ))}
+            </select>
+          </label>
+          {state.accountingContexts?.length > 1 && (
+            <label className="grid gap-2 text-sm">
+              Treasury backing
+              <select
+                className="min-h-11 w-full rounded border border-[#bfc9b5] bg-white px-3 pr-10 text-base"
+                disabled={locked}
+                value={backingToken}
+                onChange={(event) =>
+                  setBackingToken(event.target.value as Address)
+                }
               >
-                {writesUnavailable && (
-                  <p className="text-xs text-[var(--muted)]">
-                    New moves are paused while this wallet’s route is verified.
-                    Submitted transactions stay tracked.
-                  </p>
-                )}
-                <BridgePreparation
-                  key={`prepare:${displayedRoute.destination.chainId}:${displayedRoute.sourceToken}`}
-                  route={displayedRoute}
-                  adapter={adapter}
-                  setLock={setLock}
-                />
-                <BridgeMovements
-                  key={`outgoing:${displayedRoute.destination.chainId}:${displayedRoute.sourceToken}`}
-                  route={displayedRoute}
-                  adapter={adapter}
-                  incoming={false}
-                  setLock={setLock}
-                />
-                <BridgeMovements
-                  key={`incoming:${displayedRoute.destination.chainId}:${displayedRoute.sourceToken}`}
-                  route={displayedRoute}
-                  adapter={adapter}
-                  incoming
-                  setLock={setLock}
-                />
-              </fieldset>
+                {state.accountingContexts.map((context) => (
+                  <option key={context.token} value={context.token}>
+                    {context.symbol}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
+        {route.isFetching && (
+          <p className="mt-4 text-xs text-[var(--muted)]" role="status">
+            Verifying linked project IDs and bridge contracts…
+          </p>
+        )}
+        {route.isError && (
+          <p role="alert" className="mt-4 text-sm">
+            The bridge route could not be verified. {message(route.error)}{" "}
+            <button
+              type="button"
+              onClick={() => void route.refetch()}
+              className="quiet-button"
+            >
+              Try again
+            </button>
+          </p>
+        )}
+        {displayedRoute && (
+          <fieldset
+            disabled={writesUnavailable}
+            className="mt-6 grid min-w-0 gap-6 border-0 border-t border-[var(--line)] p-0 pt-6"
+          >
+            {writesUnavailable && (
+              <p className="text-xs text-[var(--muted)]">
+                New moves are paused while this wallet’s route is verified.
+                Submitted transactions stay tracked.
+              </p>
             )}
-          </>
+            <BridgePreparation
+              key={`prepare:${displayedRoute.destination.chainId}:${displayedRoute.sourceToken}`}
+              route={displayedRoute}
+              adapter={adapter}
+              setLock={setLock}
+            />
+            <BridgeMovements
+              key={`outgoing:${displayedRoute.destination.chainId}:${displayedRoute.sourceToken}`}
+              route={displayedRoute}
+              adapter={adapter}
+              incoming={false}
+              setLock={setLock}
+            />
+            <BridgeMovements
+              key={`incoming:${displayedRoute.destination.chainId}:${displayedRoute.sourceToken}`}
+              route={displayedRoute}
+              adapter={adapter}
+              incoming
+              setLock={setLock}
+            />
+          </fieldset>
         )}
         <a
           href={referenceLink(state)}

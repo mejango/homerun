@@ -33,7 +33,7 @@ import { SiteIntegration } from './SiteIntegration'
 import { getProject } from '@/lib/bendystraw'
 import { PERSIST } from '@/lib/query-persist'
 import type { ProjectSeed } from '@/lib/project-seed'
-import { DemoStageHistory, PhaseCopy, ProjectOverviewView, ProjectPageShell, ProjectPhoto, ProjectRaiseStats } from '@/components/ProjectPage'
+import { DemoStageHistory, ProjectOverviewView, ProjectPageShell, ProjectPhoto, ProjectRaiseStats } from '@/components/ProjectPage'
 import { liveFundPhase } from '@/lib/fund-phase'
 import { FundingProgress } from '@/components/FundingProgress'
 import { Revalidating } from '@/components/ui/Revalidating'
@@ -154,6 +154,19 @@ function publishedPlan(details: FundProjectMetadata) {
   }
 }
 
+/** The whole system in four steps; the numbers are HomerunDeployer's fixed rules. */
+function HowHomerunWorks() {
+  return <section className="demo-section demo-how" aria-label="How Homerun works">
+    <h2>How Homerun works</h2>
+    <ol>
+      <li><h3>Raise</h3><p>Contributors the owner allows pay into the FUND treasury and receive 10,000 FUND per USD. During the raise, FUND cashes out for its share of the treasury, less a 10% tax.</p></li>
+      <li><h3>Buy</h3><p>If the raise succeeds, the owner buys the asset and mints 20% of FUND to themselves; contributors keep 80%. If it fails, contributors cash out what remains.</p></li>
+      <li><h3>Earn</h3><p>INCOME launches with 500,000 tokens split across FUND holders. Revenue is paid into INCOME. New INCOME starts at 10 per USD and falls 2% each quarter, and a reserved share goes to operators and FUND stakers. INCOME cashes out with a 10% tax, or backs loans.</p></li>
+      <li><h3>Sell</h3><p>When the asset sells, net proceeds go back into the FUND treasury and FUND holders cash out their share. INCOME stays separate.</p></li>
+    </ol>
+  </section>
+}
+
 function PlannedIncome({ plan }: { plan: NonNullable<ReturnType<typeof publishedPlan>> }) {
   const amount = (value: number | null) => value === null ? 'Not specified' : money(value)
   const rate = (value: number | null) => value === null ? 'Not specified' : `${value}%`
@@ -168,7 +181,7 @@ function PlannedIncome({ plan }: { plan: NonNullable<ReturnType<typeof published
   ]
   return <section className="demo-section demo-live-plan" aria-label="The project plan">
     <h2>The project plan</h2>
-    <p>Published estimates. They do not set contract permissions or confirm a purchase.</p>
+    <p className="demo-section-note">Published estimates. They do not set contract permissions or confirm a purchase.</p>
     <dl className="demo-live-rows">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
     {plan.revenueDescription && <><h3>Revenue plan</h3><p className="whitespace-pre-line">{plan.revenueDescription}</p></>}
     {plan.minimumRevenueConsequences && <><h3>If revenue falls below the minimum</h3><p className="whitespace-pre-line">{plan.minimumRevenueConsequences}</p></>}
@@ -204,7 +217,7 @@ function ProjectActions({ chainId, projectId, intentId, indexedOwner, state, cli
         profiles={details ? <><CurrentOwnerProfile chainId={chainId} owner={undefined} details={details} /><CurrentOperatorProfile chainId={chainId} incomeProjectId={income.projectId} fundDetails={details} bindingUnavailable={income.bindingUnavailable} /></> : <SkeletonLines lines={4} className="max-w-md" />}
       />}
       stages={pending}
-      owners={<OwnersTabs accountsYou={pending} accountsAll={pending} settlement={pending} splits={pending} loans={pending} control={pending} permissions={pending} />}
+      owners={<OwnersTabs accountsYou={pending} accountsAll={pending} settlement={pending} splits={pending} loans={pending} />}
       shop={pending} extras={pending} operators={pending}
     />
   }
@@ -242,7 +255,7 @@ function ProjectActions({ chainId, projectId, intentId, indexedOwner, state, cli
   const progress = context && <Revalidating as="div" pending={unconfirmed}>{dollars && goal
     ? <ProjectRaiseStats raised={raised} goal={goal} historical={live.phase !== 'raising'} goalLabel="Published goal" />
     : <div className="project-raise-stats"><dl><div><dt>FUND treasury</dt><dd><DisplayTokenAmount value={context.balance} decimals={context.decimals} /> {context.symbol}</dd></div><div><dt>FUND supply</dt><dd><DisplayTokenAmount value={state.totalSupply} /></dd></div></dl></div>}</Revalidating>
-  const emptyIncome = <ActionSection title="INCOME"><p>INCOME has not been verified for this project yet. Its launch and recovery controls are under Operators.</p></ActionSection>
+  const emptyIncome = <ActionSection title="INCOME"><p>INCOME splits show up here once INCOME launches.</p></ActionSection>
   return <HomerunProjectLayout
     title={name ?? 'FUND project'}
     location={details?.location}
@@ -273,16 +286,7 @@ function ProjectActions({ chainId, projectId, intentId, indexedOwner, state, cli
     />}
     stages={<div className="demo-stages">
       {live.phase && <DemoStageHistory p={null} phase={live.phase} />}
-      {live.phase && <div className="phase-panel"><PhaseCopy phase={live.phase} /></div>}
-      <section className="demo-section" aria-label="Rules">
-        <h2>Rules</h2>
-        <dl className="demo-live-rows">
-          <div><dt>Status</dt><dd>{live.status}</dd></div>
-          <div><dt>Current rules since</dt><dd>{new Date(Number(state.ruleset.start) * 1000).toLocaleString()}</dd></div>
-          <div><dt>Next change</dt><dd>{state.upcoming && state.upcoming.ruleset.id !== state.ruleset.id ? new Date(Number(state.upcoming.ruleset.start) * 1000).toLocaleString() : 'None scheduled'}</dd></div>
-        </dl>
-        <p>Rules change only by an onchain transaction. They do not confirm an offchain purchase or sale.</p>
-      </section>
+      <HowHomerunWorks />
       {plan && <PlannedIncome plan={plan} />}
       {income.stages}
     </div>}
@@ -315,13 +319,11 @@ function ProjectActions({ chainId, projectId, intentId, indexedOwner, state, cli
       accountsAll={<div className="demo-owner-sections"><ProjectParticipants chainId={state.chainId} projectId={state.projectId} tokenLabel="FUND" />{income.projectId && income.accountsAll}</div>}
       settlement={<div className="grid gap-7">{gate(<FundBridgeActions state={state} />)}{income.projectId && income.settlement}</div>}
       splits={<div className="grid gap-7">{publishedToken}<ProjectSplitsEditor chainId={chainId} projectId={projectId} phase="fund" client={client} unavailable={writesUnavailable} />{income.projectId ? income.splits : emptyIncome}</div>}
-      loans={income.projectId ? income.loans : <ActionSection title="Loans"><p>Loans use INCOME as collateral. They become available after a verified INCOME launch under its contract terms.</p></ActionSection>}
-      control={<div className="grid gap-7"><ProjectOwnershipEditor chainId={chainId} projectId={projectId} client={client} unavailable={writesUnavailable} />{income.projectId && income.control}</div>}
-      permissions={<div className="grid gap-7"><ProjectPermissionsEditor chainId={chainId} projectId={projectId} client={client} unavailable={writesUnavailable} />{income.projectId && income.permissions}</div>}
+      loans={income.projectId ? income.loans : <ActionSection title="Loans"><p>Once INCOME launches, you can borrow against it here.</p></ActionSection>}
     />}
     // The FUND shop keeps its tree position when INCOME appears, so it is never remounted.
     shop={<div className="demo-owner-sections"><section className="demo-section">{income.projectId && <h2>FUND shop</h2>}<ProjectShop chainId={state.chainId} projectId={state.projectId} tokenLabel="FUND" /></section>{income.projectId && <section className="demo-section"><h2>INCOME shop</h2>{income.shop}</section>}</div>}
     extras={<div className="grid gap-7"><ProjectPayerAddresses chainId={state.chainId} projectId={state.projectId} tokenLabel="FUND" />{income.extras}<ActionSection title="Contracts"><dl className="demo-live-rows"><div><dt>Network</dt><dd>{displayChainName(state.chainId)}</dd></div><div><dt>FUND project</dt><dd>#{state.projectId.toString()}</dd></div>{income.projectId && <div><dt>INCOME project</dt><dd>#{income.projectId.toString()}</dd></div>}<div><dt>Project owner</dt><dd>{state.owner}</dd></div><div><dt>Operator</dt><dd>{state.operator ?? 'Not verified'}</dd></div><div><dt>Controller</dt><dd>{state.controller}</dd></div>{state.tokenAddress && <div><dt>FUND ERC-20</dt><dd>{state.tokenAddress}</dd></div>}</dl></ActionSection><SiteIntegration configuration={{ mode: 'live-project', source: 'verified contract reads and published project metadata', chainId: state.chainId, fundProjectId: state.projectId.toString(), incomeProjectId: income.projectId?.toString() ?? null, project: { name: name ?? null, location: details?.location ?? null }, publishedPlan: plan ?? null }} /></div>}
-    operators={<div className="grid gap-7">{income.projectId ? income.operators : null}{gate(<ActionSection title="Operator actions">{!isOperator && <p className="mb-5">Connect a wallet with verified project permissions to manage this project. Contract permissions are checked again before every transaction.</p>}<fieldset disabled={!isOperator} className="min-w-0 border-0 p-0"><OperatorActions state={state} client={client} contextIndex={contextIndex} /></fieldset></ActionSection>)}<IncomeLaunch state={state} client={client} name={name} plannedAllocation={plan && plan.operatorSplitPercent !== null && plan.fundHolderSplitPercent !== null ? { reservedPercent: plan.operatorSplitPercent + plan.fundHolderSplitPercent } : undefined} launchUnavailable={blocked} embedExistingProject={false} /></div>}
+    operators={<div className="grid gap-7">{income.projectId ? income.operators : null}{gate(<ActionSection title="Operator actions">{!isOperator && <p className="mb-5">Connect a wallet with verified project permissions to manage this project. Contract permissions are checked again before every transaction.</p>}<fieldset disabled={!isOperator} className="min-w-0 border-0 p-0"><OperatorActions state={state} client={client} contextIndex={contextIndex} /></fieldset></ActionSection>)}<IncomeLaunch state={state} client={client} name={name} plannedAllocation={plan && plan.operatorSplitPercent !== null && plan.fundHolderSplitPercent !== null ? { reservedPercent: plan.operatorSplitPercent + plan.fundHolderSplitPercent } : undefined} launchUnavailable={blocked} embedExistingProject={false} /><ProjectOwnershipEditor chainId={chainId} projectId={projectId} client={client} unavailable={writesUnavailable} />{income.projectId && income.control}<ProjectPermissionsEditor chainId={chainId} projectId={projectId} client={client} unavailable={writesUnavailable} />{income.projectId && income.permissions}</div>}
   />
 }

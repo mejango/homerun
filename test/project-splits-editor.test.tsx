@@ -53,10 +53,10 @@ describe('project split editing', () => {
 
   it('shows the full reserved allocation and actual onchain Owner, with current and queued stages', async () => {
     await render()
-    expect(host.textContent).toContain('reserves 20%')
+    expect(host.textContent).toContain('20% of new INCOME goes to these recipients')
     expect(host.textContent).toContain('30%')
     expect(host.textContent).toContain('70%')
-    expect(host.textContent).toContain(v6Address('REVOwner', 1))
+    expect(host.textContent).not.toContain('The remaining')
     expect(host.querySelectorAll('select')[0].options).toHaveLength(2)
     expect(button('Edit recipients').disabled).toBe(false)
   })

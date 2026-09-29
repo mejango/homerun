@@ -232,13 +232,12 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     await tab('Splits')
     const token = host.querySelector('[aria-label="FUND token"]')!
     expect(token.closest('[role="tabpanel"]')?.id).toContain('panel-splits')
-    expect(token.textContent).toContain('Starting token terms')
-    expect(token.textContent).toContain('The initial 500,000 INCOME is allocated to all FUND holders')
-    expect(token.textContent).toContain('Planned Owner FUND share: 20%')
-    expect(token.textContent).toContain('Planned new INCOME allocation: 70% operators / 10% eligible FUND stakers / 20% customers')
+    expect(token.textContent).toContain('500,000 INCOME is split across FUND holders')
+    expect(token.textContent).toContain('The owner receives 20% of FUND')
+    expect(token.textContent).toContain('New INCOME goes 70% to operators, 10% to FUND stakers and 20% to customers')
     const stages = host.querySelector('[id$="-panel-stages"]')!
     expect(stages.textContent).toContain('The project plan')
-    for (const moved of ['Starting token terms', 'The initial 500,000 INCOME is allocated to all FUND holders', 'Planned Owner FUND share', 'Planned new INCOME allocation', 'Workshop Bench FUND', 'WKSHP']) {
+    for (const moved of ['500,000 INCOME is split across FUND holders', 'The owner receives', 'New INCOME goes', 'Workshop Bench FUND', 'WKSHP']) {
       expect(stages.textContent).not.toContain(moved)
     }
   })
@@ -372,16 +371,15 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     runtime.incomeId = 9n
     runtime.incomeQuery = { ...runtime.incomeQuery, data: incomeState() }
     await render()
-    await tab('Owners')
-    for (const [label, prefix] of [['Control', 'control'], ['Permissions', 'permissions'], ['Splits', 'splits']]) {
-      await tab(label)
+    for (const [tabs, prefix, panel] of [[['Operators'], 'control', 'operators'], [['Operators'], 'permissions', 'operators'], [['Owners', 'Splits'], 'splits', 'splits']] as const) {
+      for (const label of tabs) await tab(label)
       for (const projectId of ['7', '9']) {
         const editor = host.querySelector<HTMLButtonElement>(`[data-testid="${prefix}-${projectId}"]`)!
-        expect(editor, `Missing ${label} editor for project ${projectId}`).not.toBeNull()
+        expect(editor, `Missing ${prefix} editor for project ${projectId}`).not.toBeNull()
         expect(editor.dataset.chainId).toBe('1')
         expect(editor.dataset.projectId).toBe(projectId)
         expect(editor.closest<HTMLElement>('[role="tabpanel"]')?.hidden).toBe(false)
-        expect(editor.closest('[role="tabpanel"]')?.id).toMatch(new RegExp(`-panel-${prefix}$`))
+        expect(editor.closest('[role="tabpanel"]')?.id).toMatch(new RegExp(`-panel-${panel}$`))
         expect(editor.disabled).toBe(false)
       }
     }
@@ -392,9 +390,8 @@ describe('live FUND transaction tracking survives refreshed data', () => {
 
   it('shows FUND control and permissions without phantom INCOME management while no INCOME project exists', async () => {
     await render()
-    await tab('Owners')
-    for (const [label, prefix] of [['Control', 'control'], ['Permissions', 'permissions']]) {
-      await tab(label)
+    await tab('Operators')
+    for (const prefix of ['control', 'permissions']) {
       const editor = host.querySelector<HTMLButtonElement>(`[data-testid="${prefix}-7"]`)!
       expect(editor.disabled).toBe(false)
       expect(editor.closest<HTMLElement>('[role="tabpanel"]')?.hidden).toBe(false)
@@ -413,8 +410,7 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     runtime.incomeId = 9n
     runtime.incomeQuery = { ...runtime.incomeQuery, data: incomeState() }
     await render()
-    await tab('Owners')
-    for (const label of ['Control', 'Permissions', 'Splits']) await tab(label)
+    for (const label of ['Operators', 'Owners', 'Splits']) await tab(label)
     const fundEditors = ['metadata', 'control', 'permissions', 'splits'].map(prefix => host.querySelector<HTMLButtonElement>(`[data-testid="${prefix}-7"]`)!)
     const incomeEditors = ['metadata', 'control', 'permissions', 'splits'].map(prefix => host.querySelector<HTMLButtonElement>(`[data-testid="${prefix}-9"]`)!)
     runtime.query = { ...runtime.query, isError: true, error: new Error('FUND RPC unavailable') }
@@ -525,8 +521,8 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     runtime.phase = 'idle'
     runtime.query = { ...runtime.query, data: { ...state(), allowlist: { hook: '0x4545454545454545454545454545454545454545', open: false, accountAllowed: false } } }
     await render()
-    expect(host.textContent).toContain('Your wallet is not on this FUND’s allowlist')
-    expect(host.textContent).not.toContain('Pay on Ethereum')
+    expect(host.textContent).toContain('This wallet is not on the allowlist.')
+    expect([...host.querySelectorAll('button')].find(button => button.textContent === 'Pay on Ethereum')!.disabled).toBe(true)
     await tab('Operators')
     const section = host.querySelector('[aria-label="Payment allowlist"]')!
     expect(section.textContent).toContain('Closed: only allowed wallets can receive FUND')
@@ -567,10 +563,10 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     runtime.phase = 'idle'
     runtime.query = { ...runtime.query, data: { ...state(), allowlist: { hook: '0x4545454545454545454545454545454545454545', open: false, accountAllowed: true } } }
     await render()
-    expect(host.textContent).not.toContain('not on this FUND’s allowlist')
+    expect(host.textContent).not.toContain('not on the allowlist')
     runtime.query = { ...runtime.query, data: { ...state(), allowlist: { hook: '0x4545454545454545454545454545454545454545', open: true, accountAllowed: false } } }
     await render()
-    expect(host.textContent).not.toContain('not on this FUND’s allowlist')
+    expect(host.textContent).not.toContain('not on the allowlist')
     await tab('Operators')
     expect(host.querySelector('[aria-label="Payment allowlist"]')?.textContent).toContain('Open: anyone can contribute')
   })

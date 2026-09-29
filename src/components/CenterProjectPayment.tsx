@@ -23,8 +23,8 @@ const statuses = {
   cancelled: 'The payment review was cancelled.', unknown: 'The payment outcome is not confirmed. Check its status before making another payment.',
   expired: 'The payment expired before it was included onchain. Nothing was charged; you can pay again.',
 }
-export default function CenterProjectPayment({ chainId, projectId, tokenLabel, title, paused, verify, chainSelector, onBusyChange }: {
-  chainId: JBChainId; projectId: bigint; tokenLabel: 'FUND' | 'INCOME'; title: string; paused: boolean;
+export default function CenterProjectPayment({ chainId, projectId, tokenLabel, title, paused, blocked, verify, chainSelector, onBusyChange }: {
+  chainId: JBChainId; projectId: bigint; tokenLabel: 'FUND' | 'INCOME'; title: string; paused: boolean; blocked?: string;
   verify: (account: Address, minimumBlock?: bigint) => Promise<{ blockNumber: bigint }>;
   chainSelector?: ReactNode; onBusyChange?: (busy: boolean) => void
 }) {
@@ -145,7 +145,7 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
           disabled={busy || paused} onChange={event => setInput(event.target.value)} className="min-h-12 border border-[#bfc9b5] bg-white px-3" /></label> : null}
         {matching ? <dl className="mt-4 text-sm"><dt>Payment</dt><dd>{formatUnits(BigInt(pending!.intent.amount), 6)} USDC</dd>
           {pending?.status?.expectedPayment ? <><dt className="mt-2">Minimum returned</dt><dd><DisplayTokenAmount value={BigInt(pending.status.expectedPayment.minimumReturnedTokens)} /> {tokenLabel}</dd></> : null}</dl> : null}
-        <p role="status" aria-live="polite" className="mt-4 break-words text-sm">{paused ? 'This project has paused payments.' : frame ? statuses.reviewing : status ? statuses[status] : 'Each payment needs your passkey approval.'}</p>
+        <p role="status" aria-live="polite" className="mt-4 break-words text-sm">{paused ? 'This project has paused payments.' : blocked ?? (frame ? statuses.reviewing : status ? statuses[status] : 'Each payment needs your passkey approval.')}</p>
         {frame ? <div className="center-review-frame mt-4">
           <iframe ref={frameRef} src={frame} title="Juicebox wallet payment review" allow="publickey-credentials-get" referrerPolicy="no-referrer" style={frameHeight ? { height: frameHeight } : undefined} />
           <div className="mt-3 flex flex-wrap justify-between gap-3 text-sm">
@@ -154,7 +154,7 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
           </div>
         </div> : null}
         <div className="mt-4 flex flex-wrap gap-3">
-          {!frame && (!pending || (!pending.submitted && (!status || status === 'reviewing'))) ? <button type="button" className="btn-primary min-h-11 px-4" disabled={busy || paused || !controller} onClick={() => void review()}>{busy ? 'Preparing…' : pending ? status ? 'Approve with your passkey' : 'Resume payment preparation' : 'Review with a passkey'}</button> : null}
+          {!frame && (!pending || (!pending.submitted && (!status || status === 'reviewing'))) ? <button type="button" className="btn-primary min-h-11 px-4" disabled={busy || paused || !!blocked || !controller} onClick={() => void review()}>{busy ? 'Preparing…' : pending ? status ? 'Approve with your passkey' : 'Resume payment preparation' : 'Review with a passkey'}</button> : null}
           {status === 'approved' && !pending?.submitted ? <button type="button" className="btn-primary min-h-11 px-4" disabled={busy || paused} onClick={() => void submit()}>Submit payment</button> : null}
           {pending && !terminal ? <button type="button" className="btn-secondary min-h-11 px-4" disabled={busy} onClick={() => void run(() => controller!.refresh())}>Check payment status</button> : null}
           {terminal ? <button type="button" className="btn-secondary min-h-11 px-4" disabled={busy} onClick={() => void run(async () => { controller!.clear(); setInput('') })}>Close payment</button> : null}

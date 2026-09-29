@@ -262,14 +262,13 @@ describe('INCOME transaction surfaces', () => {
     expect(metadata.dataset.inheritedUri).toBe('fund-uri')
     expect(metadata.textContent).toContain('Edit INCOME details')
     expect(metadata.closest('[hidden]')).toBeNull()
-    await tab('Owners')
-    for (const [label, testId] of [['Control', 'ownership-editor'], ['Permissions', 'permissions-editor'], ['Splits', 'splits-editor']]) {
-      await tab(label)
+    for (const [tabs, testId, panel] of [[['Operators'], 'ownership-editor', 'operators'], [['Operators'], 'permissions-editor', 'operators'], [['Owners', 'Splits'], 'splits-editor', 'splits']] as const) {
+      for (const label of tabs) await tab(label)
       const editor = host.querySelector<HTMLElement>(`[data-testid="${testId}"]`)!
       expect(editor.dataset.chainId).toBe('1')
       expect(editor.dataset.projectId).toBe('7')
       expect(editor.closest('[hidden]')).toBeNull()
-      expect(editor.closest('[role="tabpanel"]')?.id).toContain(`panel-${label.toLowerCase()}`)
+      expect(editor.closest('[role="tabpanel"]')?.id).toContain(`panel-${panel}`)
       expect(editor.querySelector('button')?.disabled).toBe(false)
       expect(metadata.closest('[hidden]')).not.toBeNull()
     }
@@ -279,7 +278,7 @@ describe('INCOME transaction surfaces', () => {
   })
 
   it('disables every post-launch editor during failed or stale confirmed reads without replacing the panels', async () => {
-    await render(); await tab('Owners'); await tab('Control'); await tab('Permissions'); await tab('Splits')
+    await render(); await tab('Operators'); await tab('Owners'); await tab('Splits')
     const editors = ['metadata-editor', 'ownership-editor', 'permissions-editor', 'splits-editor'].map(id => host.querySelector<HTMLElement>(`[data-testid="${id}"]`)!)
     for (const failed of [true, false]) {
       runtime.query = { ...runtime.query, isError: failed, error: new Error('RPC offline') }

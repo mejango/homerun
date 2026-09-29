@@ -42,7 +42,7 @@ describe('holder account view', () => {
     expect(host.textContent).toContain('FUND holders')
     expect(host.textContent).toContain('Total FUND3Wallet tokens0Unclaimed credits3')
     expect(host.querySelector('a')?.href).toBe('https://basescan.org/address/0x1111111111111111111111111111111111111111')
-    expect(host.textContent).toContain('1 indexed account')
+    expect(host.textContent).toContain('1 holder')
   })
 
   it('supports paged accounts and back navigation without combining different query pages', async () => {
@@ -62,15 +62,16 @@ describe('holder account view', () => {
     mocks.get.mockRejectedValue(new Error('Indexer unavailable'))
     await render()
     expect(host.textContent).toContain('Holder balances are temporarily unavailable')
-    expect(host.textContent).not.toContain('No positive balances')
+    expect(host.textContent).not.toContain('No one holds')
     expect(host.textContent).not.toContain('0 indexed')
   })
 
   it('retains cached balances and labels them stale when a refresh fails', async () => {
     await render()
     mocks.get.mockRejectedValue(new Error('Indexer unavailable'))
-    await click('Refresh holders')
-    expect(host.textContent).toContain('Showing the last indexed page')
+    await act(async () => { await client.refetchQueries({ queryKey: ['project-participants'] }) })
+    await settle()
+    expect(host.textContent).toContain('Showing the last list')
     expect(host.querySelectorAll('li')).toHaveLength(1)
   })
 
@@ -89,7 +90,7 @@ describe('holder account view', () => {
   it('supports a successful empty page and refuses unsupported identities without fetching', async () => {
     mocks.get.mockResolvedValue({ items: [], totalCount: 0, offset: 0, nextOffset: null })
     await render()
-    expect(host.textContent).toContain('No positive balances are indexed yet')
+    expect(host.textContent).toContain('No one holds FUND yet')
     mocks.get.mockClear()
     await render('0')
     expect(host.textContent).toContain('not supported by the index')

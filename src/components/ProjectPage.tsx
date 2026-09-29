@@ -2001,8 +2001,6 @@ function DemoOwners({
   phase,
   error,
   onMonthChange,
-  control,
-  permissions,
   splitEditor,
   terms,
 }: {
@@ -2010,8 +2008,6 @@ function DemoOwners({
   phase: ProjectPhase;
   error: string;
   onMonthChange: (month: number) => void;
-  control: ReactNode;
-  permissions: ReactNode;
   splitEditor: ReactNode;
   terms: FundTokenTerms;
 }) {
@@ -2023,8 +2019,6 @@ function DemoOwners({
   const income = !!p?.purchaseCompleted;
   return (
     <OwnersTabs
-      control={control}
-      permissions={permissions}
       accountsYou={
         p && !error ? (
           <section className="demo-section demo-account">
@@ -2574,8 +2568,6 @@ export function DemoProjectPage({ project, planned }: { project?: CreatedProject
                 phase={phase}
                 error={derived.personalError || derived.error}
                 onMonthChange={(value) => change("revenueMonths", value)}
-                control={<DemoProjectControl {...managementProps} />}
-                permissions={<DemoProjectPermissions {...managementProps} />}
                 splitEditor={<DemoProjectSplits {...managementProps} />}
                 terms={{
                   tokenName: project?.values.fundTokenName || null,
@@ -2661,6 +2653,8 @@ export function DemoProjectPage({ project, planned }: { project?: CreatedProject
                     Check the modeling inputs to prepare an operator action.
                   </p>
                 )}
+                <DemoProjectControl {...managementProps} />
+                <DemoProjectPermissions {...managementProps} />
               </section>
             }
           />

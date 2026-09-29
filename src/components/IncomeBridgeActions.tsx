@@ -108,11 +108,7 @@ export function IncomeBridgeActions({ state }: { state: IncomeProjectState }) {
               !isAddressEqual(address, graph.data.account))
           }
         >
-          <ProjectBridgeActions
-            state={displayed}
-            adapter={adapter}
-            initiallyExpanded
-          />
+          <ProjectBridgeActions state={displayed} adapter={adapter} />
         </fieldset>
       </div>
     );

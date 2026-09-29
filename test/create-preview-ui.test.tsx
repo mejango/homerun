@@ -193,12 +193,11 @@ describe('the preview of a project that is not created yet', () => {
     expect(token.textContent).toContain('Workshop Bench FUND')
     expect(token.textContent).toContain('Ticker')
     expect(token.textContent).toContain('WKSHP')
-    expect(token.textContent).toContain('Starting token terms')
-    expect(token.textContent).toContain('The initial 500,000 INCOME is allocated to all FUND holders')
-    expect(token.textContent).toContain('Planned Owner FUND share: 20%')
-    expect(token.textContent).toContain('Planned new INCOME allocation: 70% operators / 10% eligible FUND stakers / 20% customers')
+    expect(token.textContent).toContain('500,000 INCOME is split across FUND holders')
+    expect(token.textContent).toContain('The owner receives 20% of FUND')
+    expect(token.textContent).toContain('New INCOME goes 70% to operators, 10% to FUND stakers and 20% to customers')
     const stages = host.querySelector('[id$="-panel-stages"]')!
-    for (const moved of ['Starting token terms', 'The initial 500,000 INCOME is allocated to all FUND holders', 'Planned Owner FUND share', 'Planned new INCOME allocation', 'Workshop Bench FUND', 'WKSHP']) {
+    for (const moved of ['500,000 INCOME is split across FUND holders', 'The owner receives', 'New INCOME goes', 'Workshop Bench FUND', 'WKSHP']) {
       expect(stages.textContent).not.toContain(moved)
     }
   })

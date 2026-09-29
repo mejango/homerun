@@ -31,15 +31,12 @@ function ParticipantsList({ chainId, projectId, tokenLabel }: { chainId: number;
   const page = query.data
 
   return <section aria-labelledby={heading} className="demo-section min-w-0">
-    <div className="flex flex-wrap items-baseline justify-between gap-3">
-      <h2 id={heading}>{tokenLabel} holders</h2>
-      <button type="button" className="quiet-button" disabled={query.isFetching} onClick={() => void query.refetch()}>{query.isFetching ? 'Refreshing…' : 'Refresh holders'}</button>
-    </div>
-    <p>Balances include wallet tokens and unclaimed credits. Recent changes can take a minute to appear.</p>
+    <h2 id={heading}>{tokenLabel} holders</h2>
     {query.isPending && <p role="status">Loading {tokenLabel} holders…</p>}
-    {query.isError && <p role="status">{page ? 'Holder balances could not refresh. Showing the last indexed page.' : 'Holder balances are temporarily unavailable. Refresh to try again.'}</p>}
-    {page && <>
-      <p role="status" className="my-3 text-sm">{page.totalCount.toLocaleString()} indexed {page.totalCount === 1 ? 'account' : 'accounts'}{page.items.length ? ` / Showing ${offset + 1}–${offset + page.items.length}` : ''}</p>
+    {query.isError && <p role="status">{page ? 'Holder balances could not refresh. Showing the last list.' : 'Holder balances are temporarily unavailable.'}</p>}
+    {page && (page.totalCount === 0 ? <p>No one holds {tokenLabel} yet. Holders show up here after they pay.</p> : <>
+      <p>Balances include wallet tokens and unclaimed credits.</p>
+      <p role="status" className="my-3 text-sm">{page.totalCount.toLocaleString()} {page.totalCount === 1 ? 'holder' : 'holders'}{page.items.length ? ` / Showing ${offset + 1}–${offset + page.items.length}` : ''}</p>
       {page.items.length > 0 ? <ul className="m-0 list-none p-0">
         {page.items.map(holder => <li key={holder.address.toLowerCase()} className="grid min-w-0 gap-3 border-b border-[#d5dccd] py-4 last:border-0 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] sm:items-center">
           <a className="break-all text-sm underline underline-offset-4" href={explorerAddressUrl(chainId, holder.address)!} target="_blank" rel="noopener noreferrer" title={holder.address}>{holder.address.slice(0, 6)}…{holder.address.slice(-4)}<span className="sr-only"> — {holder.address}</span> ↗</a>
@@ -49,8 +46,8 @@ function ParticipantsList({ chainId, projectId, tokenLabel }: { chainId: number;
             <div className="min-w-0"><dt className="mb-1 text-xs">Unclaimed credits</dt><dd className="m-0"><TokenBalance value={holder.creditBalance} /></dd></div>
           </dl>
         </li>)}
-      </ul> : <p>{offset === 0 ? 'No positive balances are indexed yet.' : 'There are no accounts on this page. Return to the first page to refresh the list.'}</p>}
-    </>}
+      </ul> : <p>There are no holders on this page. Return to the first page.</p>}
+    </>)}
     {(offset > 0 || page?.nextOffset !== null && page?.nextOffset !== undefined) && <nav aria-label={`${tokenLabel} holder pages`} className="mt-5 flex flex-wrap items-center gap-3">
       {offset > 0 && <button type="button" className="btn-secondary" onClick={() => setOffsets([0])}>First page</button>}
       <button type="button" className="btn-secondary" disabled={offset === 0 || query.isFetching} onClick={() => setOffsets(current => current.slice(0, -1))}>Previous</button>

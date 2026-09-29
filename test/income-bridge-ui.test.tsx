@@ -206,14 +206,3 @@ it("keeps incoming proof failures explicit and exposes no claim action", async (
     ),
   ).toBe(false);
 });
-it("collapsing a discovered workflow leaves submitted transaction trackers mounted", async () => {
-  await render();
-  await discover();
-  await act(async () =>
-    host.querySelector<HTMLButtonElement>("button[aria-expanded]")!.click(),
-  );
-  expect(runtime.unmounted).toBe(0);
-  expect(
-    host.querySelector("button[aria-expanded]")?.getAttribute("aria-expanded"),
-  ).toBe("false");
-});

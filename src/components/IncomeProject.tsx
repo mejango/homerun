@@ -168,10 +168,10 @@ export function IncomeProject({ chainId, projectId, fundProjectId }: { chainId: 
     activity={slots.activity}
     overview={<StandaloneIncomeOverview chainId={chainId} slots={slots} />}
     stages={slots.stages}
-    owners={<OwnersTabs accountsYou={slots.accountsYou} accountsAll={slots.accountsAll} settlement={slots.settlement} splits={slots.splits} loans={slots.loans} control={slots.control} permissions={slots.permissions} />}
+    owners={<OwnersTabs accountsYou={slots.accountsYou} accountsAll={slots.accountsAll} settlement={slots.settlement} splits={slots.splits} loans={slots.loans} />}
     shop={slots.shop}
     extras={<div className="demo-owner-sections">{slots.extras}<Panel title="Contracts"><dl className="demo-live-rows"><div><dt>Network</dt><dd>{displayChainName(chainId)}</dd></div><div><dt>INCOME project</dt><dd>#{projectId.toString()}</dd></div>{slots.fundProjectId && <div><dt>FUND project</dt><dd>#{slots.fundProjectId.toString()}</dd></div>}{slots.state && <div><dt>Project owner</dt><dd>{slots.state.owner}</dd></div>}{slots.state && <div><dt>Controller</dt><dd>{slots.state.controller}</dd></div>}{slots.state?.tokenAddress && <div><dt>INCOME ERC-20</dt><dd>{slots.state.tokenAddress}</dd></div>}</dl></Panel></div>}
-    operators={<div className="demo-owner-sections">{slots.operators}<Panel title="INCOME administration"><p>INCOME follows its deployed revnet schedule. Beneficiaries manage allocations and loans under Owners.</p>{slots.fundProjectId && <a className="quiet-button mt-4 inline-block" href={`/project/${chainId}/${slots.fundProjectId}`}>Open FUND Owner controls →</a>}</Panel></div>}
+    operators={<div className="demo-owner-sections">{slots.operators}{slots.control}{slots.permissions}<Panel title="INCOME administration"><p>INCOME follows its deployed revnet schedule. Beneficiaries manage allocations and loans under Owners.</p>{slots.fundProjectId && <a className="quiet-button mt-4 inline-block" href={`/project/${chainId}/${slots.fundProjectId}`}>Open FUND Owner controls →</a>}</Panel></div>}
   /></ProjectPageShell>}</IncomeProjectRuntime>
 }
 

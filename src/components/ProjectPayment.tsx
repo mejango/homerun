@@ -60,8 +60,10 @@ async function paymentReceipt(client: PublicClient, hash: Hex) {
 
 /** FUND and INCOME share the reference clients' pay / direct-AMM execution
  * pipeline. The parent retains project-specific contract identity checks. */
-function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context: accountingContext, paused, reservedPercent, rulesetId, verify, chainSelector, onBusyChange }: {
+function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context: accountingContext, paused, blocked, reservedPercent, rulesetId, verify, chainSelector, onBusyChange }: {
   chainSelector?: ReactNode; onBusyChange?: (busy: boolean) => void
+  /** Why this wallet cannot pay; keeps the card but disables Pay. */
+  blocked?: string
   chainId: JBChainId; projectId: bigint; tokenLabel: 'FUND' | 'INCOME'; title: string
   context: PaymentContext; paused: boolean; reservedPercent: number; rulesetId: string
   verify: (account: Address, minimumBlock?: bigint) => Promise<{ blockNumber: bigint }>
@@ -207,7 +209,8 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
   return <section id="pay-panel" className="pay-panel">
     <h3 className="sr-only">{title}</h3>
     {chainSelector ?? <p className="payment-chain-label mb-2">{tokenLabel === 'FUND' ? 'Fund' : 'Pay'} on {displayChainName(chainId)}</p>}
-    <button type="button" className="btn-primary min-h-12 w-full px-5" disabled={paused} onClick={() => setOpen(true)}>{paused ? 'Payments paused' : checking ? 'Checking…' : `Pay on ${displayChainName(chainId)}`}</button>
+    <button type="button" className="btn-primary min-h-12 w-full px-5" disabled={paused || !!blocked} onClick={() => setOpen(true)}>{paused ? 'Payments paused' : checking ? 'Checking…' : `Pay on ${displayChainName(chainId)}`}</button>
+    {blocked && !paused && <p className="mt-2 text-sm text-[var(--muted)]">{blocked}</p>}
     {!open && <><Status tx={approval} chainId={chainId} /><Status tx={routerApproval} chainId={chainId} /><Status tx={tx} chainId={chainId} /></>}
     {open && <ModalShell title={`Pay: ${tokenLabel}`} subtitle={displayChainName(chainId)} onClose={() => setOpen(false)} maxWidth="max-w-lg">
     <fieldset disabled={busy} className="m-0 min-w-0 border-0 p-0">

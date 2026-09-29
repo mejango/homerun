@@ -85,19 +85,19 @@ export function ProjectSplitsEditor({ chainId, projectId, phase, client, unavail
   }
 
   return <section className="demo-section space-y-5" aria-label={`${phase.toUpperCase()} split recipients`}>
-    <div><h2>Splits</h2><p className="text-[var(--muted)]">Pick a stage and group on {displayChainName(chainId)}. Each edit changes one group in one stage.</p></div>
+    <h2>Splits</h2>
     {query.isPending && <p role="status">Reading project recipients and permissions…</p>}
     {query.isError && <p role="alert" className="text-sm text-red-800">{message(query.error)} <button type="button" className="quiet-button" onClick={() => void query.refetch()}>Retry</button></p>}
     {snapshot && stage && group && <>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <label className="grid gap-2 text-sm">Stage<select className={fieldClass} value={stage.rulesetId.toString()} onChange={event => setSelection({ rulesetId: event.target.value, groupId: group.groupId.toString() })}>{snapshot.stages.map(stage => <option key={stage.rulesetId.toString()} value={stage.rulesetId.toString()}>{stage.isCurrent ? 'Current' : 'Queued'} stage {stage.rulesetId.toString()}{!stage.isCurrent ? ` · ${lockLabel(stage.start.toString())}` : ''}</option>)}</select></label>
-        <label className="grid gap-2 text-sm">Split group<select className={fieldClass} value={group.groupId.toString()} onChange={event => setSelection({ rulesetId: stage.rulesetId.toString(), groupId: event.target.value })}>{stage.groups.map(group => <option key={group.groupId.toString()} value={group.groupId.toString()}>{group.label}</option>)}</select></label>
-      </div>
-      <p className="text-sm text-[var(--muted)]">{group.kind === 'reserved' ? <>This stage reserves {stage.reservedPercent / 100}% of new tokens. These shares divide that amount.</> : <>These shares divide payouts in this token. Withdrawal budgets are set separately.</>}</p>
+      {(snapshot.stages.length > 1 || stage.groups.length > 1) && <div className="grid gap-4 sm:grid-cols-2">
+        {snapshot.stages.length > 1 && <label className="grid gap-2 text-sm">Rules<select className={fieldClass} value={stage.rulesetId.toString()} onChange={event => setSelection({ rulesetId: event.target.value, groupId: group.groupId.toString() })}>{snapshot.stages.map(stage => <option key={stage.rulesetId.toString()} value={stage.rulesetId.toString()}>{stage.isCurrent ? 'Current rules' : `Starting ${lockLabel(stage.start.toString())}`}</option>)}</select></label>}
+        {stage.groups.length > 1 && <label className="grid gap-2 text-sm">Split<select className={fieldClass} value={group.groupId.toString()} onChange={event => setSelection({ rulesetId: stage.rulesetId.toString(), groupId: event.target.value })}>{stage.groups.map(group => <option key={group.groupId.toString()} value={group.groupId.toString()}>{group.label}</option>)}</select></label>}
+      </div>}
+      <p className="text-sm text-[var(--muted)]">{group.kind === 'reserved' ? <>{stage.reservedPercent / 100}% of new {phase.toUpperCase()} goes to these recipients.</> : <>These recipients share payouts.</>}</p>
       <SplitRows splits={group.splits} timestamp={snapshot.blockTimestamp} kind={group.kind} />
-      <p className="break-words text-xs text-[var(--muted)]">{formatSplitPercent(1_000_000_000 - group.splits.reduce((sum, split) => sum + split.percent, 0))}% unallocated, sent to the onchain project Owner: <span className="font-mono">{snapshot.owner}</span>.</p>
+      {group.splits.length > 0 && group.splits.reduce((sum, split) => sum + split.percent, 0) < 1_000_000_000 && <p className="text-xs text-[var(--muted)]">The remaining {formatSplitPercent(1_000_000_000 - group.splits.reduce((sum, split) => sum + split.percent, 0))}% goes to the owner.</p>}
       {group.fallback.length > 0 && <details className="border-t border-[var(--line)] pt-4 text-sm"><summary className="cursor-pointer text-[15px] font-medium">Default recipients</summary><p className="my-3 text-xs text-[var(--muted)]">These apply when a stage has no recipients. Keep at least one recipient when replacing this group.</p><SplitRows splits={group.fallback} timestamp={snapshot.blockTimestamp} kind={group.kind} /></details>}
-      {!snapshot.canEdit || !matches ? <p className="text-xs text-[var(--muted)]">Connect the Owner or a wallet with permission to edit split groups.</p> : null}
+      {!snapshot.canEdit || !matches ? <p className="text-xs text-[var(--muted)]">Only the owner, or a wallet they allow, can edit recipients.</p> : null}
       <button type="button" className="btn-secondary min-h-11 px-5" disabled={!canEdit} onClick={() => { setError(null); setEditor({ snapshot, rulesetId: stage.rulesetId, group, drafts: projectSplitDrafts(group), allowHookChanges: false, allowBurn: false }) }}>Edit recipients</button>
     </>}
     <ProjectAdminTransactionStatus tx={tx} />
@@ -137,5 +137,5 @@ export function ProjectSplitsEditor({ chainId, projectId, phase, client, unavail
 }
 
 function SplitRows({ splits, timestamp, kind }: { splits: readonly ProjectSplit[]; timestamp: bigint; kind: 'reserved' | 'payout' }) {
-  return splits.length ? <ul className="divide-y divide-[var(--line)] border-y border-[var(--line)]">{splits.map((split, index) => <li key={index} className="flex flex-col gap-2 py-3 sm:flex-row sm:gap-4"><span className="shrink-0 font-medium sm:w-28">{formatSplitPercent(split.percent)}%</span><div className="min-w-0 break-words text-sm"><p>{recipient(split, kind)}</p>{kind === 'payout' && split.preferAddToBalance && <p className="mt-1 text-xs text-[var(--muted)]">Add to project balance</p>}{BigInt(split.lockedUntil) > timestamp && <p className="mt-1 text-xs text-[var(--muted)]">Locked until {lockLabel(split.lockedUntil)}</p>}</div></li>)}</ul> : <p className="border-y border-[var(--line)] py-3 text-sm">No split recipients. The entire share goes to the project Owner.</p>
+  return splits.length ? <ul className="divide-y divide-[var(--line)] border-y border-[var(--line)]">{splits.map((split, index) => <li key={index} className="flex flex-col gap-2 py-3 sm:flex-row sm:gap-4"><span className="shrink-0 font-medium sm:w-28">{formatSplitPercent(split.percent)}%</span><div className="min-w-0 break-words text-sm"><p>{recipient(split, kind)}</p>{kind === 'payout' && split.preferAddToBalance && <p className="mt-1 text-xs text-[var(--muted)]">Add to project balance</p>}{BigInt(split.lockedUntil) > timestamp && <p className="mt-1 text-xs text-[var(--muted)]">Locked until {lockLabel(split.lockedUntil)}</p>}</div></li>)}</ul> : <p className="border-y border-[var(--line)] py-3 text-sm">No recipients yet. It all goes to the owner.</p>
 }
