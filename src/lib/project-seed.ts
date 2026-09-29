@@ -1,6 +1,9 @@
+import { unstable_cache } from 'next/cache'
 import { cache } from 'react'
 import { getProject, type BsProject } from '@/lib/bendystraw'
 import { fetchFundProjectMetadata, type FundProjectMetadata } from '@/lib/fund-project-metadata'
+import { readIncomeFundBinding } from '@/lib/income-fund-binding'
+import { jbCenterPublicClient } from '@/lib/jbcenter-rpc'
 
 /** What the server can say about a project before any contract read: its index row and published details. */
 export type ProjectSeed = { indexed: BsProject | null; details: FundProjectMetadata | null }
@@ -24,3 +27,27 @@ export const loadProjectSeed = cache(async (chainId: number, projectId: string):
     : null
   return { indexed, details }
 })
+
+/**
+ * An INCOME's FUND is fixed at launch, so one history search serves every later request.
+ * Cached as a string (the cache stores JSON); null for a revnet with no Homerun FUND.
+ */
+const cachedIncomeFund = unstable_cache(
+  async (chainId: number, incomeProjectId: string) => {
+    const fund = await readIncomeFundBinding(jbCenterPublicClient(chainId), { chainId, incomeProjectId: BigInt(incomeProjectId) })
+    return fund === null ? null : fund.toString()
+  },
+  ['income-fund-binding'],
+  { revalidate: false },
+)
+
+/**
+ * Server only. For an indexed revnet: the FUND it forwards to, null when it has no Homerun FUND,
+ * or undefined when that is not known in time (the browser resolves it then, as before).
+ */
+export async function loadIncomeFund(chainId: number, projectId: string, seed: ProjectSeed): Promise<string | null | undefined> {
+  if (!seed.indexed?.isRevnet) return undefined
+  const timeout = new Promise<undefined>(resolve => setTimeout(() => resolve(undefined), SEED_WAIT_MS))
+  return Promise.race([cachedIncomeFund(chainId, projectId), timeout]).catch(() => undefined)
+}
+

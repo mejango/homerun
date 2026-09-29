@@ -20,7 +20,11 @@ import { PERSIST } from '@/lib/query-persist'
  * forwards to the FUND it was launched from, which shows INCOME in its tabs. The
  * index says which kind a project is; the chain says which FUND an INCOME belongs to.
  */
-export function ProjectAddress({ chainId, projectId, intentId, seed }: { chainId: JBChainId; projectId: string; intentId?: string; seed?: ProjectSeed }) {
+export function ProjectAddress({ chainId, projectId, intentId, seed, incomeFund }: {
+  chainId: JBChainId; projectId: string; intentId?: string; seed?: ProjectSeed
+  /** The server's answer for a revnet: null when it has no Homerun FUND; undefined when unknown. */
+  incomeFund?: string | null
+}) {
   const router = useRouter()
   const client = usePublicClient({ chainId }) as PublicClient | undefined
   const indexed = useQuery({
@@ -38,7 +42,10 @@ export function ProjectAddress({ chainId, projectId, intentId, seed }: { chainId
     queryKey: ['income-fund-binding', chainId, projectId],
     enabled: income && !!client,
     queryFn: () => readIncomeFundBinding(client!, { chainId, incomeProjectId: BigInt(projectId) }),
-    staleTime: 300_000,
+    initialData: incomeFund === undefined ? undefined : incomeFund === null ? null : BigInt(incomeFund),
+    // Fixed at launch: a found binding never needs reading again.
+    staleTime: Infinity,
+    meta: PERSIST,
     retry: 1,
   })
   useEffect(() => {

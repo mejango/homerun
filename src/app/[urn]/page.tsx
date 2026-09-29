@@ -1,9 +1,10 @@
 import type { Metadata } from 'next'
+import { permanentRedirect } from 'next/navigation'
 import { ProjectAddress } from '@/components/ProjectAddress'
 import { displayChainName } from '@/lib/chainDisplay'
 import { projectFromUrn } from '@/lib/project-route'
 import { projectPath } from '@/lib/urn'
-import { loadProjectSeed } from '@/lib/project-seed'
+import { loadIncomeFund, loadProjectSeed } from '@/lib/project-seed'
 
 const INTENT_ID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i
 
@@ -29,5 +30,8 @@ export default async function ProjectPage({ params, searchParams }: ProjectRoute
   const intent = typeof query.intent === 'string' && INTENT_ID.test(query.intent) ? query.intent : undefined
   // The index row and published details render with the page; contract reads follow in the browser.
   const seed = await loadProjectSeed(route.chainId, route.projectId)
-  return <ProjectAddress key={`${route.chainId}:${route.projectId}`} {...route} intentId={intent} seed={seed} />
+  // One address per Homerun project: an INCOME forwards to its FUND before anything renders.
+  const fund = await loadIncomeFund(route.chainId, route.projectId, seed)
+  if (fund) permanentRedirect(`${projectPath(route.chainId, fund)}${intent ? `?intent=${intent}` : ''}`)
+  return <ProjectAddress key={`${route.chainId}:${route.projectId}`} {...route} intentId={intent} seed={seed} incomeFund={fund} />
 }

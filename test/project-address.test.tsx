@@ -20,9 +20,9 @@ describe('one address per project', () => {
   let host: HTMLDivElement, root: Root
   beforeEach(() => { host = document.createElement('div'); document.body.append(host); root = createRoot(host); vi.clearAllMocks() })
   afterEach(() => { act(() => root.unmount()); host.remove() })
-  async function render(projectId: string) {
+  async function render(projectId: string, incomeFund?: string | null) {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    await act(async () => root.render(<QueryClientProvider client={client}><ProjectAddress chainId={1} projectId={projectId} /></QueryClientProvider>))
+    await act(async () => root.render(<QueryClientProvider client={client}><ProjectAddress chainId={1} projectId={projectId} incomeFund={incomeFund} /></QueryClientProvider>))
     for (let i = 0; i < 5; i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
   }
 
@@ -49,5 +49,12 @@ describe('one address per project', () => {
     await render('72')
     expect(host.textContent).toContain('INCOME page 72')
     expect(mocks.replace).not.toHaveBeenCalled()
+  })
+
+  it('trusts the server\'s answer for a revnet instead of repeating the history search', async () => {
+    mocks.project.mockResolvedValue(row(72, true))
+    await render('72', null)
+    expect(host.textContent).toContain('INCOME page 72')
+    expect(mocks.binding).not.toHaveBeenCalled()
   })
 })
