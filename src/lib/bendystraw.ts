@@ -165,6 +165,85 @@ export async function getProject(
   return data.project
 }
 
+/** Every project in a sucker group, one row per chain, through the registered filter document. Juicebox Money's getSuckerGroupProjects. */
+export async function getSuckerGroupProjects(
+  suckerGroupId: string,
+  chainId?: number,
+): Promise<BsProject[]> {
+  const data = await bendystraw<{ projects: { items: BsProject[] } }>(
+    PROJECTS_BY_FILTER_QUERY,
+    { where: { suckerGroupId, version: 6 }, limit: 100 },
+    { network: bendystrawNetworkHint(chainId), policy: 'stable' },
+  )
+  return data.projects.items
+}
+
+/**
+ * Turn a sucker-group response into verified per-chain deployments for the
+ * exact project route which loaded it. A linked project may have a different
+ * project ID on every chain. Conflicting rows are therefore never repaired by
+ * copying the home ID: the route chain fails closed to home-only, while an
+ * ambiguous remote chain is omitted. Same as Juicebox Money's.
+ */
+export function resolveProjectDeployments(
+  home: BsProject,
+  members: readonly BsProject[],
+): BsProject[] {
+  const homeOnly = [home]
+  if (!home.suckerGroupId) return homeOnly
+
+  const isUsable = (member: BsProject) =>
+    member.version === 6 &&
+    Number.isSafeInteger(member.chainId) &&
+    member.chainId > 0 &&
+    Number.isSafeInteger(member.projectId) &&
+    member.projectId > 0
+
+  // A group which identifies another project on the route's own chain cannot
+  // authorize any remote identity for this route.
+  if (
+    members.some(
+      member =>
+        isUsable(member) &&
+        member.chainId === home.chainId &&
+        member.projectId !== home.projectId,
+    )
+  ) {
+    return homeOnly
+  }
+
+  const reportedIdByChain = new Map<number, number>()
+  const conflictedChains = new Set<number>()
+  for (const member of members) {
+    if (!isUsable(member) || member.chainId === home.chainId) continue
+    const reported = reportedIdByChain.get(member.chainId)
+    if (reported !== undefined && reported !== member.projectId) {
+      conflictedChains.add(member.chainId)
+    } else if (reported === undefined) {
+      reportedIdByChain.set(member.chainId, member.projectId)
+    }
+  }
+
+  const byChain = new Map<number, BsProject>([[home.chainId, home]])
+
+  for (const member of members) {
+    if (
+      !isUsable(member) ||
+      member.suckerGroupId !== home.suckerGroupId ||
+      conflictedChains.has(member.chainId)
+    ) {
+      continue
+    }
+    if (member.chainId === home.chainId) continue
+
+    const existing = byChain.get(member.chainId)
+    if (existing && existing.projectId !== member.projectId) continue
+    if (!existing) byChain.set(member.chainId, member)
+  }
+
+  return [...byChain.values()].sort((a, b) => a.chainId - b.chainId)
+}
+
 export async function searchProjects(
   text: string,
   limit = 24,

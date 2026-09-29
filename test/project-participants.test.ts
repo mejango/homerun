@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest'
-import { formatParticipantBalance, getProjectParticipants, indexedParticipantProjectId } from '../src/lib/project-participants'
+import { formatParticipantBalance, getProjectHolders, getProjectParticipants, indexedParticipantProjectId } from '../src/lib/project-participants'
 
 function row(overrides: Record<string, unknown> = {}) {
   return { address: '0x1111111111111111111111111111111111111111', chainId: 8453, projectId: 7, version: 6, balance: '30', creditBalance: '10', erc20Balance: '20', ...overrides }
@@ -82,4 +82,38 @@ describe('project participants', () => {
     expect(formatParticipantBalance('1234500000000000000')).toBe('1.2345')
     expect(formatParticipantBalance('9007199254740993123450000000000000')).toBe('9,007,199,254,740,993.1234')
   })
+
+  it('folds each holder across chains, largest chain first, from complete per-deployment reads', async () => {
+    const second = '0x2222222222222222222222222222222222222222'
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async (_input, init) => {
+      const { variables } = JSON.parse(String(init?.body))
+      const chainId = variables.where.AND[0].chainId
+      const items = chainId === 10
+        ? [row({ chainId: 10, projectId: 9, balance: '50', creditBalance: '0', erc20Balance: '50' })]
+        : [row(), row({ address: second, balance: '7', creditBalance: '7', erc20Balance: '0' })]
+      return new Response(JSON.stringify({ data: { participants: { items, totalCount: items.length } } }), { status: 200, headers: { 'content-type': 'application/json' } })
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const { holders, complete } = await getProjectHolders([[8453, 7], [10, 9]])
+    expect(complete).toBe(true)
+    expect(holders.map(holder => [holder.address, holder.balance, holder.creditBalance, holder.erc20Balance, holder.chains])).toEqual([
+      ['0x1111111111111111111111111111111111111111', 80n, 10n, 70n, [10, 8453]],
+      [second, 7n, 7n, 0n, [8453]],
+    ])
+    expect(fetcher.mock.calls.map(call => JSON.parse(String(call[1]?.body)).variables.limit)).toEqual([250, 250])
+  })
+
+  it('says so when a deployment has more holders than one read covers', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async (_input, init) => {
+      const { variables } = JSON.parse(String(init?.body))
+      const items = Array.from({ length: 250 }, (_, index) => row({ address: `0x${(variables.offset + index + 1).toString(16).padStart(40, '0')}`, balance: '1', creditBalance: '0', erc20Balance: '1' }))
+      return new Response(JSON.stringify({ data: { participants: { items, totalCount: 1_200 } } }), { status: 200, headers: { 'content-type': 'application/json' } })
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const { holders, complete } = await getProjectHolders([[8453, 7]])
+    expect(holders).toHaveLength(1_000)
+    expect(complete).toBe(false)
+    expect(fetcher).toHaveBeenCalledTimes(4)
+  })
 })
+
