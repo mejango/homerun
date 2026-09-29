@@ -49,6 +49,11 @@ describe('Homerun original Center payment recovery', () => {
     expect(f.payments.submitPayment).not.toHaveBeenCalled()
     expect(f.create().pending()?.intent).toEqual(f.intent)
   })
+  it('reviews a payment started on a project page whose address holds a colon, and keeps that page to return to', async () => {
+    const f = fixture(), intent = { ...f.intent, returnPath: '/op:11' }
+    expect((await f.create().prepare(intent as never)).status).toBe('reviewing')
+    expect(f.create().pending()?.intent.returnPath).toBe('/op:11')
+  })
   it('rejects a changed recipient, amount, terminal, minimum or stale owner observation before payment review', async () => {
     for (const args of [[8n, token, 1000000n, account, 100n, '', '0x'], [7n, token, 2000000n, account, 100n, '', '0x'], [7n, token, 1000000n, terminal, 100n, '', '0x'], [7n, token, 1000000n, account, 98n, '', '0x']]) {
       const f = fixture()
