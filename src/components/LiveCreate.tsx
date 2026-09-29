@@ -19,7 +19,7 @@ import { runRelayrLaunch } from '@/lib/fund-launch-relayr'
 import { displayChainName } from '@/lib/chainDisplay'
 import { SUPPORTED_CHAINS } from '@/lib/chains'
 import { plannedNetworks } from '../../web/create-networks.mjs'
-import { isSafeConnection, waitForSafeExecutionHash } from '@/lib/safe-connector'
+import { isSafeConnection, useSafeConnection, waitForSafeExecutionHash } from '@/lib/safe-connector'
 import { intentPath } from '@bananapus/nana-sdk-core/jbcenter'
 import { projectPath } from '@/lib/urn'
 
@@ -151,6 +151,7 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
 export function FundDeploy({ values, onLockChange, importedRecord, onRecordUsed }: { values?: CreateValues; onLockChange?: (chains: readonly number[] | null) => void; importedRecord?: string | null; onRecordUsed?: () => void }) {
   const router = useRouter()
   const { address, isCenterWallet } = useWallet()
+  const safeConnection = useSafeConnection(wagmiConfig)
   const [session, setSession] = useState<FundLaunchSession | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState('')
@@ -175,7 +176,7 @@ export function FundDeploy({ values, onLockChange, importedRecord, onRecordUsed 
   // Juicebox Center recovers the publisher from a signature, so a passkey or Safe
   // connection cannot publish and keeps the transaction path. `loaded` keeps this
   // first client render equal to the server's.
-  const needsTransaction = loaded && (isCenterWallet || isSafeConnection(wagmiConfig))
+  const needsTransaction = loaded && (isCenterWallet || safeConnection)
   useEffect(() => {
     onLockChange?.(session?.input.chainIds ?? (preparing && selectionKey ? selectionKey.split(',').map(Number) : null))
   }, [session, preparing, selectionKey, onLockChange])

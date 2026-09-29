@@ -51,4 +51,14 @@ describe('the wallet chooser', () => {
     expect(host.innerHTML).not.toContain('javascript:')
     expect(host.innerHTML).not.toContain('text/html')
   })
+
+  it('lists wallets named like Safe, and offers Safe itself only inside Safe{Wallet}', async () => {
+    mocks.connectors = [connector('safe', 'Safe'), connector('app.safepal', 'SafePal Wallet'), connector('injected', 'SafePal')]
+    await act(async () => root.render(<ExternalWalletDialog onClose={vi.fn()} />))
+
+    expect(tile('SafePal Wallet')).toBeTruthy()
+    expect(tile('SafePal')).toBeTruthy()
+    // This page is not framed by Safe{Wallet}, so the Safe app connector cannot connect here.
+    expect(tile('Safe')).toBeUndefined()
+  })
 })

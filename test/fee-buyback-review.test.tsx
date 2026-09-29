@@ -41,8 +41,13 @@ const fee = {
   received: 9429n * 10n ** 18n,
   route: 'fallback',
 }
-function Host({ sent }: { sent: () => void }) {
-  const review = useFeeBuybackReview(calls)
+const batch = [
+  { ...calls[0], functionName: 'sendPayoutsOf' },
+  { ...calls[0], chainId: 10, functionName: 'sendPayoutsOf' },
+  { ...calls[0], chainId: 10, functionName: 'transfer' },
+]
+function Host({ sent, reviewed = calls }: { sent: () => void; reviewed?: typeof calls }) {
+  const review = useFeeBuybackReview(reviewed)
   return (
     <>
       <FeeBuybackNotice review={review} />
@@ -64,11 +69,11 @@ afterEach(() => {
   host?.remove()
   vi.clearAllMocks()
 })
-async function render(sent: () => void) {
+async function render(sent: () => void, reviewed = calls) {
   host = document.createElement('div')
   document.body.append(host)
   root = createRoot(host)
-  await act(async () => root!.render(<Host sent={sent} />))
+  await act(async () => root!.render(<Host sent={sent} reviewed={reviewed} />))
 }
 function button(label: string) {
   const found = [...host.querySelectorAll('button')].find(
@@ -120,6 +125,20 @@ describe('actionable fee review', () => {
     await act(async () => button('Review and submit').click())
     expect(sent).not.toHaveBeenCalled()
     button('Submit anyway')
+    await act(async () => button('Submit anyway').click())
+    expect(sent).toHaveBeenCalledOnce()
+  })
+  it('estimates every fee-paying call in a batch and shows the worst result', async () => {
+    mocks.check.mockImplementation(async (_client: unknown, call: { chainId: number }) =>
+      call.chainId === 8453
+        ? { status: 'ready', fees: [{ ...fee, route: 'swap' }], checkedAt: 1 }
+        : { status: 'fallback', fees: [fee], checkedAt: 2 },
+    )
+    const sent = vi.fn()
+    await render(sent, batch)
+    expect(mocks.check).toHaveBeenCalledTimes(2)
+    expect(host.textContent).toContain('issuance rate')
+    expect(host.textContent!.match(/9,429/g)).toHaveLength(2)
     await act(async () => button('Submit anyway').click())
     expect(sent).toHaveBeenCalledOnce()
   })

@@ -9,6 +9,7 @@ import { TransactionReviewProvider } from '@/components/TransactionReviewProvide
 import { SUPPORTED_CHAINS } from '@/lib/chains'
 import { jbCenterRpcTransport } from '@/lib/jbcenter-rpc'
 import { installQueryPersistence } from '@/lib/query-persist'
+import { watchSafeWalletPeer } from '@/lib/safe-connector'
 import { WalletAuthContext } from './WalletAuthContext'
 import { lazyCenterConnector } from './lazy-center-connector'
 import { externalWalletConnectors } from './wallet-connectors'
@@ -44,6 +45,8 @@ export function Providers({ children }: PropsWithChildren) {
     else window.addEventListener('load', restore, { once: true })
     return () => { window.removeEventListener('load', restore); teardown?.() }
   }, [queryClient])
+  // Safe{Wallet} over WalletConnect proposes like the Safe app, and Safe tracking reads each chain through this config.
+  useEffect(() => watchSafeWalletPeer(wagmiConfig), [])
   const [walletOpen, setWalletOpen] = useState(false)
   const waiting = useRef<(() => void)[]>([])
   const requestSignIn = useCallback(() => {
