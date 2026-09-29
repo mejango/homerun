@@ -47,7 +47,7 @@ function validProject(ref: { chainId: number; projectId: number }) {
 }
 function projectHref(ref: { chainId: number; projectId: number }, isRevnet?: boolean | null) {
   if (!validProject(ref) || typeof isRevnet !== 'boolean') return null
-  return isRevnet ? `/income/${ref.chainId}/${ref.projectId}` : projectPath(ref.chainId, ref.projectId)
+  return projectPath(ref.chainId, ref.projectId)
 }
 function shortAddress(address: string) { return `${address.slice(0, 6)}…${address.slice(-4)}` }
 

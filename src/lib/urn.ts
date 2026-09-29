@@ -25,7 +25,7 @@ export function toUrn(chainId: number, projectId: number | bigint | string): str
   return `${displayChainSlug(chainId) ?? chainId}:${projectId}`
 }
 
-/** A deployed project's own address on Homerun, e.g. `/op:11`. */
+/** A deployed project's address on Homerun, e.g. `/op:11`. An INCOME ID forwards to its FUND's. */
 export function projectPath(chainId: number, projectId: number | bigint | string): string {
   return `/${toUrn(chainId, projectId)}`
 }

@@ -62,9 +62,8 @@ function tokenBalance(value: string): bigint {
 function ProjectRow({ project, holding }: { project?: BsProject; holding?: BsAccountTokenHolding }) {
   const ref = project ?? holding!
   const name = project?.name?.trim() || `Project ${ref.projectId}`
-  // An unresolved type must not silently route an INCOME holder to a FUND page.
-  const href = project?.isRevnet === true ? `/income/${ref.chainId}/${ref.projectId}`
-    : project?.isRevnet === false ? projectPath(ref.chainId, ref.projectId) : null
+  // One address per project; an INCOME ID forwards to its FUND. An unresolved type stays unlinked.
+  const href = typeof project?.isRevnet === 'boolean' ? projectPath(ref.chainId, ref.projectId) : null
   return <li className="grid min-w-0 gap-2 rounded-md border border-[#c4cdbb] bg-[#fffefa] p-4">
     <div className="flex flex-wrap items-baseline justify-between gap-2">
       {href ? <Link href={href} prefetch={false} className="min-w-0 break-words text-lg underline underline-offset-4">{name}</Link>

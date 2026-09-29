@@ -118,7 +118,7 @@ describe('account project discovery', () => {
     await settle()
     expect(mocks.search).toHaveBeenCalledExactlyOnceWith('Neighbor', 24, { network: 'mainnet' })
     expect(host.querySelector('a[href="/eth:7"]')?.textContent).toBe('<img src=x onerror=alert(1)>')
-    expect(host.querySelector('a[href="/income/8453/8"]')?.textContent).toBe('Neighborhood INCOME')
+    expect(host.querySelector('a[href="/base:8"]')?.textContent).toBe('Neighborhood INCOME')
     expect(host.querySelector('img, script')).toBeNull()
     expect(host.textContent).not.toContain('Old version')
   })
@@ -138,7 +138,7 @@ describe('account project discovery', () => {
     ], { network: 'mainnet' })
     expect(section('Owned or published').textContent).not.toContain('Somebody else')
     expect(section('Token holdings').querySelector('a[href="/eth:7"]')).not.toBeNull()
-    expect(section('Token holdings').querySelector('a[href="/income/8453/8"]')).not.toBeNull()
+    expect(section('Token holdings').querySelector('a[href="/base:8"]')).not.toBeNull()
     expect(section('Token holdings').textContent).toContain('5 project tokens')
     expect(section('Token holdings').textContent).toContain('3 credits / 2 ERC-20')
     expect(section('Token holdings').textContent).not.toContain('5 ETH')
@@ -187,7 +187,7 @@ describe('account project discovery', () => {
     mocks.byRefs.mockResolvedValue([project({ isRevnet: true, name: 'Recovered INCOME' })])
     await act(async () => { [...host.querySelectorAll('button')].find(node => node.textContent === 'Retry holding details')!.click() })
     await settle()
-    expect(section('Token holdings').querySelector('a[href="/income/1/7"]')?.textContent).toBe('Recovered INCOME')
+    expect(section('Token holdings').querySelector('a[href="/eth:7"]')?.textContent).toBe('Recovered INCOME')
   })
 
   it('isolates mainnet and testnet queries and clears the previous network’s rows', async () => {
