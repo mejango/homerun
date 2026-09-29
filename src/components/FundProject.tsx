@@ -249,10 +249,10 @@ function ProjectActions({ chainId, projectId, intentId, state, client, details, 
               <dt>FUND</dt>
               <dd>{address ? <DisplayTokenAmount value={totalBalance} /> : '—'}</dd>
               {address && state.creditBalance > 0n && <dd className="text-xs"><DisplayTokenAmount value={state.creditBalance} /> as unclaimed credits</dd>}
-              <dd className="mt-3 flex flex-wrap gap-2" role="group" aria-label="FUND actions">
-                {context && <button type="button" className="btn-secondary min-h-10 px-3 text-sm" aria-pressed={accountAction === 'cashout'} onClick={() => setAccountAction(accountAction === 'cashout' ? null : 'cashout')}>Cash out FUND</button>}
-                <button type="button" className="btn-secondary min-h-10 px-3 text-sm" aria-pressed={accountAction === 'tokens'} onClick={() => setAccountAction(accountAction === 'tokens' ? null : 'tokens')}>Transfer or burn FUND</button>
-              </dd>
+              <dd className="project-action-guide"><div className="pag-actions" role="group" aria-label="FUND actions">
+                {context && <button type="button" className="outline-button pag-control" aria-pressed={accountAction === 'cashout'} onClick={() => setAccountAction(accountAction === 'cashout' ? null : 'cashout')}>Cash out FUND</button>}
+                <button type="button" className="outline-button pag-control" aria-pressed={accountAction === 'tokens'} onClick={() => setAccountAction(accountAction === 'tokens' ? null : 'tokens')}>Transfer or burn FUND</button>
+              </div></dd>
             </div>
             <div>
               <dt>INCOME</dt>
