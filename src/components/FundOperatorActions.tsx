@@ -8,6 +8,8 @@ import { useEffect, useRef, useState } from 'react'
 import { decodeEventLog, decodeFunctionData, encodeFunctionData, erc20Abi, formatUnits, getAddress, isAddress, isAddressEqual, parseAbi, zeroAddress, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import { useSafeTx, txPhaseLabel } from '@/hooks/useSafeTx'
 import { FundAssetWithdrawals, type FundAssetAllowanceConfiguration } from '@/components/FundAssetWithdrawals'
+import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { TxSteps } from '@/components/ui/TxSteps'
 import { useWallet } from '@/hooks/useWallet'
 import { displayChainName, explorerTxUrl } from '@/lib/chainDisplay'
 import {
@@ -438,6 +440,8 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
   const [recoveryLoadError, setRecoveryLoadError] = useState(false)
   const loadedStorageKey = useRef<string | null>(null)
   const [scheduleHours, setScheduleHours] = useState('1')
+  // The owner action open in Juicebox Money's confirm dialog; linked multi-chain changes use the plan below instead.
+  const [review, setReview] = useState<FundRulesetAction | 'mint' | 'return' | null>(null)
   const clearedReceipt = useRef<string | null>(null)
   useEffect(() => {
     if (tx.phase !== 'success' || !tx.receipt || tx.receipt.status !== 'success' || tx.receipt.transactionHash === clearedReceipt.current) return
@@ -474,6 +478,20 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
   const returnRaw = context ? amountOrZero(returnAmount, context.decimals) : 0n
   const returnIntent = context && address ? encoded([state.chainId, state.projectId, address, context.terminal, context.token, returnRaw, returnReason]) : null
   const approvalBlock = approval.phase === 'success' && approvedIntent === returnIntent ? approval.receipt?.blockNumber : undefined
+  const returnNative = !!context && isAddressEqual(context.token, NATIVE_TOKEN)
+  // Whether the return needs an approval first, read before the first prompt so the step list is right.
+  const returnAllowance = useQuery({
+    queryKey: ['fund-return-allowance', state.chainId, state.projectId.toString(), context?.terminal, context?.token, address],
+    enabled: review === 'return' && !!context && !returnNative && !!address,
+    queryFn: () => client.readContract({ address: context!.token, abi: erc20Abi, functionName: 'allowance', args: [address!, context!.terminal] }),
+    staleTime: 10_000, retry: false,
+  })
+  function openReview(kind: FundRulesetAction | 'mint' | 'return') {
+    setError(null)
+    // A settled earlier action must not show as this one's result.
+    if (tx.phase === 'success' || tx.phase === 'error') tx.reset()
+    setReview(kind)
+  }
 
   function recoveryKey(account: Address): string {
     return `homerun:fund-ruleset-recovery:${state.chainId}:${state.projectId}:${account.toLowerCase()}`
@@ -751,12 +769,21 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
       {(!address || !isAddressEqual(address, plan.account)) && <p role="status" className="break-words text-sm">Reconnect {plan.account} to continue this plan. Its pending transaction tracking remains active.</p>}
       <p className="text-xs text-[var(--muted)]">Calls and hashes are saved for recovery and verified again on return. Confirmed updates stay queued if a later transaction is cancelled or delayed.</p>
       <div className="flex flex-wrap gap-3"><button type="button" className="btn-secondary min-h-10 px-4" onClick={downloadRecovery}>Download recovery plan</button>{!recovering && submissions.size > completed.size && <button type="button" className="btn-secondary min-h-10 px-4" onClick={() => setRecovering(true)}>Recheck saved transaction</button>}</div>
-      <dl className="demo-live-rows">{plan.states.map(peer => {
-        const result = completed.get(peer.chainId)
-        const explorer = result ? explorerTxUrl(peer.chainId, result.receipt.transactionHash) : null
-        const saved = submissions.get(peer.chainId)
-        return <div key={peer.chainId}><dt>{displayChainName(peer.chainId)}, project {peer.projectId.toString()}</dt><dd>{result ? 'execution confirmed' : saved ? saved.kind === 'submission-unknown' ? 'submission started; hash not yet recorded' : saved.kind === 'safe-proposal' ? 'Safe proposal recorded; execution not yet verified' : 'transaction recorded; confirmation not yet verified' : 'not yet confirmed'}{explorer && <> / <a className="underline" href={explorer} target="_blank" rel="noreferrer">Transaction</a></>}</dd></div>
-      })}</dl>
+      <TxSteps
+        ariaLabel="Linked chains"
+        intro={`Every linked chain needs its own transaction before ${new Date(plan.startsAt * 1000).toLocaleString()}. This list advances as each one confirms.`}
+        activeIndex={completed.size >= plan.states.length ? plan.states.length : plan.states.findIndex(peer => !completed.has(peer.chainId))}
+        steps={plan.states.map(peer => {
+          const result = completed.get(peer.chainId)
+          const explorer = result ? explorerTxUrl(peer.chainId, result.receipt.transactionHash) : null
+          const saved = submissions.get(peer.chainId)
+          return {
+            key: String(peer.chainId),
+            title: <>{displayChainName(peer.chainId)}, project {peer.projectId.toString()}{explorer && <> (<a className="underline" href={explorer} target="_blank" rel="noreferrer">transaction</a>)</>}</>,
+            detail: result ? 'Execution confirmed.' : saved ? saved.kind === 'submission-unknown' ? 'Submission started; hash not yet recorded.' : saved.kind === 'safe-proposal' ? 'Safe proposal recorded; execution not yet verified.' : 'Transaction recorded; confirmation not yet verified.' : 'Not yet confirmed.',
+          }
+        })}
+      />
       {recovering ? <RecoveryPanel plan={plan} submissions={submissions} onSubmitted={recordSubmission} onRemoveSubmission={removeSubmission} onResume={verified => { setCompleted(verified); setRecovering(false) }} />
         : completed.size < plan.states.length ? <LinkedRulesetStep key={`${plan.startsAt}:${completed.size}`} plan={plan} index={plan.states.findIndex(peer => !completed.has(peer.chainId))} submission={submissions.get(plan.states.find(peer => !completed.has(peer.chainId))!.chainId)} completed={completed} onConfirmed={(chainId, rulesetId, receipt) => { recordSubmission(chainId, { kind: 'transaction', hash: receipt.transactionHash }); setCompleted(previous => new Map(previous).set(chainId, { rulesetId, receipt })) }} onCancel={closePlan} onSubmitted={recordSubmission} onBeforeWrite={recordBeforeWrite} onWriteRejected={chainId => { if (submissionsRef.current.get(chainId)?.kind === 'submission-unknown') removeSubmission(chainId) }} />
           : <><p role="status" className="text-sm">Every ruleset transaction is confirmed. The new rules take effect at the shared activation time.</p><button type="button" className="btn-secondary min-h-10 w-fit px-4" onClick={closePlan}>Done</button></>}
@@ -766,9 +793,9 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
       <h3 id="fund-campaign-controls" className="text-[15px] font-medium">Campaign controls</h3>
       <p className="text-sm">Pausing stops new contributions. Closing also disables FUND cash-outs while the purchase settles.</p>
       <div className="flex flex-wrap gap-3">
-        <button type="button" className="btn-secondary min-h-10 px-4" disabled={busy || !canQueue || !!rulesetUnavailable || state.metadata.pausePay} onClick={() => void changeRules('pause')}>Review pause</button>
-        <button type="button" className="btn-secondary min-h-10 px-4" disabled={busy || !canQueue || !!rulesetUnavailable || !state.metadata.pausePay || !fundraising} onClick={() => void changeRules('resume')}>Review resume</button>
-        <button type="button" className="btn-secondary min-h-10 px-4" disabled={busy || !canQueue || !!rulesetUnavailable || !fundraising} onClick={() => void changeRules('close')}>Review close campaign</button>
+        <button type="button" className="btn-secondary min-h-10 px-4" disabled={busy || !canQueue || !!rulesetUnavailable || state.metadata.pausePay} onClick={() => linked ? void changeRules('pause') : openReview('pause')}>Review pause</button>
+        <button type="button" className="btn-secondary min-h-10 px-4" disabled={busy || !canQueue || !!rulesetUnavailable || !state.metadata.pausePay || !fundraising} onClick={() => linked ? void changeRules('resume') : openReview('resume')}>Review resume</button>
+        <button type="button" className="btn-secondary min-h-10 px-4" disabled={busy || !canQueue || !!rulesetUnavailable || !fundraising} onClick={() => linked ? void changeRules('close') : openReview('close')}>Review close campaign</button>
       </div>
       {!canQueue && <p className="text-xs text-[var(--muted)]">This wallet does not have permission to change the project’s rules.</p>}
     </section>
@@ -780,7 +807,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
       <p className="text-sm">In order: close the campaign, enable success minting, record offchain contributions, mint the owner share, then disable owner minting.</p>
       <p className="text-xs text-[var(--muted)]">The owner may pass FUND to the operator at their discretion. Failed offchain contributions are refunded outside the treasury.</p>
       <label className="flex items-start gap-3 text-sm"><input className="mt-1 size-4 shrink-0" type="checkbox" checked={purchased} onChange={event => setPurchased(event.target.checked)} disabled={busy} />I confirm that the asset purchase succeeded and the contribution records are reconciled.</label>
-      <button type="button" className="btn-secondary min-h-10 w-fit px-4" disabled={busy || !canQueue || !!rulesetUnavailable || !purchased || !closed || mintEnabled} onClick={() => void changeRules('enable-success-minting')}>Review enabling success mints</button>
+      <button type="button" className="btn-secondary min-h-10 w-fit px-4" disabled={busy || !canQueue || !!rulesetUnavailable || !purchased || !closed || mintEnabled} onClick={() => linked ? void changeRules('enable-success-minting') : openReview('enable-success-minting')}>Review enabling success mints</button>
       <div className="grid gap-4 border-t border-[var(--line)] pt-6">
         <label className="grid gap-2 text-sm">Allocation<select className={select} value={mintKind} disabled={busy} onChange={event => setMintKind(event.target.value as typeof mintKind)}><option value="offchain-contribution">Offchain contribution</option><option value="operator-share">Owner share</option></select></label>
         {mintKind === 'operator-share' && <p className="break-words text-sm">Owner recipient: {state.owner}. This is the current Juicebox project owner.</p>}
@@ -790,7 +817,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
         <p className="break-words text-sm">Additional FUND to mint: {formatUnits(mintCount, 18)}. It is checked again with fresh contract reads before review.</p>
         {mintKind === 'operator-share' && !linked && !connectedOwner && ownerHoldings.isError && <p role="alert" className="text-sm">The owner’s FUND holdings could not be verified. Refresh before calculating this allocation.</p>}
         {!mintEnabled && <p className="text-xs text-[var(--muted)]">Minting opens once the onchain ruleset closes cash-outs and enables owner minting.</p>}
-        <div className="flex flex-wrap gap-3"><button type="button" className="btn-primary min-h-11 px-5" disabled={busy || !canMint || !!rulesetUnavailable || !purchased || !mintEnabled || mintCount <= 0n || !mintRecipient || (mintKind === 'offchain-contribution' && !contributionReference.trim())} onClick={() => void mint()}>Review FUND allocation</button><button type="button" className="btn-secondary min-h-10 px-4" disabled={busy || !canQueue || !!rulesetUnavailable || !mintEnabled} onClick={() => void changeRules('finish-success-minting')}>Review disabling owner minting</button></div>
+        <div className="flex flex-wrap gap-3"><button type="button" className="btn-primary min-h-11 px-5" disabled={busy || !canMint || !!rulesetUnavailable || !purchased || !mintEnabled || mintCount <= 0n || !mintRecipient || (mintKind === 'offchain-contribution' && !contributionReference.trim())} onClick={() => openReview('mint')}>Review FUND allocation</button><button type="button" className="btn-secondary min-h-10 px-4" disabled={busy || !canQueue || !!rulesetUnavailable || !mintEnabled} onClick={() => linked ? void changeRules('finish-success-minting') : openReview('finish-success-minting')}>Review disabling owner minting</button></div>
         {!canMint && <p className="text-xs text-[var(--muted)]">This wallet does not have permission to mint FUND.</p>}
       </div>
     </section>
@@ -800,7 +827,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
       <p className="text-sm">Add money for refunds or net asset-sale proceeds. No FUND is minted.</p>
       {context ? <div className="grid gap-4"><div className="grid gap-4 sm:grid-cols-2"><label className="grid gap-2 text-sm">Reason<select className={select} value={returnReason} disabled={busy} onChange={event => { setReturnReason(event.target.value as typeof returnReason); setApprovalNeeded(false) }}><option value="refunds">Campaign refunds</option><option value="asset-sale">Asset-sale proceeds</option></select></label><Field label={`Amount in ${context.symbol}`} value={returnAmount} onChange={value => { setReturnAmount(value); setApprovalNeeded(false) }} disabled={busy} /></div>
         {approvalBlock !== undefined && <p className="text-sm">Token approval confirmed. Review the treasury return to continue.</p>}
-        <button type="button" className="btn-primary min-h-11 w-fit px-5" disabled={busy || returnRaw <= 0n} onClick={() => void returnFunds()}>{preparing ? 'Preparing…' : txPhaseLabel(approval.busy ? approval.phase : tx.phase, { idle: approvalNeeded && approvalBlock === undefined ? 'Review token approval' : 'Review treasury return', pending: 'Confirming onchain…' })}</button><p className="text-xs text-[var(--muted)]">A token approval, if needed, is reviewed and confirmed first.</p></div> : <p className="text-sm">No supported treasury currency has been verified.</p>}
+        <button type="button" className="btn-primary min-h-11 w-fit px-5" disabled={busy || returnRaw <= 0n} onClick={() => openReview('return')}>Review treasury return</button><p className="text-xs text-[var(--muted)]">A token approval, if needed, is reviewed and confirmed first.</p></div> : <p className="text-sm">No supported treasury currency has been verified.</p>}
     </section>
 
     <section className="grid gap-4 border-t border-[var(--line)] pt-6" aria-labelledby="fund-refund-controls">
@@ -808,12 +835,68 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
       <p className="text-sm">Once funds are returned, open pro rata FUND cash-outs at zero tax. This removes payout limits and surplus allowances; contributions and owner minting stay paused.</p>
       <label className="grid gap-2 text-sm">Outcome<select className={select} value={refundReason} disabled={busy} onChange={event => { setRefundReason(event.target.value as typeof refundReason); setRefundAttestation(false) }}><option value="failure-refunds">Campaign failed</option><option value="asset-sale-refunds">Asset sold</option></select></label>
       <label className="flex items-start gap-3 text-sm"><input className="mt-1 size-4 shrink-0" type="checkbox" checked={refundAttestation} disabled={busy} onChange={event => setRefundAttestation(event.target.checked)} />{refundReason === 'failure-refunds' ? 'I confirm that the campaign failed and the available onchain funds have been returned for refunds. Offchain refunds are handled separately.' : 'I confirm that the asset was sold and net sale proceeds are in the treasury for FUND holders.'}</label>
-      <button type="button" className="btn-secondary min-h-10 w-fit px-4" disabled={busy || !canQueue || !!rulesetUnavailable || !refundAttestation} onClick={() => void changeRules(refundReason)}>{refundReason === 'failure-refunds' ? 'Review opening failure refunds' : 'Review opening asset-sale cash-outs'}</button>
+      <button type="button" className="btn-secondary min-h-10 w-fit px-4" disabled={busy || !canQueue || !!rulesetUnavailable || !refundAttestation} onClick={() => linked ? void changeRules(refundReason) : openReview(refundReason)}>{refundReason === 'failure-refunds' ? 'Review opening failure refunds' : 'Review opening asset-sale cash-outs'}</button>
     </section>
 
-    <div className="grid gap-3">
+    {!review && <div className="grid gap-3">
       {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
       <Status tx={approval} chainId={state.chainId} /><Status tx={tx} chainId={state.chainId} />
-    </div>
+    </div>}
+    {review && (() => {
+      const chain = displayChainName(state.chainId)
+      const returnNeedsApproval = review === 'return' && !returnNative && approvalBlock === undefined && (approvalNeeded || returnAllowance.data === undefined || returnAllowance.data < returnRaw)
+      const spec: { title: string; rows: TxConfirmRow[]; steps: { key: string; title: string; detail?: string }[]; action: string; notice?: string; run: () => Promise<void> } =
+        review === 'mint' ? {
+          title: 'Mint FUND',
+          rows: [
+            { label: 'Mint', value: `${formatUnits(mintCount, 18)} FUND`, strong: true },
+            { label: 'To', value: mintRecipient ?? '', mono: true },
+            { label: 'For', value: mintKind === 'offchain-contribution' ? `Offchain contribution ${contributionReference.trim()}` : 'The owner share after the purchase' },
+            { label: 'On', value: chain },
+          ],
+          steps: [{ key: 'mint', title: 'Mint FUND', detail: 'Checked again with fresh contract reads before your wallet opens.' }],
+          action: 'Confirm & mint',
+          run: mint,
+        } : review === 'return' ? {
+          title: 'Return funds to the treasury',
+          rows: [
+            { label: 'Return', value: `${returnAmount || '0'} ${context?.symbol ?? ''}`, strong: true },
+            { label: 'For', value: returnReason === 'asset-sale' ? 'Asset-sale proceeds' : 'Campaign refunds' },
+            { label: 'To', value: `FUND treasury on ${chain}` },
+          ],
+          steps: [
+            ...(!returnNative && (returnNeedsApproval || approvalBlock !== undefined) ? [{ key: 'approve', title: `Approve ${context?.symbol ?? 'the token'}`, detail: 'Lets the treasury take exactly this amount.' }] : []),
+            { key: 'return', title: 'Return to the treasury', detail: 'No FUND is minted.' },
+          ],
+          action: returnNeedsApproval ? `Approve ${context?.symbol ?? 'the token'}` : 'Confirm & return',
+          run: returnFunds,
+        } : {
+          title: 'Change the rules',
+          rows: [{ label: 'Change', value: RULESET_LABELS[review] }, { label: 'On', value: chain }],
+          steps: [{ key: 'queue', title: 'Queue the new rules' }],
+          action: 'Confirm & queue',
+          notice: rulesetNotice(review),
+          run: () => changeRules(review),
+        }
+      const running = preparing || tx.busy || approval.busy || tx.phase === 'review' || approval.phase === 'review'
+      const approving = approval.busy || approval.phase === 'review'
+      return <TxConfirmDialog
+        open
+        eyebrow="Owner action"
+        title={tx.phase === 'success' ? `${spec.title}: confirmed` : spec.title}
+        rows={spec.rows}
+        steps={spec.steps}
+        activeIndex={approving ? 0 : running ? spec.steps.length - 1 : spec.steps.length > 1 && approvalBlock !== undefined ? 1 : -1}
+        action={spec.action}
+        onConfirm={() => void spec.run()}
+        busy={running && !tx.safeProposalHash && !approval.safeProposalHash}
+        complete={tx.phase === 'success'}
+        status={tx.safeProposalHash || approval.safeProposalHash ? 'Proposed to Safe. It still needs execution and onchain confirmation; you can close this while it waits.' : tx.phase === 'pending' || approval.phase === 'pending' ? 'Submitted. Waiting for onchain confirmation…' : approvalBlock !== undefined && review === 'return' && tx.phase !== 'success' ? 'Token approval confirmed. Confirm the return to continue.' : null}
+        error={error ?? tx.error ?? approval.error}
+        onClose={() => setReview(null)}
+      >
+        {spec.notice && <p className="text-sm text-smoke-600">{spec.notice}</p>}
+      </TxConfirmDialog>
+    })()}
   </div>
 }

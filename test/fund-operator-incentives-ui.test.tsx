@@ -1,3 +1,4 @@
+import './dialog-shim'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -49,6 +50,11 @@ describe('FUND success allocation belongs to the owner', () => {
   const client = { readContract: runtime.readContract } as unknown as PublicClient
   async function render() { await act(async () => root.render(<FundOperatorActions state={runtime.state!} client={client} contextIndex={0} />)) }
   function mintButton() { return [...host.querySelectorAll('button')].find(button => button.textContent === 'Review FUND allocation')! }
+  /** Review opens jbm's confirm dialog; its action sends the mint. */
+  async function reviewAndConfirm() {
+    await act(async () => mintButton().click())
+    await act(async () => [...host.querySelectorAll<HTMLButtonElement>('[data-tx-confirm] button')].find(button => button.textContent === 'Confirm & mint')!.click())
+  }
   async function selectOwner() {
     const selection = host.querySelector('select')!
     await act(async () => { selection.value = 'operator-share'; selection.dispatchEvent(new Event('change', { bubbles: true })) })
@@ -63,7 +69,7 @@ describe('FUND success allocation belongs to the owner', () => {
     expect(host.textContent).toContain(`Owner recipient: ${OWNER}`)
     expect(host.textContent).toContain('Additional FUND to mint: 18.75.')
     expect(runtime.query).toHaveBeenCalledWith(expect.objectContaining({ queryKey: ['fund-owner-balance', 8453, '7', OWNER, '100'], enabled: false }))
-    await act(async () => mintButton().click())
+    await reviewAndConfirm()
     const [request, options] = runtime.send.mock.calls[0]
     const decoded = decodeFunctionData({ abi: request.abi, data: encodeFunctionData({ abi: request.abi, functionName: request.functionName, args: request.args }) })
     expect(decoded.functionName).toBe('mintTokensOf')
@@ -79,7 +85,7 @@ describe('FUND success allocation belongs to the owner', () => {
     await setInput(contributor, OPERATOR)
     await selectOwner()
     expect([...host.querySelectorAll('label')].some(label => /wallet|recipient/i.test(label.textContent ?? ''))).toBe(false)
-    await act(async () => mintButton().click())
+    await reviewAndConfirm()
     const [request] = runtime.send.mock.calls[0]
     expect(request.args[2]).toBe(OWNER)
   })
@@ -90,7 +96,7 @@ describe('FUND success allocation belongs to the owner', () => {
     await render(); await selectOwner()
     expect(host.textContent).toContain('Additional FUND to mint: 18.75.')
     expect(runtime.query).toHaveBeenCalledWith(expect.objectContaining({ queryKey: ['fund-owner-balance', 8453, '7', OWNER, '100'], enabled: true }))
-    await act(async () => mintButton().click())
+    await reviewAndConfirm()
     const [request] = runtime.send.mock.calls[0]
     expect(request.args[2]).toBe(OWNER)
     expect(request.args[1]).toBe(18_750_000_000_000_000_000n)
@@ -107,7 +113,7 @@ describe('FUND success allocation belongs to the owner', () => {
   it('refuses to mint when the live owner changed after the displayed allocation', async () => {
     await render(); await selectOwner()
     runtime.state = { ...runtime.state!, owner: OPERATOR }
-    await act(async () => mintButton().click())
+    await reviewAndConfirm()
     expect(host.textContent).toContain('Project ownership changed')
     expect(runtime.send).not.toHaveBeenCalled()
   })
