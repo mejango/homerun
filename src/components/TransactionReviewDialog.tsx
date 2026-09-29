@@ -49,6 +49,8 @@ import {
 import { chainName } from '@/lib/urn'
 import { isStickyHook } from '@/lib/sticky'
 
+import { FeeBuybackNotice, useFeeBuybackReview } from './FeeBuybackNotice'
+
 import type { PendingReview, PendingFundingChainSelection, TransactionReviewDialogProps } from './TransactionReviewProvider'
 
 function knownAddressName(chainId: number, value: unknown): string | null {
@@ -1490,6 +1492,7 @@ function ReviewModal({
   onFinish: (approved: boolean) => void
 }) {
   const { request } = pending
+  const feeReview = useFeeBuybackReview(request.calls)
   const [agreed, setAgreed] = useState(false)
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
 
@@ -1605,6 +1608,7 @@ function ReviewModal({
         </div>
 
         <footer className="shrink-0 border-t border-smoke-200 bg-white px-4 py-4 sm:px-6">
+          <FeeBuybackNotice review={feeReview} />
           <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-smoke-200 bg-grey-25 p-3 text-sm leading-relaxed text-ink">
             <input
               type="checkbox"
@@ -1632,11 +1636,11 @@ function ReviewModal({
             </button>
             <button
               type="button"
-              onClick={() => onFinish(true)}
-              disabled={!agreed}
+              onClick={async () => { if (await feeReview.confirm()) onFinish(true) }}
+              disabled={!agreed || feeReview.busy}
               className="btn-primary min-h-[44px] px-5 text-sm"
             >
-              {request.confirmLabel ??
+              {feeReview.confirmLabel ?? request.confirmLabel ??
                 (isAuthorization ? 'Agree & authorize' : 'Agree & continue')}
             </button>
           </div>
