@@ -11,7 +11,7 @@ import {
 } from 'wagmi'
 import { useWallet } from '@/hooks/useWallet'
 import { submitReviewedContractWrite } from '@/lib/contract-write'
-import { gasWithHeadroom } from '@/lib/gas'
+import { gasWithHeadroom } from '@bananapus/nana-sdk-core/review'
 import { getViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import { requestContractTransactionReview } from '@/lib/transaction-review'
 import { wagmiConfig } from '@/providers/Providers'

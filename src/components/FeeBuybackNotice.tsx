@@ -8,7 +8,7 @@ import {
   feeReceipt,
   type FeeCall,
   type FeeResult,
-} from '@/lib/fee-buyback'
+} from '@bananapus/nana-sdk-core/v6/fee-buyback'
 import { feeBuybackContext } from '@/lib/fee-buyback-client'
 
 type Call = FeeCall & { chainId: number; functionName?: string }
