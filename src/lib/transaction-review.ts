@@ -21,6 +21,8 @@ export type TransactionReviewCall = {
   label?: string
   /** Optional known contract name. The full address is always shown too. */
   contractName?: string
+  /** The calls a batching destination (MultiSend) makes in order, decoded by the caller. */
+  calls?: readonly TransactionReviewCall[]
 }
 
 export type TransactionReviewRequest = {

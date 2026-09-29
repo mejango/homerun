@@ -29,7 +29,7 @@ import {
   jbTokensAbi,
   SPLITS_TOTAL_PERCENT,
 } from '@bananapus/nana-sdk-core'
-import { JBPermissionCatalogV6 } from '@bananapus/nana-sdk-core/v6'
+import { JBPermissionCatalogV6, describeStickySplit } from '@bananapus/nana-sdk-core/v6'
 import {
   USDC_ADDRESSES,
   jbContractAddress,
@@ -47,6 +47,7 @@ import {
   type TransactionReviewCall,
 } from '@/lib/transaction-review'
 import { chainName } from '@/lib/urn'
+import { isStickyHook } from '@/lib/sticky'
 
 import type { PendingReview, PendingFundingChainSelection, TransactionReviewDialogProps } from './TransactionReviewProvider'
 
@@ -1239,12 +1240,18 @@ export function describeSplitGroups(chainId: number, value: unknown): PrettyStep
         return null;
       }
       total += split.percent;
+      // A Sticky split's projectId is its holder group and its beneficiary is the Sticky token.
+      const sticky = typeof split.hook === "string" && isStickyHook(split.hook, chainId);
       const parts = [
-        split.projectId !== 0n
-          ? `project #${split.projectId} (beneficiary ${split.beneficiary})`
-          : v4AddressLabel(chainId, split.beneficiary),
+        sticky
+          ? `${describeStickySplit({ projectId: split.projectId })} → Sticky token ${v4AddressLabel(chainId, split.beneficiary)}`
+          : split.projectId !== 0n
+            ? `project #${split.projectId} (beneficiary ${split.beneficiary})`
+            : v4AddressLabel(chainId, split.beneficiary),
       ];
-      if (typeof split.hook === "string" && split.hook.toLowerCase() !== zeroAddress) {
+      if (sticky) {
+        parts.push(`via StickyDistributor ${split.hook}`);
+      } else if (typeof split.hook === "string" && split.hook.toLowerCase() !== zeroAddress) {
         parts.push(`via hook ${split.hook}`);
       }
       if (split.preferAddToBalance === true) parts.push("prefers add-to-balance");
@@ -1313,6 +1320,15 @@ function specialArgumentView(
     const steps = describeSplitGroups(call.chainId, value)
     if (steps) return <UrPlanView steps={steps} />
   }
+  if (fn.name === 'multiSend' && inputName === 'transactions' && call.calls?.length) {
+    return (
+      <div className="mt-2 space-y-3">
+        {call.calls.map((inner, index) => (
+          <PrettyCall key={index} call={inner} index={index} total={call.calls!.length} nested />
+        ))}
+      </div>
+    )
+  }
   return null
 }
 
@@ -1337,10 +1353,13 @@ function PrettyCall({
   call,
   index,
   total,
+  nested = false,
 }: {
   call: TransactionReviewCall
   index: number
   total: number
+  /** One call inside a batch: numbered as a call, no chain chip of its own. */
+  nested?: boolean
 }) {
   const fn = functionFromCall(call)
   const args = call.args ?? []
@@ -1350,18 +1369,20 @@ function PrettyCall({
     <section className="rounded-xl border border-smoke-200 bg-white p-4 sm:p-5">
       {total > 1 ? (
         <p className="mb-2 text-xs font-medium uppercase tracking-wide text-smoke-500">
-          Transaction {index + 1} of {total}
+          {nested ? 'Call' : 'Transaction'} {index + 1} of {total}
         </p>
       ) : null}
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="chip inline-flex items-center gap-1.5 rounded-md bg-bluebs-50 px-2 py-0.5 text-bluebs-700">
-          <ChainIcon chainId={call.chainId} size={16} />
-          {chainName(call.chainId)}
-        </span>
-        <span className="font-mono text-[11px] text-smoke-500">
-          chain {call.chainId}
-        </span>
-      </div>
+      {nested ? null : (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="chip inline-flex items-center gap-1.5 rounded-md bg-bluebs-50 px-2 py-0.5 text-bluebs-700">
+            <ChainIcon chainId={call.chainId} size={16} />
+            {chainName(call.chainId)}
+          </span>
+          <span className="font-mono text-[11px] text-smoke-500">
+            chain {call.chainId}
+          </span>
+        </div>
+      )}
 
       {call.label ? (
         <h3 className="mt-3 font-agrandir text-base font-medium text-ink">
