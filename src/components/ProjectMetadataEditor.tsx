@@ -59,7 +59,7 @@ function ProjectMetadataEditorContent({ chainId, projectId, client, unavailable 
     queryKey: ['project-metadata-edit', chainId, projectId.toString(), address ?? null],
     enabled: !!client && !!address && !unavailable,
     queryFn: async () => requireConfirmedBlock(await readProjectMetadataEditState(client!, { chainId, projectId, account: address! })),
-    refetchInterval: 20_000, retry: 1,
+    retry: 1,
   })
   const active = snapshot.data && address && isAddressEqual(snapshot.data.account, address) ? snapshot.data : undefined
   const details = useQuery({

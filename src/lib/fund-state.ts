@@ -157,6 +157,51 @@ function remoteAddress(value: Hex): Address {
  * Any required RPC failure rejects the entire read; optional symbol/URI failures
  * cannot turn a missing balance or permission into a plausible zero/true value.
  */
+type FundAccountInput = {
+  chainId: JBChainId; projectId: bigint; blockNumber: bigint; owner: Address; tokenAddress: Address | null
+  account: Address | null; permissionsEligible: boolean; allowlistHook: Address | null
+}
+
+/** One wallet's FUND balances, permissions and allowlist access at a pinned block. */
+async function readFundAccount(client: PublicClient, input: FundAccountInput) {
+  const { chainId, projectId, blockNumber, owner, tokenAddress, account, permissionsEligible, allowlistHook } = input
+  const at = { blockNumber }
+  const tokens = v6Address('JBTokens', chainId)
+  const permissionsAddress = v6Address('JBPermissions', chainId)
+  const [creditBalance, erc20Balance, totalBalance, accountAllowed, permissions] = await Promise.all([
+    account ? client.readContract({ address: tokens, abi: jbTokensAbi, functionName: 'creditBalanceOf', args: [account, projectId], ...at }) : 0n,
+    account && tokenAddress ? client.readContract({ address: tokenAddress, abi: erc20Abi, functionName: 'balanceOf', args: [account], ...at }) : 0n,
+    account ? client.readContract({ address: tokens, abi: jbTokensAbi, functionName: 'totalBalanceOf', args: [account, projectId], ...at }) : 0n,
+    // Read beside the hook check, so a chain whose registered hook is absent answers unknown, not an error.
+    account && allowlistHook ? client.readContract({ address: allowlistHook, abi: homerunAllowlistHookAbi, functionName: 'canPay', args: [projectId, account], ...at }).catch(() => null) : null,
+    Promise.all(Object.entries(PERMISSIONS).map(async ([key, id]) => {
+      const allowed = account && permissionsEligible
+        ? isAddressEqual(account, owner) || await client.readContract({ address: permissionsAddress, abi: jbPermissionsAbi, functionName: 'hasPermission', args: [account, owner, projectId, BigInt(id), true, true], ...at })
+        : false
+      return [key, Boolean(allowed)] as const
+    })).then(entries => Object.fromEntries(entries) as FundProjectPermissions),
+  ])
+  if (creditBalance + erc20Balance !== totalBalance) throw new Error('The RPC returned inconsistent project token accounting.')
+  return { creditBalance, erc20Balance, totalBalance, accountAllowed, permissions }
+}
+
+/**
+ * Adds one wallet's view to a project read, pinned at that read's block, as Juicebox
+ * Money keeps "your position" apart from the project: connecting or switching a wallet
+ * re-reads a few calls, not the whole project. Writes still verify with a full read.
+ */
+export async function readFundAccountState(client: PublicClient, project: FundProjectState, account: Address): Promise<FundProjectState> {
+  const view = await readFundAccount(client, {
+    chainId: project.chainId, projectId: project.projectId, blockNumber: project.blockNumber, owner: project.owner,
+    tokenAddress: project.tokenAddress, account, permissionsEligible: project.supportedController && project.knownOwnerWrapper,
+    allowlistHook: project.allowlist?.hook ?? null,
+  })
+  return {
+    ...project, account, creditBalance: view.creditBalance, erc20Balance: view.erc20Balance, totalBalance: view.totalBalance,
+    permissions: view.permissions, allowlist: project.allowlist && { ...project.allowlist, accountAllowed: view.accountAllowed },
+  }
+}
+
 export async function readFundProjectState(
   client: PublicClient,
   { chainId, projectId, account }: { chainId: number; projectId: bigint; account?: Address },
@@ -175,7 +220,6 @@ export async function readFundProjectState(
   const terminalStore = v6Address('JBTerminalStore', chain)
   const accessLimits = v6Address('JBFundAccessLimits', chain)
   const splits = v6Address('JBSplits', chain)
-  const permissionsAddress = v6Address('JBPermissions', chain)
   const omnichain = v6Address('JBOmnichainDeployer', chain)
   const suckerRegistry = v6Address('JBSuckerRegistry', chain)
   const [remoteChainId, block] = await Promise.all([client.getChainId(), client.getBlock({ blockTag: 'latest' })])
@@ -250,14 +294,11 @@ export async function readFundProjectState(
       const hasAllowlist = !!allowlistHook && isAddressEqual(extraHook.dataHook, allowlistHook) && extraHook.useDataHookForPay && !extraHook.useDataHookForCashOut
       const [verified721, allowlistRead] = await Promise.all([
         nonzero(tieredHook[0]) ? readVerifiedProject721Hook(client, { chainId: chain, projectId, owner, hook: tieredHook[0], blockNumber }) : undefined,
-        hasAllowlist ? Promise.all([
-          client.readContract({ address: allowlistHook, abi: homerunAllowlistHookAbi, functionName: 'isOpen', args: [projectId], ...at }),
-          account ? client.readContract({ address: allowlistHook, abi: homerunAllowlistHookAbi, functionName: 'canPay', args: [projectId, account], ...at }) : Promise.resolve(null),
-        ]) : null,
+        hasAllowlist ? client.readContract({ address: allowlistHook, abi: homerunAllowlistHookAbi, functionName: 'isOpen', args: [projectId], ...at }) : null,
       ])
       stock721Hook = verified721
       omnichainHooks = { ...extraHook, tiered721Hook: tieredHook[0], tiered721UseDataHookForCashOut: tieredHook[1], tiered721HasTiers: stock721Hook?.hasTiers ?? false }
-      if (hasAllowlist && allowlistRead) allowlist = { hook: allowlistHook, open: allowlistRead[0], accountAllowed: allowlistRead[1] }
+      if (hasAllowlist && allowlistRead !== null) allowlist = { hook: allowlistHook, open: allowlistRead, accountAllowed: null }
       supportedHook = (!nonzero(extraHook.dataHook) && !extraHook.useDataHookForPay || hasAllowlist) && !extraHook.useDataHookForCashOut && !tieredHook[1]
     } else if (nonzero(metadata.dataHook) && metadata.useDataHookForPay && !metadata.useDataHookForCashOut) {
       try {
@@ -307,28 +348,22 @@ export async function readFundProjectState(
     return { accountingContexts, splitGroups }
   }
   const tokenAddress = nonzero(token) ? token : null
-  const readAccount = async () => {
-    const [tokenSymbol, tokenDecimals, projectUri, creditBalance, erc20Balance, totalBalance] = await Promise.all([
+  const readToken = async () => {
+    const [tokenSymbol, tokenDecimals, projectUri] = await Promise.all([
       tokenAddress ? client.readContract({ address: tokenAddress, abi: erc20Abi, functionName: 'symbol', ...at }).catch(() => 'FUND') : 'FUND',
       tokenAddress ? client.readContract({ address: tokenAddress, abi: erc20Abi, functionName: 'decimals', ...at }) : 18,
       client.readContract({ address: canonicalController, abi: jbControllerAbi, functionName: 'uriOf', args: [projectId], ...at }).catch(() => ''),
-      account ? client.readContract({ address: tokens, abi: jbTokensAbi, functionName: 'creditBalanceOf', args: [account, projectId], ...at }) : 0n,
-      account && tokenAddress ? client.readContract({ address: tokenAddress, abi: erc20Abi, functionName: 'balanceOf', args: [account], ...at }) : 0n,
-      account ? client.readContract({ address: tokens, abi: jbTokensAbi, functionName: 'totalBalanceOf', args: [account, projectId], ...at }) : 0n,
     ])
-    if (creditBalance + erc20Balance !== totalBalance || totalSupply + pendingReservedTokens !== totalSupplyWithReservedTokens) {
-      throw new Error('The RPC returned inconsistent project token accounting.')
+    if (totalSupply + pendingReservedTokens !== totalSupplyWithReservedTokens) throw new Error('The RPC returned inconsistent project token accounting.')
+    return [tokenSymbol, tokenDecimals, projectUri] as const
   }
-  return [tokenSymbol, tokenDecimals, projectUri, creditBalance, erc20Balance, totalBalance] as const
-  }
-  const readPermissions = async () => Object.fromEntries(await Promise.all(Object.entries(PERMISSIONS).map(async ([key, id]) => {
-    const allowed = account && supportedController && knownOwnerWrapper
-      ? isAddressEqual(account, owner) || await client.readContract({ address: permissionsAddress, abi: jbPermissionsAbi, functionName: 'hasPermission', args: [account, owner, projectId, BigInt(id), true, true], ...at })
-      : false
-    return [key, Boolean(allowed)]
-  }))) as FundProjectPermissions
-  const [{ omnichainHooks, stock721Hook, allowlist, supportedHook }, { accountingContexts, splitGroups }, [tokenSymbol, tokenDecimals, projectUri, creditBalance, erc20Balance, totalBalance], permissions] =
-    await Promise.all([readHooks(), readTreasury(), readAccount(), readPermissions()])
+  const readAccount = () => readFundAccount(client, {
+    chainId: chain, projectId, blockNumber, owner, tokenAddress, account: account ?? null,
+    permissionsEligible: supportedController && knownOwnerWrapper, allowlistHook: registeredAllowlistHook(chain) ?? null,
+  })
+  const [{ omnichainHooks, stock721Hook, allowlist: projectAllowlist, supportedHook }, { accountingContexts, splitGroups }, [tokenSymbol, tokenDecimals, projectUri], { creditBalance, erc20Balance, totalBalance, permissions, accountAllowed }] =
+    await Promise.all([readHooks(), readTreasury(), readToken(), readAccount()])
+  const allowlist = projectAllowlist && { ...projectAllowlist, accountAllowed }
   if (!supportedHook) issues.push('Custom payment or cash-out hooks need the full Juicebox ruleset editor.')
   // Unknown hooks can consume split groups, so their splits are neither bounded nor copied.
   if (supportedHook) for (const group of splitGroups ?? []) boundedCount(group.splits.length, 64, 'Split recipient count')

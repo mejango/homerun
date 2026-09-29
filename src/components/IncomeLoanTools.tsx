@@ -55,7 +55,7 @@ export function IncomeLoanTools({ state, client }: Props) {
     queryKey: ['income-loan-tools', state.chainId, state.projectId.toString(), loanId.toString(), address],
     enabled: !!address && loanId > 0n,
     queryFn: () => readIncomeLoan(client, { chainId: state.chainId, projectId: state.projectId, loanId, account: address! }),
-    staleTime: 10_000, refetchInterval: 20_000, retry: false,
+    retry: false,
   })
 
   useEffect(() => {

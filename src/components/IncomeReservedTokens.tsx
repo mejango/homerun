@@ -32,7 +32,7 @@ export function IncomeReservedTokens({ state, client }: { state: IncomeProjectSt
   const query = useQuery({
     queryKey: ['income-reserved', state.chainId, state.projectId.toString()],
     queryFn: () => readIncomeReservedTokens(client, { chainId: state.chainId, projectId: state.projectId }),
-    staleTime: 10_000, refetchInterval: 20_000, retry: 1,
+    retry: 1,
   })
   const verified = useQuery({
     queryKey: ['income-reserved-receipt', state.chainId, state.projectId.toString(), tx.receipt?.transactionHash],

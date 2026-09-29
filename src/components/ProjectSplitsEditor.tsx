@@ -40,7 +40,7 @@ export function ProjectSplitsEditor({ chainId, projectId, phase, client, unavail
   const [preparing, setPreparing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const submitting = useRef(false)
-  const query = useQuery({ queryKey: ['project-splits-edit', chainId, projectId.toString(), phase, address ?? null], queryFn: () => readProjectSplitsSnapshot(client, { chainId, projectId, phase, account: address }), staleTime: 10_000, refetchInterval: 20_000, retry: 1 })
+  const query = useQuery({ queryKey: ['project-splits-edit', chainId, projectId.toString(), phase, address ?? null], queryFn: () => readProjectSplitsSnapshot(client, { chainId, projectId, phase, account: address }), retry: 1 })
   const onConfirmed = useCallback(async () => {
     setEditor(null); setError(null)
     for (const key of ['project-splits-edit', 'project-operator-profile', 'income-operator', 'income-reserved', 'income-sticky-binding', 'fund-project', 'income-project']) await cache.invalidateQueries({ queryKey: [key, chainId, projectId.toString()] })

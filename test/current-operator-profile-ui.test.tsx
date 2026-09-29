@@ -189,14 +189,13 @@ describe('current Operator profile', () => {
     expectNoPublishedOperator()
   })
 
-  it('scopes refreshes to the chain and INCOME project and periodically reads current splits', async () => {
+  it('scopes refreshes to the chain and INCOME project without polling, relying on confirmed-transaction refreshes', async () => {
     runtime.data = { ...snapshot(), chainId: 84532, incomeProjectId: 21n }
     await renderOperator({ chainId: 84532, incomeProjectId: 21n })
     const query = queryOptions()
     expect(query.queryKey).toEqual(['project-operator-profile', 84532, '21'])
     expect(query.enabled).toBe(true)
-    expect(query.staleTime).toBe(10_000)
-    expect(query.refetchInterval).toBe(20_000)
+    expect(query.refetchInterval).toBeUndefined()
     await query.queryFn()
     expect(runtime.read).toHaveBeenCalledWith(runtime.client, expect.objectContaining({ chainId: 84532, incomeProjectId: 21n }))
     expect(host.querySelector('a')?.getAttribute('href')).toBe(`/account/${ORIGINAL}?network=testnet`)

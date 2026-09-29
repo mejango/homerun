@@ -22,7 +22,7 @@ export function ProjectPermissionsEditor({ chainId, projectId, client, unavailab
   const query = useQuery({
     queryKey: ['project-authority', chainId, projectId.toString(), address ?? null, operator?.toLowerCase() ?? null],
     queryFn: () => readProjectAuthority(client!, { chainId, projectId, account: address, operator }),
-    enabled: !!client && !unavailable, staleTime: 10_000, refetchInterval: 20_000, retry: 1,
+    enabled: !!client && !unavailable, retry: 1,
   })
   const tx = useProjectAdminTx({ chainId, projectId, onConfirmed: async () => { await query.refetch() } })
   const state = query.data

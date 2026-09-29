@@ -27,7 +27,7 @@ import { readIncomeLaunchBinding } from '@/lib/income-launch'
 import { money } from '@/lib/money'
 import { useWallet } from '@/hooks/useWallet'
 import { displayChainName } from '@/lib/chainDisplay'
-import { readFundProjectState, type FundProjectState } from '@/lib/fund-state'
+import { readFundAccountState, readFundProjectState, type FundProjectState } from '@/lib/fund-state'
 import { fetchFundProjectMetadata, type FundProjectMetadata } from '@/lib/fund-project-metadata'
 import { SiteIntegration } from './SiteIntegration'
 import { getProject } from '@/lib/bendystraw'
@@ -64,15 +64,30 @@ export function FundProject({ chainId, projectId, intentId, seed }: { chainId: J
   const { address } = useWallet()
   const [lastState, setLastState] = useState<FundProjectState | null>(null)
   const confirmed = useQuery<bigint>({ queryKey: ['project-admin-confirmed-block', chainId, projectId], queryFn: async () => 0n, enabled: false, initialData: 0n })
-  const query = useQuery({
-    queryKey: ['fund-project', chainId, projectId, address ?? null],
+  // As in Juicebox Money, the project and "your position" are separate reads: the project
+  // read never depends on the wallet, and a wallet adds only its own calls at that block.
+  const project = useQuery({
+    queryKey: ['fund-project', chainId, projectId],
     enabled: !!client,
-    queryFn: () => readFundProjectState(client!, { chainId, projectId: id, account: address }),
-    staleTime: 10_000,
-    refetchInterval: 20_000,
+    queryFn: () => readFundProjectState(client!, { chainId, projectId: id }),
     retry: 1,
     placeholderData: keepPreviousData,
   })
+  const wallet = useQuery({
+    queryKey: ['fund-project', chainId, projectId, 'account', address ?? null, project.data?.blockNumber.toString()],
+    enabled: !!client && !!address && !!project.data,
+    queryFn: () => readFundAccountState(client!, project.data!, address!),
+    retry: 1,
+    placeholderData: keepPreviousData,
+  })
+  const query = {
+    data: address ? wallet.data : project.data,
+    isError: project.isError || !!address && wallet.isError,
+    isFetching: project.isFetching || wallet.isFetching,
+    // A wallet view from an older project read is display-only until it catches up.
+    isPlaceholderData: project.isPlaceholderData || !!address && (wallet.isPlaceholderData || wallet.data?.blockNumber !== project.data?.blockNumber),
+    refetch: () => project.refetch(),
+  }
   // A return visit shows this project's last verified figures while the fresh read runs.
   // Only the project-level snapshot is persisted: wallet balances and permissions never
   // reach disk, as in Juicebox Money, and a snapshot never enables a write.
@@ -104,6 +119,9 @@ export function FundProject({ chainId, projectId, intentId, seed }: { chainId: J
     retry: 1,
     meta: PERSIST,
   })
+  const indexedRow = indexed.data?.version === 6 && indexed.data.chainId === chainId && String(indexed.data.projectId) === projectId ? indexed.data : null
+  // The index's treasury balance, in the FUND's USDC accounting token, paints the header before the contract read confirms it.
+  const indexedRaised = indexedRow && indexedRow.decimals !== null ? Number(formatUnits(BigInt(indexedRow.balance), indexedRow.decimals)) : undefined
   const metadataUri = displayState?.projectUri || (indexed.data?.version === 6 && indexed.data.chainId === chainId && String(indexed.data.projectId) === projectId ? indexed.data.metadataUri : null)
   const details = useQuery({
     queryKey: ['fund-project-metadata', metadataUri],
@@ -116,7 +134,7 @@ export function FundProject({ chainId, projectId, intentId, seed }: { chainId: J
     retry: 1,
   })
   const [lastIncomeId, setLastIncomeId] = useState<bigint | undefined>()
-  const incomeBinding = useQuery({ queryKey: ['income-binding', chainId, projectId], enabled: !!client, queryFn: () => readIncomeLaunchBinding(client!, chainId, id), staleTime: 10_000, refetchInterval: 15_000, retry: false })
+  const incomeBinding = useQuery({ queryKey: ['income-binding', chainId, projectId], enabled: !!client, queryFn: () => readIncomeLaunchBinding(client!, chainId, id), staleTime: 300_000, retry: false })
   useEffect(() => { if (incomeBinding.data) setLastIncomeId(incomeBinding.data) }, [incomeBinding.data])
   const incomeId = incomeBinding.data ?? lastIncomeId
   const notice = <>
@@ -124,8 +142,15 @@ export function FundProject({ chainId, projectId, intentId, seed }: { chainId: J
     {query.isError && <p role="alert" className="text-sm">Couldn’t confirm this project against the chain. <button type="button" className="quiet-button" onClick={() => void query.refetch()}>Try again</button></p>}
   </>
   return <IncomeProjectRuntime chainId={chainId} projectId={incomeId} fundProjectId={id} bindingUnavailable={incomeBinding.isPending || incomeBinding.isError || !!lastIncomeId && !incomeBinding.data}>{income => <ProjectPageShell>
-      <ProjectActions key={`${chainId}:${projectId}`} chainId={chainId} projectId={id} intentId={intentId} indexedOwner={indexed.data?.owner ?? undefined} state={displayState ?? undefined} client={client} details={details.data} notice={<>{notice}{income.notice}</>} income={income} refreshing={query.isFetching} unconfirmed={!query.data || query.isPlaceholderData} readsUnavailable={readsUnavailable} writesUnavailable={writesUnavailable} refresh={() => void query.refetch()} />
+      <ProjectActions key={`${chainId}:${projectId}`} chainId={chainId} projectId={id} intentId={intentId} indexedOwner={indexed.data?.owner ?? undefined} indexedRaised={indexedRaised} state={displayState ?? undefined} client={client} details={details.data} notice={<>{notice}{income.notice}</>} income={income} refreshing={query.isFetching} unconfirmed={!query.data || query.isPlaceholderData} readsUnavailable={readsUnavailable} writesUnavailable={writesUnavailable} refresh={() => void query.refetch()} />
     </ProjectPageShell>}</IncomeProjectRuntime>
+}
+
+const compact = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: Math.abs(value) < 1_000 ? 2 : 1 }).format(value)
+
+/** The published raise goal: the asset price plus its operating budget. */
+function publishedGoal(plan: ReturnType<typeof publishedPlan> | null | undefined) {
+  return plan && plan.purchaseBudget !== null && plan.opsReserve !== null ? plan.purchaseBudget + plan.opsReserve : null
 }
 
 /** The published setup is the page's first source; a setup that fails its own validation is read through the plan. */
@@ -188,8 +213,8 @@ function PlannedIncome({ plan }: { plan: NonNullable<ReturnType<typeof published
   </section>
 }
 
-function ProjectActions({ chainId, projectId, intentId, indexedOwner, state, client, details, notice, income, refreshing, unconfirmed, readsUnavailable, writesUnavailable, refresh }: {
-  chainId: JBChainId; projectId: bigint; intentId?: string; indexedOwner?: string; state?: FundProjectState; client?: PublicClient; details?: FundProjectMetadata; notice: ReactNode; income: IncomeProjectSlots
+function ProjectActions({ chainId, projectId, intentId, indexedOwner, indexedRaised, state, client, details, notice, income, refreshing, unconfirmed, readsUnavailable, writesUnavailable, refresh }: {
+  chainId: JBChainId; projectId: bigint; intentId?: string; indexedOwner?: string; indexedRaised?: number; state?: FundProjectState; client?: PublicClient; details?: FundProjectMetadata; notice: ReactNode; income: IncomeProjectSlots
   refreshing: boolean; unconfirmed: boolean; readsUnavailable: boolean; writesUnavailable: boolean; refresh: () => void
 }) {
   const alsoDeploy = <DeployRemainingChains chainId={chainId} projectId={projectId.toString()} owner={state?.owner ?? (indexedOwner && isAddress(indexedOwner) ? indexedOwner : undefined)} intentId={intentId} />
@@ -202,10 +227,18 @@ function ProjectActions({ chainId, projectId, intentId, indexedOwner, state, cli
   if (!state || !client) {
     // First visit: shapes sized like what they stand for, never a status sentence.
     const pending = <div role="status"><span className="sr-only">Loading project</span><SkeletonLines lines={3} className="max-w-md" /></div>
+    const seededGoal = publishedGoal(details && publishedPlan(details))
+    const seeded = indexedRaised !== undefined && seededGoal ? { raised: indexedRaised, goal: seededGoal } : null
     return <HomerunProjectLayout title={details?.name ?? <Skeleton as="span" className="inline-block h-[0.9em] w-72 max-w-full align-middle" />}
       location={details?.location}
       logo={projectLogo(details, 'Project logo')}
-      metadata={[<span key="status" id="project-status" className="project-status" role="status" aria-busy="true"><span className="sr-only">Loading</span><Skeleton as="span" className="inline-block h-3 w-56" /></span>]}
+      metadata={[
+        <span key="status" id="project-status" className="project-status" role="status" aria-busy="true"><span className="sr-only">Loading</span><Skeleton as="span" className={`inline-block h-3 ${seeded ? 'w-24' : 'w-56'}`} /></span>,
+        seeded && <span key="raised" data-header-metric="raised">Raised: <Revalidating pending>{compact(seeded.raised)}</Revalidating></span>,
+        seeded && <span key="goal" data-header-metric="goal">Goal: {compact(seeded.goal)}</span>,
+        seeded && <span key="funded" data-header-metric="funded">Funded: <Revalidating pending>{Math.round((seeded.raised / seeded.goal) * 100)}%</Revalidating></span>,
+      ].filter(Boolean)}
+      headerProgress={seeded ? <FundingProgress raised={seeded.raised} goal={seeded.goal} historical={false} compact /> : undefined}
       notice={<>{alsoDeploy}{notice}</>}
       payment={<div className="pay-panel" aria-busy="true"><Skeleton className="h-4 w-32" /><Skeleton className="mt-5 h-12 w-full rounded" /></div>}
       activity={<ProjectActivity chainId={chainId} projectId={projectId} />}
@@ -213,7 +246,7 @@ function ProjectActions({ chainId, projectId, intentId, indexedOwner, state, cli
         about={<p className="whitespace-pre-line">{details?.description ?? ''}</p>}
         photo={details?.coverUrl ? <ProjectPhoto name={details.name ?? 'Project'} photo={details.coverUrl} /> : undefined}
         phase={null}
-        progress={<div className="project-raise-stats" aria-busy="true"><div className="flex gap-7"><Skeleton className="h-10 w-32" /><Skeleton className="h-10 w-32" /></div><Skeleton className="mt-5 h-2 w-full rounded-full" /></div>}
+        progress={seeded ? <Revalidating as="div" pending><ProjectRaiseStats raised={seeded.raised} goal={seeded.goal} historical={false} goalLabel="Published goal" /></Revalidating> : <div className="project-raise-stats" aria-busy="true"><div className="flex gap-7"><Skeleton className="h-10 w-32" /><Skeleton className="h-10 w-32" /></div><Skeleton className="mt-5 h-2 w-full rounded-full" /></div>}
         profiles={details ? <><CurrentOwnerProfile chainId={chainId} owner={undefined} details={details} /><CurrentOperatorProfile chainId={chainId} incomeProjectId={income.projectId} fundDetails={details} bindingUnavailable={income.bindingUnavailable} /></> : <SkeletonLines lines={4} className="max-w-md" />}
       />}
       stages={pending}
@@ -248,10 +281,9 @@ function ProjectActions({ chainId, projectId, intentId, indexedOwner, state, cli
   </section>
   const live = liveFundPhase({ pausePay: state.metadata.pausePay, cashOutTaxRate: state.metadata.cashOutTaxRate, allowOwnerMinting: state.metadata.allowOwnerMinting, hasIncome: !!income.projectId, supported: !!supported })
   // The goal is published, never enforced, and only comparable to a dollar treasury.
-  const goal = plan && plan.purchaseBudget !== null && plan.opsReserve !== null ? plan.purchaseBudget + plan.opsReserve : null
+  const goal = publishedGoal(plan)
   const dollars = !!context && /^USDC?$/i.test(context.symbol)
   const raised = context ? Number(formatUnits(context.balance, context.decimals)) : 0
-  const compact = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: Math.abs(value) < 1_000 ? 2 : 1 }).format(value)
   const raisedMetric = context && (dollars
     ? <span key="raised" data-header-metric="raised" title={`Raised: ${money(raised)}`}>Raised: <Revalidating pending={unconfirmed}>{compact(raised)}</Revalidating></span>
     : <span key="raised" data-header-metric="raised">FUND treasury: <Revalidating pending={unconfirmed}><DisplayTokenAmount value={context.balance} decimals={context.decimals} /> {context.symbol}</Revalidating></span>)

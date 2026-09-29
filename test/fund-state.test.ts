@@ -14,7 +14,7 @@ import { HOMERUN_ALLOWLIST_HOOK } from './fixtures/homerun-deployer'
 import { HOMERUN_SET_ALLOWLIST_PERMISSION_ID } from '../src/lib/income-contracts'
 
 vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fixtures/homerun-deployer')).withHomerunDeployer(await importOriginal()))
-import { assertFundStateForWrite, readFundProjectState, readLinkedFundProjects } from '../src/lib/fund-state'
+import { assertFundStateForWrite, readFundAccountState, readFundProjectState, readLinkedFundProjects } from '../src/lib/fund-state'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as const
 const DELEGATE = '0x2222222222222222222222222222222222222222' as const
@@ -507,3 +507,29 @@ describe('readLinkedFundProjects', () => {
     await expect(readLinkedFundProjects(clientForChainId, await read(local))).rejects.toThrow(/remote chain changed during the project read/i)
   })
 })
+
+describe('readFundAccountState', () => {
+  it('adds a wallet to a wallet-free project read at that read\'s block, matching the full read', async () => {
+    const options = { omnichain: true, allowlist: { open: false, accountAllowed: false }, values: { payoutLimitsOf: [], surplusAllowancesOf: [] } }
+    const full = await read(rpcFixture(options))
+    const fixture = rpcFixture(options)
+    const project = await readFundProjectState(fixture.client, { chainId: fixture.chainId, projectId: fixture.projectId })
+    expect(project).toMatchObject({ account: null, totalBalance: 0n, allowlist: { accountAllowed: null } })
+    fixture.readContract.mockClear(); fixture.getBlock.mockClear()
+    const withWallet = await readFundAccountState(fixture.client, project, DELEGATE)
+    const calls = fixture.readContract.mock.calls.map(([request]) => request.functionName)
+    expect(calls).not.toContain('currentRulesetOf')
+    expect(calls).not.toContain('accountingContextsOf')
+    expect(fixture.readContract.mock.calls.every(([request]) => request.blockNumber === project.blockNumber)).toBe(true)
+    expect(fixture.getBlock).not.toHaveBeenCalled()
+    expect({ ...withWallet, rulesetSnapshot: undefined }).toEqual({ ...full, rulesetSnapshot: undefined })
+  })
+
+  it('rejects inconsistent wallet balances', async () => {
+    const fixture = rpcFixture()
+    const project = await readFundProjectState(fixture.client, { chainId: fixture.chainId, projectId: fixture.projectId })
+    fixture.readContract.mockImplementation(async ({ functionName }: { functionName: string }) => functionName === 'creditBalanceOf' ? 30n : functionName === 'balanceOf' ? 20n : functionName === 'totalBalanceOf' ? 999n : false)
+    await expect(readFundAccountState(fixture.client, project, DELEGATE)).rejects.toThrow('inconsistent')
+  })
+})
+

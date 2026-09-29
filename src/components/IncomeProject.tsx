@@ -139,7 +139,7 @@ export function IncomeProjectRuntime({ chainId, projectId, fundProjectId, bindin
     queryKey: ['income-project', chainId, projectId?.toString(), address ?? null, fundProjectId?.toString()],
     enabled: !!client && projectId !== undefined,
     queryFn: () => readIncomeProjectState(client!, { chainId, projectId: projectId!, account: address, fundProjectId }),
-    staleTime: 10_000, refetchInterval: 20_000, retry: 1, placeholderData: keepPreviousData,
+    retry: 1, placeholderData: keepPreviousData,
   })
   useEffect(() => { if (query.data) setLastState(query.data) }, [query.data])
   const retained = query.data ?? lastState
@@ -187,10 +187,10 @@ function StandaloneIncomeOverview({ chainId, slots }: { chainId: JBChainId; slot
   // A URL's FUND hint cannot identify the asset's public Owner or Operator.
   const fundProjectId = binding.isError ? undefined : binding.data ?? undefined
   const fund = useQuery({
-    queryKey: ['fund-project', chainId, fundProjectId?.toString(), null],
+    queryKey: ['fund-project', chainId, fundProjectId?.toString()],
     enabled: !!client && fundProjectId !== undefined,
     queryFn: () => readFundProjectState(client!, { chainId, projectId: fundProjectId! }),
-    staleTime: 10_000, refetchInterval: 20_000, retry: 1,
+    retry: 1,
   })
   const currentFund = fund.data?.chainId === chainId && fund.data.projectId === fundProjectId ? fund.data : undefined
   const confirmedFund = useQuery<bigint>({ queryKey: ['project-admin-confirmed-block', chainId, fundProjectId?.toString()], queryFn: async () => 0n, enabled: false, initialData: 0n })

@@ -25,7 +25,7 @@ export function IncomeOperatorActions({ state, client }: { state: IncomeProjectS
   const query = useQuery({
     queryKey: ['income-operator', state.chainId, state.projectId.toString(), address ?? null],
     queryFn: () => readIncomeOperatorSnapshot(client, { chainId: state.chainId, projectId: state.projectId, account: address }),
-    staleTime: 10_000, refetchInterval: 20_000, retry: 1,
+    retry: 1,
   })
   const verified = useQuery({
     queryKey: ['income-operator-receipt', state.chainId, state.projectId.toString(), tx.receipt?.transactionHash, intent?.rulesetId.toString()],
