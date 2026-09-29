@@ -21,6 +21,7 @@ import { prepareProjectPayQuote, readProjectPayTokenOptions } from '@/lib/projec
 import { swapDeadline } from '@/lib/safe-connector'
 import dynamic from 'next/dynamic'
 import { readableError } from '@/lib/readable-error'
+import { refreshIndexedProject } from '@/lib/refresh-indexed'
 
 const CenterProjectPayment = dynamic(() => import('./CenterProjectPayment'))
 export function ProjectPayment(props: Parameters<typeof ExternalProjectPayment>[0]) {
@@ -100,7 +101,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       if (item.phase !== 'success' || !item.receipt || confirmed.current.has(item.receipt.transactionHash)) continue
       confirmed.current.add(item.receipt.transactionHash)
       for (const prefix of ['fund-project', 'income-project', 'project-pay', 'project-pay-tokens', 'income-reserved']) void cache.invalidateQueries({ queryKey: [prefix, chainId, projectId.toString()] })
-      for (const prefix of ['project-activity', 'indexed-project']) void cache.invalidateQueries({ queryKey: [prefix, chainId, projectId] })
+      refreshIndexedProject(cache, chainId, projectId)
     }
   }, [cache, chainId, projectId, tx, approval, routerApproval])
   const quote = useQuery({

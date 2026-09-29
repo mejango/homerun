@@ -12,6 +12,7 @@ import { explorerTxUrl } from '@/lib/chainDisplay'
 import { readFundProjectState, type FundProjectState } from '@/lib/fund-state'
 import { buildFundAllowlistChange, buildFundAllowlistOpen, parseAmount } from '@/lib/fund-contracts'
 import { readableError } from '@/lib/readable-error'
+import { refreshIndexedProject } from '@/lib/refresh-indexed'
 
 /** Reject rounded, negative, exponent and over-precise financial inputs. */
 function positiveAmount(value: string, decimals: number): bigint {
@@ -67,6 +68,7 @@ function useConfirmedRefresh(tx: Tx, state: FundProjectState) {
     void cache.invalidateQueries({ queryKey: ['fund-allowance', state.chainId, state.projectId.toString()] })
     void cache.invalidateQueries({ queryKey: ['fund-pay-quote', state.chainId, state.projectId.toString()] })
     void cache.invalidateQueries({ queryKey: ['fund-cash-out-quote', state.chainId, state.projectId.toString()] })
+    refreshIndexedProject(cache, state.chainId, state.projectId)
   }, [cache, state.chainId, state.projectId, tx.phase, tx.receipt])
 }
 
