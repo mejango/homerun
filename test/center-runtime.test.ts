@@ -26,4 +26,12 @@ describe('Center runtime', () => {
     window.sessionStorage.setItem = () => {}
     expect(() => saveCenterReturnPath()).toThrow()
   })
+  it('preserves a project page whose address holds a colon or an @, which a launch from it needs', async () => {
+    const { saveCenterReturnPath, originalCenterPage } = await import('@/providers/center-runtime')
+    for (const path of ['/op:11', '/@jango']) {
+      window.location.pathname = path
+      saveCenterReturnPath()
+      expect(originalCenterPage()).toBe(path)
+    }
+  })
 })

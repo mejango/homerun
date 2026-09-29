@@ -2,13 +2,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { connect } from '@wagmi/core'
 import { wagmiConfig } from '@/providers/Providers'
-import { capturedCenterCallback } from '@/providers/center-callback'
+import { capturedCenterCallback, clearCenterCallbackUrl } from '@/providers/center-callback'
 
 let completing: Promise<string | null> | null = null
 let callbackResolved = false
 async function complete(): Promise<string | null> {
   const callback = capturedCenterCallback()
   const { centerWalletClient, originalCenterPage } = await import('@/providers/center-runtime')
+  clearCenterCallbackUrl()
   if (!callbackResolved && callback && new URL(callback.url).search) {
     // Framed by a Homerun page (a sign-in or payment review shown inline) or opened as a popup: that page finishes
     // the sign-in or payment and removes the frame or closes the window.
