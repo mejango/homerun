@@ -4,7 +4,7 @@ import type { FundProjectState } from '../src/lib/fund-state'
 
 const runtime = vi.hoisted(() => ({ read: vi.fn(), assert: vi.fn() }))
 vi.mock('../src/lib/fund-state', () => ({ readFundProjectState: runtime.read, assertFundStateForWrite: runtime.assert }))
-import { readFundPayNetworks } from '../src/lib/fund-pay-networks'
+import { readFundPayNetwork } from '../src/lib/fund-pay-networks'
 
 const local = `0x${'11'.repeat(20)}` as Address
 const remote = `0x${'22'.repeat(20)}` as Address
@@ -18,32 +18,35 @@ function client(overrides: Record<string, unknown> = {}) {
   } as unknown as PublicClient
 }
 
-describe('available FUND payment networks', () => {
+describe('verifying a picked FUND payment chain', () => {
+  const read = (overrides: Record<string, unknown> = {}) => readFundPayNetwork(() => client(overrides), source, 8453)
+
   it('uses the remote contract project ID rather than the source ID', async () => {
     runtime.read.mockResolvedValue(destination)
-    const result = await readFundPayNetworks(() => client(), source)
-    expect(result.projects.map(project => [project.chainId, project.projectId])).toEqual([[1, 7n], [8453, 42n]])
-    expect(result.unavailable).toBe(0)
+    const state = await read()
+    expect([state.chainId, state.projectId]).toEqual([8453, 42n])
   })
 
-  it('keeps the local project payable while a peer has not launched', async () => {
-    const result = await readFundPayNetworks(() => client({ projectId: 0n }), source)
-    expect(result.projects).toEqual([source])
-    expect(result.unavailable).toBe(1)
+  it('rejects a peer that has not launched yet', async () => {
+    await expect(read({ projectId: 0n })).rejects.toThrow('incomplete')
   })
 
-  it('excludes a project without a reciprocal registered bridge', async () => {
+  it('rejects a chain the source has no registered bridge to', async () => {
+    await expect(readFundPayNetwork(() => client(), source, 10)).rejects.toThrow('Unsupported payment chain')
+  })
+
+  it('rejects a project without a reciprocal registered bridge', async () => {
     runtime.read.mockResolvedValue({ ...destination, linkedPeers: [] })
-    expect((await readFundPayNetworks(() => client(), source)).projects).toEqual([source])
+    await expect(read()).rejects.toThrow('Unverified peer project')
   })
 
-  it('excludes an incorrect peer chain even if metadata or IDs match', async () => {
+  it('rejects an incorrect peer chain even if metadata or IDs match', async () => {
     runtime.read.mockResolvedValue(destination)
-    expect((await readFundPayNetworks(() => client({ peerChainId: 10n }), source)).projects).toEqual([source])
+    await expect(read({ peerChainId: 10n })).rejects.toThrow('Unverified peer project')
   })
 
-  it('excludes a peer whose block was reorganized', async () => {
+  it('rejects a peer whose block was reorganized', async () => {
     runtime.read.mockResolvedValue({ ...destination, blockHash: '0xdef' })
-    expect((await readFundPayNetworks(() => client(), source)).projects).toEqual([source])
+    await expect(read()).rejects.toThrow('Unverified peer project')
   })
 })
