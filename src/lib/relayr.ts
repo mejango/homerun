@@ -682,8 +682,8 @@ export async function relayrPay(
         from: expectedAccount,
         to: details.target,
         value: details.amount,
-        // A Safe app forwards the sent gas limit as the proposal's safeTxGas.
-        ...(viaSafe ? { safeTxGas: RELAYR_PAYMENT_GAS } : { gas: RELAYR_PAYMENT_GAS }),
+        // A Safe app signs the sent gas as safeTxGas; 0 makes a failed payment revert.
+        ...(viaSafe ? { safeTxGas: 0n } : { gas: RELAYR_PAYMENT_GAS }),
         data: details.calldata,
         label: 'Pay for relayed transactions',
         contractName: 'Relayr prepaid payment',
@@ -721,7 +721,7 @@ export async function relayrPay(
       to: details.target,
       value: details.amount,
       data: details.calldata,
-      gas: RELAYR_PAYMENT_GAS,
+      gas: viaSafe ? 0n : RELAYR_PAYMENT_GAS,
     })
   } catch (error) {
     if (relayrErrorIsDefiniteNoSubmission(error)) throw error

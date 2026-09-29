@@ -64,7 +64,7 @@ describe('choosing where to pay a relay fee', () => {
     const { dialog, select } = await choose([ethereum, base], 8453)
     expect(dialog.querySelector('h2')?.textContent).toBe('Choose where to pay')
     expect(document.getElementById(dialog.getAttribute('aria-describedby')!)?.textContent).toBe(
-      "One payment covers every chain. You'll review it before your wallet sends it.",
+      "One payment covers every chain. You’ll review it before your wallet sends it.",
     )
     expect(dialog.querySelector(`label[for="${select.id}"]`)?.textContent).toBe('Pay on')
     expect([...select.options].map(option => option.textContent)).toEqual([

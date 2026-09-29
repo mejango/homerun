@@ -1709,7 +1709,7 @@ function FundingChainSelectionModal({
         </header>
         <div className="px-5 py-5 sm:px-6">
           <p id={descriptionId} className="text-sm leading-relaxed text-smoke-700">
-            {"One payment covers every chain. You'll review it before your wallet sends it."}
+            One payment covers every chain. You’ll review it before your wallet sends it.
           </p>
           <label
             htmlFor={selectId}

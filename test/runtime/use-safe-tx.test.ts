@@ -409,12 +409,16 @@ describe('useSafeTx', () => {
     })
 
     expect(mocks.requestReview).toHaveBeenCalledWith(
-      { ...request, account: ALICE },
+      { ...request, account: ALICE, safeTxGas: 0n },
       {
         label: 'Transfer',
         description: 'Safe nonce guidance',
         confirmLabel: 'Agree & continue to Safe',
       },
+    )
+    // The Safe app signs the sent gas as safeTxGas: 0 makes a failed call revert.
+    expect(mocks.writeContract).toHaveBeenCalledWith(
+      expect.objectContaining({ gas: 0n }),
     )
     await act(async () => {
       await Promise.resolve()

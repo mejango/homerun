@@ -86,12 +86,12 @@ describe('Relayr payment review', () => {
     expect(m.send.mock.calls[0][0].gas).toBe(reviewed.gas)
   })
 
-  it('shows a Safe the safeTxGas its proposal carries', async () => {
+  it('sends a Safe proposal with safeTxGas 0 and shows it', async () => {
     m.safe = true
     await relayrPay(payment, m.account, BUNDLE, [1, 10])
     const reviewed = m.review.mock.calls[0][0].calls[0]
-    expect(reviewed.safeTxGas).toBe(150_000n)
+    expect(reviewed.safeTxGas).toBe(0n)
     expect(reviewed).not.toHaveProperty('gas')
-    expect(m.send.mock.calls[0][0].gas).toBe(reviewed.safeTxGas)
+    expect(m.send.mock.calls[0][0].gas).toBe(0n)
   })
 })
