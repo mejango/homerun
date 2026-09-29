@@ -87,7 +87,8 @@ export function IntentProject({ intentId }: { intentId: string }) {
     // started here keeps its per-chain progress until that run resolves, so a
     // linked project never opens on half of itself.
     if (!deployment || running) return
-    router.replace(`/project/${deployment.chainId}/${deployment.projectId}?intent=${intentId}`)
+    // The project's own address is the link to share; the page finds its intent itself.
+    router.replace(`/project/${deployment.chainId}/${deployment.projectId}`)
   }, [deployment, running, router, intentId])
 
   const details = useQuery({

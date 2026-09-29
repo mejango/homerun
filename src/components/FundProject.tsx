@@ -3,7 +3,7 @@
 import { type JBChainId } from '@bananapus/nana-sdk-core'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { formatUnits, isAddressEqual, type PublicClient } from 'viem'
+import { formatUnits, isAddress, isAddressEqual, type PublicClient } from 'viem'
 import Image from 'next/image'
 import { usePublicClient } from 'wagmi'
 import { DeployRemainingChains } from '@/components/DeployRemainingChains'
@@ -30,6 +30,8 @@ import { displayChainName } from '@/lib/chainDisplay'
 import { readFundProjectState, type FundProjectState } from '@/lib/fund-state'
 import { fetchFundProjectMetadata, type FundProjectMetadata } from '@/lib/fund-project-metadata'
 import { SiteIntegration } from './SiteIntegration'
+import { getProject } from '@/lib/bendystraw'
+import { loadDisplayCache, saveDisplayCache } from '@/lib/display-cache'
 import { DemoStageHistory, PhaseCopy, ProjectOverviewView, ProjectPageShell, ProjectPhoto, ProjectRaiseStats } from '@/components/ProjectPage'
 import { liveFundPhase } from '@/lib/fund-phase'
 import { FundingProgress } from '@/components/FundingProgress'
@@ -57,7 +59,10 @@ export function FundProject({ chainId, projectId, intentId }: { chainId: JBChain
     retry: 1,
     placeholderData: keepPreviousData,
   })
-  useEffect(() => { if (query.data) setLastState(query.data) }, [query.data])
+  // A return visit shows the last verified state for this wallet while the fresh read runs.
+  const cacheKey = `fund-state:${chainId}:${projectId}:${address?.toLowerCase() ?? 'none'}`
+  useEffect(() => { if (!query.data) setLastState(current => current ?? loadDisplayCache<FundProjectState>(cacheKey)) }, [cacheKey, query.data])
+  useEffect(() => { if (query.data) { setLastState(query.data); saveDisplayCache(cacheKey, query.data) } }, [cacheKey, query.data])
   // Keep receipt tracking mounted through a failed refresh or wallet change.
   // Retained reads are display-only until the active account is freshly read.
   const displayState = query.data ?? lastState
@@ -66,10 +71,22 @@ export function FundProject({ chainId, projectId, intentId }: { chainId: JBChain
     : !address
   const readsUnavailable = query.isError || query.isPlaceholderData || !query.data || query.data.blockNumber < (confirmed.data ?? 0n)
   const writesUnavailable = readsUnavailable || !accountMatches
+  // The index answers in about a second, the verified contract read in several:
+  // its row puts the project's name and pictures on screen first. Verified
+  // state replaces the URI as soon as it lands; the index never gates a write.
+  const indexed = useQuery({
+    queryKey: ['indexed-project', chainId, Number(projectId)],
+    enabled: Number.isSafeInteger(Number(projectId)),
+    queryFn: () => getProject(chainId, Number(projectId)),
+    staleTime: 30_000,
+    retry: 1,
+  })
+  const metadataUri = displayState?.projectUri || (indexed.data?.version === 6 && indexed.data.chainId === chainId && String(indexed.data.projectId) === projectId ? indexed.data.metadataUri : null)
   const details = useQuery({
-    queryKey: ['fund-project-metadata', displayState?.projectUri],
-    enabled: !!displayState?.projectUri,
-    queryFn: () => fetchFundProjectMetadata(displayState!.projectUri),
+    queryKey: ['fund-project-metadata', metadataUri],
+    enabled: !!metadataUri,
+    queryFn: async () => { const read = await fetchFundProjectMetadata(metadataUri!); saveDisplayCache(`fund-metadata:${metadataUri}`, read); return read },
+    placeholderData: () => metadataUri ? loadDisplayCache<FundProjectMetadata>(`fund-metadata:${metadataUri}`) ?? undefined : undefined,
     staleTime: 300_000,
     retry: 1,
   })
@@ -84,7 +101,7 @@ export function FundProject({ chainId, projectId, intentId }: { chainId: JBChain
     {incomeBinding.isError && <p role="status">The INCOME connection could not be refreshed. FUND balances and permissions are verified independently.</p>}
   </>
   return <IncomeProjectRuntime chainId={chainId} projectId={incomeId} fundProjectId={id} bindingUnavailable={incomeBinding.isPending || incomeBinding.isError || !!lastIncomeId && !incomeBinding.data}>{income => <ProjectPageShell>
-      <ProjectActions key={`${chainId}:${projectId}`} chainId={chainId} projectId={id} intentId={intentId} state={displayState ?? undefined} client={client} details={details.data} notice={<>{notice}{income.notice}</>} income={income} refreshing={query.isFetching} readsUnavailable={readsUnavailable} writesUnavailable={writesUnavailable} refresh={() => void query.refetch()} />
+      <ProjectActions key={`${chainId}:${projectId}`} chainId={chainId} projectId={id} intentId={intentId} indexedOwner={indexed.data?.owner ?? undefined} state={displayState ?? undefined} client={client} details={details.data} notice={<>{notice}{income.notice}</>} income={income} refreshing={query.isFetching} readsUnavailable={readsUnavailable} writesUnavailable={writesUnavailable} refresh={() => void query.refetch()} />
     </ProjectPageShell>}</IncomeProjectRuntime>
 }
 
@@ -135,11 +152,11 @@ function PlannedIncome({ plan }: { plan: NonNullable<ReturnType<typeof published
   </section>
 }
 
-function ProjectActions({ chainId, projectId, intentId, state, client, details, notice, income, refreshing, readsUnavailable, writesUnavailable, refresh }: {
-  chainId: JBChainId; projectId: bigint; intentId?: string; state?: FundProjectState; client?: PublicClient; details?: FundProjectMetadata; notice: ReactNode; income: IncomeProjectSlots
+function ProjectActions({ chainId, projectId, intentId, indexedOwner, state, client, details, notice, income, refreshing, readsUnavailable, writesUnavailable, refresh }: {
+  chainId: JBChainId; projectId: bigint; intentId?: string; indexedOwner?: string; state?: FundProjectState; client?: PublicClient; details?: FundProjectMetadata; notice: ReactNode; income: IncomeProjectSlots
   refreshing: boolean; readsUnavailable: boolean; writesUnavailable: boolean; refresh: () => void
 }) {
-  const alsoDeploy = <DeployRemainingChains chainId={chainId} projectId={projectId.toString()} owner={state?.owner} intentId={intentId} />
+  const alsoDeploy = <DeployRemainingChains chainId={chainId} projectId={projectId.toString()} owner={state?.owner ?? (indexedOwner && isAddress(indexedOwner) ? indexedOwner : undefined)} intentId={intentId} />
   const { address, isConnected } = useWallet()
   const [contextIndex, setContextIndex] = useState(0)
   const [paymentToken, setPaymentToken] = useState<'fund' | 'income'>('fund')
@@ -147,15 +164,21 @@ function ProjectActions({ chainId, projectId, intentId, state, client, details, 
   const paymentChoice = useRef(false)
   useEffect(() => { if (income.projectId && !paymentChoice.current) setPaymentToken('income') }, [income.projectId])
   if (!state || !client) {
-    const pending = <p>Waiting for the project’s confirmed contract state.</p>
+    const pending = <p className="text-sm text-[var(--muted)]" role="status">Reading the contracts…</p>
     return <HomerunProjectLayout title={details?.name ?? 'FUND project'}
       location={details?.location}
       logo={projectLogo(details, 'Project logo')}
       metadata={[<span key="status" id="project-status" className="project-status" role="status">Status: Verifying contracts</span>]}
       notice={<>{alsoDeploy}{notice}</>}
-      payment={<ActionSection title="Pay">{pending}</ActionSection>}
+      payment={<div className="pay-panel">{pending}</div>}
       activity={<ProjectActivity chainId={chainId} projectId={projectId} />}
-      overview={<div className="grid gap-7"><ActionSection title="About"><p>{details?.description ?? 'Fund the asset, manage its treasury, and use your FUND tokens.'}</p>{pending}</ActionSection><CurrentOwnerProfile chainId={chainId} owner={undefined} details={details} /><CurrentOperatorProfile chainId={chainId} incomeProjectId={income.projectId} fundDetails={details} bindingUnavailable={income.bindingUnavailable} /></div>}
+      overview={<ProjectOverviewView
+        about={<p className="whitespace-pre-line">{details?.description ?? ''}</p>}
+        photo={details?.coverUrl ? <ProjectPhoto name={details.name ?? 'Project'} photo={details.coverUrl} /> : undefined}
+        phase={null}
+        progress={pending}
+        profiles={<><CurrentOwnerProfile chainId={chainId} owner={undefined} details={details} /><CurrentOperatorProfile chainId={chainId} incomeProjectId={income.projectId} fundDetails={details} bindingUnavailable={income.bindingUnavailable} /></>}
+      />}
       stages={pending}
       owners={<OwnersTabs accountsYou={pending} accountsAll={pending} settlement={pending} splits={pending} loans={pending} control={pending} permissions={pending} />}
       shop={pending} extras={pending} operators={pending}

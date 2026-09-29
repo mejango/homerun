@@ -236,7 +236,7 @@ describe('a published project page', () => {
     expect(runtime.requestDeploy).toHaveBeenCalledWith(intentId, expect.objectContaining({ chainIds: [8453] }))
     // Center's next reported step is the one the SDK polls for, four seconds on.
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 5_000)) })
-    expect(navigate.replace).toHaveBeenCalledWith(`/project/8453/42?intent=${intentId}`)
+    expect(navigate.replace).toHaveBeenCalledWith(`/project/8453/42`)
   }, 20_000)
 
   it('opens the created project immediately when one already exists', async () => {
@@ -245,7 +245,7 @@ describe('a published project page', () => {
       deployments: [{ chainId: 8453, projectId: '7', transactionHash: hash, createdAt: new Date(0).toISOString() }],
     }))
     await render()
-    expect(navigate.replace).toHaveBeenCalledWith(`/project/8453/7?intent=${intentId}`)
+    expect(navigate.replace).toHaveBeenCalledWith(`/project/8453/7`)
   })
 
   it('opens nothing for a deployment on a chain this intent does not carry', async () => {
@@ -320,14 +320,14 @@ describe('a published project page', () => {
     expect(alert?.textContent).toBe('This project could not be created on Optimism. It cannot be deployed from here; create it again.')
     const link = Array.from(host.querySelectorAll('a')).find(a => a.getAttribute('href') === '/project/8453/42')
     expect(link?.getAttribute('aria-label')).toBe('Deployed on Base')
-    expect(navigate.replace).toHaveBeenCalledWith(`/project/8453/42?intent=${intentId}`)
+    expect(navigate.replace).toHaveBeenCalledWith(`/project/8453/42`)
   })
 
   it('opens the first deployed chain in the intent’s own order', async () => {
     const envelope = envelopeFor([call(10), call(8453)])
     runtime.getIntent.mockResolvedValue(intent({ envelope, deployments: [deployment(8453, '42'), deployment(10, '43')] }))
     await render()
-    expect(navigate.replace).toHaveBeenCalledWith(`/project/10/43?intent=${intentId}`)
+    expect(navigate.replace).toHaveBeenCalledWith(`/project/10/43`)
   })
 
   it('keeps Deploy offered when no chain was recorded as failed', async () => {
@@ -364,7 +364,7 @@ describe('a published project page', () => {
     created = 2
     // Center's next reported step is the one the SDK polls for, four seconds on.
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 5_000)) })
-    expect(navigate.replace).toHaveBeenCalledWith(`/project/8453/42?intent=${intentId}`)
+    expect(navigate.replace).toHaveBeenCalledWith(`/project/8453/42`)
   }, 20_000)
 
   it('opens contributions as soon as a project whose start has passed is created', async () => {

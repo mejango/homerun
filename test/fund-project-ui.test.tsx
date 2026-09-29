@@ -109,6 +109,7 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     HTMLElement.prototype.scrollIntoView ??= () => {}
     Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) })
     window.history.replaceState(null, '', '/')
+    localStorage.clear()
     runtime.incomeId = undefined; runtime.details = undefined
     runtime.incomeQuery = { data: undefined, isError: false, isPending: false, isFetching: false, isPlaceholderData: false, refetch: vi.fn() }
     runtime.bindingError = false; runtime.bindingPending = false; runtime.operator = undefined; runtime.operatorError = false
@@ -425,6 +426,16 @@ describe('live FUND transaction tracking survives refreshed data', () => {
       expect(editor.disabled).toBe(false)
     }
     expect(runtime.send).not.toHaveBeenCalled()
+  })
+
+  it('shows the last verified state from this browser at once, with transactions still closed until a fresh read', async () => {
+    await act(async () => root.render(<FundProject chainId={1} projectId="7" />))
+    await act(async () => root.unmount())
+    root = createRoot(host)
+    runtime.query = { ...runtime.query, data: undefined, isPending: true }
+    await act(async () => root.render(<FundProject chainId={1} projectId="7" />))
+    expect(host.querySelector('.hpl-metadata')?.textContent).toContain('FUND treasury:')
+    expect(host.textContent).toContain('New transactions are paused while current project permissions and balances are being verified.')
   })
 
   it('shows the project navigation before RPC reads finish and preserves the selected tab', async () => {

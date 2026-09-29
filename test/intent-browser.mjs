@@ -378,7 +378,7 @@ try {
   await relayReview.getByRole('checkbox').check()
   await relayReview.getByRole('button', { name: 'Continue to wallet', exact: true }).click()
 
-  await page.waitForURL(new RegExp(`${appOrigin}/project/1/7\\?intent=${intentId}$`), { timeout: 60_000 })
+  await page.waitForURL(new RegExp(`${appOrigin}/project/1/7$`), { timeout: 60_000 })
 
   // The Safe this project owns does not exist on Ethereum yet, so the visitor
   // creates it before the project, and both are sent from their own wallet.
