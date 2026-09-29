@@ -2,11 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { isAddressEqual, createPublicClient, type PublicClient } from "viem";
-import type { JBChainId } from "@bananapus/nana-sdk-core";
+import { isAddressEqual } from "viem";
 import { useWallet } from "@/hooks/useWallet";
 import type { IncomeProjectState } from "@/lib/income-state";
-import { jbCenterRpcTransport } from "@/lib/jbcenter-rpc";
+import { jbCenterPublicClient } from "@/lib/jbcenter-rpc";
 import {
   readLinkedIncomeProjects,
   readIncomeBridgeRoute,
@@ -20,17 +19,7 @@ import {
   type ProjectBridgeAdapter,
 } from "./ProjectBridgeActions";
 
-const clients = new Map<JBChainId, PublicClient>();
-function clientFor(chainId: JBChainId) {
-  let client = clients.get(chainId);
-  if (!client) {
-    client = createPublicClient({
-      transport: jbCenterRpcTransport(chainId, 60_000),
-    });
-    clients.set(chainId, client);
-  }
-  return client;
-}
+const clientFor = jbCenterPublicClient;
 const adapter: ProjectBridgeAdapter<IncomeLinkedProjectState> = {
   tokenLabel: "INCOME",
   description:

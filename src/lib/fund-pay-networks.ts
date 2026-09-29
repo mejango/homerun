@@ -14,9 +14,9 @@ export async function readFundPayNetworks(
     const chain = SUPPORTED_CHAINS.find(chain => chain.id === peer.chainId)
     if (!chain) throw new Error('Unsupported payment chain.')
     const client = clientFor(chain.id)
-    if (await client.getChainId() !== peer.chainId) throw new Error('Wrong RPC chain.')
     const projectId = await client.readContract({ address: peer.suckerAddress, abi: jbSuckerV6ViewAbi, functionName: 'projectId' })
     if (projectId <= 0n) throw new Error('Peer launch is incomplete.')
+    // readFundProjectState rejects an RPC that answers for a different chain.
     const state = await readFundProjectState(client, { chainId: peer.chainId, projectId, ...(source.account ? { account: source.account } : {}) })
     assertFundStateForWrite(state)
     const [remotePeer, remoteChain, remoteId, block] = await Promise.all([

@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  createPublicClient,
   formatUnits,
   isAddress,
   isAddressEqual,
@@ -24,7 +23,7 @@ import {
   displayChainSlug,
   explorerTxUrl,
 } from "@/lib/chainDisplay";
-import { jbCenterRpcTransport } from "@/lib/jbcenter-rpc";
+import { jbCenterPublicClient } from "@/lib/jbcenter-rpc";
 import { parseAmount } from "@/lib/fund-contracts";
 import type { FundTransaction } from "@/lib/fund-contracts";
 import type {
@@ -43,17 +42,7 @@ import {
 import { verifyFundBridgeReceipt } from "@/lib/fund-bridge-receipts";
 import { readableError } from "@/lib/readable-error";
 
-const clients = new Map<JBChainId, PublicClient>();
-function clientFor(chainId: JBChainId): PublicClient {
-  let client = clients.get(chainId);
-  if (!client) {
-    client = createPublicClient({
-      transport: jbCenterRpcTransport(chainId, 60_000),
-    });
-    clients.set(chainId, client);
-  }
-  return client;
-}
+const clientFor = jbCenterPublicClient;
 function message(error: unknown) {
   return readableError(
     error,

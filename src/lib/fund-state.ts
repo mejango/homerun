@@ -165,7 +165,6 @@ export async function readFundProjectState(
     throw new Error('A supported chain and positive project ID are required.')
   }
   if (client.chain && client.chain.id !== chainId) throw new Error('The RPC client is connected to a different chain.')
-  if (await client.getChainId() !== chainId) throw new Error('The RPC endpoint returned a different chain.')
   const chain = chainId as JBChainId
   const projects = v6Address('JBProjects', chain)
   const directory = v6Address('JBDirectory', chain)
@@ -179,7 +178,8 @@ export async function readFundProjectState(
   const permissionsAddress = v6Address('JBPermissions', chain)
   const omnichain = v6Address('JBOmnichainDeployer', chain)
   const suckerRegistry = v6Address('JBSuckerRegistry', chain)
-  const block = await client.getBlock({ blockTag: 'latest' })
+  const [remoteChainId, block] = await Promise.all([client.getChainId(), client.getBlock({ blockTag: 'latest' })])
+  if (remoteChainId !== chainId) throw new Error('The RPC endpoint returned a different chain.')
   if (block.number === null || !block.hash) throw new Error('The RPC did not return a mined snapshot block.')
   const blockNumber = block.number
   const at = { blockNumber }
@@ -234,105 +234,116 @@ export async function readFundProjectState(
     return { chainId: remoteChainId, suckerAddress: remoteAddress(peer.remote), localSuckerAddress: peer.local }
   })
   const linkedChainIds = [...new Set([chainId, ...linkedPeers.map(peer => peer.chainId)])].sort((a, b) => a - b)
-  let omnichainHooks: FundRulesetSnapshot['omnichainHooks']
-  let stock721Hook: FundRulesetSnapshot['stock721Hook']
-  let allowlist: FundAllowlistState | null = null
-  let supportedHook = !nonzero(metadata.dataHook) && !metadata.useDataHookForPay && !metadata.useDataHookForCashOut
-  if (isAddressEqual(metadata.dataHook, omnichain)) {
-    const [extraHook, tieredHook] = await Promise.all([
-      client.readContract({ address: omnichain, abi: jbOmnichainDeployerAbi, functionName: 'extraDataHookOf', args: [projectId, BigInt(ruleset.id)], ...at }),
-      client.readContract({ address: omnichain, abi: jbOmnichainDeployerAbi, functionName: 'tiered721HookOf', args: [projectId, BigInt(ruleset.id)], ...at }),
-    ])
-    if (nonzero(tieredHook[0])) {
-      stock721Hook = await readVerifiedProject721Hook(client, { chainId: chain, projectId, owner, hook: tieredHook[0], blockNumber })
-    }
-    omnichainHooks = { ...extraHook, tiered721Hook: tieredHook[0], tiered721UseDataHookForCashOut: tieredHook[1], tiered721HasTiers: stock721Hook?.hasTiers ?? false }
-    const allowlistHook = registeredAllowlistHook(chain)
-    const hasAllowlist = !!allowlistHook && isAddressEqual(extraHook.dataHook, allowlistHook) && extraHook.useDataHookForPay && !extraHook.useDataHookForCashOut
-    if (hasAllowlist) {
-      const [open, accountAllowed] = await Promise.all([
-        client.readContract({ address: allowlistHook, abi: homerunAllowlistHookAbi, functionName: 'isOpen', args: [projectId], ...at }),
-        account ? client.readContract({ address: allowlistHook, abi: homerunAllowlistHookAbi, functionName: 'canPay', args: [projectId, account], ...at }) : Promise.resolve(null),
+  // Hooks, treasury and account reads depend only on the reads above, so each
+  // branch runs alongside the others instead of waiting in one long chain.
+  const readHooks = async () => {
+    let omnichainHooks: FundRulesetSnapshot['omnichainHooks']
+    let stock721Hook: FundRulesetSnapshot['stock721Hook']
+    let allowlist: FundAllowlistState | null = null
+    let supportedHook = !nonzero(metadata.dataHook) && !metadata.useDataHookForPay && !metadata.useDataHookForCashOut
+    if (isAddressEqual(metadata.dataHook, omnichain)) {
+      const [extraHook, tieredHook] = await Promise.all([
+        client.readContract({ address: omnichain, abi: jbOmnichainDeployerAbi, functionName: 'extraDataHookOf', args: [projectId, BigInt(ruleset.id)], ...at }),
+        client.readContract({ address: omnichain, abi: jbOmnichainDeployerAbi, functionName: 'tiered721HookOf', args: [projectId, BigInt(ruleset.id)], ...at }),
       ])
-      allowlist = { hook: allowlistHook, open, accountAllowed }
-    }
-    supportedHook = (!nonzero(extraHook.dataHook) && !extraHook.useDataHookForPay || hasAllowlist) && !extraHook.useDataHookForCashOut && !tieredHook[1]
-  } else if (nonzero(metadata.dataHook) && metadata.useDataHookForPay && !metadata.useDataHookForCashOut) {
-    try {
-      stock721Hook = await readVerifiedProject721Hook(client, { chainId: chain, projectId, owner, hook: metadata.dataHook, blockNumber })
-      supportedHook = true
-    } catch (reason) {
-      // Unrecognized custom hooks remain readable with lifecycle writes disabled.
-      // RPC failures and inconsistent canonical bindings still reject the read.
-      if (!(reason instanceof UnsupportedProject721HookError)) throw reason
-    }
+      const allowlistHook = registeredAllowlistHook(chain)
+      const hasAllowlist = !!allowlistHook && isAddressEqual(extraHook.dataHook, allowlistHook) && extraHook.useDataHookForPay && !extraHook.useDataHookForCashOut
+      const [verified721, allowlistRead] = await Promise.all([
+        nonzero(tieredHook[0]) ? readVerifiedProject721Hook(client, { chainId: chain, projectId, owner, hook: tieredHook[0], blockNumber }) : undefined,
+        hasAllowlist ? Promise.all([
+          client.readContract({ address: allowlistHook, abi: homerunAllowlistHookAbi, functionName: 'isOpen', args: [projectId], ...at }),
+          account ? client.readContract({ address: allowlistHook, abi: homerunAllowlistHookAbi, functionName: 'canPay', args: [projectId, account], ...at }) : Promise.resolve(null),
+        ]) : null,
+      ])
+      stock721Hook = verified721
+      omnichainHooks = { ...extraHook, tiered721Hook: tieredHook[0], tiered721UseDataHookForCashOut: tieredHook[1], tiered721HasTiers: stock721Hook?.hasTiers ?? false }
+      if (hasAllowlist && allowlistRead) allowlist = { hook: allowlistHook, open: allowlistRead[0], accountAllowed: allowlistRead[1] }
+      supportedHook = (!nonzero(extraHook.dataHook) && !extraHook.useDataHookForPay || hasAllowlist) && !extraHook.useDataHookForCashOut && !tieredHook[1]
+    } else if (nonzero(metadata.dataHook) && metadata.useDataHookForPay && !metadata.useDataHookForCashOut) {
+      try {
+        stock721Hook = await readVerifiedProject721Hook(client, { chainId: chain, projectId, owner, hook: metadata.dataHook, blockNumber })
+        supportedHook = true
+      } catch (reason) {
+        // Unrecognized custom hooks remain readable with lifecycle writes disabled.
+        // RPC failures and inconsistent canonical bindings still reject the read.
+        if (!(reason instanceof UnsupportedProject721HookError)) throw reason
+      }
   }
-  if (!supportedHook) issues.push('Custom payment or cash-out hooks need the full Juicebox ruleset editor.')
-
-  const rawContexts = terminals.some(terminal => isAddressEqual(terminal, canonicalTerminal))
-    ? await client.readContract({ address: canonicalTerminal, abi: jbMultiTerminalAbi, functionName: 'accountingContextsOf', args: [projectId], ...at })
-    : []
-  boundedCount(rawContexts.length, 32, 'Accounting token count')
-  if (new Set(rawContexts.map(context => context.token.toLowerCase())).size !== rawContexts.length) throw new Error('The terminal returned duplicate accounting contexts.')
-  const accountingContexts = await Promise.all(rawContexts.map(async context => {
-    const [primaryTerminal, balance, surplus, payoutLimits, surplusAllowances] = await Promise.all([
-      client.readContract({ address: directory, abi: jbDirectoryAbi, functionName: 'primaryTerminalOf', args: [projectId, context.token], ...at }),
-      client.readContract({ address: terminalStore, abi: jbTerminalStoreAbi, functionName: 'balanceOf', args: [canonicalTerminal, projectId, context.token], ...at }),
-      client.readContract({ address: canonicalTerminal, abi: jbMultiTerminalAbi, functionName: 'currentSurplusOf', args: [projectId, [context.token], BigInt(context.decimals), BigInt(context.currency)], ...at }),
-      client.readContract({ address: accessLimits, abi: jbFundAccessLimitsAbi, functionName: 'payoutLimitsOf', args: [projectId, BigInt(ruleset.id), canonicalTerminal, context.token], ...at }),
-      client.readContract({ address: accessLimits, abi: jbFundAccessLimitsAbi, functionName: 'surplusAllowancesOf', args: [projectId, BigInt(ruleset.id), canonicalTerminal, context.token], ...at }),
-    ])
-    boundedCount(payoutLimits.length, 32, 'Payout currency count')
-    boundedCount(surplusAllowances.length, 32, 'Allowance currency count')
-    const native = isAddressEqual(context.token, NATIVE_TOKEN)
-    const usdc = USDC_ADDRESSES[chain] && isAddressEqual(context.token, USDC_ADDRESSES[chain])
-    const symbol = native ? 'ETH' : usdc ? 'USDC' : await client.readContract({ address: context.token, abi: erc20Abi, functionName: 'symbol', ...at }).catch(() => 'Token')
-    return { ...context, terminal: canonicalTerminal, primaryTerminal, isPrimary: isAddressEqual(primaryTerminal, canonicalTerminal), balance, surplus, symbol, payoutLimits, surplusAllowances }
-  }))
-
-  // Core ruleset groups are reserved tokens and one payout group per accepted
-  // token. Stock721 tier groups are managed by the hook at rulesetId=0 (not the
-  // current ruleset), so retaining the hook preserves them without copying them
-  // into a new ruleset. Unknown hooks can consume other groups and are excluded.
-  let configuration: JBRulesetConfig | null = null
-  if (supportedController && supportedTerminals && supportedHook && rawContexts.length > 0 && ruleset.id !== 0) {
-    const groupIds = [...new Set([RESERVED_TOKEN_SPLIT_GROUP_ID, ...rawContexts.map(context => payoutSplitGroupId(context.token))])]
-    const splitGroups = await Promise.all(groupIds.map(async groupId => {
-      const groupSplits = await client.readContract({ address: splits, abi: jbSplitsAbi, functionName: 'splitsOf', args: [projectId, BigInt(ruleset.id), groupId], ...at })
-      boundedCount(groupSplits.length, 64, 'Split recipient count')
-      return { groupId, splits: groupSplits }
+  return { omnichainHooks, stock721Hook, allowlist, supportedHook }
+  }
+  const readTreasury = async () => {
+    const rawContexts = terminals.some(terminal => isAddressEqual(terminal, canonicalTerminal))
+      ? await client.readContract({ address: canonicalTerminal, abi: jbMultiTerminalAbi, functionName: 'accountingContextsOf', args: [projectId], ...at })
+      : []
+    boundedCount(rawContexts.length, 32, 'Accounting token count')
+    if (new Set(rawContexts.map(context => context.token.toLowerCase())).size !== rawContexts.length) throw new Error('The terminal returned duplicate accounting contexts.')
+    const accountingContexts = await Promise.all(rawContexts.map(async context => {
+      const native = isAddressEqual(context.token, NATIVE_TOKEN)
+      const usdc = USDC_ADDRESSES[chain] && isAddressEqual(context.token, USDC_ADDRESSES[chain])
+      const [primaryTerminal, balance, surplus, payoutLimits, surplusAllowances, symbol] = await Promise.all([
+        client.readContract({ address: directory, abi: jbDirectoryAbi, functionName: 'primaryTerminalOf', args: [projectId, context.token], ...at }),
+        client.readContract({ address: terminalStore, abi: jbTerminalStoreAbi, functionName: 'balanceOf', args: [canonicalTerminal, projectId, context.token], ...at }),
+        client.readContract({ address: canonicalTerminal, abi: jbMultiTerminalAbi, functionName: 'currentSurplusOf', args: [projectId, [context.token], BigInt(context.decimals), BigInt(context.currency)], ...at }),
+        client.readContract({ address: accessLimits, abi: jbFundAccessLimitsAbi, functionName: 'payoutLimitsOf', args: [projectId, BigInt(ruleset.id), canonicalTerminal, context.token], ...at }),
+        client.readContract({ address: accessLimits, abi: jbFundAccessLimitsAbi, functionName: 'surplusAllowancesOf', args: [projectId, BigInt(ruleset.id), canonicalTerminal, context.token], ...at }),
+        native ? 'ETH' : usdc ? 'USDC' : client.readContract({ address: context.token, abi: erc20Abi, functionName: 'symbol', ...at }).catch(() => 'Token'),
+      ])
+      boundedCount(payoutLimits.length, 32, 'Payout currency count')
+      boundedCount(surplusAllowances.length, 32, 'Allowance currency count')
+      return { ...context, terminal: canonicalTerminal, primaryTerminal, isPrimary: isAddressEqual(primaryTerminal, canonicalTerminal), balance, surplus, symbol, payoutLimits, surplusAllowances }
     }))
-    configuration = {
-      mustStartAtOrAfter: ruleset.start,
-      duration: ruleset.duration,
-      weight: ruleset.weight,
-      weightCutPercent: ruleset.weightCutPercent,
-      approvalHook: ruleset.approvalHook,
-      metadata,
-      splitGroups,
-      fundAccessLimitGroups: accountingContexts
-        .filter(context => context.payoutLimits.length > 0 || context.surplusAllowances.length > 0)
-        .map(context => ({ terminal: context.terminal, token: context.token, payoutLimits: context.payoutLimits, surplusAllowances: context.surplusAllowances })),
+
+    // Core ruleset groups are reserved tokens and one payout group per accepted
+    // token. Stock721 tier groups are managed by the hook at rulesetId=0 (not the
+    // current ruleset), so retaining the hook preserves them without copying them
+    // into a new ruleset. Unknown hooks can consume other groups and are excluded.
+    let splitGroups: JBRulesetConfig['splitGroups'] | null = null
+    if (supportedController && supportedTerminals && rawContexts.length > 0 && ruleset.id !== 0) {
+      const groupIds = [...new Set([RESERVED_TOKEN_SPLIT_GROUP_ID, ...rawContexts.map(context => payoutSplitGroupId(context.token))])]
+      splitGroups = await Promise.all(groupIds.map(async groupId => ({
+        groupId, splits: await client.readContract({ address: splits, abi: jbSplitsAbi, functionName: 'splitsOf', args: [projectId, BigInt(ruleset.id), groupId], ...at }),
+      })))
     }
+    return { accountingContexts, splitGroups }
   }
   const tokenAddress = nonzero(token) ? token : null
-  const [tokenSymbol, tokenDecimals, projectUri, creditBalance, erc20Balance, totalBalance] = await Promise.all([
-    tokenAddress ? client.readContract({ address: tokenAddress, abi: erc20Abi, functionName: 'symbol', ...at }).catch(() => 'FUND') : 'FUND',
-    tokenAddress ? client.readContract({ address: tokenAddress, abi: erc20Abi, functionName: 'decimals', ...at }) : 18,
-    client.readContract({ address: canonicalController, abi: jbControllerAbi, functionName: 'uriOf', args: [projectId], ...at }).catch(() => ''),
-    account ? client.readContract({ address: tokens, abi: jbTokensAbi, functionName: 'creditBalanceOf', args: [account, projectId], ...at }) : 0n,
-    account && tokenAddress ? client.readContract({ address: tokenAddress, abi: erc20Abi, functionName: 'balanceOf', args: [account], ...at }) : 0n,
-    account ? client.readContract({ address: tokens, abi: jbTokensAbi, functionName: 'totalBalanceOf', args: [account, projectId], ...at }) : 0n,
-  ])
-  if (creditBalance + erc20Balance !== totalBalance || totalSupply + pendingReservedTokens !== totalSupplyWithReservedTokens) {
-    throw new Error('The RPC returned inconsistent project token accounting.')
+  const readAccount = async () => {
+    const [tokenSymbol, tokenDecimals, projectUri, creditBalance, erc20Balance, totalBalance] = await Promise.all([
+      tokenAddress ? client.readContract({ address: tokenAddress, abi: erc20Abi, functionName: 'symbol', ...at }).catch(() => 'FUND') : 'FUND',
+      tokenAddress ? client.readContract({ address: tokenAddress, abi: erc20Abi, functionName: 'decimals', ...at }) : 18,
+      client.readContract({ address: canonicalController, abi: jbControllerAbi, functionName: 'uriOf', args: [projectId], ...at }).catch(() => ''),
+      account ? client.readContract({ address: tokens, abi: jbTokensAbi, functionName: 'creditBalanceOf', args: [account, projectId], ...at }) : 0n,
+      account && tokenAddress ? client.readContract({ address: tokenAddress, abi: erc20Abi, functionName: 'balanceOf', args: [account], ...at }) : 0n,
+      account ? client.readContract({ address: tokens, abi: jbTokensAbi, functionName: 'totalBalanceOf', args: [account, projectId], ...at }) : 0n,
+    ])
+    if (creditBalance + erc20Balance !== totalBalance || totalSupply + pendingReservedTokens !== totalSupplyWithReservedTokens) {
+      throw new Error('The RPC returned inconsistent project token accounting.')
   }
-  const permissions = Object.fromEntries(await Promise.all(Object.entries(PERMISSIONS).map(async ([key, id]) => {
+  return [tokenSymbol, tokenDecimals, projectUri, creditBalance, erc20Balance, totalBalance] as const
+  }
+  const readPermissions = async () => Object.fromEntries(await Promise.all(Object.entries(PERMISSIONS).map(async ([key, id]) => {
     const allowed = account && supportedController && knownOwnerWrapper
       ? isAddressEqual(account, owner) || await client.readContract({ address: permissionsAddress, abi: jbPermissionsAbi, functionName: 'hasPermission', args: [account, owner, projectId, BigInt(id), true, true], ...at })
       : false
     return [key, Boolean(allowed)]
   }))) as FundProjectPermissions
+  const [{ omnichainHooks, stock721Hook, allowlist, supportedHook }, { accountingContexts, splitGroups }, [tokenSymbol, tokenDecimals, projectUri, creditBalance, erc20Balance, totalBalance], permissions] =
+    await Promise.all([readHooks(), readTreasury(), readAccount(), readPermissions()])
+  if (!supportedHook) issues.push('Custom payment or cash-out hooks need the full Juicebox ruleset editor.')
+  // Unknown hooks can consume split groups, so their splits are neither bounded nor copied.
+  if (supportedHook) for (const group of splitGroups ?? []) boundedCount(group.splits.length, 64, 'Split recipient count')
+  const configuration: JBRulesetConfig | null = supportedHook && splitGroups ? {
+    mustStartAtOrAfter: ruleset.start,
+    duration: ruleset.duration,
+    weight: ruleset.weight,
+    weightCutPercent: ruleset.weightCutPercent,
+    approvalHook: ruleset.approvalHook,
+    metadata,
+    splitGroups,
+    fundAccessLimitGroups: accountingContexts
+      .filter(context => context.payoutLimits.length > 0 || context.surplusAllowances.length > 0)
+      .map(context => ({ terminal: context.terminal, token: context.token, payoutLimits: context.payoutLimits, surplusAllowances: context.surplusAllowances })),
+  } : null
   const rulesetSnapshot: FundRulesetSnapshot = {
     chainId, projectId, blockNumber, controller, currentRulesetId: BigInt(ruleset.id),
     upcomingRulesetId: hasPendingRuleset ? BigInt(queued?.ruleset.id !== ruleset.id ? queued?.ruleset.id ?? upcoming?.ruleset.id ?? 0 : upcoming?.ruleset.id ?? 0) : 0n,

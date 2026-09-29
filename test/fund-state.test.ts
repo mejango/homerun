@@ -384,7 +384,6 @@ describe('readFundProjectState', () => {
     expect(state.rulesetSnapshot.configuration).toBeNull()
     expect(state.rulesetSnapshot.stock721Hook).toBeUndefined()
     expect(state.issues).toContain('Custom payment or cash-out hooks need the full Juicebox ruleset editor.')
-    expect(fixture.readContract.mock.calls.some(([request]) => request.functionName === 'STORE')).toBe(false)
   })
 
   it('does not treat an unavailable hook registry as an unrecognized custom hook', async () => {

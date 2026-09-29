@@ -227,6 +227,9 @@ function ProjectActions({ chainId, projectId, intentId, indexedOwner, state, cli
   const supported = state.supportedController && state.supportedTerminals && state.knownOwnerWrapper
   const name = details?.name ?? undefined, plan = details && publishedPlan(details)
   const blocked = writesUnavailable || !supported
+  // Pay opens on the displayed figures: the payment re-reads the chain and rejects changed
+  // rules, terminals or allowlist access before the wallet signs, so it needs no page-level wait.
+  const payGate = (children: ReactNode) => <fieldset disabled={!supported || (readsUnavailable && !unconfirmed)} className="grid min-w-0 gap-7 border-0 p-0" aria-label="Payment">{children}</fieldset>
   const gate = (children: ReactNode) => <WritesChecking.Provider value={supported && unconfirmed}><fieldset disabled={blocked} className="grid min-w-0 gap-7 border-0 p-0" aria-label="Project transactions">{children}</fieldset></WritesChecking.Provider>
   const publishedToken = plan ? <FundTokenTermsSection terms={{
     tokenName: plan.tokenName, tokenSymbol: plan.tokenSymbol, ownerFundPercent: plan.operatorFundPercent,
@@ -272,7 +275,7 @@ function ProjectActions({ chainId, projectId, intentId, indexedOwner, state, cli
     notice={<>{alsoDeploy}{notice}{!supported && <p role="alert">This project uses contract settings outside Homerun’s verified FUND integration. Transactions are unavailable here. {state.issues.join(' ')}</p>}</>}
     payment={<>
       {income.projectId && <div className="mb-5 flex gap-3" role="group" aria-label="Payment token"><button type="button" className={paymentToken === 'fund' ? 'btn-primary' : 'btn-secondary'} aria-pressed={paymentToken === 'fund'} onClick={() => { paymentChoice.current = true; setPaymentToken('fund') }}>FUND</button><button type="button" className={paymentToken === 'income' ? 'btn-primary' : 'btn-secondary'} aria-pressed={paymentToken === 'income'} onClick={() => { paymentChoice.current = true; setPaymentToken('income') }}>INCOME</button></div>}
-      <div hidden={paymentToken !== 'fund'} onFocusCapture={() => { paymentChoice.current = true }}>{gate(<>{context ? <FundPaymentNetworks state={state}>{(paymentState, paymentClient, selector, onBusyChange) => <PaymentPanel state={paymentState} client={paymentClient} contextIndex={paymentState.chainId === state.chainId ? contextIndex : 0} chainSelector={selector} onBusyChange={onBusyChange} />}</FundPaymentNetworks> : <p>No supported payment terminal was verified for this project.</p>}</>)}</div>
+      <div hidden={paymentToken !== 'fund'} onFocusCapture={() => { paymentChoice.current = true }}>{payGate(<>{context ? <FundPaymentNetworks state={state}>{(paymentState, paymentClient, selector, onBusyChange) => <PaymentPanel state={paymentState} client={paymentClient} contextIndex={paymentState.chainId === state.chainId ? contextIndex : 0} chainSelector={selector} onBusyChange={onBusyChange} />}</FundPaymentNetworks> : <p>No supported payment terminal was verified for this project.</p>}</>)}</div>
       <div hidden={paymentToken !== 'income'}>{income.projectId && income.payment}</div>
     </>}
     activity={<><div hidden={paymentToken !== 'fund'}><ProjectActivity chainId={state.chainId} projectId={state.projectId} /></div><div hidden={paymentToken !== 'income'}>{income.activity}</div></>}

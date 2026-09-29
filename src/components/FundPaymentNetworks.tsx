@@ -2,20 +2,13 @@
 
 import { useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import type { JBChainId } from '@bananapus/nana-sdk-core'
-import { createPublicClient, type PublicClient } from 'viem'
+import type { PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { readFundPayNetworks } from '@/lib/fund-pay-networks'
 import type { FundProjectState } from '@/lib/fund-state'
-import { jbCenterRpcTransport } from '@/lib/jbcenter-rpc'
+import { jbCenterPublicClient } from '@/lib/jbcenter-rpc'
 import { displayChainName } from '@/lib/chainDisplay'
 import { PaymentChainSelect } from '@/components/PaymentChainSelect'
-
-const clients = new Map<JBChainId, PublicClient>()
-function clientFor(chainId: JBChainId) {
-  if (!clients.has(chainId)) clients.set(chainId, createPublicClient({ transport: jbCenterRpcTransport(chainId, 60_000) }))
-  return clients.get(chainId)!
-}
 
 export function FundPaymentNetworks({ state, children }: {
   state: FundProjectState
@@ -25,7 +18,7 @@ export function FundPaymentNetworks({ state, children }: {
   const [busy, setBusy] = useState(false)
   const networks = useQuery({
     queryKey: ['fund-pay-networks', state.chainId, state.projectId.toString(), state.account ?? null, state.blockNumber.toString()],
-    queryFn: () => readFundPayNetworks(clientFor, state),
+    queryFn: () => readFundPayNetworks(jbCenterPublicClient, state),
     enabled: !!state.linkedPeers?.length,
     retry: false,
   })

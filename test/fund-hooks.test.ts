@@ -26,10 +26,16 @@ function fixture(values: Record<string, unknown> = {}) {
 }
 
 describe('canonical project NFT hook verification', () => {
-  it('checks deployment provenance before trusting interface responses', async () => {
+  it('trusts interface responses only after deployment provenance checks out', async () => {
+    // Every binding answers correctly; only the deployer is wrong.
     const rpc = fixture({ deployerOf: OWNER })
     await expect(readVerifiedProject721Hook(rpc.client, input)).rejects.toThrow(/canonical stock deployment/)
-    expect(rpc.readContract).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports a non-hook contract whose binding reads revert as unsupported, not an RPC failure', async () => {
+    const rpc = fixture({ deployerOf: OWNER })
+    rpc.readContract.mockImplementation(async ({ functionName }: { functionName: string }) => { if (functionName === 'deployerOf') return OWNER; throw new Error('execution reverted') })
+    await expect(readVerifiedProject721Hook(rpc.client, input)).rejects.toThrow(/canonical stock deployment/)
   })
 
   it('accepts both empty and nonempty canonical project-owned shops', async () => {

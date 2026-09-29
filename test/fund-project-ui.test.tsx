@@ -559,6 +559,15 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     expect(section.textContent).toContain('Only the FUND owner, or a wallet the owner granted allowlist permission')
   })
 
+  it('opens Pay on retained figures while the fresh read runs, and keeps admin writes closed', async () => {
+    runtime.query = { ...runtime.query, isPlaceholderData: true }
+    await render()
+    const pay = [...host.querySelectorAll('button')].find(button => button.textContent === 'Pay on Ethereum')!
+    expect(pay.matches(':disabled')).toBe(false)
+    await tab('Operators')
+    expect(host.querySelector<HTMLButtonElement>('[data-testid="control-7"]')!.disabled).toBe(true)
+  })
+
   it('does not gate payments once the owner opens the FUND or the wallet is allowed', async () => {
     runtime.phase = 'idle'
     runtime.query = { ...runtime.query, data: { ...state(), allowlist: { hook: '0x4545454545454545454545454545454545454545', open: false, accountAllowed: true } } }
