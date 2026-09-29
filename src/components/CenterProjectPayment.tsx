@@ -24,7 +24,7 @@ const statuses = {
   expired: 'The payment expired before it was included onchain. Nothing was charged; you can pay again.',
 }
 export default function CenterProjectPayment({ chainId, projectId, tokenLabel, title, paused, blocked, verify, chainSelector, onBusyChange }: {
-  chainId: JBChainId; projectId: bigint; tokenLabel: 'FUND' | 'INCOME'; title: string; paused: boolean; blocked?: string;
+  chainId: JBChainId; projectId: bigint; tokenLabel: 'FUND' | 'INCOME'; title: string; paused: boolean; blocked?: string; quoteNeedsWallet?: boolean;
   verify: (account: Address, minimumBlock?: bigint) => Promise<{ blockNumber: bigint }>;
   chainSelector?: ReactNode; onBusyChange?: (busy: boolean) => void
 }) {

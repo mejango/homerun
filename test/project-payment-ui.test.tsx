@@ -131,7 +131,7 @@ describe('shared payment execution', () => {
       assertion()
     }, { timeout: 5000, interval: 10 })
   }
-  function button() { return [...host.querySelectorAll('button')].find(element => /Review contribution|Review payment|Preparing payment/.test(element.textContent ?? ''))! }
+  function button() { return [...host.querySelectorAll('button')].find(element => /^Confirm & (contribute|pay)$/.test(element.textContent ?? ''))! }
   async function ready(value = '1') {
     await render(); await input(value)
     await waitUntil(() => expect(button().disabled).toBe(false))
@@ -330,6 +330,35 @@ describe('shared payment execution', () => {
     await render()
     expect(host.querySelector('input')!.value).toBe('2')
     expect(runtime.mounts).toBe(3)
+  })
+
+  it('lists the wallet steps before the first prompt and advances through them, as jbm\'s pay sequence does', async () => {
+    erc20(); runtime.allowance = 0n
+    await ready('2.5')
+    await waitUntil(() => expect(host.textContent).toContain('Your wallet will ask for 2 actions'))
+    const titles = () => [...host.querySelectorAll('li[data-state]')].map(step => step.textContent)
+    expect(titles()[0]).toContain('Approve USDC')
+    expect(titles()[1]).toContain('Contribute 2.5 USDC')
+    expect([...host.querySelectorAll('li[data-state]')].map(step => step.getAttribute('data-state'))).toEqual(['pending', 'pending'])
+    await submit()
+    expect(runtime.writes.map(item => item.action)).toEqual(['approval', 'payment'])
+    expect([...host.querySelectorAll('li[data-state]')].map(step => step.getAttribute('data-state'))).toEqual(['complete', 'active'])
+  })
+
+  it('asks for one action when a native payment needs no approval', async () => {
+    await ready()
+    await waitUntil(() => expect(host.textContent).toContain('Your wallet will ask for one action'))
+    expect(host.querySelectorAll('li[data-state]')).toHaveLength(1)
+  })
+
+  it('does not quote a closed allowlist for a visitor without a wallet, and asks for an allowed one', async () => {
+    runtime.address = undefined
+    props.quoteNeedsWallet = true
+    await render(); await input('25')
+    await waitUntil(() => expect(host.textContent).toContain('Connect an allowed wallet to see your quote.'))
+    expect(runtime.quote).not.toHaveBeenCalled()
+    expect(host.textContent).not.toContain('quote is unavailable')
+    expect(host.textContent).not.toContain('Enter an amount')
   })
 
   it('submits the selected chain and its own project ID', async () => {

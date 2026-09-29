@@ -130,7 +130,7 @@ export function PaymentPanel({ state, client, contextIndex, chainSelector, onBus
   const { address } = useWallet()
   // The hook reverts for anyone not on the list; say so before a doomed review instead of after.
   const blocked = state.allowlist && !state.allowlist.open && address && state.account && isAddressEqual(state.account, address) && state.allowlist.accountAllowed === false ? 'This wallet is not on the allowlist.' : undefined
-  return <ProjectPayment blocked={blocked} chainSelector={chainSelector} onBusyChange={onBusyChange} chainId={state.chainId} projectId={state.projectId} tokenLabel="FUND" title="Contribute" context={context} paused={state.metadata.pausePay} reservedPercent={state.metadata.reservedPercent} rulesetId={state.ruleset.id.toString()} verify={async (account, minimumBlock) => {
+  return <ProjectPayment blocked={blocked} quoteNeedsWallet={!!state.allowlist && !state.allowlist.open} chainSelector={chainSelector} onBusyChange={onBusyChange} chainId={state.chainId} projectId={state.projectId} tokenLabel="FUND" title="Contribute" context={context} paused={state.metadata.pausePay} reservedPercent={state.metadata.reservedPercent} rulesetId={state.ruleset.id.toString()} verify={async (account, minimumBlock) => {
     const current = await freshState(client, state, account, minimumBlock)
     const active = current.accountingContexts.find(item => isAddressEqual(item.token, context.token) && isAddressEqual(item.terminal, context.terminal))
     if (!active || active.decimals !== context.decimals || active.currency !== context.currency || current.metadata.pausePay || current.ruleset.id !== state.ruleset.id) throw new Error('The payment terminal or project rules changed. Refresh and review the payment again.')
