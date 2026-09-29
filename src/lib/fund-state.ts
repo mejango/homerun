@@ -202,6 +202,65 @@ export async function readFundAccountState(client: PublicClient, project: FundPr
   }
 }
 
+/**
+ * What a holder write (pay, cash out, transfer, burn, allowlist) depends on, re-read in one
+ * batched round at the latest block, as Juicebox Money's flows re-read only what each action
+ * needs. Returns the project read overlaid with those fresh values. The project's shape (hooks,
+ * splits, limits) is fixed per ruleset, so a changed ruleset ID — which every caller rejects —
+ * covers it; the simulation stays the final gate. Operator writes keep the full read.
+ */
+export async function readFundWriteState(client: PublicClient, project: FundProjectState, account: Address): Promise<FundProjectState> {
+  const chain = project.chainId
+  const projectId = project.projectId
+  const canonicalController = v6Address('JBController', chain)
+  const canonicalTerminal = v6Address('JBMultiTerminal', chain)
+  const routerRegistry = v6Address('JBRouterTerminalRegistry', chain)
+  const [remoteChainId, block] = await Promise.all([client.getChainId(), client.getBlock({ blockTag: 'latest' })])
+  if (remoteChainId !== chain) throw new Error('The RPC endpoint returned a different chain.')
+  if (block.number === null) throw new Error('The RPC did not return a mined snapshot block.')
+  const at = { blockNumber: block.number }
+  const [controller, terminals, owner, current, token, rawContexts, open, view] = await Promise.all([
+    client.readContract({ address: v6Address('JBDirectory', chain), abi: jbDirectoryAbi, functionName: 'controllerOf', args: [projectId], ...at }),
+    client.readContract({ address: v6Address('JBDirectory', chain), abi: jbDirectoryAbi, functionName: 'terminalsOf', args: [projectId], ...at }),
+    client.readContract({ address: v6Address('JBProjects', chain), abi: jbProjectsAbi, functionName: 'ownerOf', args: [projectId], ...at }),
+    client.readContract({ address: canonicalController, abi: jbControllerAbi, functionName: 'currentRulesetOf', args: [projectId], ...at }),
+    client.readContract({ address: v6Address('JBTokens', chain), abi: jbTokensAbi, functionName: 'tokenOf', args: [projectId], ...at }),
+    client.readContract({ address: canonicalTerminal, abi: jbMultiTerminalAbi, functionName: 'accountingContextsOf', args: [projectId], ...at }),
+    project.allowlist ? client.readContract({ address: project.allowlist.hook, abi: homerunAllowlistHookAbi, functionName: 'isOpen', args: [projectId], ...at }) : null,
+    readFundAccount(client, {
+      chainId: chain, projectId, blockNumber: block.number, owner: project.owner, tokenAddress: project.tokenAddress, account,
+      permissionsEligible: project.supportedController && project.knownOwnerWrapper, allowlistHook: project.allowlist?.hook ?? null,
+    }),
+  ])
+  const tokenAddress = nonzero(token) ? token : null
+  // The wallet's ERC-20 balance was read on the known token; a new token would make it the wrong one.
+  if (tokenAddress?.toLowerCase() !== project.tokenAddress?.toLowerCase()) throw new Error('The project token changed. Refresh and review again.')
+  boundedCount(rawContexts.length, 32, 'Accounting token count')
+  const revOwner = (jbContractAddress['6'] as Record<string, Record<number, Address | undefined>>).REVOwner?.[chain]
+  const [ruleset, metadata] = current
+  const sameOwner = isAddressEqual(owner, project.owner)
+  return {
+    ...project,
+    blockNumber: block.number,
+    ...(block.hash ? { blockHash: block.hash } : {}),
+    blockTimestamp: block.timestamp,
+    owner, operator: owner, account, controller,
+    supportedController: isAddressEqual(controller, canonicalController),
+    supportedTerminals: terminals.some(terminal => isAddressEqual(terminal, canonicalTerminal))
+      && terminals.every(terminal => isAddressEqual(terminal, canonicalTerminal) || isAddressEqual(terminal, routerRegistry)),
+    knownOwnerWrapper: !revOwner || !isAddressEqual(owner, revOwner),
+    terminals, ruleset, metadata,
+    accountingContexts: rawContexts.map(context => ({
+      ...(project.accountingContexts.find(known => isAddressEqual(known.token, context.token)) ?? { primaryTerminal: canonicalTerminal, isPrimary: true, balance: 0n, surplus: 0n, symbol: 'Token', payoutLimits: [], surplusAllowances: [] }),
+      token: context.token, decimals: context.decimals, currency: context.currency, terminal: canonicalTerminal,
+    })),
+    creditBalance: view.creditBalance, erc20Balance: view.erc20Balance, totalBalance: view.totalBalance,
+    // Permissions were read against the known owner; a new owner fails them closed until the page re-reads.
+    permissions: sameOwner ? view.permissions : Object.fromEntries(Object.keys(view.permissions).map(key => [key, false])) as FundProjectPermissions,
+    allowlist: project.allowlist && { ...project.allowlist, open: open ?? project.allowlist.open, accountAllowed: view.accountAllowed },
+  }
+}
+
 export async function readFundProjectState(
   client: PublicClient,
   { chainId, projectId, account }: { chainId: number; projectId: bigint; account?: Address },

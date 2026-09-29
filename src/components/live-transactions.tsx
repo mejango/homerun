@@ -10,7 +10,7 @@ import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDia
 import { useSafeTx, type TxRequest } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { displayChainName, explorerTxUrl } from '@/lib/chainDisplay'
-import { readFundProjectState, type FundProjectState } from '@/lib/fund-state'
+import { readFundWriteState, type FundProjectState } from '@/lib/fund-state'
 import { buildFundAllowlistChange, buildFundAllowlistOpen, parseAmount } from '@/lib/fund-contracts'
 import { readableError } from '@/lib/readable-error'
 import { refreshIndexedProject } from '@/lib/refresh-indexed'
@@ -118,7 +118,7 @@ function useProjectTransaction(state: FundProjectState) {
 }
 
 async function freshState(client: PublicClient, state: FundProjectState, account: Address, minimumBlock?: bigint) {
-  const fresh = await readFundProjectState(client, { chainId: state.chainId, projectId: state.projectId, account })
+  const fresh = await readFundWriteState(client, state, account)
   if (!fresh.supportedController || !fresh.supportedTerminals || !fresh.knownOwnerWrapper) throw new Error('This project no longer matches the verified FUND integration. Refresh the project before continuing.')
   if (minimumBlock !== undefined && fresh.blockNumber < minimumBlock) throw new Error('The network has not caught up with your confirmed approval. Wait a moment and try again.')
   if (!isAddressEqual(fresh.controller, state.controller)) throw new Error('The project controller changed. Refresh and review the project again.')

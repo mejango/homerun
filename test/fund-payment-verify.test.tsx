@@ -5,7 +5,7 @@ import type { Address, PublicClient } from 'viem'
 import type { FundProjectState } from '../src/lib/fund-state'
 
 const runtime = vi.hoisted(() => ({ fresh: undefined as unknown, verify: undefined as undefined | ((account: Address) => Promise<unknown>) }))
-vi.mock('@/lib/fund-state', () => ({ readFundProjectState: async () => runtime.fresh }))
+vi.mock('@/lib/fund-state', () => ({ readFundWriteState: async () => runtime.fresh }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: '0x1111111111111111111111111111111111111111' }) }))
 vi.mock('@/components/ProjectPayment', () => ({ ProjectPayment: ({ verify }: { verify: (account: Address) => Promise<unknown> }) => { runtime.verify = verify; return null } }))
 vi.mock('@/components/FundOperatorActions', () => ({ FundOperatorActions: () => null }))

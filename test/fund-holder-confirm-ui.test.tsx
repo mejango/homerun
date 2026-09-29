@@ -20,7 +20,7 @@ const runtime = vi.hoisted(() => ({
 }))
 vi.mock('wagmi', async importOriginal => ({ ...await importOriginal<typeof import('wagmi')>(), usePublicClient: () => ({}) }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: WALLET }) }))
-vi.mock('@/lib/fund-state', () => ({ readFundProjectState: async () => runtime.fresh }))
+vi.mock('@/lib/fund-state', () => ({ readFundWriteState: async () => runtime.fresh }))
 vi.mock('@/hooks/useSafeTx', () => ({ txPhaseLabel: (_: string, labels: { idle: string }) => labels.idle, useSafeTx: () => runtime.tx }))
 vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
   ...await importOriginal<typeof import('@bananapus/nana-sdk-core/v6')>(),

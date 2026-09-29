@@ -14,7 +14,7 @@ import { HOMERUN_ALLOWLIST_HOOK } from './fixtures/homerun-deployer'
 import { HOMERUN_SET_ALLOWLIST_PERMISSION_ID } from '../src/lib/income-contracts'
 
 vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fixtures/homerun-deployer')).withHomerunDeployer(await importOriginal()))
-import { assertFundStateForWrite, readFundAccountState, readFundProjectState, readLinkedFundProjects } from '../src/lib/fund-state'
+import { assertFundStateForWrite, readFundAccountState, readFundProjectState, readFundWriteState, readLinkedFundProjects } from '../src/lib/fund-state'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as const
 const DELEGATE = '0x2222222222222222222222222222222222222222' as const
@@ -530,6 +530,51 @@ describe('readFundAccountState', () => {
     const project = await readFundProjectState(fixture.client, { chainId: fixture.chainId, projectId: fixture.projectId })
     fixture.readContract.mockImplementation(async ({ functionName }: { functionName: string }) => functionName === 'creditBalanceOf' ? 30n : functionName === 'balanceOf' ? 20n : functionName === 'totalBalanceOf' ? 999n : false)
     await expect(readFundAccountState(fixture.client, project, DELEGATE)).rejects.toThrow('inconsistent')
+  })
+})
+
+describe('readFundWriteState', () => {
+  const options = { omnichain: true, allowlist: { open: false, accountAllowed: true }, values: { payoutLimitsOf: [], surplusAllowancesOf: [] } }
+
+  it('re-reads only what a holder write depends on, in one round at one block, agreeing with the full read', async () => {
+    const full = await read(rpcFixture(options))
+    const fixture = rpcFixture(options)
+    const project = await read(fixture)
+    fixture.readContract.mockClear(); fixture.getBlock.mockClear()
+    const fresh = await readFundWriteState(fixture.client, project, DELEGATE)
+    const names = new Set(fixture.readContract.mock.calls.map(([request]) => request.functionName))
+    for (const skipped of ['splitsOf', 'payoutLimitsOf', 'surplusAllowancesOf', 'extraDataHookOf', 'tiered721HookOf', 'uriOf', 'primaryTerminalOf', 'currentSurplusOf', 'upcomingRulesetOf', 'latestQueuedRulesetOf', 'suckerPairsOf']) expect(names.has(skipped)).toBe(false)
+    expect(fixture.getBlock).toHaveBeenCalledOnce()
+    expect(fixture.readContract.mock.calls.every(([request]) => request.blockNumber === fixture.blockNumber)).toBe(true)
+    expect(fresh).toMatchObject({
+      owner: full.owner, controller: full.controller, supportedController: true, supportedTerminals: true, knownOwnerWrapper: true,
+      creditBalance: full.creditBalance, erc20Balance: full.erc20Balance, totalBalance: full.totalBalance,
+      permissions: full.permissions, allowlist: full.allowlist, tokenAddress: full.tokenAddress, blockNumber: full.blockNumber,
+    })
+    expect(fresh.ruleset.id).toBe(full.ruleset.id)
+    expect(fresh.metadata).toEqual(full.metadata)
+    expect(fresh.accountingContexts.map(({ token, decimals, currency, terminal }) => ({ token, decimals, currency, terminal })))
+      .toEqual(full.accountingContexts.map(({ token, decimals, currency, terminal }) => ({ token, decimals, currency, terminal })))
+  })
+
+  it('refuses a changed project token, whose wallet balance it did not read', async () => {
+    const project = await read(rpcFixture(options))
+    const changed = rpcFixture({ ...options, values: { ...options.values, tokenOf: DELEGATE } })
+    await expect(readFundWriteState(changed.client, project, DELEGATE)).rejects.toThrow('The project token changed')
+  })
+
+  it('fails permissions closed when the project owner changed since the page read', async () => {
+    const fixture = rpcFixture(options)
+    const project = await read(fixture)
+    const fresh = await readFundWriteState(fixture.client, { ...project, owner: DELEGATE }, DELEGATE)
+    expect(Object.values(fresh.permissions).every(allowed => allowed === false)).toBe(true)
+    expect(fresh.owner).toBe(project.owner)
+  })
+
+  it('rejects wallet balances that do not reconcile', async () => {
+    const fixture = rpcFixture({ ...options, values: { ...options.values, totalBalanceOf: 999n } })
+    const project = await readFundProjectState(fixture.client, { chainId: fixture.chainId, projectId: fixture.projectId })
+    await expect(readFundWriteState(fixture.client, project, DELEGATE)).rejects.toThrow('inconsistent')
   })
 })
 
