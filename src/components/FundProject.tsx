@@ -35,7 +35,9 @@ import { loadDisplayCache, saveDisplayCache } from '@/lib/display-cache'
 import { DemoStageHistory, PhaseCopy, ProjectOverviewView, ProjectPageShell, ProjectPhoto, ProjectRaiseStats } from '@/components/ProjectPage'
 import { liveFundPhase } from '@/lib/fund-phase'
 import { FundingProgress } from '@/components/FundingProgress'
-import { ActionSection, CashOutPanel, HolderActions, OperatorActions, PaymentPanel, errorMessage } from '@/components/live-transactions'
+import { Revalidating } from '@/components/ui/Revalidating'
+import { Skeleton, SkeletonLines } from '@/components/ui/Skeleton'
+import { ActionSection, CashOutPanel, HolderActions, OperatorActions, PaymentPanel } from '@/components/live-transactions'
 
 /** Every displayed balance and every permission is resolved from this chain. */
 
@@ -95,13 +97,11 @@ export function FundProject({ chainId, projectId, intentId }: { chainId: JBChain
   useEffect(() => { if (incomeBinding.data) setLastIncomeId(incomeBinding.data) }, [incomeBinding.data])
   const incomeId = incomeBinding.data ?? lastIncomeId
   const notice = <>
-    {details.isError && <p className="mb-5 text-sm">Project details could not be loaded. The contract balances and permissions below are still read independently.</p>}
-    {query.isPending && <p role="status">Reading the project’s confirmed contract state…</p>}
-    {query.isError && <div role="alert"><p>Project data could not be verified. Transactions are unavailable until the reads recover.</p><p className="mt-2 text-sm">{errorMessage(query.error)}</p><button type="button" className="btn-secondary mt-4" onClick={() => void query.refetch()}>Try again</button></div>}
-    {incomeBinding.isError && <p role="status">The INCOME connection could not be refreshed. FUND balances and permissions are verified independently.</p>}
+    {details.isError && !details.data && <p className="text-sm text-[var(--muted)]">Project details could not be loaded.</p>}
+    {query.isError && <p role="alert" className="text-sm">Couldn’t confirm this project against the chain. <button type="button" className="quiet-button" onClick={() => void query.refetch()}>Try again</button></p>}
   </>
   return <IncomeProjectRuntime chainId={chainId} projectId={incomeId} fundProjectId={id} bindingUnavailable={incomeBinding.isPending || incomeBinding.isError || !!lastIncomeId && !incomeBinding.data}>{income => <ProjectPageShell>
-      <ProjectActions key={`${chainId}:${projectId}`} chainId={chainId} projectId={id} intentId={intentId} indexedOwner={indexed.data?.owner ?? undefined} state={displayState ?? undefined} client={client} details={details.data} notice={<>{notice}{income.notice}</>} income={income} refreshing={query.isFetching} readsUnavailable={readsUnavailable} writesUnavailable={writesUnavailable} refresh={() => void query.refetch()} />
+      <ProjectActions key={`${chainId}:${projectId}`} chainId={chainId} projectId={id} intentId={intentId} indexedOwner={indexed.data?.owner ?? undefined} state={displayState ?? undefined} client={client} details={details.data} notice={<>{notice}{income.notice}</>} income={income} refreshing={query.isFetching} unconfirmed={!query.data || query.isPlaceholderData} readsUnavailable={readsUnavailable} writesUnavailable={writesUnavailable} refresh={() => void query.refetch()} />
     </ProjectPageShell>}</IncomeProjectRuntime>
 }
 
@@ -152,32 +152,33 @@ function PlannedIncome({ plan }: { plan: NonNullable<ReturnType<typeof published
   </section>
 }
 
-function ProjectActions({ chainId, projectId, intentId, indexedOwner, state, client, details, notice, income, refreshing, readsUnavailable, writesUnavailable, refresh }: {
+function ProjectActions({ chainId, projectId, intentId, indexedOwner, state, client, details, notice, income, refreshing, unconfirmed, readsUnavailable, writesUnavailable, refresh }: {
   chainId: JBChainId; projectId: bigint; intentId?: string; indexedOwner?: string; state?: FundProjectState; client?: PublicClient; details?: FundProjectMetadata; notice: ReactNode; income: IncomeProjectSlots
-  refreshing: boolean; readsUnavailable: boolean; writesUnavailable: boolean; refresh: () => void
+  refreshing: boolean; unconfirmed: boolean; readsUnavailable: boolean; writesUnavailable: boolean; refresh: () => void
 }) {
   const alsoDeploy = <DeployRemainingChains chainId={chainId} projectId={projectId.toString()} owner={state?.owner ?? (indexedOwner && isAddress(indexedOwner) ? indexedOwner : undefined)} intentId={intentId} />
-  const { address, isConnected } = useWallet()
+  const { address } = useWallet()
   const [contextIndex, setContextIndex] = useState(0)
   const [paymentToken, setPaymentToken] = useState<'fund' | 'income'>('fund')
   const [accountAction, setAccountAction] = useState<'cashout' | 'tokens' | null>(null)
   const paymentChoice = useRef(false)
   useEffect(() => { if (income.projectId && !paymentChoice.current) setPaymentToken('income') }, [income.projectId])
   if (!state || !client) {
-    const pending = <p className="text-sm text-[var(--muted)]" role="status">Reading the contracts…</p>
-    return <HomerunProjectLayout title={details?.name ?? 'FUND project'}
+    // First visit: shapes sized like what they stand for, never a status sentence.
+    const pending = <div role="status"><span className="sr-only">Loading project</span><SkeletonLines lines={3} className="max-w-md" /></div>
+    return <HomerunProjectLayout title={details?.name ?? <Skeleton as="span" className="inline-block h-[0.9em] w-72 max-w-full align-middle" />}
       location={details?.location}
       logo={projectLogo(details, 'Project logo')}
-      metadata={[<span key="status" id="project-status" className="project-status" role="status">Status: Verifying contracts</span>]}
+      metadata={[<span key="status" id="project-status" className="project-status" role="status" aria-busy="true"><span className="sr-only">Loading</span><Skeleton as="span" className="inline-block h-3 w-56" /></span>]}
       notice={<>{alsoDeploy}{notice}</>}
-      payment={<div className="pay-panel">{pending}</div>}
+      payment={<div className="pay-panel" aria-busy="true"><Skeleton className="h-4 w-32" /><Skeleton className="mt-5 h-12 w-full rounded" /></div>}
       activity={<ProjectActivity chainId={chainId} projectId={projectId} />}
       overview={<ProjectOverviewView
         about={<p className="whitespace-pre-line">{details?.description ?? ''}</p>}
         photo={details?.coverUrl ? <ProjectPhoto name={details.name ?? 'Project'} photo={details.coverUrl} /> : undefined}
         phase={null}
-        progress={pending}
-        profiles={<><CurrentOwnerProfile chainId={chainId} owner={undefined} details={details} /><CurrentOperatorProfile chainId={chainId} incomeProjectId={income.projectId} fundDetails={details} bindingUnavailable={income.bindingUnavailable} /></>}
+        progress={<div className="project-raise-stats" aria-busy="true"><div className="flex gap-7"><Skeleton className="h-10 w-32" /><Skeleton className="h-10 w-32" /></div><Skeleton className="mt-5 h-2 w-full rounded-full" /></div>}
+        profiles={details ? <><CurrentOwnerProfile chainId={chainId} owner={undefined} details={details} /><CurrentOperatorProfile chainId={chainId} incomeProjectId={income.projectId} fundDetails={details} bindingUnavailable={income.bindingUnavailable} /></> : <SkeletonLines lines={4} className="max-w-md" />}
       />}
       stages={pending}
       owners={<OwnersTabs accountsYou={pending} accountsAll={pending} settlement={pending} splits={pending} loans={pending} control={pending} permissions={pending} />}
@@ -198,12 +199,12 @@ function ProjectActions({ chainId, projectId, intentId, indexedOwner, state, cli
   const currency = context && <label className="grid gap-2 text-sm">FUND treasury currency<select value={contextIndex} onChange={event => setContextIndex(Number(event.target.value))} className="min-h-11 rounded border border-[#bfc9b5] bg-white px-3 pr-9">{state.accountingContexts.map((item, index) => <option key={`${item.terminal}:${item.token}`} value={index}>{item.symbol}</option>)}</select></label>
   const verified = <section aria-label="Verified project state" className="demo-section">
     <div className="flex flex-wrap items-baseline justify-between gap-3"><h2>Onchain</h2><button className="quiet-button" type="button" disabled={refreshing} onClick={refresh}>{refreshing ? 'Refreshing…' : 'Refresh'}</button></div>
-    <dl className="demo-live-rows">
+    <Revalidating as="div" pending={unconfirmed}><dl className="demo-live-rows">
       <div><dt>Contributions</dt><dd>{state.metadata.pausePay ? 'Paused' : 'Open'}</dd></div>
       <div><dt>Cash-out tax</dt><dd>{state.metadata.cashOutTaxRate === 10_000 ? 'Cash-outs disabled' : `${state.metadata.cashOutTaxRate / 100}%`}</dd></div>
       <div><dt>FUND supply</dt><dd><DisplayTokenAmount value={state.totalSupply} /></dd></div>
       {context && <div><dt>FUND treasury</dt><dd><DisplayTokenAmount value={context.balance} decimals={context.decimals} /> {context.symbol}</dd></div>}
-    </dl>
+    </dl></Revalidating>
     <p>Verified at block {state.blockNumber.toString()}.</p>
   </section>
   const live = liveFundPhase({ pausePay: state.metadata.pausePay, cashOutTaxRate: state.metadata.cashOutTaxRate, allowOwnerMinting: state.metadata.allowOwnerMinting, hasIncome: !!income.projectId, supported: !!supported })
@@ -213,26 +214,26 @@ function ProjectActions({ chainId, projectId, intentId, indexedOwner, state, cli
   const raised = context ? Number(formatUnits(context.balance, context.decimals)) : 0
   const compact = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: Math.abs(value) < 1_000 ? 2 : 1 }).format(value)
   const raisedMetric = context && (dollars
-    ? <span key="raised" data-header-metric="raised" title={`Raised: ${money(raised)}`}>Raised: {compact(raised)}</span>
-    : <span key="raised" data-header-metric="raised">FUND treasury: <DisplayTokenAmount value={context.balance} decimals={context.decimals} /> {context.symbol}</span>)
-  const progress = context && (dollars && goal
+    ? <span key="raised" data-header-metric="raised" title={`Raised: ${money(raised)}`}>Raised: <Revalidating pending={unconfirmed}>{compact(raised)}</Revalidating></span>
+    : <span key="raised" data-header-metric="raised">FUND treasury: <Revalidating pending={unconfirmed}><DisplayTokenAmount value={context.balance} decimals={context.decimals} /> {context.symbol}</Revalidating></span>)
+  const progress = context && <Revalidating as="div" pending={unconfirmed}>{dollars && goal
     ? <ProjectRaiseStats raised={raised} goal={goal} historical={live.phase !== 'raising'} goalLabel="Published goal" />
-    : <div className="project-raise-stats"><dl><div><dt>FUND treasury</dt><dd><DisplayTokenAmount value={context.balance} decimals={context.decimals} /> {context.symbol}</dd></div><div><dt>FUND supply</dt><dd><DisplayTokenAmount value={state.totalSupply} /></dd></div></dl></div>)
+    : <div className="project-raise-stats"><dl><div><dt>FUND treasury</dt><dd><DisplayTokenAmount value={context.balance} decimals={context.decimals} /> {context.symbol}</dd></div><div><dt>FUND supply</dt><dd><DisplayTokenAmount value={state.totalSupply} /></dd></div></dl></div>}</Revalidating>
   const emptyIncome = <ActionSection title="INCOME"><p>INCOME has not been verified for this project yet. Its launch and recovery controls are under Operators.</p></ActionSection>
   return <HomerunProjectLayout
     title={name ?? 'FUND project'}
     location={details?.location}
     logo={projectLogo(details, name ? `${name} logo` : 'Project logo')}
     metadata={[
-      <span key="status" id="project-status" className="project-status" data-project-phase={live.phase ?? undefined} role="status">Status: {live.status}</span>,
+      <span key="status" id="project-status" className="project-status" data-project-phase={live.phase ?? undefined} role="status">Status: <Revalidating pending={unconfirmed}>{live.status}</Revalidating></span>,
       supported && raisedMetric,
-      supported && !dollars && <span key="supply">FUND supply: <DisplayTokenAmount value={state.totalSupply} /></span>,
+      supported && !dollars && <span key="supply">FUND supply: <Revalidating pending={unconfirmed}><DisplayTokenAmount value={state.totalSupply} /></Revalidating></span>,
       supported && dollars && goal !== null && <span key="goal" data-header-metric="goal" title={`Published goal: ${money(goal)}`}>Goal: {compact(goal)}</span>,
-      supported && dollars && goal && <span key="funded" data-header-metric="funded">Funded: {Math.round((raised / goal) * 100)}%</span>,
+      supported && dollars && goal && <span key="funded" data-header-metric="funded">Funded: <Revalidating pending={unconfirmed}>{Math.round((raised / goal) * 100)}%</Revalidating></span>,
       income.treasuryMetric,
     ].filter(Boolean)}
     headerProgress={supported && dollars && goal ? <FundingProgress raised={raised} goal={goal} historical={live.phase !== 'raising'} compact /> : undefined}
-    notice={<>{alsoDeploy}{notice}{!supported && <p role="alert">This project uses contract settings outside Homerun’s verified FUND integration. Transactions are unavailable here. {state.issues.join(' ')}</p>}{!isConnected && <p>Connect your wallet to contribute, use your tokens, or access operator actions.</p>}{writesUnavailable && <p role="status">New transactions are paused while current project permissions and balances are being verified. Submitted transactions continue to be tracked below.</p>}</>}
+    notice={<>{alsoDeploy}{notice}{!supported && <p role="alert">This project uses contract settings outside Homerun’s verified FUND integration. Transactions are unavailable here. {state.issues.join(' ')}</p>}</>}
     payment={<>
       {income.projectId && <div className="mb-5 flex gap-3" role="group" aria-label="Payment token"><button type="button" className={paymentToken === 'fund' ? 'btn-primary' : 'btn-secondary'} aria-pressed={paymentToken === 'fund'} onClick={() => { paymentChoice.current = true; setPaymentToken('fund') }}>FUND</button><button type="button" className={paymentToken === 'income' ? 'btn-primary' : 'btn-secondary'} aria-pressed={paymentToken === 'income'} onClick={() => { paymentChoice.current = true; setPaymentToken('income') }}>INCOME</button></div>}
       <div hidden={paymentToken !== 'fund'} onFocusCapture={() => { paymentChoice.current = true }}>{gate(<>{context ? <FundPaymentNetworks state={state}>{(paymentState, paymentClient, selector, onBusyChange) => <PaymentPanel state={paymentState} client={paymentClient} contextIndex={paymentState.chainId === state.chainId ? contextIndex : 0} chainSelector={selector} onBusyChange={onBusyChange} />}</FundPaymentNetworks> : <p>No supported payment terminal was verified for this project.</p>}</>)}</div>
@@ -270,7 +271,7 @@ function ProjectActions({ chainId, projectId, intentId, indexedOwner, state, cli
           <dl className="demo-account-balances">
             <div>
               <dt>FUND</dt>
-              <dd>{address ? <DisplayTokenAmount value={totalBalance} /> : '—'}</dd>
+              <dd>{address ? <Revalidating pending={unconfirmed}><DisplayTokenAmount value={totalBalance} /></Revalidating> : '—'}</dd>
               {address && state.creditBalance > 0n && <dd className="text-xs"><DisplayTokenAmount value={state.creditBalance} /> as unclaimed credits</dd>}
               <dd className="project-action-guide"><div className="pag-actions" role="group" aria-label="FUND actions">
                 {context && <button type="button" className="outline-button pag-control" aria-pressed={accountAction === 'cashout'} onClick={() => setAccountAction(accountAction === 'cashout' ? null : 'cashout')}>Cash out FUND</button>}

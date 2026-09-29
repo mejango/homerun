@@ -428,14 +428,15 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     expect(runtime.send).not.toHaveBeenCalled()
   })
 
-  it('shows the last verified state from this browser at once, with transactions still closed until a fresh read', async () => {
+  it('shows the last verified state from this browser at once, marked as confirming, with transactions closed until a fresh read', async () => {
     await act(async () => root.render(<FundProject chainId={1} projectId="7" />))
     await act(async () => root.unmount())
     root = createRoot(host)
     runtime.query = { ...runtime.query, data: undefined, isPending: true }
     await act(async () => root.render(<FundProject chainId={1} projectId="7" />))
     expect(host.querySelector('.hpl-metadata')?.textContent).toContain('FUND treasury:')
-    expect(host.textContent).toContain('New transactions are paused while current project permissions and balances are being verified.')
+    expect(host.querySelector('.hpl-metadata .revalidating[aria-busy="true"]')).not.toBeNull()
+    expect([...host.querySelectorAll<HTMLFieldSetElement>('fieldset[aria-label="Project transactions"]')].every(set => set.disabled)).toBe(true)
   })
 
   it('shows the project navigation before RPC reads finish and preserves the selected tab', async () => {

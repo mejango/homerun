@@ -400,3 +400,13 @@
 .homerun-project-layout .demo-section, .homerun-project-layout [role="alert"], .homerun-project-layout [role="status"] { overflow-wrap: anywhere; }
 /* Browser fieldsets draw a box; project forms group without one. In the base layer so utilities (border-t, p-*) still win. */
 @layer base { .homerun-project-layout fieldset { min-width: 0; margin: 0; padding: 0; border: 0; } }
+
+/* Loading and confirming states, as Juicebox Money draws them. A first load shows a
+   sized skeleton; a value restored from the last visit stays readable, faded, with a
+   light sweep while this visit confirms it against the chain. */
+@keyframes skeleton-sweep { to { transform: translateX(100%); } }
+.skeleton-shimmer { position: relative; overflow: hidden; background-color: var(--color-smoke-100, #e6e9df); border-radius: 4px; }
+.skeleton-shimmer::after { position: absolute; inset: 0; content: ''; background: linear-gradient(100deg, transparent 20%, rgb(255 255 255 / 0.72) 50%, transparent 80%); transform: translateX(-100%); animation: skeleton-sweep 1.5s ease-in-out infinite; }
+.revalidating { position: relative; overflow: hidden; opacity: 0.55; transition: opacity 180ms ease-out; }
+.revalidating::after { position: absolute; inset: 0; content: ''; background: linear-gradient(100deg, transparent 20%, rgb(255 255 255 / 0.5) 50%, transparent 80%); transform: translateX(-100%); animation: skeleton-sweep 1.5s ease-in-out infinite; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .skeleton-shimmer::after, .revalidating::after { animation: none; } }

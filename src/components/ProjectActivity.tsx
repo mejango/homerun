@@ -10,6 +10,7 @@ import {
 } from '@/lib/bendystraw'
 import { displayChainName, displayChainSlug, explorerTxUrl } from '@/lib/chainDisplay'
 import { ChainIcon } from '@/components/ChainIcon'
+import { SkeletonLines } from '@/components/ui/Skeleton'
 
 const ACTIVITY_PAGE = 20
 const ACTIVITY_POLL_MS = 15_000
@@ -182,7 +183,7 @@ function ActivityFeed({ chainId, projectId, suckerGroupId }: { chainId: number; 
 
   return <section aria-labelledby={heading} className="demo-activity">
     <div className="demo-activity-heading"><h2 id={heading}>Activity</h2></div>
-    {newest.isPending && <p role="status" className="mt-3 text-sm text-smoke-500">{events.length ? 'Loading linked-chain activity…' : 'Loading activity…'}</p>}
+    {newest.isPending && !events.length && <div role="status" className="mt-4"><span className="sr-only">Loading activity</span><SkeletonLines lines={4} /></div>}
     {newest.isError && <p role="status" className="mt-3 text-sm text-smoke-500">{events.length ? 'Activity could not refresh. Showing the last indexed events.' : 'Activity is temporarily unavailable.'}</p>}
     {!newest.isPending && !newest.isError && events.length === 0 && <p className="mt-3 text-sm text-smoke-500">No activity yet. New transactions can take a minute to appear.</p>}
     {events.length > 0 && <ol className="min-w-0">{groupActivity(events).map(row => <EventRow key={row.events[0].id} row={row} />)}</ol>}
