@@ -12,7 +12,14 @@ import {
 export function parseUrn(
   urn: string,
 ): { chainId: JBChainId; projectId: number } | null {
-  const [slug, id] = decodeURIComponent(urn).split(':')
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(urn)
+  } catch {
+    // Typed or linked text with a stray `%` is not a URN, and must not throw.
+    return null
+  }
+  const [slug, id] = decoded.split(':')
   const chainId = displayChainId(slug?.trim())
   const projectId = Number(id)
   if (chainId === null || !Number.isInteger(projectId) || projectId <= 0) {

@@ -9,6 +9,10 @@ import { useMobileWallet } from '@/hooks/useMobileWallet'
 import { mobileWalletLinks } from '@/lib/walletLinks'
 import { CENTER_WALLET_CONFIG, CENTER_WALLET_ENABLED } from './wallet-config'
 
+/** A wallet tile shows only an inline image: a remote icon URL would tell its host that this page was opened. */
+const safeIcon = (icon: string | undefined) =>
+  icon && /^data:image\/(?:png|svg\+xml|webp|jpeg|gif)[;,]/i.test(icon) ? icon : undefined
+
 /** Two ways in: a passkey account at Signa, or an external wallet through the
  * shared wagmi stack. Keep the SDK's connection and dismissal behavior with Homerun's typography. */
 export function ExternalWalletDialog({ onClose }: { onClose: () => void }) {
@@ -74,7 +78,7 @@ export function ExternalWalletDialog({ onClose }: { onClose: () => void }) {
     for (const connector of connectors) {
       if (connector.id === 'safe' && !framed) continue
       options.push({
-        id: connector.id, name: connector.name, icon: connector.icon,
+        id: connector.id, name: connector.name, icon: safeIcon(connector.icon),
         async connect({ signal, handoff }) {
           const onMessage = ({ type, data }: { type: string; data?: unknown }) => {
             if (type === 'display_uri' && typeof data === 'string') handoff(data)
