@@ -1,8 +1,8 @@
 'use client'
 
 import { type JBChainId } from '@bananapus/nana-sdk-core'
-import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { formatUnits, isAddress, isAddressEqual, type PublicClient } from 'viem'
 import Image from 'next/image'
 import { usePublicClient } from 'wagmi'
@@ -31,7 +31,7 @@ import { readFundProjectState, type FundProjectState } from '@/lib/fund-state'
 import { fetchFundProjectMetadata, type FundProjectMetadata } from '@/lib/fund-project-metadata'
 import { SiteIntegration } from './SiteIntegration'
 import { getProject } from '@/lib/bendystraw'
-import { loadDisplayCache, saveDisplayCache } from '@/lib/display-cache'
+import { PERSIST } from '@/lib/query-persist'
 import { DemoStageHistory, PhaseCopy, ProjectOverviewView, ProjectPageShell, ProjectPhoto, ProjectRaiseStats } from '@/components/ProjectPage'
 import { liveFundPhase } from '@/lib/fund-phase'
 import { FundingProgress } from '@/components/FundingProgress'
@@ -40,6 +40,16 @@ import { Skeleton, SkeletonLines } from '@/components/ui/Skeleton'
 import { ActionSection, CashOutPanel, HolderActions, OperatorActions, PaymentPanel } from '@/components/live-transactions'
 
 /** Every displayed balance and every permission is resolved from this chain. */
+
+/** The project-level part of a verified read: what anyone sees, with every wallet-scoped field reset. */
+function projectSnapshot(state: FundProjectState): FundProjectState {
+  return {
+    ...state,
+    account: null, creditBalance: 0n, erc20Balance: 0n, totalBalance: 0n,
+    permissions: Object.fromEntries(Object.keys(state.permissions).map(key => [key, false])) as FundProjectState['permissions'],
+    allowlist: state.allowlist && { ...state.allowlist, accountAllowed: null },
+  }
+}
 
 /** Homerun's create form sets a cover photo, not a logo: the cover stands in, as the preview shows it. */
 function projectLogo(details: { logoUrl: string | null; coverUrl: string | null } | null | undefined, alt: string) {
@@ -61,10 +71,14 @@ export function FundProject({ chainId, projectId, intentId }: { chainId: JBChain
     retry: 1,
     placeholderData: keepPreviousData,
   })
-  // A return visit shows the last verified state for this wallet while the fresh read runs.
-  const cacheKey = `fund-state:${chainId}:${projectId}:${address?.toLowerCase() ?? 'none'}`
-  useEffect(() => { if (!query.data) setLastState(current => current ?? loadDisplayCache<FundProjectState>(cacheKey)) }, [cacheKey, query.data])
-  useEffect(() => { if (query.data) { setLastState(query.data); saveDisplayCache(cacheKey, query.data) } }, [cacheKey, query.data])
+  // A return visit shows this project's last verified figures while the fresh read runs.
+  // Only the project-level snapshot is persisted: wallet balances and permissions never
+  // reach disk, as in Juicebox Money, and a snapshot never enables a write.
+  const cache = useQueryClient()
+  const snapshotKey = useMemo(() => ['fund-display', chainId, projectId] as const, [chainId, projectId])
+  const snapshot = useQuery<FundProjectState | null>({ queryKey: snapshotKey, queryFn: () => null, enabled: false, staleTime: Infinity, meta: PERSIST })
+  useEffect(() => { if (!query.data && snapshot.data) setLastState(current => current ?? snapshot.data!) }, [snapshot.data, query.data])
+  useEffect(() => { if (query.data) { setLastState(query.data); cache.setQueryData(snapshotKey, projectSnapshot(query.data)) } }, [cache, snapshotKey, query.data])
   // Keep receipt tracking mounted through a failed refresh or wallet change.
   // Retained reads are display-only until the active account is freshly read.
   const displayState = query.data ?? lastState
@@ -82,14 +96,15 @@ export function FundProject({ chainId, projectId, intentId }: { chainId: JBChain
     queryFn: () => getProject(chainId, Number(projectId)),
     staleTime: 30_000,
     retry: 1,
+    meta: PERSIST,
   })
   const metadataUri = displayState?.projectUri || (indexed.data?.version === 6 && indexed.data.chainId === chainId && String(indexed.data.projectId) === projectId ? indexed.data.metadataUri : null)
   const details = useQuery({
     queryKey: ['fund-project-metadata', metadataUri],
     enabled: !!metadataUri,
-    queryFn: async () => { const read = await fetchFundProjectMetadata(metadataUri!); saveDisplayCache(`fund-metadata:${metadataUri}`, read); return read },
-    placeholderData: () => metadataUri ? loadDisplayCache<FundProjectMetadata>(`fund-metadata:${metadataUri}`) ?? undefined : undefined,
+    queryFn: () => fetchFundProjectMetadata(metadataUri!),
     staleTime: 300_000,
+    meta: PERSIST,
     retry: 1,
   })
   const [lastIncomeId, setLastIncomeId] = useState<bigint | undefined>()
@@ -271,7 +286,7 @@ function ProjectActions({ chainId, projectId, intentId, indexedOwner, state, cli
           <dl className="demo-account-balances">
             <div>
               <dt>FUND</dt>
-              <dd>{address ? <Revalidating pending={unconfirmed}><DisplayTokenAmount value={totalBalance} /></Revalidating> : '—'}</dd>
+              <dd>{!address ? '—' : state.account && isAddressEqual(state.account, address) ? <Revalidating pending={unconfirmed}><DisplayTokenAmount value={totalBalance} /></Revalidating> : <Skeleton as="span" className="inline-block h-6 w-20 align-middle" />}</dd>
               {address && state.creditBalance > 0n && <dd className="text-xs"><DisplayTokenAmount value={state.creditBalance} /> as unclaimed credits</dd>}
               <dd className="project-action-guide"><div className="pag-actions" role="group" aria-label="FUND actions">
                 {context && <button type="button" className="outline-button pag-control" aria-pressed={accountAction === 'cashout'} onClick={() => setAccountAction(accountAction === 'cashout' ? null : 'cashout')}>Cash out FUND</button>}

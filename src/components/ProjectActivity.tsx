@@ -11,6 +11,7 @@ import {
 import { displayChainName, displayChainSlug, explorerTxUrl } from '@/lib/chainDisplay'
 import { ChainIcon } from '@/components/ChainIcon'
 import { SkeletonLines } from '@/components/ui/Skeleton'
+import { PERSIST } from '@/lib/query-persist'
 
 const ACTIVITY_PAGE = 20
 const ACTIVITY_POLL_MS = 15_000
@@ -137,6 +138,7 @@ function ActivityFeed({ chainId, projectId, suckerGroupId }: { chainId: number; 
     : getProjectActivityByProject(chainId, projectId, ACTIVITY_PAGE, offset)
   const newest = useQuery({
     queryKey: ['project-activity', chainId, projectId, suckerGroupId],
+    meta: PERSIST,
     queryFn: () => fetchPage(),
     staleTime: 10_000,
     refetchInterval: ACTIVITY_POLL_MS,
@@ -195,6 +197,7 @@ function ActivityFeed({ chainId, projectId, suckerGroupId }: { chainId: number; 
 function ProjectActivitySource({ chainId, projectId }: { chainId: number; projectId: number }) {
   const project = useQuery({
     queryKey: ['indexed-project', chainId, projectId],
+    meta: PERSIST,
     queryFn: () => getProject(chainId, projectId),
     staleTime: 30_000,
     refetchInterval: 30_000,

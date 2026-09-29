@@ -14,6 +14,7 @@ type AdminEditorProps = { chainId: number; projectId: bigint; unavailable?: bool
 const runtime = vi.hoisted(() => ({
   address: '0x1111111111111111111111111111111111111111' as Address,
   query: {} as Record<string, unknown>,
+  snapshot: undefined as unknown,
   incomeId: undefined as bigint | undefined,
   incomeQuery: {} as Record<string, unknown>,
   bindingError: false,
@@ -50,11 +51,12 @@ vi.mock('@/components/DeployRemainingChains', () => ({ DeployRemainingChains: ({
   <span data-testid="also-deploy" data-chain-id={chainId} data-project-id={projectId} data-intent-id={intentId} data-owner={owner}>Also deploy</span> }))
 vi.mock('@tanstack/react-query', () => ({
   keepPreviousData: (value: unknown) => value,
-  useQueryClient: () => ({ invalidateQueries: runtime.invalidateQueries }),
+  useQueryClient: () => ({ invalidateQueries: runtime.invalidateQueries, setQueryData: (key: unknown[], value: unknown) => { if (key[0] === 'fund-display') runtime.snapshot = value } }),
   useQuery: ({ queryKey }: { queryKey: unknown[] }) => queryKey[0] === 'fund-project'
     ? runtime.query
     : queryKey[0] === 'income-project' ? runtime.incomeQuery
     : queryKey[0] === 'fund-project-metadata' ? { data: runtime.details, isError: false }
+    : queryKey[0] === 'fund-display' ? { data: runtime.snapshot }
     : queryKey[0] === 'income-binding' ? { data: runtime.incomeId, isError: runtime.bindingError, isPending: runtime.bindingPending, isFetching: false }
     : queryKey[0] === 'project-operator-profile' ? { data: runtime.operator, isError: runtime.operatorError, isPending: false, refetch: vi.fn() }
     : queryKey[0] === 'fund-reward-activation' ? { data: runtime.delegated, isError: false, isFetching: false }
@@ -109,7 +111,7 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     HTMLElement.prototype.scrollIntoView ??= () => {}
     Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) })
     window.history.replaceState(null, '', '/')
-    localStorage.clear()
+    localStorage.clear(); runtime.snapshot = undefined
     runtime.incomeId = undefined; runtime.details = undefined
     runtime.incomeQuery = { data: undefined, isError: false, isPending: false, isFetching: false, isPlaceholderData: false, refetch: vi.fn() }
     runtime.bindingError = false; runtime.bindingPending = false; runtime.operator = undefined; runtime.operatorError = false
@@ -430,6 +432,11 @@ describe('live FUND transaction tracking survives refreshed data', () => {
 
   it('shows the last verified state from this browser at once, marked as confirming, with transactions closed until a fresh read', async () => {
     await act(async () => root.render(<FundProject chainId={1} projectId="7" />))
+    // Only project-level figures are kept: no wallet, balance or permission reaches the snapshot.
+    const snapshot = runtime.snapshot as FundProjectState
+    expect(snapshot.account).toBeNull()
+    expect([snapshot.creditBalance, snapshot.erc20Balance, snapshot.totalBalance]).toEqual([0n, 0n, 0n])
+    expect(Object.values(snapshot.permissions).some(Boolean)).toBe(false)
     await act(async () => root.unmount())
     root = createRoot(host)
     runtime.query = { ...runtime.query, data: undefined, isPending: true }

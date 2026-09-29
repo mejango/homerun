@@ -13,6 +13,7 @@ import { explorerAddressUrl, explorerTokenUrl } from '@/lib/chainDisplay'
 import { readProjectShop, readShopCustomers, shopTierAvailability, shopTierName, shopTierPrice, type ProjectShopState } from '@/lib/project-shop'
 import { readShopItemMetadata } from '@/lib/shop-item-metadata'
 import { ProjectShopManagement } from '@/components/ProjectShopManagement'
+import { PERSIST } from '@/lib/query-persist'
 
 /** Uses the same canonical shop resolver as Juicebox and Revnet. */
 export function ProjectShop({ chainId, projectId, tokenLabel = 'project' }: { chainId: JBChainId; projectId: bigint; tokenLabel?: string }) {
@@ -25,6 +26,7 @@ function ProjectShopContent({ chainId, projectId, tokenLabel }: { chainId: JBCha
   const id = useId()
   const shop = useQuery({
     queryKey: ['project-shop', chainId, projectId.toString()], enabled: !!client,
+    meta: PERSIST,
     queryFn: () => readProjectShop(client!, { chainId, projectId }), staleTime: 30_000, retry: 1,
   })
   function onKey(event: KeyboardEvent<HTMLButtonElement>, next: 'inventory' | 'customers') {

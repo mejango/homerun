@@ -12,6 +12,7 @@ import { ProjectPageShell } from '@/components/ProjectPage'
 import { getProject } from '@/lib/bendystraw'
 import { readIncomeFundBinding } from '@/lib/income-fund-binding'
 import { projectPath } from '@/lib/urn'
+import { PERSIST } from '@/lib/query-persist'
 
 /**
  * One address per Homerun project: its FUND's. An INCOME project's own address
@@ -23,6 +24,7 @@ export function ProjectAddress({ chainId, projectId, intentId }: { chainId: JBCh
   const client = usePublicClient({ chainId }) as PublicClient | undefined
   const indexed = useQuery({
     queryKey: ['indexed-project', chainId, Number(projectId)],
+    meta: PERSIST,
     enabled: Number.isSafeInteger(Number(projectId)),
     queryFn: () => getProject(chainId, Number(projectId)),
     staleTime: 30_000,

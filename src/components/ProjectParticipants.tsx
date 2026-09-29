@@ -9,6 +9,7 @@ import {
   getProjectParticipants,
   indexedParticipantProjectId,
 } from '@/lib/project-participants'
+import { PERSIST } from '@/lib/query-persist'
 
 function TokenBalance({ value }: { value: string }) {
   return <span className="break-words tabular-nums" title={formatUnits(BigInt(value), 18)}>{formatParticipantBalance(value)}</span>
@@ -20,6 +21,7 @@ function ParticipantsList({ chainId, projectId, tokenLabel }: { chainId: number;
   const offset = offsets.at(-1) ?? 0
   const query = useQuery({
     queryKey: ['project-participants', chainId, projectId, offset],
+    meta: PERSIST,
     queryFn: () => getProjectParticipants(chainId, projectId, offset),
     staleTime: 30_000,
     refetchInterval: 60_000,
