@@ -6,6 +6,7 @@ import {
   getBorrowableAmount, getHookAwareCashOutQuote, hasPermissions, prepareHookAwareCashOut,
   REVLOANS_BURN_PERMISSION_ID,
 } from '@bananapus/nana-sdk-core/v6'
+import { netLoanProceeds } from '@bananapus/nana-sdk-core/v6/loan-math'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { erc20Abi, formatUnits, getAddress, isAddress, isAddressEqual, zeroAddress, type Address, type PublicClient } from 'viem'
@@ -18,6 +19,8 @@ import { IncomeOperatorActions } from '@/components/IncomeOperatorActions'
 import { ProjectActivity } from '@/components/ProjectActivity'
 import { DisplayTokenAmount } from '@/components/DisplayTokenAmount'
 import { InitialIncomeMint } from '@/components/InitialIncomeMint'
+import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { getLoans } from '@/lib/loans-queries'
 import { useSafeTx, txPhaseLabel, type TxRequest } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { displayChainName, explorerTxUrl } from '@/lib/chainDisplay'
@@ -75,6 +78,7 @@ function useIncomeTx(state: IncomeProjectState) {
     confirmed.current = tx.receipt.transactionHash
     for (const prefix of ['income-project', 'income-reserved', 'income-pay', 'income-cash-out', 'income-borrow', 'income-loan', 'income-allowance', 'income-permission']) void cache.invalidateQueries({ queryKey: [prefix, state.chainId, state.projectId.toString()] })
     if (state.rewards) void cache.invalidateQueries({ queryKey: ['fund-project', state.chainId, state.rewards.fundProjectId.toString()] })
+    void cache.invalidateQueries({ queryKey: ['loans', state.chainId, Number(state.projectId)] })
   }, [cache, state.chainId, state.projectId, state.rewards, tx.phase, tx.receipt])
   return tx
 }
@@ -236,7 +240,7 @@ function IncomeActions({ state, client, fundProjectId, writesUnavailable, bindin
     accountsAll: projectId && <ProjectParticipants chainId={chainId} projectId={projectId} tokenLabel="INCOME" />,
     settlement: gate(ready && <IncomeBridgeActions state={state} />),
     splits: <div className="demo-owner-sections">{ready && <ProjectSplitsEditor chainId={chainId} projectId={state.projectId} phase="income" client={client} unavailable={writesUnavailable} />}{gate(ready && <><IncomeReservedTokens state={state} client={client} /><IncomeAutoIssue state={state} client={client} /></>)}</div>,
-    loans: gate(ready && <>{currency}{context && <IncomeBorrow state={state} client={client} context={context} />}<IncomeRepay state={state} client={client} /><IncomeLoanTools state={state} client={client} /></>),
+    loans: gate(ready && <>{currency}{context && <IncomeBorrow state={state} client={client} context={context} />}<IncomeLoansList state={state} client={client} /><IncomeLoanTools state={state} client={client} /></>),
     shop: projectId && <ProjectShop chainId={chainId} projectId={projectId} tokenLabel="INCOME" />,
     extras: projectId && <ProjectPayerAddresses chainId={chainId} projectId={projectId} tokenLabel="INCOME" />,
     operators: gate(ready && <IncomeOperatorActions state={state} client={client} />),
@@ -340,98 +344,228 @@ function IncomeTokenActions({ state, client }: { state: IncomeProjectState; clie
   </Panel>
 }
 
-function IncomeBorrow({ state, client, context }: { state: IncomeProjectState; client: PublicClient; context: IncomeAccountingContext }) {
+/** Prepaid-fee choices, out of 1000, as in Juicebox Money's loan flow. 2.5% is the onchain minimum. */
+const PREPAID_OPTIONS = [{ value: 25n, label: '2.5%' }, { value: 50n, label: '5%' }, { value: 100n, label: '10%' }] as const
+
+/** A confirmed prerequisite's block, so the next step can pin to it. A Safe proposal is not awaited here. */
+async function prerequisiteBlock(client: PublicClient, hash: `0x${string}` | null, safe: boolean): Promise<bigint | null> {
+  if (!hash || safe) return null
+  const receipt = await client.waitForTransactionReceipt({ hash, timeout: 180_000 })
+  if (receipt.status !== 'success') throw new Error('The prerequisite transaction reverted onchain.')
+  return receipt.blockNumber
+}
+
+export function IncomeBorrow({ state, client, context }: { state: IncomeProjectState; client: PublicClient; context: IncomeAccountingContext }) {
   const { address } = useWallet()
   const [input, setInput] = useState('')
+  const [prepaid, setPrepaid] = useState<bigint>(25n)
   const [error, setError] = useState<string | null>(null)
   const [preparing, setPreparing] = useState(false)
+  // Juicebox Money's loan flow: review the loan and its wallet steps, then one action runs them in order.
+  const [reviewing, setReviewing] = useState(false)
+  const [stage, setStage] = useState<'permission' | 'borrow' | null>(null)
   const tx = useIncomeTx(state)
   const grant = useIncomeTx(state)
   const count = amount(input)
   const loans = v6Address('REVLoans', state.chainId)
-  const prerequisite = grant.phase === 'success' ? grant.receipt?.blockNumber : undefined
+  const confirmedGrant = grant.phase === 'success' ? grant.receipt?.blockNumber : undefined
   const quote = useQuery({
     queryKey: ['income-borrow', state.chainId, state.projectId.toString(), context.token, count.toString(), address],
     enabled: !!address && count > 0n && count <= state.totalBalance && state.cashOutsAvailable,
     queryFn: () => getBorrowableAmount(client, { chainId: state.chainId, revnetId: state.projectId, collateralCount: count, decimals: BigInt(context.decimals), currency: BigInt(context.currency) }),
     staleTime: 10_000, retry: false,
   })
-  async function submit() {
+  const permission = useQuery({
+    queryKey: ['income-permission', state.chainId, state.projectId.toString(), 'revloans-burn', address],
+    enabled: !!address && reviewing,
+    queryFn: () => hasPermissions(client, { chainId: state.chainId, account: address!, operator: loans, projectId: state.projectId, permissionIds: [REVLOANS_BURN_PERMISSION_ID], includeRoot: true, includeWildcardProjectId: true }),
+    staleTime: 10_000, retry: false,
+  })
+  const needsPermission = permission.data !== true && confirmedGrant === undefined
+  const borrowable = quote.data && quote.data.borrowableNow > 0n ? quote.data.borrowableNow : undefined
+  const optionLabel = PREPAID_OPTIONS.find(option => option.value === prepaid)?.label ?? `${Number(prepaid) / 10}%`
+  async function run() {
     if (!address || count <= 0n) return
     setPreparing(true); setError(null)
     try {
-      const current = await fresh(client, state, address, prerequisite)
+      let minimumBlock = confirmedGrant
+      const current = await fresh(client, state, address, minimumBlock)
       matchingContext(current, context)
       if (!current.cashOutsAvailable || count > current.totalBalance) throw new Error('The collateral or borrowing unlock time changed.')
       const permitted = await hasPermissions(client, { chainId: state.chainId, account: address, operator: loans, projectId: state.projectId, permissionIds: [REVLOANS_BURN_PERMISSION_ID], includeRoot: true, includeWildcardProjectId: true })
       if (!permitted) {
-        await grant.send({ ...buildSetPermissionsTx({ chainId: state.chainId, account: address, operator: loans, projectId: state.projectId, permissionIds: [REVLOANS_BURN_PERMISSION_ID] }), label: 'Allow REVLoans to burn this project’s INCOME as loan collateral' }, { reverify: async () => { await fresh(client, state, address) } })
-        return
+        setStage('permission')
+        const hash = await grant.send({ ...buildSetPermissionsTx({ chainId: state.chainId, account: address, operator: loans, projectId: state.projectId, permissionIds: [REVLOANS_BURN_PERMISSION_ID] }), label: 'Allow REVLoans to burn this project’s INCOME as loan collateral' }, { reverify: async () => { await fresh(client, state, address) } })
+        const block = await prerequisiteBlock(client, hash, grant.isSafe)
+        if (block === null) return
+        minimumBlock = block
       }
+      setStage('borrow')
+      const latest = await fresh(client, state, address, minimumBlock)
+      matchingContext(latest, context)
       const latestQuote = await getBorrowableAmount(client, { chainId: state.chainId, revnetId: state.projectId, collateralCount: count, decimals: BigInt(context.decimals), currency: BigInt(context.currency) })
       const minimum = protectedIncomeMinimum(latestQuote.borrowableNow)
-      await tx.send({ ...buildProtectedIncomeBorrow({ chainId: state.chainId, revnetId: state.projectId, token: context.token, quotedBorrowAmount: latestQuote.borrowableNow, collateralCount: count, holder: address, beneficiary: address }), label: `Borrow against ${units(count)} INCOME; minimum ${units(minimum, context.decimals)} ${context.symbol} before loan fees` }, {
-        simulationBlockNumber: prerequisite === undefined ? undefined : current.blockNumber,
-        reviewNotice: 'The source prepaid fee is 2.5%. Protocol and REV fees also reduce wallet proceeds. Your INCOME becomes loan collateral; repayment is required to recover it. Unpaid loans can be liquidated after the contract’s ten-year term.',
-        reverify: async () => { const latest = await fresh(client, state, address, prerequisite); matchingContext(latest, context); if (!latest.cashOutsAvailable || count > latest.totalBalance) throw new Error('The borrowing conditions changed during review.') },
+      await tx.send({ ...buildProtectedIncomeBorrow({ chainId: state.chainId, revnetId: state.projectId, token: context.token, quotedBorrowAmount: latestQuote.borrowableNow, collateralCount: count, holder: address, beneficiary: address, prepaidFeePercent: prepaid }), label: `Borrow against ${units(count)} INCOME; minimum ${units(minimum, context.decimals)} ${context.symbol} before loan fees` }, {
+        simulationBlockNumber: minimumBlock === undefined ? undefined : latest.blockNumber,
+        reviewNotice: `The prepaid source fee is ${optionLabel}. Protocol and REV fees also reduce wallet proceeds. Your INCOME becomes loan collateral; repayment is required to recover it. Unpaid loans can be liquidated after the contract’s ten-year term.`,
+        reverify: async () => { const again = await fresh(client, state, address, minimumBlock); matchingContext(again, context); if (!again.cashOutsAvailable || count > again.totalBalance) throw new Error('The borrowing conditions changed during review.') },
       })
     } catch (reason) { setError(message(reason)) } finally { setPreparing(false) }
   }
+  const running = preparing || tx.busy || grant.busy || tx.phase === 'review' || grant.phase === 'review'
+  const steps = [
+    ...(needsPermission ? [{ key: 'permission', title: 'Allow REVLoans to use your INCOME as collateral', detail: 'A one-time permission for this project.' }] : []),
+    { key: 'borrow', title: `Borrow against ${units(count)} INCOME`, detail: 'The minimum is re-quoted just before your wallet opens.' },
+  ]
   return <Panel title="Borrow against INCOME">
     <Field label="INCOME collateral" value={input} onChange={setInput} />
-    <p className="mt-4 text-xs text-[var(--muted)]">Your INCOME is locked in a loan NFT until repaid. Fees: 2.5% prepaid source fee plus protocol and REV fees.</p>
-    {quote.data && <p className="mt-3 text-sm">Borrowable before fees: {units(quote.data.borrowableNow, context.decimals)} {context.symbol}, protected with 1% slippage.</p>}
+    <fieldset className="mt-4 flex flex-wrap items-center gap-2 border-0 p-0"><legend className="mb-2 text-sm">Prepaid fee</legend>{PREPAID_OPTIONS.map(option => <button key={option.label} type="button" className={prepaid === option.value ? 'btn-primary min-h-10 px-4' : 'btn-secondary min-h-10 px-4'} aria-pressed={prepaid === option.value} onClick={() => setPrepaid(option.value)}>{option.label}</button>)}</fieldset>
+    <p className="mt-2 text-xs text-[var(--muted)]">Prepaying more buys more fee-free time before the repayment cost starts to grow.</p>
+    {borrowable !== undefined && <p className="mt-3 text-sm">Borrowable: {units(borrowable, context.decimals)} {context.symbol}. You receive about {units(netLoanProceeds(borrowable, prepaid), context.decimals)} {context.symbol} after fees.</p>}
     {quote.isError && <p role="alert" className="mt-3 text-sm">{message(quote.error)}</p>}
-    {grant.phase === 'success' && <p className="mt-3 text-sm">Collateral permission confirmed. Review the loan next.</p>}
-    <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={!address || preparing || tx.busy || grant.busy || tx.phase === 'review' || grant.phase === 'review' || count <= 0n || count > state.totalBalance || !state.cashOutsAvailable || !quote.data || quote.data.borrowableNow <= 0n} onClick={() => void submit()}>{preparing ? 'Preparing…' : txPhaseLabel(grant.busy ? grant.phase : tx.phase, { idle: 'Review borrowing', pending: 'Confirming onchain…' })}</button>
-    {error && <p role="alert" className="mt-3 text-sm text-red-800">{error}</p>}<Status tx={grant} chainId={state.chainId} /><Status tx={tx} chainId={state.chainId} />
+    <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={!address || running || count <= 0n || count > state.totalBalance || !state.cashOutsAvailable || !borrowable} onClick={() => { setError(null); setStage(null); if (tx.phase === 'success' || tx.phase === 'error') tx.reset(); setReviewing(true) }}>Review loan</button>
+    {!reviewing && error && <p role="alert" className="mt-3 text-sm text-red-800">{error}</p>}
+    {!reviewing && <><Status tx={grant} chainId={state.chainId} /><Status tx={tx} chainId={state.chainId} /></>}
+    <TxConfirmDialog
+      open={reviewing}
+      eyebrow="Loan"
+      title={tx.phase === 'success' ? 'Loan opened' : 'Confirm loan'}
+      rows={[
+        { label: 'Collateral', value: `${units(count)} INCOME`, strong: true },
+        ...(borrowable !== undefined ? [
+          { label: 'Borrow at least', value: `${units(protectedIncomeMinimum(borrowable), context.decimals)} ${context.symbol}` },
+          { label: 'Prepaid fee', value: optionLabel },
+          { label: 'You receive about', value: `${units(netLoanProceeds(borrowable, prepaid), context.decimals)} ${context.symbol}`, strong: true },
+        ] : []),
+        { label: 'On', value: displayChainName(state.chainId) },
+      ]}
+      steps={steps}
+      activeIndex={stage === 'permission' ? 0 : stage === 'borrow' ? steps.length - 1 : -1}
+      action="Confirm & borrow"
+      actionDisabled={!borrowable}
+      onConfirm={() => void run()}
+      busy={running && !tx.safeProposalHash && !grant.safeProposalHash}
+      complete={tx.phase === 'success'}
+      status={grant.safeProposalHash && !confirmedGrant ? 'Permission proposed to Safe. Execute it there, then confirm again to borrow.' : tx.safeProposalHash ? 'Loan proposed to Safe. It still needs execution and onchain confirmation.' : tx.phase === 'pending' || grant.phase === 'pending' ? 'Submitted. Waiting for onchain confirmation…' : null}
+      error={error ?? tx.error ?? grant.error}
+      onClose={() => setReviewing(false)}
+    >
+      <p className="text-sm text-smoke-600">Your INCOME stays in a loan NFT until repaid. Unpaid loans can be liquidated after ten years.</p>
+    </TxConfirmDialog>
   </Panel>
 }
 
-function IncomeRepay({ state, client }: { state: IncomeProjectState; client: PublicClient }) {
+/** A full repayment in Juicebox Money's confirm dialog, approving first when the loan's token needs it. */
+function IncomeRepayDialog({ state, client, loanId, tx, approval, onClose }: { state: IncomeProjectState; client: PublicClient; loanId: bigint | null; tx: IncomeTx; approval: IncomeTx; onClose: () => void }) {
   const { address } = useWallet()
-  const [input, setInput] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [preparing, setPreparing] = useState(false)
-  const tx = useIncomeTx(state)
-  const approval = useIncomeTx(state)
-  const loanId = /^\d+$/.test(input.trim()) ? BigInt(input.trim()) : 0n
-  const prerequisite = approval.phase === 'success' ? approval.receipt?.blockNumber : undefined
-  const loan = useQuery({ queryKey: ['income-loan', state.chainId, state.projectId.toString(), loanId.toString(), address], enabled: !!address && loanId > 0n, queryFn: () => readIncomeLoan(client, { chainId: state.chainId, projectId: state.projectId, loanId, account: address! }), staleTime: 10_000, retry: false })
-  async function submit() {
-    if (!address || loanId <= 0n) return
+  const [stage, setStage] = useState<'approve' | 'repay' | null>(null)
+  const loan = useQuery({ queryKey: ['income-loan', state.chainId, state.projectId.toString(), loanId?.toString(), address], enabled: !!address && !!loanId, queryFn: () => readIncomeLoan(client, { chainId: state.chainId, projectId: state.projectId, loanId: loanId!, account: address! }), staleTime: 10_000, retry: false })
+  const loansContract = v6Address('REVLoans', state.chainId)
+  const native = loan.data ? isAddressEqual(loan.data.sourceContext.token, NATIVE_TOKEN) : true
+  const allowance = useQuery({ queryKey: ['income-allowance', state.chainId, state.projectId.toString(), loan.data?.sourceContext.token, address], enabled: !!address && !!loan.data && !native, queryFn: () => client.readContract({ address: loan.data!.sourceContext.token, abi: erc20Abi, functionName: 'allowance', args: [address!, loansContract] }), staleTime: 10_000, retry: false })
+  const confirmedApproval = approval.phase === 'success' ? approval.receipt?.blockNumber : undefined
+  const needsApproval = !native && !!loan.data && confirmedApproval === undefined && (allowance.data === undefined || allowance.data < loan.data.loan.amount + loan.data.accruedFee)
+  async function run() {
+    if (!address || !loanId) return
     setPreparing(true); setError(null)
     try {
+      let prerequisite = confirmedApproval
       await fresh(client, state, address, prerequisite)
-      const current = await readIncomeLoan(client, { chainId: state.chainId, projectId: state.projectId, loanId, account: address })
+      let current = await readIncomeLoan(client, { chainId: state.chainId, projectId: state.projectId, loanId, account: address })
       if (prerequisite !== undefined && current.blockNumber < prerequisite) throw new Error('The network has not caught up with the confirmed token approval.')
-      const loans = v6Address('REVLoans', state.chainId)
-      const native = isAddressEqual(current.sourceContext.token, NATIVE_TOKEN)
+      const tokenNative = isAddressEqual(current.sourceContext.token, NATIVE_TOKEN)
       let maximum = current.repayCeiling
-      if (!native) {
-        const approved = await client.readContract({ address: current.sourceContext.token, abi: erc20Abi, functionName: 'allowance', args: [address, loans], blockNumber: current.blockNumber })
+      if (!tokenNative) {
+        let approved = await client.readContract({ address: current.sourceContext.token, abi: erc20Abi, functionName: 'allowance', args: [address, loansContract], blockNumber: current.blockNumber })
         if (approved < current.loan.amount + current.accruedFee) {
-          await approval.send({ chainId: state.chainId, address: current.sourceContext.token, abi: erc20Abi, functionName: 'approve', args: [loans, current.repayCeiling], label: `Approve up to ${units(current.repayCeiling, current.sourceContext.decimals)} ${current.sourceContext.symbol} to repay loan ${loanId}` }, { reverify: async () => { await readIncomeLoan(client, { chainId: state.chainId, projectId: state.projectId, loanId, account: address }) } })
-          return
+          setStage('approve')
+          const hash = await approval.send({ chainId: state.chainId, address: current.sourceContext.token, abi: erc20Abi, functionName: 'approve', args: [loansContract, current.repayCeiling], label: `Approve up to ${units(current.repayCeiling, current.sourceContext.decimals)} ${current.sourceContext.symbol} to repay loan ${loanId}` }, { reverify: async () => { await readIncomeLoan(client, { chainId: state.chainId, projectId: state.projectId, loanId, account: address }) } })
+          const block = await prerequisiteBlock(client, hash, approval.isSafe)
+          if (block === null) return
+          prerequisite = block
+          current = await readIncomeLoan(client, { chainId: state.chainId, projectId: state.projectId, loanId, account: address })
+          if (current.blockNumber < prerequisite) throw new Error('The network has not caught up with the confirmed token approval.')
+          approved = await client.readContract({ address: current.sourceContext.token, abi: erc20Abi, functionName: 'allowance', args: [address, loansContract], blockNumber: current.blockNumber })
         }
         // Fees keep accruing after approval. Reuse its remaining buffer instead
         // of repeatedly asking to approve a newly calculated, slightly higher ceiling.
         if (approved < maximum) maximum = approved
       }
-      await tx.send({ ...buildRepayLoanTx({ chainId: state.chainId, loanId, maxRepayBorrowAmount: maximum, collateralCountToReturn: current.loan.collateral, beneficiary: address, value: native ? maximum : 0n }), label: `Repay loan ${loanId}; spend at most ${units(maximum, current.sourceContext.decimals)} ${current.sourceContext.symbol}` }, {
-        simulationBlockNumber: prerequisite === undefined ? undefined : current.blockNumber,
-        reviewNotice: `Recover ${units(current.loan.collateral)} INCOME. The maximum includes outstanding principal, accrued fees, and a 0.1% principal buffer. Unused funds are refunded.`,
-        reverify: async () => { const latest = await readIncomeLoan(client, { chainId: state.chainId, projectId: state.projectId, loanId, account: address }); if (latest.loan.collateral !== current.loan.collateral || latest.loan.amount !== current.loan.amount || latest.loan.amount + latest.accruedFee > maximum) throw new Error('The loan changed or its fees exceeded the reviewed maximum. Review a fresh repayment.'); if (prerequisite !== undefined && latest.blockNumber < prerequisite) throw new Error('The RPC is behind the confirmed approval.') },
+      setStage('repay')
+      const reviewed = current
+      await tx.send({ ...buildRepayLoanTx({ chainId: state.chainId, loanId, maxRepayBorrowAmount: maximum, collateralCountToReturn: reviewed.loan.collateral, beneficiary: address, value: tokenNative ? maximum : 0n }), label: `Repay loan ${loanId}; spend at most ${units(maximum, reviewed.sourceContext.decimals)} ${reviewed.sourceContext.symbol}` }, {
+        simulationBlockNumber: prerequisite === undefined ? undefined : reviewed.blockNumber,
+        reviewNotice: `Recover ${units(reviewed.loan.collateral)} INCOME. The maximum includes outstanding principal, accrued fees, and a 0.1% principal buffer. Unused funds are refunded.`,
+        reverify: async () => { const latest = await readIncomeLoan(client, { chainId: state.chainId, projectId: state.projectId, loanId, account: address }); if (latest.loan.collateral !== reviewed.loan.collateral || latest.loan.amount !== reviewed.loan.amount || latest.loan.amount + latest.accruedFee > maximum) throw new Error('The loan changed or its fees exceeded the reviewed maximum. Review a fresh repayment.'); if (prerequisite !== undefined && latest.blockNumber < prerequisite) throw new Error('The RPC is behind the confirmed approval.') },
       })
     } catch (reason) { setError(message(reason)) } finally { setPreparing(false) }
   }
-  return <Panel title="Repay an INCOME loan">
-    <Field label="Loan NFT ID" value={input} onChange={setInput} />
-    {loan.data && <p className="mt-4 text-sm">Return {units(loan.data.loan.collateral)} INCOME for at most {units(loan.data.repayCeiling, loan.data.sourceContext.decimals)} {loan.data.sourceContext.symbol}, including fees and a refundable buffer.</p>}
-    {loan.isError && <p role="alert" className="mt-3 text-sm">{message(loan.error)}</p>}
-    {approval.phase === 'success' && <p className="mt-3 text-sm">Approval confirmed. Review the repayment next.</p>}
-    <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={!address || !loan.data || loan.isError || preparing || tx.busy || approval.busy || tx.phase === 'review' || approval.phase === 'review'} onClick={() => void submit()}>{preparing ? 'Preparing…' : txPhaseLabel(approval.busy ? approval.phase : tx.phase, { idle: 'Review full repayment', pending: 'Confirming onchain…' })}</button>
-    {error && <p role="alert" className="mt-3 text-sm text-red-800">{error}</p>}<Status tx={approval} chainId={state.chainId} /><Status tx={tx} chainId={state.chainId} />
+  const running = preparing || tx.busy || approval.busy || tx.phase === 'review' || approval.phase === 'review'
+  const steps = [
+    ...(needsApproval ? [{ key: 'approve', title: `Approve ${loan.data?.sourceContext.symbol ?? 'the token'}`, detail: 'Lets REVLoans take up to the repayment maximum.' }] : []),
+    { key: 'repay', title: `Repay loan ${loanId?.toString() ?? ''}`, detail: 'Returns all of its INCOME collateral to you.' },
+  ]
+  return <TxConfirmDialog
+    open={!!loanId}
+    eyebrow="Loan"
+    title={tx.phase === 'success' ? 'Loan repaid' : `Repay loan ${loanId?.toString() ?? ''}`}
+    preparing={loan.isPending && !!loanId}
+    rows={loan.data ? [
+      { label: 'Pay at most', value: `${units(loan.data.repayCeiling, loan.data.sourceContext.decimals)} ${loan.data.sourceContext.symbol}`, strong: true },
+      { label: 'You get back', value: `${units(loan.data.loan.collateral)} INCOME`, strong: true },
+      { label: 'On', value: displayChainName(state.chainId) },
+    ] : []}
+    steps={steps}
+    activeIndex={stage === 'approve' ? 0 : stage === 'repay' ? steps.length - 1 : -1}
+    action="Confirm & repay"
+    actionDisabled={!loan.data || loan.isError}
+    onConfirm={() => void run()}
+    busy={running && !tx.safeProposalHash && !approval.safeProposalHash}
+    complete={tx.phase === 'success'}
+    status={loan.isPending ? 'Reading the loan…' : approval.safeProposalHash && !confirmedApproval ? 'Approval proposed to Safe. Execute it there, then confirm again to repay.' : tx.safeProposalHash ? 'Repayment proposed to Safe. It still needs execution and onchain confirmation.' : tx.phase === 'pending' || approval.phase === 'pending' ? 'Submitted. Waiting for onchain confirmation…' : null}
+    error={error ?? (loan.isError ? message(loan.error) : null) ?? tx.error ?? approval.error}
+    onClose={onClose}
+  >
+    <p className="text-sm text-smoke-600">The maximum includes principal, accrued fees and a small refundable buffer.</p>
+  </TxConfirmDialog>
+}
+
+/** The connected wallet's open loans on this chain, from the index; each repays through a fresh onchain read. */
+export function IncomeLoansList({ state, client }: { state: IncomeProjectState; client: PublicClient }) {
+  const { address } = useWallet()
+  const [repaying, setRepaying] = useState<bigint | null>(null)
+  const [byId, setById] = useState('')
+  // The list owns the repayment's transactions, so closing the dialog never stops their receipt tracking.
+  const repayTx = useIncomeTx(state)
+  const repayApproval = useIncomeTx(state)
+  const inFlight = repayTx.busy || repayApproval.busy || repayTx.phase === 'review' || repayApproval.phase === 'review'
+  function openRepay(loanId: bigint) {
+    if (inFlight) return
+    if (repayTx.phase === 'success' || repayTx.phase === 'error') repayTx.reset()
+    if (repayApproval.phase === 'error') repayApproval.reset()
+    setRepaying(loanId)
+  }
+  const loans = useQuery({ queryKey: ['loans', state.chainId, Number(state.projectId)], enabled: !!address, queryFn: () => getLoans(Number(state.projectId), state.chainId), staleTime: 30_000, retry: 1 })
+  const mine = (loans.data?.items ?? []).filter(loan => !!address && loan.owner.toLowerCase() === address.toLowerCase() && loan.collateral !== '0')
+  const tokenOf = (token: string) => state.accountingContexts.find(context => isAddressEqual(context.token, (token === zeroAddress ? NATIVE_TOKEN : token) as Address))
+  const typedId = /^\d+$/.test(byId.trim()) ? BigInt(byId.trim()) : 0n
+  return <Panel title="Your loans">
+    {!address ? <p className="text-sm">Connect a wallet to see its loans.</p>
+      : loans.isPending ? <p className="text-sm" role="status">Loading your loans…</p>
+      : loans.isError ? <p className="text-sm" role="status">Your loans are temporarily unavailable. You can still repay one by its ID below.</p>
+      : mine.length === 0 ? <p className="text-sm">No open loans on {displayChainName(state.chainId)}.</p>
+      : <ul className="m-0 list-none p-0">{mine.map(loan => {
+        const context = tokenOf(loan.token)
+        return <li key={loan.id} className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--line)] py-3 last:border-0">
+          <span className="text-sm">Loan {loan.id}: {context ? `${units(BigInt(loan.borrowAmount), context.decimals)} ${context.symbol}` : loan.borrowAmount} borrowed against {units(BigInt(loan.collateral))} INCOME<span className="block text-xs text-[var(--muted)]">Opened {new Date(loan.createdAt * 1000).toLocaleDateString()}</span></span>
+          <button type="button" className="btn-secondary min-h-10 px-4" disabled={inFlight} onClick={() => openRepay(BigInt(loan.id))}>Repay</button>
+        </li>
+      })}</ul>}
+    <details className="mt-4"><summary className="cursor-pointer text-sm">Repay another loan by ID</summary><div className="mt-3 flex flex-wrap items-end gap-3"><Field label="Loan NFT ID" value={byId} onChange={setById} /><button type="button" className="btn-secondary min-h-11 px-4" disabled={!address || typedId <= 0n || inFlight} onClick={() => openRepay(typedId)}>Review repayment</button></div></details>
+    {!repaying && <><Status tx={repayApproval} chainId={state.chainId} /><Status tx={repayTx} chainId={state.chainId} /></>}
+    <IncomeRepayDialog key={repaying?.toString() ?? 'none'} state={state} client={client} loanId={repaying} tx={repayTx} approval={repayApproval} onClose={() => setRepaying(null)} />
   </Panel>
 }
 
