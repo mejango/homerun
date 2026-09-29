@@ -2,8 +2,9 @@
 
 /**
  * Gas fixed before review is reviewed. A wallet or forwarder gas limit shows as
- * its own row, and the review stops saying the wallet adds one. A Safe
- * proposal's safeTxGas shows too, with what a nonzero value means.
+ * its own row, and a Safe proposal's safeTxGas shows too, with what a nonzero
+ * value means. The review says the wallet only adds the nonce and fees when
+ * every call carries its gas; otherwise the wallet shows the gas limit it sets.
  */
 
 import { act, createElement } from 'react'
@@ -19,7 +20,11 @@ vi.mock('next/image', () => ({
 }))
 
 import { TransactionReviewProvider } from '@/components/TransactionReviewProvider'
-import { requireTransactionReview, type TransactionReviewCall } from '@/lib/transaction-review'
+import {
+  requireTransactionReview,
+  type TransactionReviewCall,
+  type TransactionReviewRequest,
+} from '@/lib/transaction-review'
 import '../dialog-shim'
 
 let container: HTMLDivElement
@@ -43,11 +48,14 @@ const call: TransactionReviewCall = {
 }
 const SAFE_NOTE = 'If this call fails, the Safe still executes and uses this nonce.'
 
-async function open(calls: TransactionReviewCall[]) {
+async function open(
+  calls: TransactionReviewCall[],
+  request: Omit<TransactionReviewRequest, 'calls'> = {},
+) {
   act(() => root.render(<TransactionReviewProvider>{null}</TransactionReviewProvider>))
   await act(async () => {
     // Swallow the cancellation thrown when the modal unmounts after the test.
-    requireTransactionReview({ calls }).catch(() => {})
+    requireTransactionReview({ ...request, calls }).catch(() => {})
   })
   await act(async () => { await vi.dynamicImportSettled() })
   return document.querySelector('dialog')!
@@ -67,30 +75,55 @@ function row(dialog: Element, label: string): string[] | undefined {
 const description = (dialog: Element) =>
   document.getElementById(dialog.getAttribute('aria-describedby')!)?.textContent
 
+const SENT = 'This is the exact destination, native value, and calldata the app will ask your wallet to send.'
+const GAS_REVIEWED = `${SENT} Your wallet adds the nonce and network fees.`
+const GAS_IN_WALLET = `${SENT} Your wallet shows the gas limit and network fees before you send.`
+
 describe('gas in the transaction review', () => {
   it('shows a fixed gas limit and says the wallet adds only the nonce and fees', async () => {
     const dialog = await open([{ ...call, gas: 4_000_000n }])
     expect(row(dialog, 'Gas limit')).toEqual(['4,000,000'])
     expect(row(dialog, 'Safe gas')).toBeUndefined()
-    expect(description(dialog)).toBe(
-      'This is the exact destination, native value, and calldata the app will ask your wallet to send. Your wallet adds the nonce and network fees.',
-    )
+    expect(description(dialog)).toBe(GAS_REVIEWED)
     expect(dialog.querySelector('pre')?.textContent).toContain('"gas": "0x3d0900"')
   })
 
-  it('leaves the gas limit to the wallet when none is fixed', async () => {
+  it('says the wallet shows the gas limit when none is fixed', async () => {
     const dialog = await open([call])
     expect(row(dialog, 'Gas limit')).toBeUndefined()
     expect(row(dialog, 'Safe gas')).toBeUndefined()
+    expect(description(dialog)).toBe(GAS_IN_WALLET)
+  })
+
+  it('says the wallet shows the gas limit when any one of several calls leaves it open', async () => {
+    const dialog = await open([call, { ...call, gas: 150_000n }])
+    expect(row(dialog, 'Gas limit')).toEqual(['150,000'])
+    expect(description(dialog)).toBe(GAS_IN_WALLET)
+  })
+
+  it('counts a Safe proposal’s safeTxGas as the gas it sends', async () => {
+    const dialog = await open([{ ...call, safeTxGas: 0n }])
+    expect(description(dialog)).toBe(GAS_REVIEWED)
+  })
+
+  it('says the wallet adds only the nonce and fees when every call carries gas or safeTxGas', async () => {
+    const dialog = await open([{ ...call, gas: 150_000n }, { ...call, safeTxGas: 0n }])
+    expect(description(dialog)).toBe(GAS_REVIEWED)
+  })
+
+  it.each([
+    ['without', call],
+    ['with', { ...call, gas: 500_000n }],
+  ])('keeps the authorization description %s a signed gas limit', async (_, reviewed) => {
+    const dialog = await open([reviewed], { kind: 'authorization', authorization: { type: 'test' } })
     expect(description(dialog)).toBe(
-      'This is the exact destination, native value, and calldata the app will ask your wallet to send. Your wallet adds the nonce, gas limit, and network fees.',
+      'This authorization commits to the exact destination, native value, and calldata below. A Safe or relayer can submit that call onchain after you continue.',
     )
   })
 
-  it('counts a gas limit on any one of several calls', async () => {
-    const dialog = await open([call, { ...call, gas: 150_000n }])
-    expect(row(dialog, 'Gas limit')).toEqual(['150,000'])
-    expect(description(dialog)).toContain('Your wallet adds the nonce and network fees.')
+  it('keeps a flow’s own description', async () => {
+    const dialog = await open([call], { description: 'Pay for relayed transactions.' })
+    expect(description(dialog)).toBe('Pay for relayed transactions.')
   })
 
   it('shows a nonzero safeTxGas with what it means for a failed call', async () => {
