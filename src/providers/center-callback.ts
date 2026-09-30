@@ -8,8 +8,8 @@ export function captureCenterCallback(location: CallbackLocation): { url: string
   return { url: url.href }
 }
 // A local path of Homerun's own routes (`/op:11`, `/@handle`, `/account/0x…`). Each segment is one or more of
-// `a-z A-Z 0-9 _ . : @ -` or a percent escape other than an encoded slash or backslash. Segments are split by
-// a mandatory `/`, so the match is linear in the length of the value.
+// `a-z A-Z 0-9 _ . : @ -` or a percent escape other than an encoded slash (`%2f`) or backslash (`%5c`). Segments
+// are split by a mandatory `/`, so the match is linear in the length of the value.
 const SEGMENT = String.raw`(?:[a-zA-Z0-9_.:@-]|%(?!2[fF]|5[cC])[0-9a-fA-F]{2})+`
 const RETURN_PATH = new RegExp(String.raw`^/(?:${SEGMENT}(?:/${SEGMENT})*/?)?$`)
 export function centerReturnPath(value: string): string {

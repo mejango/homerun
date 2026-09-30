@@ -167,9 +167,12 @@ describe('the indexer origins', () => {
     expect(fetcher.mock.calls.map(([url]) => url)).toEqual(['https://index.example/base/graphql', 'https://testnet-index.example/graphql'])
   })
 
-  it('fall back to the production indexers when a variable is blank, as an unset build argument leaves it', async () => {
-    vi.stubEnv('NEXT_PUBLIC_BENDYSTRAW_URL', '')
-    vi.stubEnv('NEXT_PUBLIC_TESTNET_BENDYSTRAW_URL', '')
+  it.each([
+    ['empty, as an unset build argument leaves it', ''],
+    ['only whitespace', ' \t\n '],
+  ])('fall back to the production indexers when a variable is %s', async (_name, value) => {
+    vi.stubEnv('NEXT_PUBLIC_BENDYSTRAW_URL', value)
+    vi.stubEnv('NEXT_PUBLIC_TESTNET_BENDYSTRAW_URL', value)
     vi.resetModules()
     const blank = await import('@/lib/bendystraw')
     const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => response({ data: { project: null } }))
