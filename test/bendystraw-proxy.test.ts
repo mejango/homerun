@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { webcrypto } from 'node:crypto'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import registry from '@/lib/bendystraw-operation-registry.json'
 import { bendystrawOperationId } from '@bananapus/nana-sdk-core/bendystraw-operations'
 import { resolvePersistedBendystrawRequest } from '@/lib/bendystraw-proxy'
@@ -11,6 +11,11 @@ const makeRequest = (body: unknown, headers = { 'content-type': 'application/jso
 const mainnet = { params: Promise.resolve({ net: 'mainnet' }) }
 
 describe('same-origin persisted query proxy', () => {
+  // The relay logs why it failed. Silencing the log keeps the run's output clean, and the spy lets a test read it.
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+  })
+
   it('registers the exact SHA-256 documents used by the source', async () => {
     vi.stubGlobal('crypto', webcrypto)
     for (const [id, query] of Object.entries(registry)) expect(await bendystrawOperationId(query)).toBe(id)
@@ -48,5 +53,28 @@ describe('same-origin persisted query proxy', () => {
     const result = await POST(makeRequest({ operation, variables: { chainId: 1, projectId: 11 } }), mainnet)
     expect(result.status).toBe(502)
     expect(await result.json()).toEqual({ error: 'Bendystraw unavailable' })
+  })
+
+  it('answers 502 and only that when the indexer fails, and logs the cause once', async () => {
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockImplementation(async () => new Response(JSON.stringify({ errors: [{ message: 'relation "secret_table" does not exist' }] }), { headers: { 'content-type': 'application/json' } })))
+    const result = await POST(makeRequest({ operation, variables: { chainId: 1, projectId: 11 } }), mainnet)
+    expect(result.status).toBe(502)
+    expect(await result.json()).toEqual({ error: 'Bendystraw unavailable' })
+    expect(console.error).toHaveBeenCalledExactlyOnceWith('Bendystraw relay failed:', 'BendystrawRequestError: relation "secret_table" does not exist')
+  })
+
+  it('logs a cause on one line, without the control characters a terminal or a log viewer would act on', async () => {
+    // A line break could forge a log line, ESC starts a terminal sequence, and NUL cuts a line in some viewers. U+0085 (NEL), U+009B (CSI) and DEL are controls that `\s` does not match.
+    const message = 'first line\r\n2026-09-29 ERROR forged line\n\tindented \u001b[31mred\u001b[0m\u0000nul \u0085 nel \u009b csi \u007f del'
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockImplementation(async () => new Response(JSON.stringify({ errors: [{ message }] }), { headers: { 'content-type': 'application/json' } })))
+    const result = await POST(makeRequest({ operation, variables: { chainId: 1, projectId: 11 } }), mainnet)
+    expect(await result.json()).toEqual({ error: 'Bendystraw unavailable' })
+    expect(console.error).toHaveBeenCalledExactlyOnceWith('Bendystraw relay failed:', 'BendystrawRequestError: first line 2026-09-29 ERROR forged line indented [31mred [0m nul nel csi del')
+  })
+
+  it('logs nothing when the relay answers', async () => {
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockImplementation(async () => new Response(JSON.stringify({ data: { project: null } }), { headers: { 'content-type': 'application/json' } })))
+    expect((await POST(makeRequest({ operation, variables: { chainId: 1, projectId: 11 } }), mainnet)).status).toBe(200)
+    expect(console.error).not.toHaveBeenCalled()
   })
 })
