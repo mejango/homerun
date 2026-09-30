@@ -52,6 +52,33 @@ describe('the wallet chooser', () => {
     expect(host.innerHTML).not.toContain('text/html')
   })
 
+  // An icon is drawn when it starts with one of these image types and then `;` or `,`, whatever the case. Nothing else is.
+  const iconTile = async (icon: string) => {
+    mocks.connectors = [connector('probe', 'Probe', icon)]
+    await act(async () => root.render(<ExternalWalletDialog onClose={vi.fn()} />))
+    return tile('Probe')
+  }
+
+  it.each([
+    ['a PNG', 'data:image/png;base64,iVBORw0KGgo='],
+    ['a WebP', 'data:image/webp;base64,UklGRg=='],
+    ['a JPEG', 'data:image/jpeg;base64,/9j/4AAQ'],
+    ['a GIF', 'data:image/gif;base64,R0lGODlh'],
+    ['a scheme and image type in capitals', 'DATA:IMAGE/PNG;base64,iVBORw0KGgo='],
+  ])('draws %s', async (_name, icon) => {
+    expect((await iconTile(icon)).querySelector('img')!.getAttribute('src')).toBe(icon)
+  })
+
+  it.each([
+    ['image/jpg, which the list spells jpeg', 'data:image/jpg;base64,/9j/4AAQ'],
+    ['an image type the list leaves out', 'data:image/x-icon;base64,AAABAA=='],
+    ['an SVG type with no payload after it', 'data:image/svg+xml'],
+  ])('draws the generic mark for %s', async (_name, icon) => {
+    const shown = await iconTile(icon)
+    expect(shown.querySelector('img')).toBeNull()
+    expect(shown.querySelector('svg')!.getAttribute('aria-hidden')).toBe('true')
+  })
+
   it('lists wallets named like Safe, and offers Safe itself only inside Safe{Wallet}', async () => {
     mocks.connectors = [connector('safe', 'Safe'), connector('app.safepal', 'SafePal Wallet'), connector('injected', 'SafePal')]
     await act(async () => root.render(<ExternalWalletDialog onClose={vi.fn()} />))

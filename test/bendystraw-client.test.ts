@@ -151,3 +151,36 @@ describe('V6 account discovery and pagination', () => {
     expect(request(fetcher.mock.calls[0][1]).variables).toEqual({ where: { AND: [{ version: 6 }, { OR: [{ name_contains_nocase: '11' }, { projectId: 11 }] }] }, limit: 3 })
   })
 })
+
+describe('the indexer origins', () => {
+  it('come from the environment, one per network', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BENDYSTRAW_URL', 'https://index.example/base')
+    vi.stubEnv('NEXT_PUBLIC_TESTNET_BENDYSTRAW_URL', 'https://testnet-index.example')
+    vi.resetModules()
+    const configured = await import('@/lib/bendystraw')
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => response({ data: { project: null } }))
+    vi.stubGlobal('fetch', fetcher)
+
+    await configured.getProject(8453, 11)
+    await configured.getProject(84532, 11)
+
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual(['https://index.example/base/graphql', 'https://testnet-index.example/graphql'])
+  })
+
+  it.each([
+    ['empty, as an unset build argument leaves it', ''],
+    ['only whitespace', ' \t\n '],
+  ])('fall back to the production indexers when a variable is %s', async (_name, value) => {
+    vi.stubEnv('NEXT_PUBLIC_BENDYSTRAW_URL', value)
+    vi.stubEnv('NEXT_PUBLIC_TESTNET_BENDYSTRAW_URL', value)
+    vi.resetModules()
+    const blank = await import('@/lib/bendystraw')
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => response({ data: { project: null } }))
+    vi.stubGlobal('fetch', fetcher)
+
+    await blank.getProject(8453, 11)
+    await blank.getProject(84532, 11)
+
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual(['https://bendystraw.up.railway.app/graphql', 'https://testnet.bendystraw.xyz/graphql'])
+  })
+})
