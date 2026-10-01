@@ -38,6 +38,7 @@ import { ProjectPermissionsEditor } from '@/components/ProjectPermissionsEditor'
 import { ProjectSplitsEditor } from '@/components/ProjectSplitsEditor'
 import { fetchFundProjectMetadata, type FundProjectMetadata } from '@/lib/fund-project-metadata'
 import { parseAmount } from '@/lib/fund-contracts'
+import { buildErc20ApproveRequest } from '@/lib/transaction-builders'
 import { readFundProjectState } from '@/lib/fund-state'
 import { readIncomeFundBinding } from '@/lib/income-fund-binding'
 import {
@@ -481,7 +482,7 @@ function IncomeRepayDialog({ state, client, loanId, tx, approval, onClose }: { s
         let approved = await client.readContract({ address: current.sourceContext.token, abi: erc20Abi, functionName: 'allowance', args: [address, loansContract], blockNumber: current.blockNumber })
         if (approved < current.loan.amount + current.accruedFee) {
           setStage('approve')
-          const hash = await approval.send({ chainId: state.chainId, address: current.sourceContext.token, abi: erc20Abi, functionName: 'approve', args: [loansContract, current.repayCeiling], label: `Approve up to ${units(current.repayCeiling, current.sourceContext.decimals)} ${current.sourceContext.symbol} to repay loan ${loanId}` }, { reverify: async () => { await readIncomeLoan(client, { chainId: state.chainId, projectId: state.projectId, loanId, account: address }) } })
+          const hash = await approval.send({ ...buildErc20ApproveRequest({ chainId: state.chainId, token: current.sourceContext.token, spender: loansContract, amount: current.repayCeiling }), label: `Approve up to ${units(current.repayCeiling, current.sourceContext.decimals)} ${current.sourceContext.symbol} to repay loan ${loanId}` }, { reverify: async () => { await readIncomeLoan(client, { chainId: state.chainId, projectId: state.projectId, loanId, account: address }) } })
           const block = await prerequisiteBlock(client, hash, approval.isSafe)
           if (block === null) return
           prerequisite = block

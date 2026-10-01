@@ -43,6 +43,7 @@ vi.mock('@wagmi/core', () => ({
 }))
 
 import { SAFE_PROXY_CREATION_CODE } from '@bananapus/nana-sdk-core/safe'
+import { describeSafeInitializer, functionFromCall } from '@bananapus/nana-sdk-core/review/decode'
 import { SAFE_FACTORY, multisigCreationData, predictMultisig } from '../src/lib/create-multisig'
 import { TransactionReviewCancelledError } from '../src/lib/transaction-review'
 import { DeployChains } from '../src/components/DeployChains'
@@ -235,6 +236,13 @@ describe('choosing the chains a published project is deployed on', () => {
     await act(async () => { button('Deploy selected')!.click() })
     await settle()
     expect(runtime.review.mock.calls[0][0].calls).toHaveLength(2)
+    // The review decodes the factory call's own bytes, down to the Safe's owners and threshold.
+    const [creation] = runtime.review.mock.calls[0][0].calls
+    expect(functionFromCall(creation)?.name).toBe('createProxyWithNonce')
+    expect(describeSafeInitializer(1, creation.args?.[1])?.[0].rows).toEqual(expect.arrayContaining([
+      ['Owners', safeOwners.join(', ')],
+      ['Threshold', '2 of 2'],
+    ]))
     expect(runtime.send).toHaveBeenCalledTimes(2)
     expect(runtime.send.mock.calls[0][1].to).toBe(SAFE_FACTORY)
     expect(runtime.recordDeployment).toHaveBeenCalled()
@@ -302,6 +310,22 @@ describe('choosing the chains a published project is deployed on', () => {
       await settle()
       expect(runtime.switchChain).not.toHaveBeenCalled()
       expect(runtime.review).not.toHaveBeenCalled()
+      expect(runtime.send).not.toHaveBeenCalled()
+      expect(alert()).toBe('Deploying from a Safe isn’t supported here. Connect an ordinary wallet to deploy these networks.')
+    } finally {
+      runtime.safe = false
+    }
+  })
+
+  it('sends nothing when the connection turns out to be a Safe during the review', async () => {
+    // A WalletConnect peer read lands while the review is open.
+    runtime.review.mockImplementationOnce(async () => { runtime.safe = true })
+    try {
+      await render(intent([1]))
+      await act(async () => { rowFor(1)!.click() })
+      await act(async () => { button('Deploy selected')!.click() })
+      await settle()
+      expect(runtime.review).toHaveBeenCalledOnce()
       expect(runtime.send).not.toHaveBeenCalled()
       expect(alert()).toBe('Deploying from a Safe isn’t supported here. Connect an ordinary wallet to deploy these networks.')
     } finally {

@@ -86,6 +86,8 @@ describe("Sticky transaction targets and limits", () => {
     expect(decoded(request).args).toEqual([HOLDER, 7n, 100n, HOLDER]);
   });
   it("uses exact approval, explicit nonzero reset, and skips only an identical allowance", () => {
+    // No declared output, so a token whose approve returns nothing still simulates.
+    expect(buildStickyApproval(identity, 0n, 100n)?.abi[0]).toMatchObject({ name: "approve", outputs: [] });
     expect(buildStickyApproval(identity, 0n, 100n)?.args).toEqual([
       identity.terminal,
       100n,

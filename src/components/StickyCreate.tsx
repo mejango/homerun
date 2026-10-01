@@ -395,6 +395,11 @@ export function StickyCreate({
             if (saved) clearStickyCreationPending(localStorage, saved);
             changed();
           },
+          // Nothing reached the wallet, so the pending creation is withdrawn.
+          onBeforeWriteAborted: async () => {
+            if (saved) clearStickyCreationPending(localStorage, saved);
+            changed();
+          },
         },
       );
       if (hash) {

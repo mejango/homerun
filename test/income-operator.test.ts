@@ -4,6 +4,7 @@ import { decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodeFunct
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { IncomeProjectState } from '../src/lib/income-state'
 import { OPERATOR_BURN_ADDRESS } from '../src/lib/project-operator-profile'
+import { safeExecutionLog } from './support/safe-logs'
 
 const runtime = vi.hoisted(() => ({ readState: vi.fn() }))
 vi.mock('../src/lib/income-state', () => ({ readIncomeProjectState: runtime.readState }))
@@ -200,6 +201,31 @@ describe('INCOME Operator receipt confirmation', () => {
     await expect(verifyIncomeOperatorReceipt(f.rpc, f.reviewed, 90n, RECIPIENT, OWNER, f.receipt)).resolves.toEqual({ rulesetId: 90n, recipient: RECIPIENT })
     f.transaction.input = encodeFunctionData({ abi: safeAbi, functionName: 'execTransaction', args: [f.reviewed.controller, 0n, innerData, 1, 0n, 0n, 0n, zeroAddress, zeroAddress, '0x'] })
     await expect(verifyIncomeOperatorReceipt(f.rpc, f.reviewed, 90n, RECIPIENT, OWNER, f.receipt)).rejects.toThrow()
+  })
+  describe('Safe execution events', () => {
+    const PROPOSAL = `0x${'dd'.repeat(32)}` as Hex
+    /** The Owner Safe executing the reviewed change, with `events` in its receipt. */
+    const verify = (...events: ReturnType<typeof safeExecutionLog>[]) => {
+      const f = receiptFixture()
+      const innerData = f.transaction.input
+      f.transaction.to = OWNER
+      f.transaction.from = RECIPIENT
+      f.transaction.input = encodeFunctionData({ abi: safeAbi, functionName: 'execTransaction', args: [f.reviewed.controller, 0n, innerData, 0, 0n, 0n, 0n, zeroAddress, zeroAddress, '0x'] })
+      const logs = [...f.receipt.logs, ...events as unknown as TransactionReceipt['logs']]
+      return verifyIncomeOperatorReceipt(f.rpc, f.reviewed, 90n, RECIPIENT, OWNER, { ...f.receipt, logs })
+    }
+    it('accepts a Safe 1.4.1 ExecutionSuccess, whose txHash is indexed', async () => {
+      await expect(verify(safeExecutionLog(OWNER, PROPOSAL))).resolves.toEqual({ rulesetId: 90n, recipient: RECIPIENT })
+    })
+    it('refuses a Safe 1.4.1 ExecutionFailure', async () => {
+      await expect(verify(safeExecutionLog(OWNER, PROPOSAL, { failed: true }))).rejects.toThrow('successful execution by the Safe')
+    })
+    it('accepts a Safe 1.3 ExecutionSuccess, whose txHash is in data', async () => {
+      await expect(verify(safeExecutionLog(OWNER, PROPOSAL, { version: '1.3' }))).resolves.toEqual({ rulesetId: 90n, recipient: RECIPIENT })
+    })
+    it('ignores another Safe’s failure in the same receipt', async () => {
+      await expect(verify(safeExecutionLog(HOOK, PROPOSAL, { failed: true }), safeExecutionLog(OWNER, PROPOSAL))).resolves.toEqual({ rulesetId: 90n, recipient: RECIPIENT })
+    })
   })
   it('refuses a receipt submitted as a different account than the reviewed Owner', async () => {
     const f = receiptFixture(); f.transaction.from = OPERATOR

@@ -105,7 +105,6 @@ export async function confirmProjectAdminExecution(client: PublicClient, storage
   if (!current.safe && current.hash && current.hash !== executionHash.toLowerCase()) throw new Error('Use the saved project update transaction hash.')
   try {
     const receipt = await client.getTransactionReceipt({ hash: executionHash })
-    if (current.safe && receipt.status !== 'success') throw new Error('The outer Safe transaction reverted before resolving its proposal. Keep this update pending and check Safe for its eventual execution.')
     const pinned = { ...client, getTransactionReceipt: async () => receipt } as PublicClient
     const status = await verifyStickyExecution(pinned, current, executionHash)
     clear(storage, key, current)

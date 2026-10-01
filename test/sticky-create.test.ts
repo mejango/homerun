@@ -60,8 +60,9 @@ vi.mock("../src/lib/sticky-state", () => ({ readStickyProjectState: vi.fn() }));
 vi.mock("../src/hooks/useWallet", () => ({
   useWallet: () => ({ address: OWNER }),
 }));
+const engine = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../src/hooks/useSafeTx", () => ({
-  useSafeTx: () => ({ phase: "idle", busy: false, error: null, send: vi.fn() }),
+  useSafeTx: () => ({ phase: "idle", busy: false, error: null, send: engine.send }),
   txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,
 }));
 vi.mock("../src/providers/Providers", () => ({ wagmiConfig: {} }));
@@ -70,7 +71,7 @@ vi.mock("../src/lib/safe-connector", () => ({
   waitForSafeExecutionHash: vi.fn(),
 }));
 vi.mock("../src/lib/jbcenter-ipfs", () => ({
-  jbCenterIpfs: { pinJson: vi.fn() },
+  jbCenterIpfs: { pinJson: vi.fn(async () => ({ cid: "bafkreisticky" })) },
 }));
 const DEPLOYER = "0x1111111111111111111111111111111111111111",
   FUND = "0x2222222222222222222222222222222222222222",
@@ -934,6 +935,61 @@ describe("creation recovery and duplicate protection", () => {
       expect(onCreated).not.toHaveBeenCalled();
     } finally {
       await act(async () => root.unmount());
+    }
+  });
+  it("withdraws its pending creation when the write stops before the wallet", async () => {
+    const { client } = clientFixture(),
+      container = document.createElement("div"),
+      root = createRoot(container);
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: { request: async (_name: string, callback: () => unknown) => callback() },
+    });
+    let marked = false;
+    engine.send.mockImplementation(
+      async (
+        _request: unknown,
+        options: { beforeWrite: () => Promise<void>; onBeforeWriteAborted: () => Promise<void> },
+      ) => {
+        await options.beforeWrite();
+        marked = !!readStickyCreationPending(localStorage, 1, 7n);
+        // A Safe connection that changes at the write: nothing reaches the wallet.
+        await options.onBeforeWriteAborted();
+        return null;
+      },
+    );
+    const click = async (label: string) => {
+      const button = [...container.querySelectorAll("button")].find(
+        (node) => node.textContent === label,
+      )!;
+      expect(button.disabled).toBe(false);
+      await act(async () => button.click());
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+    };
+    try {
+      localStorage.clear();
+      await act(async () =>
+        root.render(
+          createElement(StickyCreate, {
+            state: fundState(),
+            client,
+            manifest: manifest(),
+            launchUnavailable: false,
+            onCreated: vi.fn(),
+          }),
+        ),
+      );
+      await click("Prepare Sticky creation");
+      await click("Review Sticky creation");
+      expect(engine.send).toHaveBeenCalledOnce();
+      expect(marked).toBe(true);
+      expect(readStickyCreationPending(localStorage, 1, 7n)).toBeNull();
+    } finally {
+      await act(async () => root.unmount());
+      Reflect.deleteProperty(navigator, "locks");
+      localStorage.clear();
     }
   });
   it("disables new preparation when FUND verification is unavailable", async () => {

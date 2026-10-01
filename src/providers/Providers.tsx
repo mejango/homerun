@@ -9,7 +9,7 @@ import { TransactionReviewProvider } from '@/components/TransactionReviewProvide
 import { SUPPORTED_CHAINS } from '@/lib/chains'
 import { jbCenterRpcTransport } from '@/lib/jbcenter-rpc'
 import { installQueryPersistence } from '@/lib/query-persist'
-import { watchSafeWalletPeer } from '@/lib/safe-connector'
+import { watchSafeWalletPeer } from '@/lib/safe-wallet-peer'
 import { WalletAuthContext } from './WalletAuthContext'
 import { lazyCenterConnector } from './lazy-center-connector'
 import { externalWalletConnectors } from './wallet-connectors'

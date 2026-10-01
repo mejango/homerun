@@ -3,6 +3,7 @@ import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import { decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodeFunctionData, getAbiItem, parseAbi, zeroAddress, type AbiEvent, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { IncomeProjectState } from '../src/lib/income-state'
+import { safeExecutionLog } from './support/safe-logs'
 const runtime = vi.hoisted(() => ({ readState: vi.fn() }))
 vi.mock('../src/lib/income-state', () => ({ readIncomeProjectState: runtime.readState }))
 import { assertIncomeReservedProject, assertSameIncomeReservedTokens, buildSendIncomeReservedTokensTx, readIncomeReservedTokens, verifyIncomeReservedReceipt, type IncomeReservedSnapshot } from '../src/lib/income-reserved'
@@ -98,6 +99,29 @@ describe('reserved INCOME receipt confirmation', () => {
     await expect(verifyIncomeReservedReceipt(f.rpc, f.reviewed, ACCOUNT, f.receipt)).resolves.toMatchObject({ tokenCount: 1000n })
     f.transaction.input = encodeFunctionData({ abi: safeAbi, functionName: 'execTransaction', args: [f.reviewed.controller, 0n, encodeFunctionData(buildSendIncomeReservedTokensTx(1, 8n)), 0, 0n, 0n, 0n, zeroAddress, zeroAddress, '0x'] })
     await expect(verifyIncomeReservedReceipt(f.rpc, f.reviewed, ACCOUNT, f.receipt)).rejects.toThrow('different reserved')
+  })
+  describe('Safe execution events', () => {
+    const PROPOSAL = `0x${'dd'.repeat(32)}` as Hex
+    /** The Safe executing the reviewed distribution, with `events` in its receipt. */
+    const verify = (...events: ReturnType<typeof safeExecutionLog>[]) => {
+      const f = fixture()
+      f.transaction.to = ACCOUNT
+      f.transaction.input = encodeFunctionData({ abi: safeAbi, functionName: 'execTransaction', args: [f.reviewed.controller, 0n, encodeFunctionData(buildSendIncomeReservedTokensTx(1, 7n)), 0, 0n, 0n, 0n, zeroAddress, zeroAddress, '0x'] })
+      const logs = [...f.receipt.logs, ...events as unknown as TransactionReceipt['logs']]
+      return verifyIncomeReservedReceipt(f.rpc, f.reviewed, ACCOUNT, { ...f.receipt, logs })
+    }
+    it('accepts a Safe 1.4.1 ExecutionSuccess, whose txHash is indexed', async () => {
+      await expect(verify(safeExecutionLog(ACCOUNT, PROPOSAL))).resolves.toMatchObject({ tokenCount: 1000n })
+    })
+    it('refuses a Safe 1.4.1 ExecutionFailure', async () => {
+      await expect(verify(safeExecutionLog(ACCOUNT, PROPOSAL, { failed: true }))).rejects.toThrow('successful execution by the Safe')
+    })
+    it('accepts a Safe 1.3 ExecutionSuccess, whose txHash is in data', async () => {
+      await expect(verify(safeExecutionLog(ACCOUNT, PROPOSAL, { version: '1.3' }))).resolves.toMatchObject({ tokenCount: 1000n })
+    })
+    it('ignores another Safe’s failure in the same receipt', async () => {
+      await expect(verify(safeExecutionLog(HOOK, PROPOSAL, { failed: true }), safeExecutionLog(ACCOUNT, PROPOSAL))).resolves.toMatchObject({ tokenCount: 1000n })
+    })
   })
   it.each(['from', 'to', 'input', 'value', 'hash', 'blockNumber', 'blockHash'])('rejects a different mined %s', field => {
     const f = fixture()

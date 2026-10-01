@@ -2,96 +2,101 @@
 
 import { useSyncExternalStore } from 'react'
 import type { Hex } from 'viem'
-import type { Config, Connector } from 'wagmi'
-import { getAccount, getPublicClient, watchAccount } from 'wagmi/actions'
+import type { Config } from 'wagmi'
+import { getAccount, getPublicClient } from 'wagmi/actions'
 import {
   isSafeWalletPeer,
-  waitForSafeExecutionHash as waitForSafeExecution,
+  waitForSafeExecutionHash as waitForExecution,
 } from '@bananapus/nana-sdk-core/safe-service'
+import {
+  getWalletConnectPeerUrl,
+  getWatchedConfig,
+  subscribeWalletConnectPeer,
+} from '@/lib/safe-wallet-peer'
 
 export {
   SAFE_NONCE_GUIDANCE,
   SAFE_PREFIX,
   SAFE_SERVICE_PREFIX,
-  safeQueueUrl,
   safeServiceBase,
   swapDeadline,
 } from '@bananapus/nana-sdk-core/safe-service'
 
-/** The config `watchSafeWalletPeer` follows; Safe tracking reads each chain through it. */
-let watched: Config | undefined
-/** Whether the connected WalletConnect peer is Safe{Wallet}. */
-let safeWalletPeer = false
-/** Counts session reads, so a slower read of an earlier connection never overwrites a newer answer. */
-let reads = 0
-const listeners = new Set<() => void>()
-
 /**
- * Whether the connected wallet proposes to a Safe instead of sending: the Safe
- * app, or Safe{Wallet} over WalletConnect. Both make the gas a dapp sends the
- * proposal's safeTxGas and reply with a safeTxHash.
+ * Whether the connected wallet proposes to a Safe rather than sending: the
+ * Safe app, or Safe{Wallet} over WalletConnect, which answers the same way.
  */
 export function isSafeConnection(config: Config): boolean {
   try {
     const id = getAccount(config).connector?.id
-    return id === 'safe' || (id === 'walletConnect' && safeWalletPeer)
+    return (
+      id === 'safe' ||
+      (id === 'walletConnect' && isSafeWalletPeer(getWalletConnectPeerUrl()))
+    )
   } catch {
     return false
   }
 }
 
-/** `isSafeConnection` for rendering: it renders again once the WalletConnect peer is known. */
+/** isSafeConnection for rendering: it renders again once the WalletConnect peer is known. */
 export function useSafeConnection(config: Config): boolean {
-  return useSyncExternalStore(subscribe, () => isSafeConnection(config), () => false)
+  return useSyncExternalStore(
+    subscribeWalletConnectPeer,
+    () => isSafeConnection(config),
+    () => false,
+  )
 }
 
-function subscribe(listener: () => void) {
-  listeners.add(listener)
-  return () => {
-    listeners.delete(listener)
-  }
-}
+/** ExecutionFailure(bytes32,uint256), the same topic in Safe 1.3 and 1.4. */
+const SAFE_EXECUTION_FAILURE_TOPIC =
+  '0x23428b18acfb3ea64b08dc0c1d296ea9c09702c09083ca5272e64d115b687d23'
 
 /**
- * Follows `config`'s connection and records whether its WalletConnect peer is
- * Safe{Wallet}, which only the WalletConnect session tells. Safe tracking also
- * reads chains through `config` from now on. Returns the unwatch.
+ * Whether a Safe execution's receipt shows `safe` failing the proposal. A Safe
+ * signed with a nonzero safeTxGas or gasPrice logs ExecutionFailure instead of
+ * reverting, so the receipt itself reads success. `proposalHash` is what the
+ * wallet returned: the safeTxHash, or, when Safe{Wallet} executed at once,
+ * this execution's own hash. A receipt can execute several of the Safe's
+ * transactions, so a safeTxHash must match the failure's own.
  */
-export function watchSafeWalletPeer(config: Config): () => void {
-  watched = config
-  const check = async (connector: Connector | undefined) => {
-    const read = ++reads
-    let peer = false
-    if (connector?.id === 'walletConnect') {
-      try {
-        const provider = (await connector.getProvider()) as
-          | { session?: { peer?: { metadata?: { url?: string } } } }
-          | undefined
-        peer = isSafeWalletPeer(provider?.session?.peer?.metadata?.url)
-      } catch {
-        // A session that cannot be read is not known to be Safe{Wallet}.
-      }
+export function safeExecutionFailed(
+  receipt: {
+    transactionHash: Hex
+    logs: readonly { address: string; topics: readonly Hex[]; data: Hex }[]
+  },
+  safe: string,
+  proposalHash: Hex,
+): boolean {
+  const safeTxHash =
+    receipt.transactionHash.toLowerCase() === proposalHash.toLowerCase()
+      ? null
+      : proposalHash.toLowerCase()
+  return receipt.logs.some(log => {
+    if (
+      log.address.toLowerCase() !== safe.toLowerCase() ||
+      log.topics[0]?.toLowerCase() !== SAFE_EXECUTION_FAILURE_TOPIC
+    ) {
+      return false
     }
-    if (read !== reads) return
-    safeWalletPeer = peer
-    for (const listener of listeners) listener()
-  }
-  void check(getAccount(config).connector)
-  return watchAccount(config, { onChange: account => void check(account.connector) })
+    // Safe 1.4 indexes the safeTxHash; Safe 1.3 logs it as the first data word.
+    const failed = log.topics.length > 1 ? log.topics[1] : `0x${log.data.slice(2, 66)}`
+    return !safeTxHash || failed?.toLowerCase() === safeTxHash
+  })
 }
 
 /**
- * The SDK's wait for a Safe proposal's execution, with the chain's client from
- * the watched config: over WalletConnect, Safe{Wallet} replies with the
- * execution's own hash when the owner executes at once. An explicit `client` wins.
+ * The SDK's wait, reading the chain as well: Safe{Wallet} over WalletConnect
+ * replies with the execution's own hash when the owner executes at once. An
+ * explicit `client` wins.
  */
 export function waitForSafeExecutionHash(
   chainId: number,
   safeTxHash: Hex,
-  options: NonNullable<Parameters<typeof waitForSafeExecution>[2]> = {},
+  options: NonNullable<Parameters<typeof waitForExecution>[2]> = {},
 ): Promise<Hex> {
-  return waitForSafeExecution(chainId, safeTxHash, {
+  const config = getWatchedConfig()
+  return waitForExecution(chainId, safeTxHash, {
     ...options,
-    client: options.client ?? (watched && getPublicClient(watched, { chainId })),
+    client: options.client ?? (config && getPublicClient(config, { chainId })),
   })
 }

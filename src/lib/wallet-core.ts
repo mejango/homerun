@@ -9,6 +9,7 @@ import {
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import type { Address, PublicClient } from 'viem'
 import { wagmiConfig } from '@/providers/Providers'
+import { chainName } from '@/lib/urn'
 
 /**
  * Shared wagmi plumbing for the transaction boundaries (relayr, safe). This
@@ -41,7 +42,14 @@ export async function connectedWallet(
 ) {
   const before = getAccount(wagmiConfig)
   if (!before.address) throw new Error('Connect a wallet first.')
-  if (before.chainId !== chainId) await switchChain(wagmiConfig, { chainId })
+  if (before.chainId !== chainId) {
+    await switchChain(wagmiConfig, { chainId }).catch(error => {
+      // Safe apps cannot switch chains; the wagmi error only names the connector.
+      throw /does not support chain switching/.test(String(error))
+        ? new Error(`This wallet cannot switch chains. Open it on ${chainName(chainId)} and try again.`)
+        : error
+    })
+  }
   const wallet = await getWalletClient(wagmiConfig, { chainId })
   const account = getAccount(wagmiConfig).address
   if (

@@ -198,6 +198,8 @@ function IncomeChainActions({ local, draft, manifest, clients, client, rootState
         reverify: async () => { if (unavailableRef.current) throw new Error('Refresh the FUND state before launching INCOME.'); sameFrozenPlan(draft); const current = await prepareIncomeLaunch(client, captured.input); if (!sameRequest(current.request, captured.plan.request) || current.manifestHash !== captured.plan.manifestHash) throw new Error('The deployment changed. Prepare and review this network again.') },
         beforeWrite: async () => { if (unavailableRef.current) throw new Error('Refresh the FUND state before launching INCOME.'); sameFrozenPlan(draft); const block = await client.getBlock({ blockTag: 'latest' }); if (block.number === null || await client.getChainId() !== chainId) throw new Error('The submission network could not be verified.'); record = beginIncomeLaunchSubmission(localStorage, key, captured.plan.request, projectId, account, isSafeConnection(wagmiConfig), block.number); changed() },
         onWriteRejected: () => { if (record) { clearIncomeLaunchPending(localStorage, key, record); changed() } },
+        // Nothing reached the wallet, so the pending record is withdrawn.
+        onBeforeWriteAborted: () => { if (record) { clearIncomeLaunchPending(localStorage, key, record); changed() } },
       }); if (hash && record) { recordIncomeLaunchHash(localStorage, key, record, hash); changed() }
     })
   }) }

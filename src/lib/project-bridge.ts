@@ -40,6 +40,7 @@ import {
   type PublicClient,
 } from "viem";
 import { type FundTransaction } from "./fund-contracts";
+import { buildErc20ApproveRequest } from "./transaction-builders";
 import type {
   FundAccountingContext,
   FundLinkedPeer,
@@ -467,13 +468,12 @@ export function buildProjectBridgeApproval(
   tokenCount: bigint,
 ): FundTransaction {
   const projectToken = routeForPrepare(route, tokenCount);
-  return {
+  return buildErc20ApproveRequest({
     chainId: route.source.chainId,
-    address: projectToken,
-    abi: erc20Abi,
-    functionName: "approve",
-    args: [route.sourceSucker, tokenCount],
-  };
+    token: projectToken,
+    spender: route.sourceSucker,
+    amount: tokenCount,
+  });
 }
 
 export function buildProjectBridgePrepare(

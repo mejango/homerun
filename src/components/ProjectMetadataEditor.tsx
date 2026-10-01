@@ -120,7 +120,7 @@ function ProjectMetadataEditorContent({ chainId, projectId, client, unavailable 
     {active?.canEdit && details.isError && <p className="text-sm" role="alert">{message(details.error)} <button type="button" className="quiet-button" onClick={() => void details.refetch()}>Retry details</button></p>}
     {address && snapshot.isError && <p className="text-sm" role="alert">{message(snapshot.error)} <button type="button" className="quiet-button" onClick={() => void snapshot.refetch()}>Retry permissions</button></p>}
     <ProjectAdminTransactionStatus tx={tx} />
-    {editing && <ModalShell title={label} subtitle={`Project #${projectId} on ${displayChainName(chainId)}`} busy={preparing || (tx.busy && !tx.pending) || tx.phase === 'review'} onClose={() => { setEditing(null); setError(null) }} maxWidth="max-w-3xl" footer={<div className="flex flex-wrap justify-end gap-3">
+    {editing && <ModalShell title={label} subtitle={`Project #${projectId} on ${displayChainName(chainId)}`} onClose={() => { setEditing(null); setError(null) }} maxWidth="max-w-3xl" footer={<div className="flex flex-wrap justify-end gap-3">
       <button type="button" className="btn-secondary min-h-11 px-4 py-2" onClick={() => setEditing(null)}>Cancel</button><button type="submit" className="btn-primary min-h-11 px-4 py-2" form={`${id}-form`} disabled={busy}>{tx.pending ? 'Waiting for confirmation…' : 'Review changes'}</button>
     </div>}>
       <div className="demo-shop-editor grid gap-6">

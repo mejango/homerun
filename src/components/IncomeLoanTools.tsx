@@ -9,6 +9,7 @@ import { useSafeTx, txPhaseLabel } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { parseAmount } from '@/lib/fund-contracts'
+import { buildErc20ApproveRequest } from '@/lib/transaction-builders'
 import { v6Address } from '@/lib/income-contracts'
 import { readIncomeLoan, type IncomeProjectState } from '@/lib/income-state'
 import { assertSameIncomeLoan, buildIncomePartialRepayment, incomeLoanRecipient, prepareIncomeLoanReallocation, prepareIncomeLoanTransfer, prepareIncomePartialRepayment } from '@/lib/income-loan-tools'
@@ -103,7 +104,7 @@ export function IncomeLoanTools({ state, client }: Props) {
         if (!native && prepared.owed > 0n) {
           const allowance = await client.readContract({ address: source.token, abi: erc20Abi, functionName: 'allowance', args: [address, loans], blockNumber: prepared.loan.blockNumber })
           if (allowance < prepared.owed) {
-            await prerequisite.send({ chainId: state.chainId, address: source.token, abi: erc20Abi, functionName: 'approve', args: [loans, maximum], label: `Approve up to ${formatUnits(maximum, source.decimals)} ${source.symbol} for this loan repayment` }, { reverify: async () => { const current = await prepareIncomePartialRepayment({ ...input, collateralToReturn: collateral }); assertSameIncomeLoan(prepared.loan, current.loan); if (current.owed > maximum) throw new Error('The repayment quote exceeded the approval. Review a fresh quote.') } })
+            await prerequisite.send({ ...buildErc20ApproveRequest({ chainId: state.chainId, token: source.token, spender: loans, amount: maximum }), label: `Approve up to ${formatUnits(maximum, source.decimals)} ${source.symbol} for this loan repayment` }, { reverify: async () => { const current = await prepareIncomePartialRepayment({ ...input, collateralToReturn: collateral }); assertSameIncomeLoan(prepared.loan, current.loan); if (current.owed > maximum) throw new Error('The repayment quote exceeded the approval. Review a fresh quote.') } })
             return
           }
           // Use existing allowance that covers actual debt even when a newly calculated buffer grew by one wei.

@@ -12,7 +12,7 @@ import { wagmiConfig } from '@/providers/Providers'
 import CreateFlow, { type CreateValues } from './CreateFlow'
 import { buildFundLaunch, type FundTransaction } from '@/lib/fund-contracts'
 import { FUND_LAUNCH_KEY, canCancelLaunch, cancelUnsubmittedLaunch, discardUnsignedLaunch, decodeLaunchSession, encodeLaunchSession, saveLaunch, updateLaunchStatus, refreshLaunchCreationFee, archiveLaunch, loadLaunchSession, sameSender, type FundLaunchSession, type LaunchStatus } from '@/lib/fund-launch-session'
-import { checkLaunchDeployment, verifyFundLaunch, verifyFailedFundLaunch } from '@/lib/fund-launch-verification'
+import { checkLaunchDeployment, fundLaunchFailed, verifyFundLaunch, verifyFailedFundLaunch } from '@/lib/fund-launch-verification'
 import { publishFundProjectMetadata } from '@/lib/publish-fund-project-metadata'
 import { resolveCreateMultisigs, checkCreateMultisigs, verifyCreatedMultisigs, multisigDeploymentRequest, multisigReview } from '@/lib/create-multisig'
 import { runRelayrLaunch } from '@/lib/fund-launch-relayr'
@@ -20,6 +20,7 @@ import { displayChainName } from '@/lib/chainDisplay'
 import { SUPPORTED_CHAINS } from '@/lib/chains'
 import { plannedNetworks } from '../../web/create-networks.mjs'
 import { isSafeConnection, useSafeConnection, waitForSafeExecutionHash } from '@/lib/safe-connector'
+import { safeExecutionResult } from '@/lib/safe-execution'
 import { intentPath } from '@bananapus/nana-sdk-core/jbcenter'
 import { projectPath } from '@/lib/urn'
 
@@ -50,7 +51,7 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
       const client = publicClient(request.chainId)
       const executionHash = knownExecutionHash ?? (safe ? await waitForSafeExecutionHash(request.chainId, hash, { pollingIntervalMs: 5000, signal: AbortSignal.timeout(60_000) }) : hash)
       const receipt = await client.getTransactionReceipt({ hash: executionHash })
-      if (receipt.status === 'reverted') { await verifyFailedFundLaunch(client, request, session.input, receipt, safe); update({ phase: 'reverted', hash, executionHash, safe }); return }
+      if (fundLaunchFailed(receipt, session.input, safe, hash)) { await verifyFailedFundLaunch(client, request, session.input, receipt, safe, hash); update({ phase: 'reverted', hash, executionHash, safe }); return }
       const projectId = await verifyFundLaunch(client, request, session.input, receipt, safe)
       update({ phase: 'confirmed', hash, executionHash, safe, projectId: projectId.toString() })
     } catch (cause) { setError(`Confirmation is unresolved. Keep this launch saved and check again. ${message(cause)}`) }
@@ -69,7 +70,11 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
       const hash = await setupTx.send({ ...multisigDeploymentRequest(request.chainId, plans), label: 'Create project multisigs' }, {
         reviewNotice: multisigReview(plans),
         reverify: async () => { sameSender(getAccount(wagmiConfig).address, session.input.sender); await checkCreateMultisigs(client, plans) },
-        beforeWrite: () => update({ ...status, multisigSetup: { safe } }),
+        beforeWrite: () => {
+          // The setup records whether a Safe proposes it, so that must still be the connection.
+          if (isSafeConnection(wagmiConfig) !== safe) throw new Error('Wallet connection changed. Review the transaction again.')
+          update({ ...status, multisigSetup: { safe } })
+        },
         onWriteRejected: () => update({ ...status, multisigSetup: undefined }),
         onBeforeWriteAborted: () => update({ ...status, multisigSetup: undefined }),
       })
@@ -79,7 +84,8 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
     }
     const hash = setup.safe ? await waitForSafeExecutionHash(request.chainId, setup.hash!, { pollingIntervalMs: 5000, signal: AbortSignal.timeout(60_000) }) : setup.hash!
     const receipt = await client.waitForTransactionReceipt({ hash, timeout: 60_000 })
-    if (receipt.status !== 'success') {
+    // A Safe signed with a nonzero safeTxGas logs ExecutionFailure inside a successful receipt.
+    if (receipt.status !== 'success' || (setup.safe && safeExecutionResult(receipt, session.input.sender, setup.hash!).status === 'failed')) {
       update({ ...status, multisigSetup: undefined })
       setupTx.reset()
       throw new Error('Multisig creation reverted. Continue to retry the setup.')
@@ -102,10 +108,17 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
           await verifyCreatedMultisigs(publicClient(request.chainId), session.input.multisigs ?? [])
         },
         beforeWrite: () => {
+          // The launch records whether a Safe proposes it, so that must still be the connection.
+          if (isSafeConnection(wagmiConfig) !== safe) throw new Error('Wallet connection changed. Review the transaction again.')
           update({ phase: 'signing', safe }, status.phase)
           submissionAttempted = true
         },
         onWriteRejected: () => {
+          update(status, 'signing')
+          submissionAttempted = false
+        },
+        // Nothing reached the wallet, so the launch goes back to ready.
+        onBeforeWriteAborted: () => {
           update(status, 'signing')
           submissionAttempted = false
         },

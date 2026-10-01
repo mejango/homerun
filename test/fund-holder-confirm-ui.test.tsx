@@ -8,18 +8,20 @@ import type { FundProjectState } from '@/lib/fund-state'
 import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
 
 const WALLET = '0x1111111111111111111111111111111111111111' as Address
+const OTHER_WALLET = '0x6666666666666666666666666666666666666666' as Address
 const TERMINAL = '0x3333333333333333333333333333333333333333' as Address
 const TOKEN = '0x5555555555555555555555555555555555555555' as Address
 const USDC = '0x7777777777777777777777777777777777777777' as Address
 const UNIT = 10n ** 18n
 
 const runtime = vi.hoisted(() => ({
+  address: undefined as Address | undefined,
   fresh: undefined as unknown,
   tx: { phase: 'idle', busy: false, isSafe: false, error: null as string | null, hash: null as Hex | null, safeProposalHash: null as Hex | null, receipt: null, send: vi.fn(), reset: vi.fn() },
   quote: vi.fn(), prepare: vi.fn(),
 }))
 vi.mock('wagmi', async importOriginal => ({ ...await importOriginal<typeof import('wagmi')>(), usePublicClient: () => ({}) }))
-vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: WALLET }) }))
+vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address }) }))
 vi.mock('@/lib/fund-state', () => ({ readFundWriteState: async () => runtime.fresh }))
 vi.mock('@/hooks/useSafeTx', () => ({ txPhaseLabel: (_: string, labels: { idle: string }) => labels.idle, useSafeTx: () => runtime.tx }))
 vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
@@ -55,6 +57,7 @@ async function type(label: string, value: string) {
 const dialogText = () => document.querySelector('[data-tx-confirm]')?.textContent ?? ''
 
 beforeEach(() => {
+  runtime.address = WALLET
   runtime.fresh = state
   Object.assign(runtime.tx, { phase: 'idle', busy: false, error: null, hash: null, safeProposalHash: null })
   runtime.tx.send.mockReset().mockResolvedValue(null); runtime.tx.reset.mockReset()
@@ -126,6 +129,39 @@ describe('FUND holder actions confirm like Juicebox Money', () => {
     await click('Review cash-out'); await settle()
     expect(document.querySelector('[data-tx-confirm]')).toBeNull()
     expect(host.querySelector('[role="alert"]')?.textContent).toContain('No positive protected return')
+  })
+
+  it('refuses a cash out reviewed for another account, whose tokens and proceeds it names', async () => {
+    await render(<CashOutPanel state={state} client={{} as never} contextIndex={0} />)
+    await type('FUND to cash out', '10'); await settle()
+    await click('Review cash-out'); await settle()
+    expect(runtime.prepare).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ holder: WALLET, beneficiary: WALLET }))
+    // The wallet switches accounts while the confirm is open.
+    runtime.address = OTHER_WALLET
+    await render(<CashOutPanel state={state} client={{} as never} contextIndex={0} />)
+    await click('Confirm & cash out')
+    expect(runtime.tx.send).not.toHaveBeenCalled()
+    expect(dialogText()).toContain('The connected account changed. Review again.')
+  })
+
+  it.each([
+    ['burn', 'Review burn', 'Confirm & burn'],
+    ['transferTokens', 'Review transfer', 'Confirm & transfer'],
+  ] as const)('refuses a %s reviewed for another account', async (action, review, confirm) => {
+    await render(<HolderActions state={state} client={{} as never} />)
+    await act(async () => {
+      const select = host.querySelector('select')!
+      select.value = action
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    await type('FUND amount', '5')
+    if (action === 'transferTokens') await type('Recipient wallet', '0x4444444444444444444444444444444444444444')
+    await click(review); await settle()
+    runtime.address = OTHER_WALLET
+    await render(<HolderActions state={state} client={{} as never} />)
+    await click(confirm)
+    expect(runtime.tx.send).not.toHaveBeenCalled()
+    expect(dialogText()).toContain('The connected account changed. Review again.')
   })
 
   it('reviews a transfer with its recipient before sending', async () => {

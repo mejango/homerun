@@ -81,6 +81,22 @@ describe('project split editing', () => {
     expect(dialog.textContent).toContain('Remaining to the owner0%')
     expect(runtime.send).not.toHaveBeenCalled()
   })
+  it('keeps the editor open through Escape, a backdrop click and its × while the hosted confirm sends', async () => {
+    // The wallet never answers, so the send stays in flight.
+    runtime.send.mockImplementation(() => new Promise(() => {}))
+    await render(); await click('Edit recipients')
+    await input('dialog fieldset input[placeholder="0x…"]', NEXT)
+    await click('Review changes'); await click('Confirm & save')
+    const shell = host.querySelector('dialog')!
+    await act(async () => { shell.dispatchEvent(new Event('cancel', { cancelable: true })) })
+    await act(async () => { shell.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })) })
+    const close = [...host.querySelectorAll<HTMLButtonElement>('button[aria-label="Close"]')].find(node => !node.closest('[data-tx-confirm]'))!
+    expect(close.disabled).toBe(true)
+    await act(async () => close.click())
+    expect(host.querySelector('[data-modal-card]')).not.toBeNull()
+    expect(host.querySelector('[data-tx-confirm]')?.textContent).toContain('Save reserved tokens')
+    expect(runtime.send).toHaveBeenCalledOnce()
+  })
   it('reviews only the selected queued group and revalidates before sending', async () => {
     await render(); await input('select', '100'); await click('Edit recipients')
     await input('dialog fieldset input[placeholder="0x…"]', NEXT)

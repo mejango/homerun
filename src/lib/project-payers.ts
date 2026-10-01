@@ -2,6 +2,7 @@ import { jbDirectoryAbi, jbProjectsAbi, NATIVE_TOKEN, type JBChainId } from '@ba
 import { buildDeployProjectPayerTx, JB_PROJECT_PAYER_DEPLOYER, jbProjectPayerDeployerAbi, v6Address } from '@bananapus/nana-sdk-core/v6'
 import { decodeEventLog, decodeFunctionData, encodeFunctionData, isAddress, isAddressEqual, parseAbi, zeroAddress, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import { bendystraw } from './bendystraw'
+import { safeExecutionResult } from './safe-execution'
 
 export type ProjectPayerRow = {
   chainId: number; projectId: number; version: number; address: Address
@@ -34,7 +35,6 @@ export async function getProjectPayerAddresses(chainId: JBChainId, projectId: bi
 export const payerFactoryReadAbi = parseAbi(['function DIRECTORY() view returns (address)', 'function IMPLEMENTATION() view returns (address)'])
 const safeAbi = parseAbi([
   'function execTransaction(address to,uint256 value,bytes data,uint8 operation,uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,address gasToken,address refundReceiver,bytes signatures) returns (bool success)',
-  'event ExecutionSuccess(bytes32 txHash,uint256 payment)', 'event ExecutionFailure(bytes32 txHash,uint256 payment)',
 ])
 export type PayerSettings = {
   chainId: JBChainId; projectId: string; beneficiary: Address; owner: Address; memo: string; addToBalance: boolean
@@ -93,18 +93,17 @@ export async function verifyPayerReceipt(client: PublicClient, attempt: PayerAtt
   const [transaction, block] = await Promise.all([client.getTransaction({ hash: receipt.transactionHash }), client.getBlock({ blockNumber: receipt.blockNumber })])
   if (!receipt.blockHash || block.hash !== receipt.blockHash || transaction.blockHash !== receipt.blockHash || transaction.blockNumber !== receipt.blockNumber || transaction.hash !== receipt.transactionHash || transaction.chainId !== settings.chainId || receipt.blockNumber <= BigInt(attempt.afterBlock)) throw new Error('The payer receipt is no longer a matching canonical execution, or predates this attempt.')
   const data = encodeFunctionData(request)
-  const safeEvents = receipt.logs.flatMap(log => {
-    if (!isAddressEqual(log.address, account)) return []
-    try { return [decodeEventLog({ abi: safeAbi, data: log.data, topics: log.topics, strict: true })] } catch { return [] }
-  }).filter(event => !attempt.hash || event.args.txHash.toLowerCase() === attempt.hash.toLowerCase())
   if (attempt.safe) {
     if (!transaction.to || !isAddressEqual(transaction.to, account)) throw new Error('The payer transaction did not execute through the reviewed Safe.')
     const decoded = decodeFunctionData({ abi: safeAbi, data: transaction.input })
     const [target, value, innerData, operation] = decoded.args
     if (!isAddressEqual(target, request.address) || value !== 0n || innerData.toLowerCase() !== data.toLowerCase() || operation !== 0) throw new Error('The Safe executed a different payer deployment call.')
     if (receipt.status === 'reverted') throw new Error('The Safe execution attempt reverted without consuming the proposal. The original proposal may still execute; keep it pending.')
-    if (receipt.status === 'success' && safeEvents.some(event => event.eventName === 'ExecutionFailure')) return { status: 'reverted' }
-    if (receipt.status === 'success' && !safeEvents.some(event => event.eventName === 'ExecutionSuccess')) throw new Error('The receipt does not prove successful execution of the reviewed Safe payer proposal.')
+    // The saved proposal hash names this execution's event. Without one, this
+    // transaction is the Safe's one execTransaction, so its own hash does.
+    const result = safeExecutionResult(receipt, account, attempt.hash ?? receipt.transactionHash)
+    if (result.status === 'failed') return { status: 'reverted' }
+    if (result.status !== 'success') throw new Error('The receipt does not prove successful execution of the reviewed Safe payer proposal.')
   } else if (!transaction.to || !isAddressEqual(transaction.to, request.address) || !isAddressEqual(transaction.from, account) || transaction.value !== 0n || transaction.input.toLowerCase() !== data.toLowerCase() || (attempt.hash && attempt.hash !== receipt.transactionHash)) throw new Error('The transaction differs from the reviewed payer deployment.')
   if (receipt.status === 'reverted') return { status: 'reverted' }
   const matches = receipt.logs.flatMap(log => {

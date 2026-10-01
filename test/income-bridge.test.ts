@@ -287,6 +287,8 @@ test("approval targets INCOME ERC20 with an exact amount and prepare retains the
   const approval = buildIncomeBridgeApproval(route, 20n);
   assert.equal(approval.address, incomeToken);
   assert.deepEqual(approval.args, [sourceSucker, 20n]);
+  // No declared output, so a token whose approve returns nothing still simulates.
+  assert.deepEqual((approval.abi[0] as { outputs?: readonly unknown[] }).outputs, []);
   const request = buildIncomeBridgePrepare(route, {
     amount: 20n,
     beneficiary: account,

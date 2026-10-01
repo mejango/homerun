@@ -7,7 +7,6 @@ import {
   v6Address,
 } from "@bananapus/nana-sdk-core/v6";
 import {
-  erc20Abi,
   getAddress,
   isAddress,
   isAddressEqual,
@@ -16,6 +15,7 @@ import {
   type Address,
 } from "viem";
 import type { FundTransaction } from "./fund-contracts";
+import { buildErc20ApproveRequest } from "./transaction-builders";
 
 export const stickyDeployerAbi = parseAbi([
   "function CONTROLLER() view returns (address)",
@@ -163,13 +163,12 @@ export function buildStickyApproval(
   if (allowance < 0n || allowance >= 1n << 256n)
     throw new Error("Invalid current allowance.");
   if (allowance === amount) return null;
-  return {
+  return buildErc20ApproveRequest({
     chainId: state.chainId,
-    address: state.fundToken,
-    abi: erc20Abi,
-    functionName: "approve",
-    args: [state.terminal, allowance > 0n ? 0n : amount],
-  };
+    token: state.fundToken,
+    spender: state.terminal,
+    amount: allowance > 0n ? 0n : amount,
+  });
 }
 export function buildStickyStake(
   state: StickyIdentity,

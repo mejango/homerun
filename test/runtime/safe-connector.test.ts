@@ -27,18 +27,19 @@ vi.mock('@bananapus/nana-sdk-core/safe-service', async importOriginal => {
 })
 
 import { waitForSafeExecutionHash as sdkWait } from '@bananapus/nana-sdk-core/safe-service'
+import { toEventSelector, type Hex } from 'viem'
 import {
   isSafeConnection,
   SAFE_NONCE_GUIDANCE,
   SAFE_PREFIX,
   SAFE_SERVICE_PREFIX,
-  safeQueueUrl,
+  safeExecutionFailed,
   safeServiceBase,
   swapDeadline,
   useSafeConnection,
   waitForSafeExecutionHash,
-  watchSafeWalletPeer,
 } from '@/lib/safe-connector'
+import { watchSafeWalletPeer } from '@/lib/safe-wallet-peer'
 
 const CONFIG = {} as never
 const SAFE = '0x1111111111111111111111111111111111111111' as const
@@ -135,10 +136,31 @@ describe('Safe connection', () => {
     await act(async () => root.unmount())
   })
 
-  it('explains the authoritative nonce selector and links the Safe queue', () => {
+  it('explains the authoritative nonce selector', () => {
     expect(SAFE_NONCE_GUIDANCE).toMatch(/next available/i)
     expect(SAFE_NONCE_GUIDANCE).toMatch(/queued nonces/i)
-    expect(safeQueueUrl(8453, SAFE)).toContain(`safe=base:${SAFE}`)
+  })
+})
+
+describe('Safe execution failure', () => {
+  const FAILURE = toEventSelector('ExecutionFailure(bytes32,uint256)')
+  const PAYMENT = `0x${'00'.repeat(32)}` as Hex
+  const OTHER = `0x${'ef'.repeat(32)}` as Hex
+  const receipt = (...logs: { address: string; topics: Hex[]; data: Hex }[]) => ({ transactionHash: EXECUTION as Hex, logs })
+
+  it('finds the proposal’s ExecutionFailure in Safe 1.4 (indexed) and Safe 1.3 (data) logs', () => {
+    expect(safeExecutionFailed(receipt({ address: SAFE, topics: [FAILURE, PROPOSAL], data: PAYMENT }), SAFE, PROPOSAL)).toBe(true)
+    expect(safeExecutionFailed(receipt({ address: SAFE, topics: [FAILURE], data: `${PROPOSAL}${PAYMENT.slice(2)}` }), SAFE, PROPOSAL)).toBe(true)
+  })
+
+  it('ignores another proposal’s failure, another Safe’s, and a receipt with none', () => {
+    expect(safeExecutionFailed(receipt({ address: SAFE, topics: [FAILURE, OTHER], data: PAYMENT }), SAFE, PROPOSAL)).toBe(false)
+    expect(safeExecutionFailed(receipt({ address: OTHER.slice(0, 42), topics: [FAILURE, PROPOSAL], data: PAYMENT }), SAFE, PROPOSAL)).toBe(false)
+    expect(safeExecutionFailed(receipt(), SAFE, PROPOSAL)).toBe(false)
+  })
+
+  it('takes any failure of the Safe when the wallet replied with the execution itself', () => {
+    expect(safeExecutionFailed(receipt({ address: SAFE, topics: [FAILURE, OTHER], data: PAYMENT }), SAFE, EXECUTION)).toBe(true)
   })
 })
 

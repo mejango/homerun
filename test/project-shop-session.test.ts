@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import { encodeAbiParameters, encodeEventTopics, encodeFunctionData, parseAbi, zeroAddress, type Hex, type PublicClient } from 'viem'
 import { newDemoShopItem } from '../src/lib/demo-shop'
+import { safeExecutionLog } from './support/safe-logs'
 import { initialFundRuleset } from '../src/lib/fund-contracts'
 import { parseProjectShopWrite, projectShopWriteRequest, type PreparedProjectShopWrite } from '../src/lib/project-shop-write'
 import {
@@ -43,7 +44,7 @@ function plan(): PreparedProjectShopWrite {
   return prepared
 }
 
-type ExecutionOptions = { reverted?: boolean; wrongPayload?: boolean; wrongSender?: boolean; reorg?: boolean; old?: boolean; safeFailure?: boolean; noEvent?: boolean; delegateCall?: boolean; proposalHash?: Hex }
+type ExecutionOptions = { reverted?: boolean; wrongPayload?: boolean; wrongSender?: boolean; reorg?: boolean; old?: boolean; safeFailure?: boolean; noEvent?: boolean; delegateCall?: boolean; proposalHash?: Hex; logs?: ReturnType<typeof safeExecutionLog>[] }
 function rpc(session: ShopWriteSession, options: Record<number, ExecutionOptions> = {}) {
   const records = session.completed.map(entry => entry.submission)
   if (session.pending) records.push(session.pending)
@@ -63,8 +64,8 @@ function rpc(session: ShopWriteSession, options: Record<number, ExecutionOptions
     return {
       transactionHash: transaction.hash, blockNumber: transaction.blockNumber, blockHash: BLOCK_HASH,
       status: opts.reverted ? 'reverted' : 'success',
-      logs: saved.safe && !opts.noEvent ? [{ address: OWNER, topics: encodeEventTopics({ abi: safeAbi, eventName }),
-        data: encodeAbiParameters([{ type: 'bytes32' }, { type: 'uint256' }], [opts.proposalHash ?? saved.hash ?? executionHash(step), 0n]) }] : [],
+      logs: opts.logs ?? (saved.safe && !opts.noEvent ? [{ address: OWNER, topics: encodeEventTopics({ abi: safeAbi, eventName }),
+        data: encodeAbiParameters([{ type: 'bytes32' }, { type: 'uint256' }], [opts.proposalHash ?? saved.hash ?? executionHash(step), 0n]) }] : []),
     }
   })
   const getTransaction = vi.fn(async ({ hash }: { hash: Hex }) => {
@@ -218,6 +219,27 @@ describe('durable live shop updates', () => {
     expect(result.session.completed).toEqual([])
     await clearShopWriteSession(storage, key, result.session)
     expect(readShopWriteSession(storage, key)).toBeNull()
+  })
+
+  describe('Safe execution events', () => {
+    const proposal = executionHash(8)
+    const confirm = (logs: ReturnType<typeof safeExecutionLog>[]) => {
+      const f = pending(true)
+      const session = recordShopWriteHash(f.storage, key, f.session, proposal)
+      return confirmShopWriteExecution(rpc(session, { 0: { logs } }) as unknown as PublicClient, f.storage, key, session, executionHash(0))
+    }
+    it('confirms a Safe 1.4.1 execution, whose txHash is indexed', async () => {
+      await expect(confirm([safeExecutionLog(OWNER, proposal)])).resolves.toMatchObject({ status: 'confirmed' })
+    })
+    it('reads a Safe 1.4.1 ExecutionFailure as reverted', async () => {
+      await expect(confirm([safeExecutionLog(OWNER, proposal, { failed: true })])).resolves.toMatchObject({ status: 'reverted' })
+    })
+    it('confirms a Safe 1.3 execution, whose txHash is in data', async () => {
+      await expect(confirm([safeExecutionLog(OWNER, proposal, { version: '1.3' })])).resolves.toMatchObject({ status: 'confirmed' })
+    })
+    it('ignores another Safe’s failure in the same receipt', async () => {
+      await expect(confirm([safeExecutionLog(OTHER, proposal, { failed: true }), safeExecutionLog(OWNER, proposal)])).resolves.toMatchObject({ status: 'confirmed' })
+    })
   })
 
   it('keeps a Safe proposal pending after an outer revert because that proposal can still execute', async () => {

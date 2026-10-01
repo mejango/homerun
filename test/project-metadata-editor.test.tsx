@@ -1,5 +1,5 @@
 import './dialog-shim'
-import { act, type ReactNode } from 'react'
+import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -11,7 +11,7 @@ import type { TxPhase, TxRequest } from '@/hooks/useSafeTx'
 const runtime = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111' as Address | undefined,
   owner: '0x1111111111111111111111111111111111111111' as Address,
-  uri: 'ipfs://bafycurrent', permission: false,
+  uri: 'ipfs://bafycurrent', permission: false, realShell: false,
   readDocument: vi.fn(), publish: vi.fn(), send: vi.fn(), recover: vi.fn(), viewAs: vi.fn(),
   onConfirmed: undefined as undefined | (() => void | Promise<unknown>),
   tx: {
@@ -37,10 +37,15 @@ vi.mock('@/lib/project-metadata-edit', async importOriginal => {
     reverifyProjectMetadataEdit: vi.fn(actual.reverifyProjectMetadataEdit),
   }
 })
-vi.mock('@/components/ui/ModalShell', async importOriginal => ({
-  ...await importOriginal<typeof import('@/components/ui/ModalShell')>(),
-  ModalShell: ({ title, subtitle, children, footer }: { title: ReactNode; subtitle: ReactNode; children: ReactNode; footer: ReactNode }) => <div role="dialog"><h2>{title}</h2><p>{subtitle}</p>{children}{footer}</div>,
-}))
+vi.mock('@/components/ui/ModalShell', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/components/ui/ModalShell')>()
+  return {
+    ...actual,
+    ModalShell: (props: Parameters<typeof actual.ModalShell>[0]) => runtime.realShell
+      ? <actual.ModalShell {...props} />
+      : <div role="dialog"><h2>{props.title}</h2><p>{props.subtitle}</p>{props.children}{props.footer}</div>,
+  }
+})
 
 import { ProjectMetadataEditor } from '@/components/ProjectMetadataEditor'
 import { projectMetadataDocument, reverifyProjectMetadataEdit } from '@/lib/project-metadata-edit'
@@ -128,7 +133,7 @@ async function review() {
 }
 
 beforeEach(() => {
-  runtime.account = OWNER; runtime.owner = OWNER; runtime.uri = 'ipfs://bafycurrent'; runtime.permission = false
+  runtime.account = OWNER; runtime.owner = OWNER; runtime.uri = 'ipfs://bafycurrent'; runtime.permission = false; runtime.realShell = false
   runtime.tx = { ready: true, busy: false, pending: false, phase: 'idle', error: null, status: null, hash: null, safe: false, pendingLabel: null, recovering: false }
   runtime.onConfirmed = undefined
   runtime.readDocument.mockReset().mockResolvedValue(projectMetadataDocument(fundMetadata()))
@@ -194,6 +199,23 @@ describe('live project metadata editor', () => {
     expect(reverifyProjectMetadataEdit).toHaveBeenCalledTimes(2)
     expect(host.textContent).not.toContain('confirmed.')
     expect(host.querySelector('[role="dialog"]')).not.toBeNull()
+  })
+
+  it('keeps the editor open through Escape, a backdrop click and its × while the hosted confirm publishes', async () => {
+    runtime.realShell = true
+    // Pinning never finishes, so the publish stays in flight.
+    runtime.publish.mockImplementation(() => new Promise(() => {}))
+    await open(); await change('Project name', 'Updated garden'); await review()
+    await click('Confirm & publish')
+    const shell = host.querySelector('dialog')!
+    await act(async () => { shell.dispatchEvent(new Event('cancel', { cancelable: true })) })
+    await act(async () => { shell.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })) })
+    const close = [...host.querySelectorAll<HTMLButtonElement>('button[aria-label="Close"]')].find(node => !node.closest('[data-tx-confirm]'))!
+    expect(close.disabled).toBe(true)
+    await act(async () => close.click())
+    expect(host.querySelector('[data-modal-card]')).not.toBeNull()
+    expect(host.querySelector('[data-tx-confirm]')?.textContent).toContain('Publish project details')
+    expect(runtime.send).not.toHaveBeenCalled()
   })
 
   it('preserves a concurrent metadata update by rejecting the stale URI before pinning or submitting', async () => {

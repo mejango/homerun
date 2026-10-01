@@ -18,6 +18,7 @@ import {
   verifyStickyExecution,
   type StickyPending,
 } from "../src/lib/sticky-session";
+import { safeExecutionLog } from "./support/safe-logs";
 
 const HOLDER = "0x1111111111111111111111111111111111111111",
   TARGET = "0x2222222222222222222222222222222222222222",
@@ -72,6 +73,7 @@ function clientFor(
     safeFailure?: boolean;
     noEvent?: boolean;
     delegateCall?: boolean;
+    logs?: ReturnType<typeof safeExecutionLog>[];
   } = {},
 ) {
   const safeData = encodeFunctionData({
@@ -106,8 +108,8 @@ function clientFor(
   const eventName = options.safeFailure
     ? "ExecutionFailure"
     : "ExecutionSuccess";
-  const logs =
-    record.safe && !options.noEvent
+  const logs = options.logs ??
+    (record.safe && !options.noEvent
       ? [
           {
             address: HOLDER,
@@ -118,7 +120,7 @@ function clientFor(
             ),
           },
         ]
-      : [];
+      : []);
   const receipt = {
     transactionHash: HASH,
     blockNumber: transaction.blockNumber,
@@ -249,5 +251,32 @@ describe("Sticky durable submission recovery", () => {
         HASH,
       ),
     ).rejects.toThrow(/proposal hash/);
+  });
+});
+
+describe("Sticky Safe execution events", () => {
+  const PROPOSAL = `0x${"ef".repeat(32)}` as Hex;
+  const proposed = (): StickyPending => ({ ...saved(true), hash: PROPOSAL });
+  const verify = (logs: ReturnType<typeof safeExecutionLog>[]) =>
+    verifyStickyExecution(clientFor(proposed(), { logs }), proposed(), HASH);
+
+  it("confirms a Safe 1.4.1 execution, whose txHash is indexed", async () => {
+    await expect(verify([safeExecutionLog(HOLDER, PROPOSAL)])).resolves.toBe("confirmed");
+  });
+  it("reads a Safe 1.4.1 ExecutionFailure as reverted", async () => {
+    await expect(verify([safeExecutionLog(HOLDER, PROPOSAL, { failed: true })])).resolves.toBe("reverted");
+  });
+  it("keeps the record when the Safe's execution transaction reverted, since its proposal can still execute", async () => {
+    await expect(
+      verifyStickyExecution(clientFor(proposed(), { reverted: true, logs: [] }), proposed(), HASH),
+    ).rejects.toThrow("before resolving its proposal");
+  });
+  it("confirms a Safe 1.3 execution, whose txHash is in data", async () => {
+    await expect(verify([safeExecutionLog(HOLDER, PROPOSAL, { version: "1.3" })])).resolves.toBe("confirmed");
+  });
+  it("ignores another Safe's failure in the same receipt", async () => {
+    await expect(
+      verify([safeExecutionLog(OTHER, PROPOSAL, { failed: true }), safeExecutionLog(HOLDER, PROPOSAL)]),
+    ).resolves.toBe("confirmed");
   });
 });
