@@ -266,6 +266,11 @@ describe("Sticky Safe execution events", () => {
   it("reads a Safe 1.4.1 ExecutionFailure as reverted", async () => {
     await expect(verify([safeExecutionLog(HOLDER, PROPOSAL, { failed: true })])).resolves.toBe("reverted");
   });
+  it("keeps the record when the Safe's execution transaction reverted, since its proposal can still execute", async () => {
+    await expect(
+      verifyStickyExecution(clientFor(proposed(), { reverted: true, logs: [] }), proposed(), HASH),
+    ).rejects.toThrow("before resolving its proposal");
+  });
   it("confirms a Safe 1.3 execution, whose txHash is in data", async () => {
     await expect(verify([safeExecutionLog(HOLDER, PROPOSAL, { version: "1.3" })])).resolves.toBe("confirmed");
   });

@@ -278,6 +278,10 @@ describe('exact INCOME EOA and Safe execution recovery', () => {
     it('confirms a Safe 1.3 execution, whose txHash is in data', async () => {
       await expect(verify([safeExecutionLog(HOLDER, HASH, { version: '1.3' })])).resolves.toBe('confirmed')
     })
+    it('keeps the launch pending when the Safe’s execution transaction reverted, since its proposal can still execute', async () => {
+      const storage = memory(), record = recordIncomeLaunchHash(storage, key, begin(storage, true), HASH)
+      await expect(verifyIncomeLaunchExecution(clientFor(record, { failed: true, logs: [] }), record, EXECUTION_HASH)).rejects.toThrow('before resolving its proposal')
+    })
     it('ignores another Safe’s failure in the same receipt', async () => {
       await expect(verify([safeExecutionLog(OTHER, HASH, { failed: true }), safeExecutionLog(HOLDER, HASH)])).resolves.toBe('confirmed')
     })

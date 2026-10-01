@@ -177,9 +177,6 @@ async function verify(client: PublicClient, session: ShopWriteSession, step: num
   if (!saved.safe && saved.hash && saved.hash !== executionHash.toLowerCase()) throw new Error('Use the saved shop transaction hash. A different transaction cannot resolve this submission.')
   try {
     const receipt = await client.getTransactionReceipt({ hash: executionHash })
-    // A reverted Safe outer call leaves its nonce/proposal live. Only the Safe's
-    // own ExecutionFailure event proves a consumed proposal with a failed inner call.
-    if (saved.safe && receipt.status !== 'success') throw new Error('The outer Safe transaction reverted before resolving its proposal. Keep the pending shop update and check Safe for its eventual execution.')
     const pinned = { ...client, getTransactionReceipt: async () => receipt } as PublicClient
     const status = await verifyStickyExecution(pinned, stickyRecord(session, step, saved), executionHash)
     return { status, blockNumber: receipt.blockNumber }

@@ -193,22 +193,26 @@ export async function verifyStickyExecution(
       throw new Error(
         "The Safe execution does not match the saved single Sticky call.",
       );
-    if (receipt.status === "success") {
-      // The saved proposal hash names this execution's event. Without one, this
-      // transaction is the Safe's one execTransaction, so its own hash does.
-      const result = safeExecutionResult(
-        receipt,
-        record.holder,
-        record.hash ?? hash,
+    // A reverted outer transaction ran nothing and spent no nonce: the
+    // proposal can still execute, so its record must stay.
+    if (receipt.status !== "success")
+      throw new Error(
+        "The outer Safe transaction reverted before resolving its proposal. Keep this Sticky record and check Safe for its eventual execution.",
       );
-      if (result.status === "unproven")
-        throw new Error(
-          record.hash
-            ? "The Safe execution does not match the saved proposal hash."
-            : "The Safe has not confirmed successful execution of this call.",
-        );
-      reverted = result.status === "failed";
-    }
+    // The saved proposal hash names this execution's event. Without one, this
+    // transaction is the Safe's one execTransaction, so its own hash does.
+    const result = safeExecutionResult(
+      receipt,
+      record.holder,
+      record.hash ?? hash,
+    );
+    if (result.status === "unproven")
+      throw new Error(
+        record.hash
+          ? "The Safe execution does not match the saved proposal hash."
+          : "The Safe has not confirmed successful execution of this call.",
+      );
+    reverted = result.status === "failed";
   }
   const canonical = await client.getBlock({ blockNumber: receipt.blockNumber });
   if (
