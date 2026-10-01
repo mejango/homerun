@@ -79,7 +79,7 @@ function recordFor(entry: RelayrEntry, index: number, status?: RelayrTransaction
 }
 function makeClient(chainId: number) {
   return {
-    getCode: vi.fn(async ({ address }: { address: Address }) => address === ACCOUNT ? '0x' : '0x6000'),
+    getCode: vi.fn(async ({ address }: { address: Address }): Promise<Hex> => address === ACCOUNT ? '0x' : '0x6000'),
     readContract: vi.fn(async ({ functionName }: { functionName: string }): Promise<bigint | boolean> => functionName === 'nonces' ? 0n : true),
     estimateGas: vi.fn(async (_request: unknown) => 2_000_000n),
     call: vi.fn(async () => ({ data: '0x' })),
@@ -178,7 +178,7 @@ describe('relayed launch execution and recovery', () => {
     expect(m.multisigCheck).toHaveBeenCalled()
     expect(loadLaunchSession()?.statuses[1].phase).toBe('confirmed')
     const nonceReads = clients.get(1)!.readContract.mock.calls.map(([call]) => call).filter(call => call.functionName === 'nonces')
-    expect(nonceReads.every(call => (call as { address: Address }).address !== MULTICALL3)).toBe(true)
+    expect(nonceReads.every(call => (call as unknown as { address: Address }).address !== MULTICALL3)).toBe(true)
     await run()
     expect(m.pay).toHaveBeenCalledTimes(1)
   })
@@ -656,7 +656,7 @@ describe('Relayr quote authentication', () => {
     expect(relayrPaymentDetails(payment, BUNDLE, NOW).chainId).toBe(1)
     for (const change of [
       { target: TARGET }, { token: TARGET }, { chain: 99999 }, { amount: '-1' },
-      { calldata: '0xdeadbeef' }, { payment_deadline: NOW + 5 },
+      { calldata: '0xdeadbeef' as Hex }, { payment_deadline: NOW + 5 },
     ]) expect(() => relayrPaymentDetails({ ...payment, ...change }, BUNDLE, NOW)).toThrow()
     expect(() => relayrPaymentDetails(payment, '00000000-0000-0000-0000-000000000002', NOW)).toThrow(/bundle/)
     expect(() => relayrPaymentDetails(payment, BUNDLE, NOW + 601)).toThrow()
