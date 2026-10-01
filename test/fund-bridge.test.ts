@@ -90,6 +90,8 @@ test('bridge approval spends exactly the reviewed FUND ERC20 amount, with the so
   assert.equal(request.chainId, 8453)
   assert.equal(decode(request).functionName, 'approve')
   assert.deepEqual(decode(request).args, [sourceSucker, amount])
+  // No declared output, so a token whose approve returns nothing still simulates.
+  assert.deepEqual((request.abi[0] as { outputs?: readonly unknown[] }).outputs, [])
 })
 
 test('prepare encodes source treasury token, padded destination recipient and positive backing protection', () => {

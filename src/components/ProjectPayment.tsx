@@ -17,6 +17,7 @@ import { useSafeTx, type TxRequest } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { parseAmount } from '@/lib/fund-contracts'
+import { buildErc20ApproveRequest } from '@/lib/transaction-builders'
 import { prepareProjectPayQuote, readProjectPayTokenOptions } from '@/lib/project-pay-quote'
 import { swapDeadline } from '@/lib/safe-connector'
 import dynamic from 'next/dynamic'
@@ -186,7 +187,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
         const allowance = await client.readContract({ address: context.token, abi: erc20Abi, functionName: 'allowance', args: [address, spender], blockNumber: latestBlock })
         if (allowance < count) {
           setStatus(`Review ${context.symbol} access for ${swap ? 'the Uniswap route' : 'the payment terminal'}.`); setStage('approve')
-          if (!await waitForApproval(approval, { chainId, address: context.token, abi: erc20Abi, functionName: 'approve', args: [spender, count], label: `Approve exactly ${formatUnits(count, context.decimals)} ${context.symbol} for this payment` })) return
+          if (!await waitForApproval(approval, { ...buildErc20ApproveRequest({ chainId, token: context.token, spender, amount: count }), label: `Approve exactly ${formatUnits(count, context.decimals)} ${context.symbol} for this payment` })) return
         }
       }
       let request: TxRequest

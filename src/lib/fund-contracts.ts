@@ -12,9 +12,10 @@ import {
   v6Address,
   type JBRulesetConfig, type JBRulesetMetadata,
 } from '@bananapus/nana-sdk-core/v6'
-import { erc20Abi, getAddress, isAddress, isAddressEqual, zeroAddress, zeroHash, type Abi, type Address, type Hex } from 'viem'
+import { getAddress, isAddress, isAddressEqual, zeroAddress, zeroHash, type Abi, type Address, type Hex } from 'viem'
 
 import { validateMultisigs, type CreateMultisig } from './create-multisig'
+import { buildErc20ApproveRequest } from './transaction-builders'
 import { isVerifiedProject721Hook, type VerifiedProject721Hook } from './fund-hooks'
 import { homerunAllowlistHookAbi, homerunDeployerAbi, registeredAllowlistHook, registeredHomerunDeployer } from './income-contracts'
 
@@ -372,7 +373,7 @@ export function buildFundApproval(input: FundTerminalContext & { amount: bigint 
   const context = terminalContext(input)
   positive(input.amount, 'Approval amount')
   if (context.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()) return null
-  return { chainId: context.chainId, address: context.token, abi: erc20Abi, functionName: 'approve', args: [context.terminal, input.amount] }
+  return buildErc20ApproveRequest({ chainId: context.chainId, token: context.token, spender: context.terminal, amount: input.amount })
 }
 
 export function buildFundReturn(input: FundTerminalContext & {

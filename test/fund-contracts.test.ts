@@ -228,6 +228,8 @@ test('returns and sale deposits use addToBalance, with exact token approvals and
   const approval = buildFundApproval({ ...terminal, amount: 5_000_000n })!
   assert.equal((decode(approval).args![0] as string).toLowerCase(), terminal.terminal.toLowerCase())
   assert.equal(decode(approval).args![1], 5_000_000n)
+  // No declared output, so a token whose approve returns nothing (USDT) still simulates.
+  assert.deepEqual((approval.abi[0] as { outputs?: readonly unknown[] }).outputs, [])
   const native = { ...terminal, token: NATIVE_TOKEN }
   assert.equal(buildFundApproval({ ...native, amount: 100n }), null)
   assert.equal(buildFundReturn({ ...native, amount: 100n, reason: 'asset-sale', shouldReturnHeldFees: false }).value, 100n)

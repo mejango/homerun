@@ -198,6 +198,8 @@ describe('shared payment execution', () => {
     await ready('2.5'); await submit()
     expect(runtime.writes.map(item => item.action)).toEqual(['approval', 'payment'])
     expect(encoded(runtime.writes[0].request).args).toEqual([TERMINAL, 2_500_000n])
+    // No declared output, so a token whose approve returns nothing (USDT) still simulates.
+    expect(runtime.writes[0].request.abi[0]).toMatchObject({ name: 'approve', outputs: [] })
     expect(runtime.writes[0].request.address).toBe(TOKEN)
     expect(runtime.writes[1].request.value).toBe(0n)
     expect(runtime.verify).toHaveBeenCalledWith(WALLET, 101n)
