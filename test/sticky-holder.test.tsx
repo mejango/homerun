@@ -15,10 +15,22 @@ import {
 } from "../src/lib/sticky-state";
 import {
   beginStickySubmission,
+  readStickyPending,
+  recordStickyHash,
   stickySessionKey,
+  verifyStickyExecution,
 } from "../src/lib/sticky-session";
 
-const mocks = vi.hoisted(() => ({ send: vi.fn(), client: {} }));
+const mocks = vi.hoisted(() => ({
+  send: vi.fn(),
+  client: {} as Record<string, unknown>,
+  phase: "idle",
+  receipt: null as null | { status: string; transactionHash: string; blockNumber: bigint },
+}));
+vi.mock("../src/lib/sticky-session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/lib/sticky-session")>()),
+  verifyStickyExecution: vi.fn(),
+}));
 vi.mock("@/hooks/useWallet", () => ({
   useWallet: () => ({
     address: "0x1111111111111111111111111111111111111111",
@@ -30,11 +42,11 @@ vi.mock("@/providers/Providers", () => ({ wagmiConfig: {} }));
 vi.mock("@/hooks/useSafeTx", () => ({
   useSafeTx: () => ({
     send: mocks.send,
-    phase: "idle",
+    phase: mocks.phase,
     busy: false,
-    hash: null,
+    hash: mocks.receipt?.transactionHash ?? null,
     safeProposalHash: null,
-    receipt: null,
+    receipt: mocks.receipt,
     error: null,
   }),
   txPhaseLabel: (_: unknown, labels: { idle: string }) => labels.idle,
@@ -112,6 +124,9 @@ beforeEach(() => {
   localStorage.clear();
   registry.StickyDeployer = { 1: DEPLOYER };
   vi.clearAllMocks();
+  mocks.client = {};
+  mocks.phase = "idle";
+  mocks.receipt = null;
   vi.mocked(readStickyProjectState).mockResolvedValue(state);
   vi.mocked(quoteStickyStake).mockResolvedValue({
     shares: 10n ** 18n,
@@ -166,6 +181,92 @@ describe("Sticky holder recovery and independent loading", () => {
     ).toBe(true);
     expect(mocks.send).not.toHaveBeenCalled();
   });
+  it("withdraws its saved transaction when the write stops before the wallet", async () => {
+    vi.mocked(readStickyProjectState).mockResolvedValue({
+      ...state,
+      fundBalance: 0n,
+      fundCreditBalance: 2n * 10n ** 18n,
+    });
+    mocks.client = {
+      getChainId: async () => 1,
+      getBlock: async () => ({ number: 100n }),
+    };
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: { request: async (_name: string, callback: () => unknown) => callback() },
+    });
+    const key = stickySessionKey(1, 9n, HOLDER);
+    let marked = false;
+    mocks.send.mockImplementation(
+      async (
+        _request: unknown,
+        options: { beforeWrite: () => Promise<void>; onBeforeWriteAborted: () => Promise<void> },
+      ) => {
+        await options.beforeWrite();
+        marked = !!readStickyPending(localStorage, key);
+        // A Safe connection that changes at the write: nothing reaches the wallet.
+        await options.onBeforeWriteAborted();
+        return null;
+      },
+    );
+    try {
+      await mount();
+      await act(async () =>
+        [...element.querySelectorAll("button")]
+          .find((button) => button.textContent === "Use available FUND")!
+          .click(),
+      );
+      await settle();
+      await act(async () =>
+        [...element.querySelectorAll("button")]
+          .find((button) => button.textContent === "Review credit claim")!
+          .click(),
+      );
+      expect(marked).toBe(true);
+      expect(readStickyPending(localStorage, key)).toBeNull();
+    } finally {
+      Reflect.deleteProperty(navigator, "locks");
+    }
+  });
+  it.each([
+    ["a Safe execution whose call failed", "success", true],
+    ["a Safe execution's outer revert, which leaves its proposal live", "reverted", false],
+  ] as const)(
+    "resolves its saved transaction from the engine's failed receipt only for %s",
+    async (_, status, resolves) => {
+      const key = stickySessionKey(1, 9n, HOLDER);
+      const proposal = `0x${"ab".repeat(32)}` as const;
+      const execution = `0x${"cd".repeat(32)}` as const;
+      const saved = beginStickySubmission(
+        localStorage,
+        key,
+        { chainId: 1, address: FUND, abi: erc20Abi, functionName: "approve", args: [TERMINAL, 10n ** 18n] },
+        9n,
+        HOLDER,
+        true,
+        "Approve FUND",
+        99n,
+      );
+      recordStickyHash(localStorage, key, proposal);
+      vi.mocked(verifyStickyExecution).mockResolvedValue("reverted");
+      await mount();
+      // The engine then judges the execution failed: phase error, with its receipt.
+      mocks.phase = "error";
+      mocks.receipt = { status, transactionHash: execution, blockNumber: 101n };
+      await mount();
+      if (resolves) {
+        expect(verifyStickyExecution).toHaveBeenCalledWith(
+          mocks.client,
+          expect.objectContaining({ submittedAt: saved.submittedAt, hash: proposal }),
+          execution,
+        );
+        expect(readStickyPending(localStorage, key)).toBeNull();
+      } else {
+        expect(verifyStickyExecution).not.toHaveBeenCalled();
+        expect(readStickyPending(localStorage, key)).not.toBeNull();
+      }
+    },
+  );
   it("renders balances and staking controls while reward history is still loading", async () => {
     vi.mocked(readStickyRewards).mockReturnValue(new Promise(() => {}));
     await mount(11n);

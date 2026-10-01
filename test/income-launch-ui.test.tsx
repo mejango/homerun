@@ -37,7 +37,7 @@ import { displayChainName } from '../src/lib/chainDisplay'
 import { BLOCK_HASH, CHAIN_IDS, FUND_IDS, HELPER, OWNER, TOKEN, fundState, globalDraft, globalManifest, globalSnapshot, hashFor, launchInput, launchPlan } from './fixtures/income-global-launch'
 
 const KEY = incomeLaunchSessionKey(8453, 7n)
-type Callbacks = { reverify: () => Promise<unknown>; beforeWrite: () => Promise<void>; onWriteRejected: () => void }
+type Callbacks = { reverify: () => Promise<unknown>; beforeWrite: () => Promise<void>; onWriteRejected: () => void; onBeforeWriteAborted: () => void }
 function pending() { return readIncomeLaunchPending(localStorage, KEY) }
 function draft() { return readIncomeGlobalDraft(localStorage, 8453, 7n)! }
 function eventReceipt(chainId: number) {
@@ -214,6 +214,15 @@ describe('global INCOME launch flow', () => {
   it('clears an unknown submission only after explicit wallet rejection', async () => {
     runtime.send.mockImplementation(async (_request, callbacks: Callbacks) => { await callbacks.beforeWrite(); callbacks.onWriteRejected(); return null })
     await ready(); await click('Review Base deployment'); expect(pending()).toBeNull()
+  })
+
+  it('withdraws the unknown submission when the write stops before the wallet', async () => {
+    // A Safe connection that changes at the write: nothing reaches the wallet.
+    let marked = false
+    runtime.send.mockImplementation(async (_request, callbacks: Callbacks) => { await callbacks.beforeWrite(); marked = !!pending(); callbacks.onBeforeWriteAborted(); return null })
+    await ready(); await click('Review Base deployment')
+    expect(marked).toBe(true)
+    expect(pending()).toBeNull()
   })
 
   it('rejects changed encoded request or fee before recording a write', async () => {

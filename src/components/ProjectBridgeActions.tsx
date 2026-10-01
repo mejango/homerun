@@ -146,18 +146,24 @@ function useBridgeTransaction(chainId: JBChainId) {
           attemptedWrite = false;
           setUnknownSubmission(false);
         },
+        // Nothing reached the wallet, so the submission is not unknown.
+        onBeforeWriteAborted: () => {
+          attemptedWrite = false;
+          setUnknownSubmission(false);
+        },
       });
     } finally {
       if (!attemptedWrite) admitted.current = false;
     }
   }
-  // A reverted receipt proves no effect; success still needs exact action proof.
+  // A receipt the engine judged failed (a revert, or a Safe execution whose call
+  // failed) proves no effect; success still needs exact action proof.
   useEffect(() => {
-    if (tx.receipt?.status === "reverted") {
+    if (tx.receipt && (tx.receipt.status === "reverted" || tx.phase === "error")) {
       setUnknownSubmission(false);
       admitted.current = false;
     }
-  }, [tx.receipt]);
+  }, [tx.receipt, tx.phase]);
   return {
     ...tx,
     send,

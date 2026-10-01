@@ -19,6 +19,7 @@ import {
 } from '@/lib/fund-contracts'
 import { assertFundStateForWrite, readFundProjectState, readLinkedFundProjects, type FundProjectState } from '@/lib/fund-state'
 import { waitForSafeExecutionHash } from '@/lib/safe-connector'
+import { safeExecutionResult } from '@/lib/safe-execution'
 import { wagmiConfig } from '@/providers/Providers'
 import { readableError } from '@/lib/readable-error'
 
@@ -216,10 +217,16 @@ function RecoveryPanel({ plan, submissions, onSubmitted, onRemoveSubmission, onR
     }
     const receipt = await client.getTransactionReceipt({ hash })
     if (signal.aborted) throw new DOMException('Recovery checks paused.', 'AbortError')
-    if (receipt.status === 'reverted' && submission.kind === 'transaction') {
+    // A Safe signed with a nonzero safeTxGas logs ExecutionFailure inside a
+    // successful receipt: its call failed, and its nonce is spent.
+    const failedInSafe = safeExecutionResult(receipt, plan.account, submission.hash).status === 'failed'
+    if ((receipt.status === 'reverted' && submission.kind === 'transaction') || failedInSafe) {
       await verifyRulesetRecoveryExecution(client, plan.requests[index], plan.account, receipt)
+      // The failed execution, like a revert, is what can be cleared.
+      if (submission.kind === 'safe-proposal') onSubmitted(chainId, { kind: 'transaction', hash })
       setReverted({ chainId, hash })
     }
+    if (failedInSafe) throw new Error('The Safe executed this transaction, but its call failed. It has not changed the rules.')
     const rulesetId = validateRulesetRecoveryReceipt(receipt, project.projectId, project.rulesetSnapshot.controller, `Homerun: ${plan.action}`)
     await verifyRulesetRecoveryExecution(client, plan.requests[index], plan.account, receipt)
     return { rulesetId, receipt }
@@ -278,7 +285,7 @@ function RecoveryPanel({ plan, submissions, onSubmitted, onRemoveSubmission, onR
       const index = plan.states.findIndex(project => project.chainId === reverted.chainId)
       const client = chainClient(plan.states[index].chainId)
       const receipt = await client.getTransactionReceipt({ hash: saved.hash })
-      if (receipt.status !== 'reverted') throw new Error('The transaction is not confirmed as reverted. Its recovery lock must remain.')
+      if (receipt.status !== 'reverted' && safeExecutionResult(receipt, plan.account, saved.hash).status !== 'failed') throw new Error('The transaction is not confirmed as reverted. Its recovery lock must remain.')
       await verifyRulesetRecoveryExecution(client, plan.requests[index], plan.account, receipt)
       onRemoveSubmission(reverted.chainId); setReverted(null)
       setNotice('The failed execution was verified and removed from this plan. Verify every chain again before reviewing a retry.')
@@ -363,6 +370,8 @@ function LinkedRulesetStep({ plan, index, completed, onConfirmed, onCancel, onSu
         reverify,
         beforeWrite: () => onBeforeWrite(state.chainId),
         onWriteRejected: () => onWriteRejected(state.chainId),
+        // Nothing reached the wallet here either, so the unknown-submission marker goes.
+        onBeforeWriteAborted: () => onWriteRejected(state.chainId),
       })
       if (hash) onSubmitted(state.chainId, { kind: tx.isSafe ? 'safe-proposal' : 'transaction', hash })
     } catch (reason) { setError(message(reason)) } finally { setPreparing(false) }

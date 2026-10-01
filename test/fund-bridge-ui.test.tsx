@@ -2,7 +2,7 @@ import './dialog-shim'
 import { act, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
-import type { Address } from 'viem'
+import { parseAbi, type Address } from 'viem'
 import type { FundBridgeRoute } from '../src/lib/fund-bridge'
 
 const runtime = vi.hoisted(() => ({
@@ -16,14 +16,17 @@ const runtime = vi.hoisted(() => ({
   cache: { invalidateQueries: vi.fn() },
   idle: false,
   quote: undefined as unknown,
+  send: vi.fn(),
+  engine: null as null | { phase: string; receipt: { status: string; transactionHash: string; blockNumber: bigint } | null },
 }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address, isConnected: !!runtime.address }) }))
 vi.mock('@/hooks/useSafeTx', () => ({
   txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,
   useSafeTx: () => {
     useEffect(() => { runtime.mounted++; return () => { runtime.unmounted++ } }, [])
+    if (runtime.engine) return { ...runtime.engine, busy: false, error: null, hash: runtime.engine.receipt?.transactionHash ?? null, safeProposalHash: null, isSafe: false, send: runtime.send, reset: vi.fn() }
     return runtime.idle
-      ? { phase: 'idle', busy: false, error: null, hash: null, safeProposalHash: null, receipt: null, isSafe: false, send: vi.fn(), reset: vi.fn() }
+      ? { phase: 'idle', busy: false, error: null, hash: null, safeProposalHash: null, receipt: null, isSafe: false, send: runtime.send, reset: vi.fn() }
       : { phase: 'pending', busy: true, error: null, hash: null, safeProposalHash: null, receipt: null, isSafe: false, send: vi.fn(), reset: vi.fn() }
   },
 }))
@@ -40,6 +43,16 @@ vi.mock('@tanstack/react-query', () => ({
   },
 }))
 
+vi.mock('@/lib/fund-bridge', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/lib/fund-bridge')>(),
+  readFundBridgeRoute: async () => runtime.route,
+  readFundBridgePrepareQuote: async () => runtime.quote,
+  buildFundBridgeApproval: (route: FundBridgeRoute, count: bigint) => ({
+    chainId: route.source.chainId, address: route.sourceToken, abi: parseAbi(['function approve(address spender, uint256 amount)']),
+    functionName: 'approve', args: [route.sourceSucker, count],
+  }),
+}))
+
 import { FundBridgeActions } from '../src/components/FundBridgeActions'
 
 let host: HTMLDivElement
@@ -54,7 +67,7 @@ beforeEach(() => {
   runtime.address = '0x1111111111111111111111111111111111111111'
   runtime.route = makeRoute(); runtime.routeAvailable = true; runtime.routeError = false; runtime.historyError = false
   runtime.mounted = 0; runtime.unmounted = 0; runtime.enabled = []
-  runtime.idle = false; runtime.quote = undefined
+  runtime.idle = false; runtime.quote = undefined; runtime.engine = null; runtime.send.mockReset()
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
 afterEach(async () => { await act(async () => { root.unmount() }); host.remove() })
@@ -113,3 +126,45 @@ it('reviews a move in the confirm dialog, listing its approval before any prompt
   expect([...dialog.querySelectorAll('button')].some(button => button.textContent === 'Approve FUND')).toBe(true)
 })
 
+
+async function reviewApproval() {
+  runtime.idle = true
+  const route = makeRoute()
+  runtime.route = { ...route, canPrepare: true, prepareIssue: undefined, source: { ...route.source, erc20Balance: 10n * 10n ** 18n } } as unknown as FundBridgeRoute
+  runtime.quote = { allowance: 0n, minTokensReclaimed: 5_000_000n, netReclaimAmount: 5_100_000n }
+  await render()
+  const input = [...host.querySelectorAll('label')].find(label => label.textContent?.startsWith('FUND to move'))!.querySelector('input')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '2')
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Review move')!.click())
+}
+const approve = () => [...host.querySelectorAll<HTMLButtonElement>('[data-tx-confirm] button')].find(button => button.textContent === 'Approve FUND')!
+
+it('frees the move when its approval stops before the wallet', async () => {
+  await reviewApproval()
+  runtime.send.mockImplementation(async (_request: unknown, options: { beforeWrite: () => void; onBeforeWriteAborted: () => void }) => {
+    options.beforeWrite()
+    // A Safe connection that changes at the write: nothing reaches the wallet.
+    options.onBeforeWriteAborted()
+    return null
+  })
+  await act(async () => approve().click())
+  expect(runtime.send).toHaveBeenCalledOnce()
+  expect(approve().disabled).toBe(false)
+})
+
+it('frees the move once the engine reads its Safe execution as failed', async () => {
+  await reviewApproval()
+  runtime.send.mockImplementation(async (_request: unknown, options: { beforeWrite: () => void }) => {
+    options.beforeWrite()
+    return `0x${'ab'.repeat(32)}`
+  })
+  await act(async () => approve().click())
+  expect(approve().disabled).toBe(true)
+  // The receipt succeeds, but the Safe logged ExecutionFailure: useSafeTx reports an error.
+  runtime.engine = { phase: 'error', receipt: { status: 'success', transactionHash: `0x${'cd'.repeat(32)}`, blockNumber: 11n } }
+  await render()
+  expect(approve().disabled).toBe(false)
+})

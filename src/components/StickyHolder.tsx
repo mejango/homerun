@@ -152,14 +152,16 @@ function useStickyTx(state: StickyProjectState) {
   );
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
   useEffect(() => {
+    // The engine settled this receipt: it confirmed, reverted, or holds a Safe
+    // execution whose call failed.
     if (
-      tx.phase !== "success" ||
+      (tx.phase !== "success" && tx.phase !== "error") ||
       !tx.receipt ||
       previous.current === tx.receipt.transactionHash
     )
       return;
     previous.current = tx.receipt.transactionHash;
-    prerequisite.current = tx.receipt.blockNumber;
+    if (tx.phase === "success") prerequisite.current = tx.receipt.blockNumber;
     for (const key of [
       "sticky-project",
       "sticky-stake",
@@ -180,7 +182,13 @@ function useStickyTx(state: StickyProjectState) {
           state.rewards.incomeProjectId.toString(),
         ],
       });
-    if (client && journal.pending && journal.key) {
+    // A Safe's reverted execution leaves its proposal live, so that record stays.
+    if (
+      client &&
+      journal.pending &&
+      journal.key &&
+      !(journal.pending.safe && tx.receipt.status !== "success")
+    ) {
       const record = journal.pending,
         key = journal.key;
       void verifyStickyExecution(client, record, tx.receipt.transactionHash)
@@ -248,6 +256,12 @@ function useStickyTx(state: StickyProjectState) {
         if (record) clearStickyPending(localStorage, key, record);
         changedJournal();
         await options?.onWriteRejected?.();
+      },
+      // Nothing reached the wallet, so the saved transaction is withdrawn.
+      onBeforeWriteAborted: async () => {
+        if (record) clearStickyPending(localStorage, key, record);
+        changedJournal();
+        await options?.onBeforeWriteAborted?.();
       },
     });
     if (hash) {
