@@ -29,13 +29,13 @@ import {
   prepareForwardedTx,
   TRUSTED_FORWARDER_ABI,
   relayrDestinationHash,
+  relayrDestinationRecords,
   relayrPay,
   relayrPaymentDetails,
   relayrPaymentOptions,
   relayrPaymentLabel,
   relayrPoll,
   relayrPostBundle,
-  relayrRecordsFor,
   type RelayrEntry,
   type RelayrQuote,
   type RelayrTransactionRecord,
@@ -275,59 +275,73 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     /** Receipts are accepted only for the exact signed outer call on its bound chain. */
     const reconcile = async (): Promise<boolean> => {
       const bindings = requireQuoteBindings()
-      const quotedIds = new Set(bindings.map(item => item.txUuid.toLowerCase()))
       const original = journal!
+      // Relayr's status only points at hashes, and only when its records are exactly this quote's.
+      const destinations = relayrDestinationRecords(original.records, bindings)
       let allDone = true
       let allRemainingRetryable = true
       let allRemainingExpired = true
       for (const signed of original.signed) {
         const request = pinnedRequest(signed)
         const client = publicClient(signed.chainId as JBChainId)
-        const binding = bindings.find(item => item.chain === signed.chainId)
+        const index = bindings.findIndex(item => item.chain === signed.chainId)
+        const binding = bindings[index]
         if (!binding || !isAddressEqual(binding.entry.target, signed.entry.target) ||
             binding.entry.data !== signed.entry.data || binding.entry.value !== signed.entry.value) {
           throw new Error('The saved launch quote does not match its signed destination.')
         }
-        // Records are provider input: the destination is the record, among this bundle's quoted IDs, that
-        // echoes the signed call. Its hash is only a pointer; the receipt is the proof.
-        const matching = relayrRecordsFor(original.records, binding, quotedIds)
-        if (matching.length > 1) throw new Error('Relayr returned conflicting destination records.')
-        // A confirmed chain keeps its verified hash. Any other chain follows the hash its record reports now,
-        // and keeps the last hash it saw while the record reports none.
+        /** Proves the hash is the signed launch on this chain, and records the destination as confirmed or reverted. */
+        const prove = async (hash: Hex): Promise<'confirmed' | 'reverted'> => {
+          const [tx, receipt] = await Promise.all([
+            client.getTransaction({ hash }), client.getTransactionReceipt({ hash }),
+          ])
+          if (!tx.to || !isAddressEqual(tx.to, signed.entry.target) || tx.input !== signed.entry.data ||
+              tx.value !== BigInt(signed.entry.value) || receipt.transactionHash !== hash ||
+              tx.hash !== hash || tx.chainId !== signed.chainId || tx.blockHash !== receipt.blockHash) {
+            throw new Error('Relayr destination transaction does not match the signed launch.')
+          }
+          const canonical = await client.getBlock({ blockNumber: receipt.blockNumber })
+          if (canonical.hash !== receipt.blockHash) throw new Error('The destination receipt is no longer canonical.')
+          if (receipt.status === 'success') {
+            const projectId = (await verifyFundLaunch(client, requestFor(current, signed.chainId, request.value), current.input, receipt, false, signed.entry)).toString()
+            if (!projectId) throw new Error('The launch confirmed but its project ID could not be verified.')
+            status(signed.chainId, { phase: 'confirmed', hash, projectId })
+            return 'confirmed'
+          }
+          // A reverted execute leaves the nonce unused. Its old authorization can only compete
+          // with a retry of that SAME nonce, never create an additional project after a success.
+          const nonce = await client.readContract({ address: forwarderFor(signed.chainId), abi: erc2771ForwarderAbi,
+            functionName: 'nonces', args: [account] })
+          if (nonce !== BigInt(signed.nonce)) throw new Error('The launch authorization was consumed elsewhere.')
+          status(signed.chainId, { phase: 'reverted', hash, error: 'The destination launch reverted.' })
+          return 'reverted'
+        }
+        // A confirmed chain keeps its verified hash. Any other chain tries the hash its record reports now, then
+        // the last hash it saw, and a hash that failed never replaces the one it saw.
         const saved = current.statuses[signed.chainId]
-        const reported = matching[0] ? relayrDestinationHash(matching[0]) : null
-        const hash = saved?.phase === 'confirmed' ? saved.hash : reported ?? saved?.hash
-        if (hash) {
-          try {
-            const [tx, receipt] = await Promise.all([
-              client.getTransaction({ hash }), client.getTransactionReceipt({ hash }),
-            ])
-            if (!tx.to || !isAddressEqual(tx.to, signed.entry.target) || tx.input !== signed.entry.data ||
-                tx.value !== BigInt(signed.entry.value) || receipt.transactionHash !== hash ||
-                tx.hash !== hash || tx.chainId !== signed.chainId || tx.blockHash !== receipt.blockHash) {
-              throw new Error('Relayr destination transaction does not match the signed launch.')
+        const record = destinations.records[index]
+        const reported = record ? relayrDestinationHash(record) : null
+        const candidates = [...new Set(saved?.phase === 'confirmed' ? [saved.hash] : [reported, saved?.hash])]
+          .filter((hash): hash is Hex => !!hash)
+        if (candidates.length) {
+          let proven: 'confirmed' | 'reverted' | undefined
+          let failure: unknown
+          for (const hash of candidates) {
+            try {
+              proven = await prove(hash)
+              break
+            } catch (error) {
+              failure ??= error
             }
-            const canonical = await client.getBlock({ blockNumber: receipt.blockNumber })
-            if (canonical.hash !== receipt.blockHash) throw new Error('The destination receipt is no longer canonical.')
-            if (receipt.status === 'success') {
-              const projectId = (await verifyFundLaunch(client, requestFor(current, signed.chainId, request.value), current.input, receipt, false, signed.entry)).toString()
-              if (!projectId) throw new Error('The launch confirmed but its project ID could not be verified.')
-              status(signed.chainId, { phase: 'confirmed', hash: hash, projectId })
-              continue
-            }
-            // A reverted execute leaves the nonce unused. Its old authorization can only compete
-            // with a retry of that SAME nonce, never create an additional project after a success.
-            const nonce = await client.readContract({ address: forwarderFor(signed.chainId), abi: erc2771ForwarderAbi,
-              functionName: 'nonces', args: [account] })
-            if (nonce !== BigInt(signed.nonce)) throw new Error('The launch authorization was consumed elsewhere.')
-            status(signed.chainId, { phase: 'reverted', hash: hash, error: 'The destination launch reverted.' })
+          }
+          if (proven === 'confirmed') continue
+          if (proven === 'reverted') {
             allDone = false
             allRemainingExpired = false
             continue
-          } catch (error) {
-            status(signed.chainId, { phase: 'unresolved', hash: hash,
-              error: error instanceof Error ? error.message : 'Destination confirmation is unavailable.' })
           }
+          status(signed.chainId, { phase: 'unresolved', hash: saved?.hash ?? candidates[0],
+            error: failure instanceof Error ? failure.message : 'Destination confirmation is unavailable.' })
         } else {
           // At a canonical block after expiry, an unchanged nonce proves this authorization
           // never succeeded and can no longer do so. Wall-clock expiry alone proves neither.
@@ -342,7 +356,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
               continue
             }
           } catch { /* An unavailable RPC cannot prove absence of execution. */ }
-          status(signed.chainId, { phase: 'unresolved', error: 'Waiting for the original Relayr destination transaction.' })
+          status(signed.chainId, { phase: 'unresolved', error: destinations.refusal ?? 'Waiting for the original Relayr destination transaction.' })
         }
         allDone = false
         allRemainingRetryable = false
