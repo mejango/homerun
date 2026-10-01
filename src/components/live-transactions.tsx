@@ -54,25 +54,33 @@ function confirmStatus(tx: Tx, chainId: number): ReactNode {
 
 /** One reviewed write, Juicebox Money's way: a frozen plan, then one action, then Done. */
 function useConfirmPlan<Plan>(tx: Tx) {
-  const [plan, setPlan] = useState<Plan | null>(null)
+  const { address } = useWallet()
+  // The plan names the account it was built for, as holder or beneficiary.
+  const [reviewed, setReviewed] = useState<{ plan: Plan; account: Address } | null>(null)
   const [preparing, setPreparing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   return {
-    plan, preparing, error, setError,
+    plan: reviewed?.plan ?? null, preparing, error, setError,
     /** Fresh reads first; the dialog shows them as "preparing" and opens on the plan. */
     async prepare(read: () => Promise<Plan>) {
+      const account = address
       setError(null); setPreparing(true)
-      try { setPlan(await read()) } catch (reason) { setPlan(null); setError(errorMessage(reason)) } finally { setPreparing(false) }
+      try {
+        const plan = await read()
+        setReviewed(account ? { plan, account } : null)
+      } catch (reason) { setReviewed(null); setError(errorMessage(reason)) } finally { setPreparing(false) }
     },
     async run(write: (plan: Plan) => Promise<unknown>) {
-      if (!plan) return
+      if (!reviewed) return
       setError(null)
-      try { await write(plan) } catch (reason) { setError(errorMessage(reason)) }
+      // Another account would send this account's plan.
+      if (!address || !isAddressEqual(address, reviewed.account)) { setError('The connected account changed. Review again.'); return }
+      try { await write(reviewed.plan) } catch (reason) { setError(errorMessage(reason)) }
     },
     /** A Safe proposal keeps tracking after close; anything else starts over. */
     close(onDone?: () => void) {
       const done = tx.phase === 'success'
-      setPlan(null); setPreparing(false); setError(null)
+      setReviewed(null); setPreparing(false); setError(null)
       if (tx.safeProposalHash) return
       tx.reset()
       if (done) onDone?.()
