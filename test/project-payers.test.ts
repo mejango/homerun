@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({ bendystraw: vi.fn() }))
 vi.mock('../src/lib/bendystraw', () => ({ bendystraw: mocks.bendystraw }))
 import { buildPayerTransaction, checkPayerFactory, decodePayerAttempt, getProjectPayerAddresses, payerAttemptIdentity, verifyPayerReceipt, type PayerAttempt, type ProjectPayerRow } from '../src/lib/project-payers'
+import { safeExecutionLog } from './support/safe-logs'
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111' as Address
 const PAYER = '0x2222222222222222222222222222222222222222' as Address
@@ -105,6 +106,26 @@ describe('payer deployment receipt proof', () => {
     await expect(verifyPayerReceipt(f.rpc, f.saved, f.receipt)).rejects.toThrow('reviewed Safe')
     f.receipt.logs.push(event('ExecutionSuccess', { txHash: HASH, payment: 0n }, ACCOUNT, safeAbi))
     await expect(verifyPayerReceipt(f.rpc, f.saved, f.receipt)).rejects.toThrow('reviewed Safe')
+  })
+  describe('Safe execution events', () => {
+    /** The Safe executing the reviewed proposal, with the deployment and `events` in its receipt. */
+    const verify = (...events: ReturnType<typeof safeExecutionLog>[]) => {
+      const f = fixture(); safe(f)
+      f.receipt.logs = [f.receipt.logs[0], ...events as unknown as TransactionReceipt['logs']]
+      return verifyPayerReceipt(f.rpc, f.saved, f.receipt)
+    }
+    it('confirms a Safe 1.4.1 execution, whose txHash is indexed', async () => {
+      await expect(verify(safeExecutionLog(ACCOUNT, PROPOSAL))).resolves.toEqual({ status: 'confirmed', payer: PAYER })
+    })
+    it('reads a Safe 1.4.1 ExecutionFailure as a consumed, reverted proposal', async () => {
+      await expect(verify(safeExecutionLog(ACCOUNT, PROPOSAL, { failed: true }))).resolves.toEqual({ status: 'reverted' })
+    })
+    it('confirms a Safe 1.3 execution, whose txHash is in data', async () => {
+      await expect(verify(safeExecutionLog(ACCOUNT, PROPOSAL, { version: '1.3' }))).resolves.toEqual({ status: 'confirmed', payer: PAYER })
+    })
+    it('ignores another Safe’s failure in the same receipt', async () => {
+      await expect(verify(safeExecutionLog(IMPL, PROPOSAL, { failed: true }), safeExecutionLog(ACCOUNT, PROPOSAL))).resolves.toEqual({ status: 'confirmed', payer: PAYER })
+    })
   })
   it('releases only an EOA revert or a consumed Safe proposal with ExecutionFailure', async () => {
     const f = fixture(); f.receipt.status = 'reverted'; f.receipt.logs = []

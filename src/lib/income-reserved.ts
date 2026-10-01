@@ -2,6 +2,7 @@ import { jbControllerAbi, jbSplitsAbi, type JBChainId } from '@bananapus/nana-sd
 import { RESERVED_TOKEN_SPLIT_GROUP_ID, v6Address } from '@bananapus/nana-sdk-core/v6'
 import { decodeEventLog, decodeFunctionData, encodeFunctionData, isAddressEqual, parseAbi, type Address, type ContractFunctionReturnType, type PublicClient, type TransactionReceipt } from 'viem'
 import { readIncomeProjectState, type IncomeProjectState } from './income-state'
+import { safeExecutionResult } from './safe-execution'
 
 type ReservedSplits = ContractFunctionReturnType<typeof jbSplitsAbi, 'view', 'splitsOf'>
 export type IncomeReservedSnapshot = {
@@ -11,7 +12,6 @@ export type IncomeReservedSnapshot = {
 }
 const safeAbi = parseAbi([
   'function execTransaction(address to,uint256 value,bytes data,uint8 operation,uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,address gasToken,address refundReceiver,bytes signatures) returns (bool success)',
-  'event ExecutionSuccess(bytes32 txHash,uint256 payment)',
 ])
 
 /** The SDK has no convenience builder for this permissionless controller call. */
@@ -56,10 +56,8 @@ export async function verifyIncomeReservedReceipt(client: PublicClient, reviewed
     const decoded = decodeFunctionData({ abi: safeAbi, data: transaction.input })
     const [to, value, innerData, operation] = decoded.args
     if (!isAddressEqual(to, request.address) || value !== 0n || innerData.toLowerCase() !== data.toLowerCase() || operation !== 0) throw new Error('The Safe executed a different reserved INCOME call.')
-    if (!receipt.logs.some(log => {
-      if (!isAddressEqual(log.address, account)) return false
-      try { return decodeEventLog({ abi: safeAbi, eventName: 'ExecutionSuccess', data: log.data, topics: log.topics }).eventName === 'ExecutionSuccess' } catch { return false }
-    })) throw new Error('The receipt does not prove successful execution by the Safe.')
+    // This transaction is the Safe's one execTransaction, so the receipt must hold its one ExecutionSuccess.
+    if (safeExecutionResult(receipt, account, receipt.transactionHash).status !== 'success') throw new Error('The receipt does not prove successful execution by the Safe.')
   } else if (!transaction.to || !isAddressEqual(transaction.to, request.address) || !isAddressEqual(transaction.from, account) || transaction.value !== 0n || transaction.input.toLowerCase() !== data.toLowerCase()) throw new Error('The mined transaction differs from the reviewed reserved INCOME call.')
 
   const events = receipt.logs.filter(log => isAddressEqual(log.address, request.address)).flatMap(log => {

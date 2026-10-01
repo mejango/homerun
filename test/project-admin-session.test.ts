@@ -5,6 +5,7 @@ import {
   beginProjectAdminSubmission, confirmProjectAdminExecution, projectAdminSessionKey, readProjectAdminPending,
   recordProjectAdminHash, rejectProjectAdminSubmission, withProjectAdminLock, type ProjectAdminPending,
 } from '../src/lib/project-admin-session'
+import { safeExecutionLog } from './support/safe-logs'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as const
 const TARGET = '0x2222222222222222222222222222222222222222' as const
@@ -45,6 +46,7 @@ type ExecutionOptions = {
   wrongValue?: boolean; old?: boolean; unmined?: boolean; receiptBlockMismatch?: boolean; reorg?: boolean;
   transactionBlockMismatch?: boolean; reverted?: boolean; wrongChain?: boolean; safeFailure?: boolean;
   delegateCall?: boolean; wrongSafe?: boolean; noEvent?: boolean; wrongEventEmitter?: boolean; proposalHash?: Hex;
+  logs?: ReturnType<typeof safeExecutionLog>[];
 }
 
 function rpc(record: ProjectAdminPending, opts: ExecutionOptions = {}) {
@@ -67,11 +69,11 @@ function rpc(record: ProjectAdminPending, opts: ExecutionOptions = {}) {
     status: opts.reverted ? 'reverted' : 'success',
     blockNumber: opts.receiptBlockMismatch ? 102n : blockNumber,
     blockHash: BLOCK_HASH,
-    logs: record.safe && !opts.noEvent ? [{
+    logs: opts.logs ?? (record.safe && !opts.noEvent ? [{
       address: opts.wrongEventEmitter ? OTHER : OWNER,
       topics: encodeEventTopics({ abi: safeAbi, eventName }),
       data: encodeAbiParameters([{ type: 'bytes32' }, { type: 'uint256' }], [opts.proposalHash ?? record.hash ?? PROPOSAL_HASH, 0n]),
-    }] : [],
+    }] : []),
   }
   return {
     getChainId: vi.fn(async () => opts.wrongChain ? 1 : 8453),
@@ -207,6 +209,26 @@ describe('durable project administration submissions', () => {
     expect(readProjectAdminPending(storage, key)).toEqual(hashed)
     await expect(confirmProjectAdminExecution(rpc(hashed) as unknown as PublicClient, storage, key, hashed, EXECUTION_HASH)).resolves.toEqual({ status: 'confirmed', blockNumber: 101n })
     expect(readProjectAdminPending(storage, key)).toBeNull()
+  })
+
+  describe('Safe execution events', () => {
+    const confirm = (logs: ReturnType<typeof safeExecutionLog>[]) => {
+      const { storage, record } = pending(true)
+      const hashed = recordProjectAdminHash(storage, key, record, PROPOSAL_HASH)
+      return confirmProjectAdminExecution(rpc(hashed, { logs }) as unknown as PublicClient, storage, key, hashed, EXECUTION_HASH)
+    }
+    it('confirms a Safe 1.4.1 execution, whose txHash is indexed', async () => {
+      await expect(confirm([safeExecutionLog(OWNER, PROPOSAL_HASH)])).resolves.toEqual({ status: 'confirmed', blockNumber: 101n })
+    })
+    it('reads a Safe 1.4.1 ExecutionFailure as reverted', async () => {
+      await expect(confirm([safeExecutionLog(OWNER, PROPOSAL_HASH, { failed: true })])).resolves.toEqual({ status: 'reverted', blockNumber: 101n })
+    })
+    it('confirms a Safe 1.3 execution, whose txHash is in data', async () => {
+      await expect(confirm([safeExecutionLog(OWNER, PROPOSAL_HASH, { version: '1.3' })])).resolves.toEqual({ status: 'confirmed', blockNumber: 101n })
+    })
+    it('ignores another Safe’s failure in the same receipt', async () => {
+      await expect(confirm([safeExecutionLog(OTHER, PROPOSAL_HASH, { failed: true }), safeExecutionLog(OWNER, PROPOSAL_HASH)])).resolves.toEqual({ status: 'confirmed', blockNumber: 101n })
+    })
   })
 
   it('resolves a canonical Safe inner failure but preserves a proposal after an outer revert', async () => {

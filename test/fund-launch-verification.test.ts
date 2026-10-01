@@ -5,7 +5,8 @@ import { encodeAbiParameters, encodeEventTopics, encodeFunctionData, parseAbi, z
 import { buildFundLaunch, initialFundRuleset, type FundLaunchInput } from '../src/lib/fund-contracts'
 import { homerunDeployerAbi } from '../src/lib/income-contracts'
 import { HOMERUN_ALLOWLIST_HOOK } from './fixtures/homerun-deployer'
-import { checkLaunchDeployment, verifyFailedFundLaunch, verifyFundLaunch } from '../src/lib/fund-launch-verification'
+import { checkLaunchDeployment, fundLaunchFailed, verifyFailedFundLaunch, verifyFundLaunch } from '../src/lib/fund-launch-verification'
+import { safeExecutionLog } from './support/safe-logs'
 
 vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fixtures/homerun-deployer')).withHomerunDeployer(await importOriginal()))
 
@@ -152,6 +153,37 @@ describe('FUND launch confirmation', () => {
     expect(await verifyFundLaunch(f.client, f.request, f.input, f.receipt, true)).toBe(7n)
     f.receipt.logs.pop()
     await expect(verifyFundLaunch(f.client, f.request, f.input, f.receipt, true)).rejects.toThrow(/expected Safe/)
+  })
+  describe('Safe execution events', () => {
+    const PROPOSAL = `0x${'ef'.repeat(32)}` as Hex
+    /** The Safe executing the launch, with `events` in place of its execution event. */
+    const safeFixture = (...events: ReturnType<typeof safeExecutionLog>[]) => {
+      const f = fixture({ safe: true })
+      f.receipt.logs.splice(-1, 1, ...events as unknown as TransactionReceipt['logs'])
+      return f
+    }
+    it('confirms a Safe 1.4.1 execution, whose txHash is indexed', async () => {
+      const f = safeFixture(safeExecutionLog(owner, PROPOSAL))
+      expect(await verifyFundLaunch(f.client, f.request, f.input, f.receipt, true)).toBe(7n)
+      expect(fundLaunchFailed(f.receipt, f.input, true, PROPOSAL)).toBe(false)
+    })
+    it('reads a Safe 1.4.1 ExecutionFailure as a failed launch that can be retried', async () => {
+      const f = safeFixture(safeExecutionLog(owner, PROPOSAL, { failed: true }))
+      await expect(verifyFundLaunch(f.client, f.request, f.input, f.receipt, true)).rejects.toThrow(/expected Safe/)
+      expect(fundLaunchFailed(f.receipt, f.input, true, PROPOSAL)).toBe(true)
+      await expect(verifyFailedFundLaunch(f.client, f.request, f.input, f.receipt, true, PROPOSAL)).resolves.toBeUndefined()
+      // Without the proposal it names, a successful receipt proves no failure.
+      await expect(verifyFailedFundLaunch(f.client, f.request, f.input, f.receipt, true)).rejects.toThrow(/reverted deployment/)
+    })
+    it('confirms a Safe 1.3 execution, whose txHash is in data', async () => {
+      const f = safeFixture(safeExecutionLog(owner, PROPOSAL, { version: '1.3' }))
+      expect(await verifyFundLaunch(f.client, f.request, f.input, f.receipt, true)).toBe(7n)
+    })
+    it('ignores another Safe’s failure in the same receipt', async () => {
+      const f = safeFixture(safeExecutionLog(other, PROPOSAL, { failed: true }), safeExecutionLog(owner, PROPOSAL))
+      expect(await verifyFundLaunch(f.client, f.request, f.input, f.receipt, true)).toBe(7n)
+      expect(fundLaunchFailed(f.receipt, f.input, true, PROPOSAL)).toBe(false)
+    })
   })
   it('cannot use the Safe flag to bypass exact request binding', async () => {
     const f = fixture({ safe: true })

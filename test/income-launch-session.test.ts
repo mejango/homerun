@@ -8,6 +8,7 @@ import {
   incomeLaunchSessionKey, readIncomeLaunchPending, recordIncomeLaunchHash, verifyIncomeLaunchExecution,
   withIncomeLaunchLock, type IncomeLaunchPending, type IncomeLaunchStorage,
 } from '../src/lib/income-launch-session'
+import { safeExecutionLog } from './support/safe-logs'
 
 const { registered } = vi.hoisted(() => ({ registered: vi.fn() }))
 vi.mock('../src/lib/income-contracts', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/income-contracts')>(), registeredHomerunDeployer: registered }))
@@ -32,12 +33,12 @@ function memory(): IncomeLaunchStorage {
   return { getItem: key => items.get(key) ?? null, setItem: (key, value) => { items.set(key, value) }, removeItem: key => { items.delete(key) } }
 }
 function begin(storage = memory(), safe = false) { return beginIncomeLaunchSubmission(storage, key, request, 9n, HOLDER, safe, 100n) }
-function clientFor(record: IncomeLaunchPending, options: { payload?: Hex; sender?: typeof OTHER; target?: typeof OTHER; value?: bigint; chain?: number; block?: bigint; reorg?: boolean; failed?: boolean; safeFailure?: boolean; missingEvent?: boolean; proposal?: Hex; operation?: number } = {}) {
+function clientFor(record: IncomeLaunchPending, options: { payload?: Hex; sender?: typeof OTHER; target?: typeof OTHER; value?: bigint; chain?: number; block?: bigint; reorg?: boolean; failed?: boolean; safeFailure?: boolean; missingEvent?: boolean; proposal?: Hex; operation?: number; logs?: ReturnType<typeof safeExecutionLog>[] } = {}) {
   const input = record.safe
     ? encodeFunctionData({ abi: safeAbi, functionName: 'execTransaction', args: [options.target ?? TARGET, options.value ?? 100n, options.payload ?? record.data, options.operation ?? 0, 0n, 0n, 0n, zeroAddress, zeroAddress, '0x'] })
     : options.payload ?? record.data
   const transaction = { hash: EXECUTION_HASH, to: record.safe ? HOLDER : options.target ?? TARGET, from: options.sender ?? HOLDER, input, value: record.safe ? 0n : options.value ?? 100n, blockNumber: options.block ?? 101n, blockHash: BLOCK_HASH }
-  const logs = record.safe && !options.missingEvent ? [{ address: HOLDER, topics: encodeEventTopics({ abi: safeAbi, eventName: options.safeFailure ? 'ExecutionFailure' : 'ExecutionSuccess' }), data: encodeAbiParameters([{ type: 'bytes32' }, { type: 'uint256' }], [options.proposal ?? record.hash ?? HASH, 0n]) }] : []
+  const logs = options.logs ?? (record.safe && !options.missingEvent ? [{ address: HOLDER, topics: encodeEventTopics({ abi: safeAbi, eventName: options.safeFailure ? 'ExecutionFailure' : 'ExecutionSuccess' }), data: encodeAbiParameters([{ type: 'bytes32' }, { type: 'uint256' }], [options.proposal ?? record.hash ?? HASH, 0n]) }] : [])
   const receipt = { transactionHash: EXECUTION_HASH, status: options.failed ? 'reverted' : 'success', blockNumber: transaction.blockNumber, blockHash: BLOCK_HASH, logs }
   return { getChainId: async () => options.chain ?? 1, getTransaction: async () => transaction, getTransactionReceipt: async () => receipt, getBlock: async () => ({ hash: options.reorg ? HASH : BLOCK_HASH }) } as unknown as PublicClient
 }
@@ -262,6 +263,24 @@ describe('exact INCOME EOA and Safe execution recovery', () => {
       await expect(verifyIncomeLaunchExecution(clientFor(record, options), record, EXECUTION_HASH)).rejects.toThrow()
     }
     expect(readIncomeLaunchPending(storage, key)?.hash).toBe(HASH)
+  })
+  describe('Safe execution events', () => {
+    const verify = (logs: ReturnType<typeof safeExecutionLog>[]) => {
+      const storage = memory(), record = recordIncomeLaunchHash(storage, key, begin(storage, true), HASH)
+      return verifyIncomeLaunchExecution(clientFor(record, { logs }), record, EXECUTION_HASH)
+    }
+    it('confirms a Safe 1.4.1 execution, whose txHash is indexed', async () => {
+      await expect(verify([safeExecutionLog(HOLDER, HASH)])).resolves.toBe('confirmed')
+    })
+    it('reads a Safe 1.4.1 ExecutionFailure as reverted', async () => {
+      await expect(verify([safeExecutionLog(HOLDER, HASH, { failed: true })])).resolves.toBe('reverted')
+    })
+    it('confirms a Safe 1.3 execution, whose txHash is in data', async () => {
+      await expect(verify([safeExecutionLog(HOLDER, HASH, { version: '1.3' })])).resolves.toBe('confirmed')
+    })
+    it('ignores another Safe’s failure in the same receipt', async () => {
+      await expect(verify([safeExecutionLog(OTHER, HASH, { failed: true }), safeExecutionLog(HOLDER, HASH)])).resolves.toBe('confirmed')
+    })
   })
   it('never clears an unknown attempt after a network error', async () => {
     const storage = memory(), record = begin(storage)

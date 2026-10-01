@@ -1,6 +1,5 @@
 /** Durable duplicate protection. Recovery state can block a write, but can never prove execution. */
 import {
-  decodeEventLog,
   decodeFunctionData,
   encodeFunctionData,
   isAddress,
@@ -11,6 +10,7 @@ import {
   type PublicClient,
 } from "viem";
 import type { FundTransaction } from "./fund-contracts";
+import { safeExecutionResult } from "./safe-execution";
 
 export type StickyPending = {
   version: 1;
@@ -30,8 +30,6 @@ export type StickyStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 const HASH = /^0x[\da-fA-F]{64}$/;
 const safeAbi = parseAbi([
   "function execTransaction(address to,uint256 value,bytes data,uint8 operation,uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,address gasToken,address refundReceiver,bytes signatures) payable returns (bool success)",
-  "event ExecutionSuccess(bytes32 txHash,uint256 payment)",
-  "event ExecutionFailure(bytes32 txHash,uint256 payment)",
 ]);
 export function stickySessionKey(
   chainId: number,
@@ -196,39 +194,20 @@ export async function verifyStickyExecution(
         "The Safe execution does not match the saved single Sticky call.",
       );
     if (receipt.status === "success") {
-      const events = receipt.logs
-        .filter((log) => isAddressEqual(log.address, record.holder))
-        .flatMap((log) => {
-          try {
-            return [
-              decodeEventLog({
-                abi: safeAbi,
-                data: log.data,
-                topics: log.topics,
-              }),
-            ];
-          } catch {
-            return [];
-          }
-        });
-      if (
-        record.hash &&
-        !events.some(
-          (event) =>
-            event.args.txHash.toLowerCase() === record.hash!.toLowerCase(),
-        )
-      )
+      // The saved proposal hash names this execution's event. Without one, this
+      // transaction is the Safe's one execTransaction, so its own hash does.
+      const result = safeExecutionResult(
+        receipt,
+        record.holder,
+        record.hash ?? hash,
+      );
+      if (result.status === "unproven")
         throw new Error(
-          "The Safe execution does not match the saved proposal hash.",
+          record.hash
+            ? "The Safe execution does not match the saved proposal hash."
+            : "The Safe has not confirmed successful execution of this call.",
         );
-      reverted = events.some((event) => event.eventName === "ExecutionFailure");
-      if (
-        !reverted &&
-        !events.some((event) => event.eventName === "ExecutionSuccess")
-      )
-        throw new Error(
-          "The Safe has not confirmed successful execution of this call.",
-        );
+      reverted = result.status === "failed";
     }
   }
   const canonical = await client.getBlock({ blockNumber: receipt.blockNumber });
