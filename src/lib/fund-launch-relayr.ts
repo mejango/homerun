@@ -317,12 +317,13 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
           return 'reverted'
         }
         // A confirmed chain keeps its verified hash. Any other chain tries the hash its record reports now, then
-        // the last hash it saw, and a hash that failed never replaces the one it saw.
+        // the last hash it saw, and a hash that failed never replaces the one it saw. A node reports hashes in
+        // lowercase, so candidates are lowercased before they are compared and de-duplicated.
         const saved = current.statuses[signed.chainId]
         const record = destinations.records[index]
         const reported = record ? relayrDestinationHash(record) : null
-        const candidates = [...new Set(saved?.phase === 'confirmed' ? [saved.hash] : [reported, saved?.hash])]
-          .filter((hash): hash is Hex => !!hash)
+        const candidates = [...new Set((saved?.phase === 'confirmed' ? [saved.hash] : [reported, saved?.hash])
+          .map(hash => hash?.toLowerCase()))].filter((hash): hash is Hex => !!hash)
         if (candidates.length) {
           let proven: 'confirmed' | 'reverted' | undefined
           let failure: unknown

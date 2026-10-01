@@ -31,7 +31,8 @@ type Posted = RelayrEntry & { virtual_nonce: number }
 type RelayrOptions = {
   /** The order Relayr lists the posted calls in, by request index. */
   listed?: number[]
-  hexValues?: boolean
+  /** How the requests echo their U256 values: live Relayr writes hex. */
+  echoValue?: 'hex' | 'decimal' | 'number'
   /** Overrides or adds fields of the quote itself. */
   body?: Raw
   /** The records the quote carries, from the listed ones. None by default. */
@@ -49,12 +50,12 @@ function json(body: unknown, status = 200) {
 }
 
 /** Relayr as seen live: IDs and records come back out of request order, and U256 values are echoed in hex. */
-function relayr({ listed, hexValues = true, body, inQuote, inBundle, echo = BUNDLE, reply }: RelayrOptions = {}) {
+function relayr({ listed, echoValue = 'hex', body, inQuote, inBundle, echo = BUNDLE, reply }: RelayrOptions = {}) {
   let posted: Posted[] = []
   const order = () => listed ?? posted.map((_, index) => index)
   const records = (): Raw[] => order().map(index => ({
     tx_uuid: uuid(index),
-    request: { ...posted[index], value: hexValues ? hex(posted[index].value) : posted[index].value },
+    request: { ...posted[index], value: { hex: hex(posted[index].value), decimal: posted[index].value, number: Number(posted[index].value) }[echoValue] },
   }))
   const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith('/v1/bundle/prepaid')) {
@@ -127,12 +128,19 @@ describe('Relayr quote binding', () => {
     expect(quote.expectedTransactions?.map(({ txUuid }) => txUuid)).toEqual(callIds)
   })
 
-  it('compares the echoed value as a number, whether Relayr writes it in hex or decimal', async () => {
-    for (const hexValues of [true, false]) {
-      relayr({ listed: LIVE_ORDER, hexValues })
-      const quote = await relayrPostBundle(entries)
-      expect(quote.expectedTransactions?.map(({ txUuid }) => txUuid)).toEqual(callIds)
-    }
+  it.each(['hex', 'decimal', 'number'] as const)('compares the echoed value as a number, whether Relayr writes it in %s', async echoValue => {
+    relayr({ listed: LIVE_ORDER, echoValue })
+    const quote = await relayrPostBundle(entries)
+    expect(quote.expectedTransactions?.map(({ txUuid }) => txUuid)).toEqual(callIds)
+  })
+
+  it('refuses a JSON number echo that cannot hold the value exactly', async () => {
+    // 2^53 is the first integer a JSON number no longer holds exactly, so even an equal-looking echo proves nothing.
+    relayr({ echoValue: 'number' })
+    await expect(relayrPostBundle([entry(1), { ...entry(10), value: String(2n ** 53n) }]))
+      .rejects.toThrow('did not bind every quoted transaction to a unique ID. Nothing was paid.')
+    relayr({ echoValue: 'number' })
+    await expect(relayrPostBundle([entry(1), { ...entry(10), value: String(2n ** 53n - 1n) }])).resolves.toBeTruthy()
   })
 
   it('reads the bundle ID it echoes in any case', async () => {
@@ -276,6 +284,13 @@ describe('Relayr destination records', () => {
     expect(relayrDestinationRecords([bare(uuid(0), 1), { tx_uuid: uuid(1) }], bindings).refusal).toBe(MISMATCHED)
   })
 
+  it('treats a record whose request is null as one that echoes none', () => {
+    const nulled = (id: string, chain: number) => ({ tx_uuid: id, chain, request: null }) as unknown as RelayrTransactionRecord
+    expect(relayrDestinationRecords([nulled(uuid(1), 10), nulled(uuid(0), 1)], bindings))
+      .toEqual({ records: [nulled(uuid(0), 1), nulled(uuid(1), 10)], refusal: null })
+    expect(relayrDestinationRecords([nulled(uuid(0), 10), nulled(uuid(1), 1)], bindings).refusal).toBe(MISMATCHED)
+  })
+
   it('compares virtual nonces only when both sides carry one', () => {
     const unnumberedRecords = listed().map(({ request, ...record }) => ({ ...record, request: { ...request!, virtual_nonce: undefined } }))
     const unnumberedBindings = bindings.map(binding => ({ ...binding, entry: { ...binding.entry, virtual_nonce: undefined } }))
@@ -306,6 +321,7 @@ describe('Relayr destination records', () => {
     ['a repeated ID', [bindings[0], { ...bindings[1], txUuid: uuid(0) }]],
     ['a chain other than its entry\'s', [{ ...bindings[0], chain: 8453 }, bindings[1]]],
     ['a malformed entry', [{ ...bindings[0], entry: { ...first, value: '-5' } }, bindings[1]]],
+    ['a value above a uint256', [{ ...bindings[0], entry: { ...first, value: (2n ** 256n).toString() } }, bindings[1]]],
     ['a missing binding', [null as unknown as RelayrTransactionBinding]],
   ])('keeps a saved bundle with %s pending', (_name, saved) => {
     expect(relayrDestinationRecords(listed(), saved)).toEqual({ records: [], refusal: NO_PROOF })

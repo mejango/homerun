@@ -92,13 +92,14 @@ function makeClient(chainId: number) {
     estimateGas: vi.fn(async (_request: unknown) => 2_000_000n),
     call: vi.fn(async () => ({ data: '0x' })),
     getBlock: vi.fn(async () => ({ number: 123n, hash: BLOCK, timestamp: BigInt(NOW) })),
+    // A node looks a hash up in any case and answers in lowercase.
     getTransaction: vi.fn(async ({ hash }: { hash: Hex }) => {
-      const entry = entries.find(item => hashFor(item.chain) === hash)
+      const entry = entries.find(item => hashFor(item.chain) === hash.toLowerCase())
       if (!entry) throw new Error('Transaction not found')
-      return { hash, to: entry.target, input: entry.data, value: BigInt(entry.value), chainId: entry.chain, blockHash: BLOCK }
+      return { hash: hash.toLowerCase() as Hex, to: entry.target, input: entry.data, value: BigInt(entry.value), chainId: entry.chain, blockHash: BLOCK }
     }),
     getTransactionReceipt: vi.fn(async ({ hash }: { hash: Hex }) => ({
-      transactionHash: hash, blockHash: BLOCK, blockNumber: 123n, status: failed.has(chainId) ? 'reverted' : 'success', logs: [],
+      transactionHash: hash.toLowerCase() as Hex, blockHash: BLOCK, blockNumber: 123n, status: failed.has(chainId) ? 'reverted' : 'success', logs: [],
     })),
   }
 }
@@ -586,6 +587,48 @@ describe('relayed launch execution and recovery', () => {
       await run()
       expect(loadLaunchSession()?.statuses[10]).toMatchObject({ phase: 'confirmed', hash: hashFor(10), projectId: '110' })
       expect(clients.get(10)!.getTransaction.mock.calls.map(([call]) => call.hash)).toEqual([hashFor(10), unknown, hashFor(10)])
+    })
+
+    it('is proven in lowercase when Relayr reports it in uppercase', async () => {
+      const upper = `0x${hashFor(10).slice(2).toUpperCase()}` as Hex
+      expect(upper).not.toBe(hashFor(10))
+      listing(reporting(10, upper))
+      await run()
+      expect(loadLaunchSession()?.statuses[10]).toMatchObject({ phase: 'confirmed', hash: hashFor(10), projectId: '110' })
+    })
+
+    it('is proven in lowercase when the chain saved it in uppercase', async () => {
+      const upper = `0x${hashFor(10).slice(2).toUpperCase()}` as Hex
+      clients.get(10)!.getTransactionReceipt.mockRejectedValueOnce(new Error('receipt unavailable'))
+      await expect(run()).rejects.toThrow('unfinished')
+      const saved = loadLaunchSession()!
+      saved.statuses[10] = { phase: 'unresolved', hash: upper, error: 'receipt unavailable' }
+      saveLaunchSession(saved)
+      listing(() => [])
+      await run(saved)
+      expect(loadLaunchSession()?.statuses[10]).toMatchObject({ phase: 'confirmed', hash: hashFor(10), projectId: '110' })
+    })
+
+    it('is tried once when the saved hash differs from it only in case', async () => {
+      clients.get(10)!.getTransactionReceipt.mockRejectedValueOnce(new Error('receipt unavailable'))
+      await expect(run()).rejects.toThrow('unfinished')
+      listing(reporting(10, `0x${hashFor(10).slice(2).toUpperCase()}`))
+      clients.get(10)!.getTransaction.mockClear()
+      clients.get(10)!.getTransactionReceipt.mockRejectedValueOnce(new Error('receipt unavailable'))
+      await expect(run()).rejects.toThrow('unresolved')
+      expect(clients.get(10)!.getTransaction).toHaveBeenCalledTimes(1)
+    })
+
+    it('stops at the first hash that proves, so the saved hash is never read', async () => {
+      clients.get(10)!.getTransactionReceipt.mockRejectedValueOnce(new Error('receipt unavailable'))
+      await expect(run()).rejects.toThrow('unfinished')
+      const saved = loadLaunchSession()!
+      saved.statuses[10] = { phase: 'unresolved', hash: hashFor(8453), error: 'Transaction not found' }
+      saveLaunchSession(saved)
+      clients.get(10)!.getTransaction.mockClear()
+      await run(saved)
+      expect(loadLaunchSession()?.statuses[10]).toMatchObject({ phase: 'confirmed', hash: hashFor(10), projectId: '110' })
+      expect(clients.get(10)!.getTransaction.mock.calls.map(([call]) => call.hash)).toEqual([hashFor(10)])
     })
 
     it('is tried once when the chain saved the same hash', async () => {
