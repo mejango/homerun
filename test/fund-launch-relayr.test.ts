@@ -39,14 +39,13 @@ vi.mock('@/lib/relayr', async importOriginal => ({
     inputs: [{ name: 'forwarder', type: 'address' }], outputs: [{ type: 'bool' }] }],
   prepareForwardedTx: m.forward, relayrPostBundle: m.quote, relayrPay: m.pay,
   relayrPoll: m.poll,
-  relayrDestinationHash: (record: RelayrTransactionRecord) => record.status?.data?.hash ?? null,
   readRelayrPendingSessionsForAuthorization: () => {
     const session = m.pending()
     return session ? [{ scope: 'another-action', session }] : []
   },
 }))
 
-import { relayrPaymentDetails, relayrPaymentLabel, RELAYR_PAYMENT_ADDRESS, RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_SELECTOR } from '@/lib/relayr'
+import { relayrDestinationHash, relayrPaymentDetails, relayrPaymentLabel, RELAYR_PAYMENT_ADDRESS, RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_SELECTOR } from '@/lib/relayr'
 import { predictMultisig, MULTICALL3, CREATE_BATCH_ABI, unbundleMultisigLaunch, type CreateMultisig } from '@/lib/create-multisig'
 import { canRelayrLaunch, runRelayrLaunch } from '@/lib/fund-launch-relayr'
 import { FUND_LAUNCH_KEY, canCancelLaunch, cancelUnsubmittedLaunch, loadLaunchSession, saveLaunch as saveLaunchSession, type FundLaunchSession as LaunchSession } from '@/lib/fund-launch-session'
@@ -73,19 +72,34 @@ function paymentFor(chain: number, deadline = NOW + 600): RelayrPayment {
 }
 
 function hashFor(chainId: number): Hex { return `0x${chainId.toString(16).padStart(64, '0')}` }
+const txId = (index: number) => `00000000-0000-4000-8000-${(index + 1).toString().padStart(12, '0')}`
+const TX_ELSEWHERE = txId(254)
+/** A status record as Relayr lists it: the posted request echoed back, with U256 values in hex. */
+function recordFor(entry: RelayrEntry, index: number, status?: RelayrTransactionRecord['status']): RelayrTransactionRecord {
+  return { tx_uuid: txId(index), request: { ...entry, value: `0x${BigInt(entry.value).toString(16)}`, virtual_nonce: 0 }, status }
+}
+/** What Relayr's status lists on every poll from now on: the records of the launch, changed. */
+function listing(change: (list: RelayrTransactionRecord[]) => RelayrTransactionRecord[]) {
+  m.poll.mockImplementation(async (_uuid, _count, update) => { const changed = change(records); update(changed); return changed })
+}
+/** The records of `chain`, reporting `hash` for it. */
+const reporting = (chain: number, hash: unknown) => (list: RelayrTransactionRecord[]) => list.map(record =>
+  record.request?.chain === chain ? { ...record, status: { data: { hash } } as RelayrTransactionRecord['status'] } : record)
 function makeClient(chainId: number) {
   return {
-    getCode: vi.fn(async ({ address }: { address: Address }) => address === ACCOUNT ? '0x' : '0x6000'),
+    getCode: vi.fn(async ({ address }: { address: Address }): Promise<Hex> => address === ACCOUNT ? '0x' : '0x6000'),
     readContract: vi.fn(async ({ functionName }: { functionName: string }): Promise<bigint | boolean> => functionName === 'nonces' ? 0n : true),
     estimateGas: vi.fn(async (_request: unknown) => 2_000_000n),
     call: vi.fn(async () => ({ data: '0x' })),
     getBlock: vi.fn(async () => ({ number: 123n, hash: BLOCK, timestamp: BigInt(NOW) })),
+    // A node looks a hash up in any case and answers in lowercase.
     getTransaction: vi.fn(async ({ hash }: { hash: Hex }) => {
-      const entry = entries.find(item => hashFor(item.chain) === hash)!
-      return { hash, to: entry.target, input: entry.data, value: BigInt(entry.value), chainId: entry.chain, blockHash: BLOCK }
+      const entry = entries.find(item => hashFor(item.chain) === hash.toLowerCase())
+      if (!entry) throw new Error('Transaction not found')
+      return { hash: hash.toLowerCase() as Hex, to: entry.target, input: entry.data, value: BigInt(entry.value), chainId: entry.chain, blockHash: BLOCK }
     }),
     getTransactionReceipt: vi.fn(async ({ hash }: { hash: Hex }) => ({
-      transactionHash: hash, blockHash: BLOCK, blockNumber: 123n, status: failed.has(chainId) ? 'reverted' : 'success', logs: [],
+      transactionHash: hash.toLowerCase() as Hex, blockHash: BLOCK, blockNumber: 123n, status: failed.has(chainId) ? 'reverted' : 'success', logs: [],
     })),
   }
 }
@@ -139,8 +153,8 @@ beforeEach(() => {
     entries = signed
     quote = { bundle_uuid: '00000000-0000-0000-0000-000000000001',
       payment_info: offeredPaymentChains.map(chain => paymentFor(chain)),
-      expectedTransactions: signed.map((entry, i) => ({ txUuid: `tx-${i}`, chain: entry.chain, entry })) }
-    records = signed.map((entry, i) => ({ tx_uuid: `tx-${i}`, status: { state: 'Confirmed', data: { hash: hashFor(entry.chain) } } }))
+      expectedTransactions: signed.map((entry, i) => ({ txUuid: txId(i), chain: entry.chain, entry: { ...entry, virtual_nonce: 0 } })) }
+    records = signed.map((entry, i) => recordFor(entry, i, { state: 'Confirmed', data: { hash: hashFor(entry.chain) } }))
     return quote
   })
   m.pay.mockImplementation(async (_payment, _account, _uuid, destinationChainIds, submitted, reverify, sending) => {
@@ -174,7 +188,7 @@ describe('relayed launch execution and recovery', () => {
     expect(m.multisigCheck).toHaveBeenCalled()
     expect(loadLaunchSession()?.statuses[1].phase).toBe('confirmed')
     const nonceReads = clients.get(1)!.readContract.mock.calls.map(([call]) => call).filter(call => call.functionName === 'nonces')
-    expect(nonceReads.every(call => (call as { address: Address }).address !== MULTICALL3)).toBe(true)
+    expect(nonceReads.every(call => (call as unknown as { address: Address }).address !== MULTICALL3)).toBe(true)
     await run()
     expect(m.pay).toHaveBeenCalledTimes(1)
   })
@@ -371,7 +385,7 @@ describe('relayed launch execution and recovery', () => {
     expect(saved.transport).toBe('relayr')
     expect(saved.relayr).toMatchObject({ paymentChainId: 84532, paymentHash: HASH })
     expect(saved.relayr?.signed.map(item => item.chainId)).toEqual(TESTNETS)
-    records = entries.map((entry, i) => ({ tx_uuid: `tx-${i}`, status: { data: { hash: hashFor(entry.chain) } } })).reverse()
+    records = entries.map((entry, i) => recordFor(entry, i, { data: { hash: hashFor(entry.chain) } })).reverse()
     await run(saved)
     expect(m.forward).toHaveBeenCalledTimes(4)
     expect(m.quote).toHaveBeenCalledTimes(1)
@@ -416,7 +430,7 @@ describe('relayed launch execution and recovery', () => {
   it('recovers a submitted bundle without fresh signatures, quote, or payment', async () => {
     m.poll.mockImplementationOnce(async () => { records = []; throw new Error('offline') })
     await expect(run()).rejects.toThrow('unfinished')
-    records = entries.map((entry, i) => ({ tx_uuid: `tx-${i}`, status: { data: { hash: hashFor(entry.chain) } } }))
+    records = entries.map((entry, i) => recordFor(entry, i, { data: { hash: hashFor(entry.chain) } }))
     m.pending.mockImplementation(() => { throw new Error('An unrelated authorization ledger is unreadable') })
     await run()
     expect(m.forward).toHaveBeenCalledTimes(2)
@@ -425,25 +439,255 @@ describe('relayed launch execution and recovery', () => {
     expect(m.funding).toHaveBeenCalledTimes(1)
   })
 
+  it('launches against a Relayr that lists transaction IDs out of request order', async () => {
+    const actual = await vi.importActual<typeof import('@/lib/relayr')>('@/lib/relayr')
+    const id = txId
+    let posted: RelayrEntry[] = []
+    let paid = false
+    const listed = () => posted.map((_, index) => posted.length - 1 - index)
+    const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } })
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/v1/bundle/prepaid')) {
+        posted = JSON.parse(String(init?.body)).transactions
+        return json({ bundle_uuid: BUNDLE, payment_info: offeredPaymentChains.map(chain => paymentFor(chain)), tx_uuids: listed().map(id) })
+      }
+      if (url.endsWith(`/v1/bundle/${BUNDLE}`)) {
+        return json({ bundle_uuid: BUNDLE, transactions: listed().map(index => ({ tx_uuid: id(index),
+          request: { ...posted[index], value: `0x${BigInt(posted[index].value).toString(16)}` },
+          status: paid ? { state: 'success', data: { hash: hashFor(posted[index].chain) } } : null })) })
+      }
+      throw new Error(`Unexpected Relayr request: ${url}`)
+    }))
+    m.quote.mockImplementation(async (signed: RelayrEntry[]) => { entries = signed; return actual.relayrPostBundle(signed) })
+    m.poll.mockImplementation(actual.relayrPoll)
+    const pay = m.pay.getMockImplementation()!
+    m.pay.mockImplementation(async (...args: unknown[]) => { paid = true; return pay(...args) })
+    await run()
+    expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'confirmed', hash: hashFor(1), projectId: '101' }, 10: { phase: 'confirmed', hash: hashFor(10), projectId: '110' } })
+    expect(loadLaunchSession()?.relayr?.quote?.expectedTransactions?.map(({ chain, txUuid }) => [chain, txUuid])).toEqual([[1, id(0)], [10, id(1)]])
+    expect(m.pay).toHaveBeenCalledTimes(1)
+  })
+
+  describe('a launch saved with each chain holding the other chain\'s transaction ID', () => {
+    async function savedPaidAndUnresolved() {
+      m.poll.mockImplementationOnce(async () => { records = []; throw new Error('offline') })
+      await expect(run()).rejects.toThrow('unfinished')
+      const saved = loadLaunchSession()!
+      const [first, second] = saved.relayr!.quote!.expectedTransactions!
+      saved.relayr!.quote!.expectedTransactions = [{ ...first, txUuid: second.txUuid }, { ...second, txUuid: first.txUuid }]
+      saveLaunchSession(saved)
+      records = entries.map((entry, i) => recordFor(entry, i, { state: 'success', data: { hash: hashFor(entry.chain) } })).reverse()
+      return saved
+    }
+    const confirmed = { 1: { phase: 'confirmed', hash: hashFor(1), projectId: '101' }, 10: { phase: 'confirmed', hash: hashFor(10), projectId: '110' } }
+
+    it('confirms each chain from the record that carries its call, without paying or signing again', async () => {
+      const saved = await savedPaidAndUnresolved()
+      await run(saved)
+      expect(loadLaunchSession()?.statuses).toMatchObject(confirmed)
+      expect(m.forward).toHaveBeenCalledTimes(2)
+      expect(m.quote).toHaveBeenCalledTimes(1)
+      expect(m.pay).toHaveBeenCalledTimes(1)
+    })
+
+    it('replaces the other chain\'s hash that was saved while it stayed unresolved', async () => {
+      const saved = await savedPaidAndUnresolved()
+      saved.statuses[1] = { phase: 'unresolved', hash: hashFor(10), error: 'Relayr destination transaction does not match the signed launch.' }
+      saved.statuses[10] = { phase: 'unresolved', hash: hashFor(1), error: 'Relayr destination transaction does not match the signed launch.' }
+      saveLaunchSession(saved)
+      await run(saved)
+      expect(loadLaunchSession()?.statuses).toMatchObject(confirmed)
+      expect(m.pay).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('Relayr\'s status', () => {
+    const NOT_IDENTIFIED = 'Relayr has not identified every exact destination transaction. Keep checking the original bundle; do not pay again.'
+    const UNBOUND = "Relayr's status names a transaction this quote did not bind. Keep the original bundle pending; do not pay again."
+    const MISMATCHED = "Relayr's destination call does not match the signed request. Keep the original bundle pending; do not pay again."
+    const SHARED = 'Relayr reported one destination transaction for two signed calls. Keep the original bundle pending; do not pay again.'
+
+    it.each([
+      ['lists a record too few', (list: RelayrTransactionRecord[]) => list.slice(1), NOT_IDENTIFIED],
+      ['lists no records', () => [] as RelayrTransactionRecord[], NOT_IDENTIFIED],
+      ['lists an extra record with an ID the quote never listed', (list: RelayrTransactionRecord[]) => [...list, { ...list[0], tx_uuid: TX_ELSEWHERE }], NOT_IDENTIFIED],
+      ['lists an extra record under a quoted ID', (list: RelayrTransactionRecord[]) => [...list, { ...list[0] }], NOT_IDENTIFIED],
+      ['names an ID the quote never listed', (list: RelayrTransactionRecord[]) => [list[0], { ...list[1], tx_uuid: TX_ELSEWHERE }], UNBOUND],
+      ['carries one quoted ID on two records', (list: RelayrTransactionRecord[]) => [list[0], { ...list[1], tx_uuid: list[0].tx_uuid }], UNBOUND],
+      ['carries an ID that is not a UUID', (list: RelayrTransactionRecord[]) => [{ ...list[0], tx_uuid: 'tx-0' }, list[1]], UNBOUND],
+      ['echoes another call than the one signed', (list: RelayrTransactionRecord[]) => [list[0], { ...list[1], request: { ...list[1].request!, data: '0xdeadbeef' as Hex } }], MISMATCHED],
+      ['echoes one call under two quoted IDs', (list: RelayrTransactionRecord[]) => [list[0], { ...list[1], request: list[0].request }], MISMATCHED],
+      ['reports one hash for both calls', (list: RelayrTransactionRecord[]) => list.map(record => ({ ...record, status: { data: { hash: hashFor(1) } } })), SHARED],
+    ])('gives no hash when it %s, and says why', async (_name, change, refusal) => {
+      listing(change)
+      await expect(run()).rejects.toThrow('unfinished')
+      for (const chain of [1, 10]) {
+        expect(loadLaunchSession()?.statuses[chain]).toMatchObject({ phase: 'unresolved', error: refusal })
+        expect(loadLaunchSession()?.statuses[chain].hash).toBeUndefined()
+        expect(clients.get(chain)!.getTransaction).not.toHaveBeenCalled()
+      }
+      expect(m.projectId).not.toHaveBeenCalled()
+      expect(m.pay).toHaveBeenCalledTimes(1)
+    })
+
+    it('confirms both chains once its records are exactly the quote\'s again', async () => {
+      listing(list => list.slice(1))
+      await expect(run()).rejects.toThrow('unfinished')
+      listing(list => list)
+      await run()
+      expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'confirmed', projectId: '101' }, 10: { phase: 'confirmed', projectId: '110' } })
+      expect(m.pay).toHaveBeenCalledTimes(1)
+    })
+
+    it('still takes a hash a chain saved earlier, however the status reads', async () => {
+      clients.get(10)!.getTransactionReceipt.mockRejectedValueOnce(new Error('receipt unavailable'))
+      await expect(run()).rejects.toThrow('unfinished')
+      listing(list => [...list, { ...list[0], tx_uuid: TX_ELSEWHERE }])
+      await run()
+      expect(loadLaunchSession()?.statuses[10]).toMatchObject({ phase: 'confirmed', hash: hashFor(10), projectId: '110' })
+    })
+
+    it('waits on a record that reports no hash yet while the other chain confirms', async () => {
+      listing(list => list.map(record => record.request?.chain === 10 ? { ...record, status: { state: 'Pending' } } : record))
+      await expect(run()).rejects.toThrow('unfinished')
+      expect(loadLaunchSession()?.statuses[1]).toMatchObject({ phase: 'confirmed', projectId: '101' })
+      expect(loadLaunchSession()?.statuses[10]).toMatchObject({ phase: 'unresolved', error: 'Waiting for the original Relayr destination transaction.' })
+    })
+  })
+
+  describe('a hash that Relayr reports', () => {
+    const malformed = ['', '0xnot-a-hash', `0x${'ab'.repeat(31)}`, `0x${'ab'.repeat(33)}`, 7]
+
+    it.each(malformed)('is never kept or preferred when it is not a transaction hash (%j)', async hash => {
+      // The real relayrDestinationHash is in play; a stand-in would hand the malformed value through.
+      expect(relayrDestinationHash({ status: { data: { hash } } } as unknown as RelayrTransactionRecord)).toBeNull()
+      clients.get(10)!.getTransactionReceipt.mockRejectedValueOnce(new Error('receipt unavailable'))
+      await expect(run()).rejects.toThrow('unfinished')
+      expect(loadLaunchSession()?.statuses[10]).toMatchObject({ phase: 'unresolved', hash: hashFor(10) })
+      listing(reporting(10, hash))
+      await run()
+      expect(loadLaunchSession()?.statuses[10]).toMatchObject({ phase: 'confirmed', hash: hashFor(10), projectId: '110' })
+    })
+
+    it.each(malformed)('is not saved the first time Relayr reports it (%j)', async hash => {
+      listing(reporting(10, hash))
+      await expect(run()).rejects.toThrow('unfinished')
+      expect(loadLaunchSession()?.statuses[10].phase).toBe('unresolved')
+      expect(loadLaunchSession()?.statuses[10].hash).toBeUndefined()
+      expect(clients.get(10)!.getTransaction).not.toHaveBeenCalled()
+      await expect(run()).rejects.toThrow('unresolved')
+    })
+
+    it('is tried before, and never instead of, the hash the chain saved', async () => {
+      const unknown = hashFor(8453)
+      clients.get(10)!.getTransactionReceipt.mockRejectedValueOnce(new Error('receipt unavailable'))
+      await expect(run()).rejects.toThrow('unfinished')
+      expect(loadLaunchSession()?.statuses[10]).toMatchObject({ phase: 'unresolved', hash: hashFor(10) })
+      listing(reporting(10, unknown))
+      await run()
+      expect(loadLaunchSession()?.statuses[10]).toMatchObject({ phase: 'confirmed', hash: hashFor(10), projectId: '110' })
+      expect(clients.get(10)!.getTransaction.mock.calls.map(([call]) => call.hash)).toEqual([hashFor(10), unknown, hashFor(10)])
+    })
+
+    it('is proven in lowercase when Relayr reports it in uppercase', async () => {
+      const upper = `0x${hashFor(10).slice(2).toUpperCase()}` as Hex
+      expect(upper).not.toBe(hashFor(10))
+      listing(reporting(10, upper))
+      await run()
+      expect(loadLaunchSession()?.statuses[10]).toMatchObject({ phase: 'confirmed', hash: hashFor(10), projectId: '110' })
+    })
+
+    it('is proven in lowercase when the chain saved it in uppercase', async () => {
+      const upper = `0x${hashFor(10).slice(2).toUpperCase()}` as Hex
+      clients.get(10)!.getTransactionReceipt.mockRejectedValueOnce(new Error('receipt unavailable'))
+      await expect(run()).rejects.toThrow('unfinished')
+      const saved = loadLaunchSession()!
+      saved.statuses[10] = { phase: 'unresolved', hash: upper, error: 'receipt unavailable' }
+      saveLaunchSession(saved)
+      listing(() => [])
+      await run(saved)
+      expect(loadLaunchSession()?.statuses[10]).toMatchObject({ phase: 'confirmed', hash: hashFor(10), projectId: '110' })
+    })
+
+    it('is tried once when the saved hash differs from it only in case', async () => {
+      clients.get(10)!.getTransactionReceipt.mockRejectedValueOnce(new Error('receipt unavailable'))
+      await expect(run()).rejects.toThrow('unfinished')
+      listing(reporting(10, `0x${hashFor(10).slice(2).toUpperCase()}`))
+      clients.get(10)!.getTransaction.mockClear()
+      clients.get(10)!.getTransactionReceipt.mockRejectedValueOnce(new Error('receipt unavailable'))
+      await expect(run()).rejects.toThrow('unresolved')
+      expect(clients.get(10)!.getTransaction).toHaveBeenCalledTimes(1)
+    })
+
+    it('stops at the first hash that proves, so the saved hash is never read', async () => {
+      clients.get(10)!.getTransactionReceipt.mockRejectedValueOnce(new Error('receipt unavailable'))
+      await expect(run()).rejects.toThrow('unfinished')
+      const saved = loadLaunchSession()!
+      saved.statuses[10] = { phase: 'unresolved', hash: hashFor(8453), error: 'Transaction not found' }
+      saveLaunchSession(saved)
+      clients.get(10)!.getTransaction.mockClear()
+      await run(saved)
+      expect(loadLaunchSession()?.statuses[10]).toMatchObject({ phase: 'confirmed', hash: hashFor(10), projectId: '110' })
+      expect(clients.get(10)!.getTransaction.mock.calls.map(([call]) => call.hash)).toEqual([hashFor(10)])
+    })
+
+    it('is tried once when the chain saved the same hash', async () => {
+      clients.get(10)!.getTransactionReceipt.mockRejectedValueOnce(new Error('receipt unavailable'))
+      await expect(run()).rejects.toThrow('unfinished')
+      clients.get(10)!.getTransaction.mockClear()
+      clients.get(10)!.getTransactionReceipt.mockRejectedValueOnce(new Error('receipt unavailable'))
+      await expect(run()).rejects.toThrow('unresolved')
+      expect(clients.get(10)!.getTransaction).toHaveBeenCalledTimes(1)
+      expect(loadLaunchSession()?.statuses[10]).toMatchObject({ phase: 'unresolved', hash: hashFor(10) })
+    })
+
+    it('does not replace the saved hash when neither it nor the reported hash can be proven', async () => {
+      const unknown = hashFor(8453)
+      clients.get(10)!.getTransactionReceipt.mockRejectedValueOnce(new Error('receipt unavailable'))
+      await expect(run()).rejects.toThrow('unfinished')
+      listing(reporting(10, unknown))
+      clients.get(10)!.getTransactionReceipt.mockRejectedValueOnce(new Error('receipt unavailable')).mockRejectedValueOnce(new Error('receipt unavailable'))
+      await expect(run()).rejects.toThrow('unresolved')
+      // The status says why the hash Relayr reports now could not be proven.
+      expect(loadLaunchSession()?.statuses[10]).toMatchObject({ phase: 'unresolved', hash: hashFor(10), error: 'Transaction not found' })
+      listing(() => [])
+      await run()
+      expect(loadLaunchSession()?.statuses[10]).toMatchObject({ phase: 'confirmed', hash: hashFor(10), projectId: '110' })
+    })
+
+    it('is the hash a chain saves when it is the first one Relayr reported and could not be proven', async () => {
+      listing(reporting(10, hashFor(8453)))
+      await expect(run()).rejects.toThrow('unfinished')
+      expect(loadLaunchSession()?.statuses[10]).toMatchObject({ phase: 'unresolved', hash: hashFor(8453) })
+    })
+
+    it('never moves a confirmed chain off the hash it was verified with', async () => {
+      await run()
+      listing(list => list.map(record => ({ ...record, status: { data: { hash: hashFor(record.request!.chain === 1 ? 10 : 1) } } })))
+      await run()
+      expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'confirmed', hash: hashFor(1) }, 10: { phase: 'confirmed', hash: hashFor(10) } })
+      expect(clients.get(1)!.getTransaction.mock.calls.every(([call]) => call.hash === hashFor(1))).toBe(true)
+      expect(clients.get(10)!.getTransaction.mock.calls.every(([call]) => call.hash === hashFor(10))).toBe(true)
+    })
+
+    it('is rejected when it points to another chain, even if that receipt has a launch log', async () => {
+      listing(list => list.map(record => ({ ...record, status: { data: { hash: hashFor(record.request!.chain === 1 ? 10 : 1) } } })))
+      await expect(run()).rejects.toThrow('unfinished')
+      expect(loadLaunchSession()?.statuses[1].phase).toBe('unresolved')
+      expect(loadLaunchSession()?.statuses[10].phase).toBe('unresolved')
+      expect(m.projectId).not.toHaveBeenCalled()
+    })
+  })
+
   it('never treats provider-only success or failure as a completed launch or permission to pay again', async () => {
     m.poll.mockImplementation(async (_uuid, _count, update) => {
-      update([{ tx_uuid: 'tx-0', status: { state: 'Confirmed' } }, { tx_uuid: 'tx-1', status: { state: 'Failed' } }])
+      update([recordFor(entries[0], 0, { state: 'Confirmed' }), recordFor(entries[1], 1, { state: 'Failed' })])
       throw new Error('provider claims failed')
     })
     await expect(run()).rejects.toThrow('unfinished')
     await expect(run()).rejects.toThrow('unresolved')
     expect(m.pay).toHaveBeenCalledTimes(1)
     expect(loadLaunchSession()?.relayr?.abandonable).not.toBe(true)
-  })
-
-  it('rejects a provider hash pointing to another chain even if that receipt has a launch log', async () => {
-    m.poll.mockImplementation(async (_uuid, _count, update) => {
-      const swapped = records.map(record => ({ ...record, status: { data: { hash: hashFor(1) } } }))
-      update(swapped); return swapped
-    })
-    await expect(run()).rejects.toThrow('unfinished')
-    expect(loadLaunchSession()?.statuses[10].phase).toBe('unresolved')
-    expect(m.projectId).toHaveBeenCalledTimes(1)
   })
 
   it('rejects a receipt whose block is no longer canonical', async () => {
@@ -456,6 +700,7 @@ describe('relayed launch execution and recovery', () => {
     failed.add(10)
     await expect(run()).rejects.toThrow('unfinished')
     expect(loadLaunchSession()?.relayr?.retryNonces).toEqual({ 10: '0' })
+    expect(loadLaunchSession()?.relayr?.abandonable).not.toBe(true)
     failed.clear()
     await run()
     expect(m.forward).toHaveBeenCalledTimes(3)
@@ -575,7 +820,7 @@ describe('Relayr quote authentication', () => {
     expect(relayrPaymentDetails(payment, BUNDLE, NOW).chainId).toBe(1)
     for (const change of [
       { target: TARGET }, { token: TARGET }, { chain: 99999 }, { amount: '-1' },
-      { calldata: '0xdeadbeef' }, { payment_deadline: NOW + 5 },
+      { calldata: '0xdeadbeef' as Hex }, { payment_deadline: NOW + 5 },
     ]) expect(() => relayrPaymentDetails({ ...payment, ...change }, BUNDLE, NOW)).toThrow()
     expect(() => relayrPaymentDetails(payment, '00000000-0000-0000-0000-000000000002', NOW)).toThrow(/bundle/)
     expect(() => relayrPaymentDetails(payment, BUNDLE, NOW + 601)).toThrow()

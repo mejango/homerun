@@ -128,16 +128,20 @@ export type RelayrVerifiedDestination = {
   receipt: TransactionReceipt
 }
 
+/** A posted transaction and the quoted ID whose record carries its exact request. */
+export type RelayrTransactionBinding = {
+  txUuid: string
+  chain: number
+  entry: RelayrEntry
+}
+
 export type RelayrQuote = {
   bundle_uuid: string
   payment_info: RelayrPayment[]
+  /** Relayr's record for each posted transaction, in posted order. */
   transactions?: RelayrTransactionRecord[]
   /** Client-authenticated quote ordering; never accepted from status alone. */
-  expectedTransactions?: {
-    txUuid: string
-    chain: number
-    entry: RelayrEntry
-  }[]
+  expectedTransactions?: RelayrTransactionBinding[]
 }
 
 type RelayrProgressSummary = { confirmed: number; failed: number; pending: number; total: number }
@@ -403,6 +407,99 @@ export async function buildForwardedTx(call: RelayrCall, expectedAccount: Addres
   return prepared.sign()
 }
 
+const RELAYR_MAX_UINT256 = (1n << 256n) - 1n
+const RELAYR_HASH_RE = /^0x[0-9a-f]{64}$/iu
+const RELAYR_UNBOUND_QUOTE =
+  'Relayr did not bind every quoted transaction to a unique ID. Nothing was paid.'
+const RELAYR_QUOTE_UNRETURNED =
+  'Relayr did not return the quoted transactions. Nothing was paid.'
+const RELAYR_NO_PROOF =
+  'This saved Relayr bundle lacks exact destination proof. Keep it pending and verify the original transactions; do not pay again.'
+const RELAYR_NOT_IDENTIFIED =
+  'Relayr has not identified every exact destination transaction. Keep checking the original bundle; do not pay again.'
+const RELAYR_UNBOUND_STATUS =
+  "Relayr's status names a transaction this quote did not bind. Keep the original bundle pending; do not pay again."
+const RELAYR_MISMATCHED_CALL =
+  "Relayr's destination call does not match the signed request. Keep the original bundle pending; do not pay again."
+const RELAYR_SHARED_HASH =
+  'Relayr reported one destination transaction for two signed calls. Keep the original bundle pending; do not pay again.'
+
+function uuidOf(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const uuid = value.toLowerCase()
+  return RELAYR_UUID_RE.test(uuid) ? uuid : null
+}
+
+/** A uint256 given as decimal or 0x-hex digits, a safe integer or a bigint. */
+function uint256(value: unknown): bigint | null {
+  let parsed: bigint
+  if (typeof value === 'bigint') parsed = value
+  else if (typeof value === 'number' && Number.isSafeInteger(value)) parsed = BigInt(value)
+  else if (typeof value === 'string' && /^(?:0x[0-9a-f]+|\d+)$/iu.test(value)) parsed = BigInt(value)
+  else return null
+  return parsed >= 0n && parsed <= RELAYR_MAX_UINT256 ? parsed : null
+}
+
+function isHexBytes(value: unknown): value is Hex {
+  return typeof value === 'string' && /^0x(?:[0-9a-f]{2})*$/iu.test(value)
+}
+
+function isAddressLike(value: unknown): value is Address {
+  return typeof value === 'string' && isAddress(value, { strict: false })
+}
+
+type ReadEntry = { chain: number; target: Address; data: Hex; value: bigint }
+
+function readEntry(entry: unknown): ReadEntry | null {
+  if (!entry || typeof entry !== 'object') return null
+  const { chain, target, data, value } = entry as Record<string, unknown>
+  const amount = uint256(value)
+  return typeof chain === 'number' && Number.isSafeInteger(chain) && chain > 0 &&
+    isAddressLike(target) && isHexBytes(data) && amount !== null
+    ? { chain, target, data, value: amount }
+    : null
+}
+
+/**
+ * Whether a record's request is the posted call: the same chain, target,
+ * calldata and value, and the same virtual nonce (always when `nonce` is
+ * 'required', else only when both carry one). Relayr echoes U256 values in
+ * hex, so values compare as numbers.
+ */
+function isRequestFor(request: unknown, entry: RelayrEntry, nonce: 'required' | 'when-present'): boolean {
+  const read = readEntry(request)
+  const expected = readEntry(entry)
+  if (!read || !expected) return false
+  const quoted = (request as { virtual_nonce?: unknown }).virtual_nonce
+  return read.chain === expected.chain &&
+    read.target.toLowerCase() === expected.target.toLowerCase() &&
+    read.data.toLowerCase() === expected.data.toLowerCase() &&
+    read.value === expected.value &&
+    (nonce === 'required'
+      ? quoted === entry.virtual_nonce
+      : typeof quoted !== 'number' || typeof entry.virtual_nonce !== 'number' || quoted === entry.virtual_nonce)
+}
+
+/** Relayr's records for exactly this bundle, each with the request it carries. */
+async function relayrBundleRecords(bundleUuid: string): Promise<RelayrTransactionRecord[]> {
+  let body: { bundle_uuid?: unknown; transactions?: unknown } | null
+  try {
+    const response = await relayrFetch(
+      `${RELAYR_API}/v1/bundle/${bundleUuid}`,
+      undefined,
+      RELAYR_STATUS_REQUEST_TIMEOUT_MS,
+    )
+    if (!response.ok) throw new Error(`Relayr HTTP ${response.status}`)
+    body = await response.json()
+  } catch (cause) {
+    throw new Error(RELAYR_QUOTE_UNRETURNED, { cause })
+  }
+  if (!body || uuidOf(body.bundle_uuid) !== bundleUuid || !Array.isArray(body.transactions)) {
+    throw new Error(RELAYR_QUOTE_UNRETURNED)
+  }
+  return body.transactions
+}
+
 export async function relayrPostBundle(
   transactions: RelayrEntry[],
 ): Promise<RelayrQuote> {
@@ -447,8 +544,8 @@ export async function relayrPostBundle(
     tx_uuids?: unknown
     txn_uuids?: unknown
   }
-  const bundleUuid = String(body.bundle_uuid ?? '').toLowerCase()
-  if (!RELAYR_UUID_RE.test(bundleUuid)) {
+  const bundleUuid = uuidOf(body.bundle_uuid)
+  if (!bundleUuid) {
     throw new Error('Relayr returned no valid bundle ID. Nothing was paid.')
   }
   const currentIds = Array.isArray(body.tx_uuids) ? body.tx_uuids : null
@@ -460,26 +557,43 @@ export async function relayrPostBundle(
   ) {
     throw new Error('Relayr returned conflicting transaction IDs. Nothing was paid.')
   }
-  const rawIds = currentIds ?? legacyIds
-  const txUuids = Array.isArray(rawIds)
-    ? rawIds.map(value => String(value).toLowerCase())
-    : []
+  const txUuids = (currentIds ?? legacyIds ?? []).map(uuidOf)
   if (
     txUuids.length !== ordered.length ||
-    txUuids.some(uuid => !RELAYR_UUID_RE.test(uuid)) ||
+    txUuids.some(uuid => uuid === null) ||
     new Set(txUuids).size !== ordered.length ||
     !Array.isArray(body.payment_info)
   ) {
-    throw new Error(
-      'Relayr did not bind every quoted transaction to a unique ID. Nothing was paid.',
-    )
+    throw new Error(RELAYR_UNBOUND_QUOTE)
   }
+  const quotedIds = new Set(txUuids)
+  let records: RelayrTransactionRecord[] = Array.isArray(body.transactions) ? body.transactions : []
+  if (records.length !== ordered.length || records.some(record => uuidOf(record?.tx_uuid) === null || !record?.request)) {
+    records = await relayrBundleRecords(bundleUuid)
+  }
+  // Every record carries one of the quoted IDs, once. With every posted
+  // transaction bound to its own record below, the records are then exactly
+  // the quoted IDs.
+  const recordIds = records.map(record => uuidOf(record?.tx_uuid))
+  if (
+    recordIds.some(uuid => uuid === null || !quotedIds.has(uuid)) ||
+    new Set(recordIds).size !== records.length
+  ) {
+    throw new Error(RELAYR_UNBOUND_QUOTE)
+  }
+  // Relayr lists a bundle's transactions out of request order, so each posted
+  // transaction takes the quoted ID whose record carries its exact request.
+  const bound = ordered.map(entry => {
+    const matches = records.filter(record => isRequestFor(record?.request, entry, 'required'))
+    if (matches.length !== 1) throw new Error(RELAYR_UNBOUND_QUOTE)
+    return matches[0]
+  })
   return {
     bundle_uuid: bundleUuid,
     payment_info: body.payment_info,
-    transactions: Array.isArray(body.transactions) ? body.transactions : [],
+    transactions: bound,
     expectedTransactions: ordered.map((entry, index) => ({
-      txUuid: txUuids[index],
+      txUuid: uuidOf(bound[index].tx_uuid)!,
       chain: entry.chain,
       entry,
     })),
@@ -827,17 +941,68 @@ export async function relayrPoll(
   }
 }
 
+/** The destination transaction hash a record reports, if it is a transaction hash. */
 export function relayrDestinationHash(
   record: RelayrTransactionRecord,
 ): Hex | null {
-  return record.status?.data?.hash ?? record.status?.data?.transaction?.hash ?? null
+  const data = record?.status?.data
+  const hash = data?.hash ?? data?.transaction?.hash
+  return typeof hash === 'string' && RELAYR_HASH_RE.test(hash) ? hash : null
 }
 
 /** Relayr's live status schema nests the destination chain under request. */
 export function relayrRecordChain(
   record: RelayrTransactionRecord,
 ): number | null {
-  const chain = record.request?.chain ?? record.chain
+  const chain = record?.request?.chain ?? record?.chain
   return Number.isSafeInteger(chain) && Number(chain) > 0 ? Number(chain) : null
+}
+
+/**
+ * The record Relayr's status holds for each binding, in binding order, or why
+ * the status names none. The status names them only as a whole: its records
+ * are exactly the quote's IDs, once each; each binding has exactly one record
+ * on its chain that carries its exact request (a record without one pairs by
+ * its ID); and no two records report one hash. A hash is only a pointer, so a
+ * record without one still names its call. Receipts prove the calls.
+ */
+export function relayrDestinationRecords(
+  records: readonly RelayrTransactionRecord[],
+  bindings: readonly RelayrTransactionBinding[],
+): { records: RelayrTransactionRecord[]; refusal: string | null } {
+  const refused = (refusal: string) => ({ records: [], refusal })
+  const ids = bindings.map(binding => uuidOf(binding?.txUuid))
+  if (
+    !bindings.length ||
+    ids.some(id => id === null) ||
+    new Set(ids).size !== bindings.length ||
+    bindings.some(binding => readEntry(binding.entry)?.chain !== binding.chain)
+  ) {
+    return refused(RELAYR_NO_PROOF)
+  }
+  const quoted = new Set(ids)
+  const recordIds = records.map(record => uuidOf(record?.tx_uuid))
+  if (records.length !== bindings.length) return refused(RELAYR_NOT_IDENTIFIED)
+  if (
+    recordIds.some(id => id === null || !quoted.has(id)) ||
+    new Set(recordIds).size !== records.length
+  ) {
+    return refused(RELAYR_UNBOUND_STATUS)
+  }
+  const destinations: RelayrTransactionRecord[] = []
+  for (const [index, binding] of bindings.entries()) {
+    const matches = records.filter((record, recordIndex) =>
+      relayrRecordChain(record) === binding.chain &&
+      (record.request !== undefined && record.request !== null
+        ? isRequestFor(record.request, binding.entry, 'when-present')
+        : recordIds[recordIndex] === ids[index]))
+    if (matches.length !== 1) return refused(RELAYR_MISMATCHED_CALL)
+    destinations.push(matches[0])
+  }
+  const hashes = destinations.flatMap(record => relayrDestinationHash(record) ?? [])
+  if (new Set(hashes.map(hash => hash.toLowerCase())).size !== hashes.length) {
+    return refused(RELAYR_SHARED_HASH)
+  }
+  return { records: destinations, refusal: null }
 }
 
