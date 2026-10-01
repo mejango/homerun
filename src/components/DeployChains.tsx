@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { getAccount, getPublicClient, sendTransaction, switchChain, waitForTransactionReceipt } from '@wagmi/core'
+import { decodeFunctionData } from 'viem'
 import { erc2771ForwarderAbi, jbProjectsAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import {
@@ -136,8 +137,10 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
     const forwarded = checkRelayRequest(intent, request)
     const account = getAccount(wagmiConfig).address
     if (!account) throw new Error(CONNECT_MESSAGE)
-    // A Safe proposes rather than sends, and a Safe app cannot switch chains.
-    if (isSafeConnection(wagmiConfig)) throw new Error(SAFE_MESSAGE)
+    // A Safe proposes rather than sends, and a Safe app cannot switch chains. A
+    // WalletConnect peer read can land mid-flow, so each send checks again.
+    const ordinaryWallet = () => { if (isSafeConnection(wagmiConfig)) throw new Error(SAFE_MESSAGE) }
+    ordinaryWallet()
     const client = getPublicClient(wagmiConfig, { chainId: request.chainId as JBChainId })
     if (!client) throw new Error(NO_CLIENT_MESSAGE)
     const fee = await client.readContract({
@@ -159,6 +162,8 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
         ...setup.map(entry => ({
           chainId: request.chainId, to: entry.to, data: entry.data, value: entry.value, from: account,
           abi: SAFE_CREATE_ABI, functionName: 'createProxyWithNonce',
+          // The review shows the arguments these exact bytes carry.
+          args: decodeFunctionData({ abi: SAFE_CREATE_ABI, data: entry.data }).args,
           contractName: 'SafeProxyFactory',
           label: `Create this project’s multisig on ${displayChainName(request.chainId)}`,
         })),
@@ -171,6 +176,7 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
       ],
     }))
     for (const entry of setup) {
+      ordinaryWallet()
       const setupHash = await fromWallet(() => sendTransaction(wagmiConfig, {
         account, chainId: request.chainId as JBChainId, to: entry.to, data: entry.data, value: entry.value,
       }))
@@ -179,6 +185,7 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
     }
     // The forwarder's own overhead sits on top of the gas the forwarded call is
     // capped at, so the wallet estimates what this transaction costs.
+    ordinaryWallet()
     const transactionHash = await fromWallet(() => sendTransaction(wagmiConfig, {
       account, chainId: request.chainId as JBChainId,
       to: request.to, data: request.data, value: request.value,

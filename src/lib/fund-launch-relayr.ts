@@ -490,7 +490,10 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         confirmLabel: 'Continue to wallet',
         calls: authorizations.flatMap(item => [
           ...multisigDeploymentCalls(current.input.multisigs ?? []).map(call => ({ chainId: item.chainId, to: call.target, data: call.callData, value: call.value,
-            abi: SAFE_CREATE_ABI, functionName: 'createProxyWithNonce', label: 'Create project multisig', contractName: 'Safe Proxy Factory' })),
+            abi: SAFE_CREATE_ABI, functionName: 'createProxyWithNonce',
+            // The review shows the arguments these exact bytes carry.
+            args: decodeFunctionData({ abi: SAFE_CREATE_ABI, data: call.callData }).args,
+            label: 'Create project multisig', contractName: 'Safe Proxy Factory' })),
           ...item.prepared.review.calls,
         ]),
         authorization: { type: 'EIP-712 launch authorizations', requests: authorizations.map(item => item.prepared.review.authorization) },
