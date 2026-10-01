@@ -72,7 +72,7 @@ export const SAFE_L1_L2_SINGLETON_PAIRS = [
   ],
 ] as const satisfies readonly (readonly [Address, Address])[]
 
-export const safeToL2SetupAbi = [
+const safeToL2SetupAbi = [
   {
     type: 'function',
     name: 'setupToL2',
@@ -134,7 +134,7 @@ export function initializerUsesSafeToL2Setup(initializer: Hex): boolean {
   }
 }
 
-export const safeSetupAbi = [
+const safeSetupAbi = [
   {
     type: 'function',
     name: 'setup',
@@ -168,6 +168,8 @@ type SafeAuthorityIdentity = {
   threshold: number
   ownersAreEoas: boolean
   hasModules: boolean
+  /** Enabled modules, or null when there are too many to snapshot. */
+  modules: Address[] | null
   proxyCodeHash: Hex
   singleton: Address
   singletonCodeHash: Hex
@@ -496,6 +498,9 @@ export async function readAuthorityIdentity(
     ownersAreEoas,
     hasModules:
       modules.length > 0 || !isAddressEqual(next, SAFE_MODULES_SENTINEL),
+    modules: isAddressEqual(next, SAFE_MODULES_SENTINEL)
+      ? modules.map(getAddress)
+      : null,
     proxyCodeHash,
     singleton,
     singletonCodeHash: keccak256(singletonCode),
