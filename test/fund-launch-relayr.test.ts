@@ -73,6 +73,10 @@ function paymentFor(chain: number, deadline = NOW + 600): RelayrPayment {
 }
 
 function hashFor(chainId: number): Hex { return `0x${chainId.toString(16).padStart(64, '0')}` }
+/** A status record as Relayr lists it: the posted request echoed back, with U256 values in hex. */
+function recordFor(entry: RelayrEntry, index: number, status?: RelayrTransactionRecord['status']): RelayrTransactionRecord {
+  return { tx_uuid: `tx-${index}`, request: { ...entry, value: `0x${BigInt(entry.value).toString(16)}`, virtual_nonce: 0 }, status }
+}
 function makeClient(chainId: number) {
   return {
     getCode: vi.fn(async ({ address }: { address: Address }) => address === ACCOUNT ? '0x' : '0x6000'),
@@ -139,8 +143,8 @@ beforeEach(() => {
     entries = signed
     quote = { bundle_uuid: '00000000-0000-0000-0000-000000000001',
       payment_info: offeredPaymentChains.map(chain => paymentFor(chain)),
-      expectedTransactions: signed.map((entry, i) => ({ txUuid: `tx-${i}`, chain: entry.chain, entry })) }
-    records = signed.map((entry, i) => ({ tx_uuid: `tx-${i}`, status: { state: 'Confirmed', data: { hash: hashFor(entry.chain) } } }))
+      expectedTransactions: signed.map((entry, i) => ({ txUuid: `tx-${i}`, chain: entry.chain, entry: { ...entry, virtual_nonce: 0 } })) }
+    records = signed.map((entry, i) => recordFor(entry, i, { state: 'Confirmed', data: { hash: hashFor(entry.chain) } }))
     return quote
   })
   m.pay.mockImplementation(async (_payment, _account, _uuid, destinationChainIds, submitted, reverify, sending) => {
@@ -371,7 +375,7 @@ describe('relayed launch execution and recovery', () => {
     expect(saved.transport).toBe('relayr')
     expect(saved.relayr).toMatchObject({ paymentChainId: 84532, paymentHash: HASH })
     expect(saved.relayr?.signed.map(item => item.chainId)).toEqual(TESTNETS)
-    records = entries.map((entry, i) => ({ tx_uuid: `tx-${i}`, status: { data: { hash: hashFor(entry.chain) } } })).reverse()
+    records = entries.map((entry, i) => recordFor(entry, i, { data: { hash: hashFor(entry.chain) } })).reverse()
     await run(saved)
     expect(m.forward).toHaveBeenCalledTimes(4)
     expect(m.quote).toHaveBeenCalledTimes(1)
@@ -416,7 +420,7 @@ describe('relayed launch execution and recovery', () => {
   it('recovers a submitted bundle without fresh signatures, quote, or payment', async () => {
     m.poll.mockImplementationOnce(async () => { records = []; throw new Error('offline') })
     await expect(run()).rejects.toThrow('unfinished')
-    records = entries.map((entry, i) => ({ tx_uuid: `tx-${i}`, status: { data: { hash: hashFor(entry.chain) } } }))
+    records = entries.map((entry, i) => recordFor(entry, i, { data: { hash: hashFor(entry.chain) } }))
     m.pending.mockImplementation(() => { throw new Error('An unrelated authorization ledger is unreadable') })
     await run()
     expect(m.forward).toHaveBeenCalledTimes(2)
@@ -425,9 +429,86 @@ describe('relayed launch execution and recovery', () => {
     expect(m.funding).toHaveBeenCalledTimes(1)
   })
 
+  it('launches against a Relayr that lists transaction IDs out of request order', async () => {
+    const actual = await vi.importActual<typeof import('@/lib/relayr')>('@/lib/relayr')
+    const id = (index: number) => `00000000-0000-4000-8000-${(index + 1).toString().padStart(12, '0')}`
+    let posted: RelayrEntry[] = []
+    let paid = false
+    const listed = () => posted.map((_, index) => posted.length - 1 - index)
+    const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } })
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/v1/bundle/prepaid')) {
+        posted = JSON.parse(String(init?.body)).transactions
+        return json({ bundle_uuid: BUNDLE, payment_info: offeredPaymentChains.map(chain => paymentFor(chain)), tx_uuids: listed().map(id) })
+      }
+      if (url.endsWith(`/v1/bundle/${BUNDLE}`)) {
+        return json({ bundle_uuid: BUNDLE, transactions: listed().map(index => ({ tx_uuid: id(index),
+          request: { ...posted[index], value: `0x${BigInt(posted[index].value).toString(16)}` },
+          status: paid ? { state: 'success', data: { hash: hashFor(posted[index].chain) } } : null })) })
+      }
+      throw new Error(`Unexpected Relayr request: ${url}`)
+    }))
+    m.quote.mockImplementation(async (signed: RelayrEntry[]) => { entries = signed; return actual.relayrPostBundle(signed) })
+    m.poll.mockImplementation(actual.relayrPoll)
+    const pay = m.pay.getMockImplementation()!
+    m.pay.mockImplementation(async (...args: unknown[]) => { paid = true; return pay(...args) })
+    await run()
+    expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'confirmed', hash: hashFor(1), projectId: '101' }, 10: { phase: 'confirmed', hash: hashFor(10), projectId: '110' } })
+    expect(loadLaunchSession()?.relayr?.quote?.expectedTransactions?.map(({ chain, txUuid }) => [chain, txUuid])).toEqual([[1, id(0)], [10, id(1)]])
+    expect(m.pay).toHaveBeenCalledTimes(1)
+  })
+
+  describe('a launch saved with each chain holding the other chain\'s transaction ID', () => {
+    async function savedPaidAndUnresolved() {
+      m.poll.mockImplementationOnce(async () => { records = []; throw new Error('offline') })
+      await expect(run()).rejects.toThrow('unfinished')
+      const saved = loadLaunchSession()!
+      const [first, second] = saved.relayr!.quote!.expectedTransactions!
+      saved.relayr!.quote!.expectedTransactions = [{ ...first, txUuid: second.txUuid }, { ...second, txUuid: first.txUuid }]
+      saveLaunchSession(saved)
+      records = entries.map((entry, i) => recordFor(entry, i, { state: 'success', data: { hash: hashFor(entry.chain) } })).reverse()
+      return saved
+    }
+    const confirmed = { 1: { phase: 'confirmed', hash: hashFor(1), projectId: '101' }, 10: { phase: 'confirmed', hash: hashFor(10), projectId: '110' } }
+
+    it('confirms each chain from the record that carries its call, without paying or signing again', async () => {
+      const saved = await savedPaidAndUnresolved()
+      await run(saved)
+      expect(loadLaunchSession()?.statuses).toMatchObject(confirmed)
+      expect(m.forward).toHaveBeenCalledTimes(2)
+      expect(m.quote).toHaveBeenCalledTimes(1)
+      expect(m.pay).toHaveBeenCalledTimes(1)
+    })
+
+    it('replaces the other chain\'s hash that was saved while it stayed unresolved', async () => {
+      const saved = await savedPaidAndUnresolved()
+      saved.statuses[1] = { phase: 'unresolved', hash: hashFor(10), error: 'Relayr destination transaction does not match the signed launch.' }
+      saved.statuses[10] = { phase: 'unresolved', hash: hashFor(1), error: 'Relayr destination transaction does not match the signed launch.' }
+      saveLaunchSession(saved)
+      await run(saved)
+      expect(loadLaunchSession()?.statuses).toMatchObject(confirmed)
+      expect(m.pay).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  it.each([
+    ['whose request is not the signed call', (record: RelayrTransactionRecord) => ({ ...record, request: { ...record.request!, data: '0xdeadbeef' as Hex } })],
+    ['that the bundle never quoted', (record: RelayrTransactionRecord) => ({ ...record, tx_uuid: 'tx-elsewhere' })],
+  ])('reads no hash from a record %s', async (_name, change) => {
+    m.poll.mockImplementation(async (_uuid, _count, update) => {
+      const changed = records.map(record => record.request?.chain === 10 ? change(record) : record)
+      update(changed); return changed
+    })
+    await expect(run()).rejects.toThrow('unfinished')
+    expect(loadLaunchSession()?.statuses[1].phase).toBe('confirmed')
+    expect(loadLaunchSession()?.statuses[10].phase).toBe('unresolved')
+    expect(loadLaunchSession()?.statuses[10].hash).toBeUndefined()
+    expect(clients.get(10)!.getTransaction).not.toHaveBeenCalled()
+  })
+
   it('never treats provider-only success or failure as a completed launch or permission to pay again', async () => {
     m.poll.mockImplementation(async (_uuid, _count, update) => {
-      update([{ tx_uuid: 'tx-0', status: { state: 'Confirmed' } }, { tx_uuid: 'tx-1', status: { state: 'Failed' } }])
+      update([recordFor(entries[0], 0, { state: 'Confirmed' }), recordFor(entries[1], 1, { state: 'Failed' })])
       throw new Error('provider claims failed')
     })
     await expect(run()).rejects.toThrow('unfinished')

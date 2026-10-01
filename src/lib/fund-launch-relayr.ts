@@ -35,6 +35,7 @@ import {
   relayrPaymentLabel,
   relayrPoll,
   relayrPostBundle,
+  relayrRecordsFor,
   type RelayrEntry,
   type RelayrQuote,
   type RelayrTransactionRecord,
@@ -274,6 +275,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     /** Receipts are accepted only for the exact signed outer call on its bound chain. */
     const reconcile = async (): Promise<boolean> => {
       const bindings = requireQuoteBindings()
+      const quotedIds = new Set(bindings.map(item => item.txUuid.toLowerCase()))
       const original = journal!
       let allDone = true
       let allRemainingRetryable = true
@@ -286,11 +288,15 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
             binding.entry.data !== signed.entry.data || binding.entry.value !== signed.entry.value) {
           throw new Error('The saved launch quote does not match its signed destination.')
         }
-        // A record's chain/request is provider input. Only the quote's bound UUID identifies its destination.
-        const matching = original.records.filter(record => record.tx_uuid === binding.txUuid)
+        // Records are provider input: the destination is the record, among this bundle's quoted IDs, that
+        // echoes the signed call. Its hash is only a pointer; the receipt is the proof.
+        const matching = relayrRecordsFor(original.records, binding, quotedIds)
         if (matching.length > 1) throw new Error('Relayr returned conflicting destination records.')
-        const hash = current.statuses[signed.chainId]?.hash ??
-          (matching[0] ? relayrDestinationHash(matching[0]) : null)
+        // A confirmed chain keeps its verified hash. Any other chain follows the hash its record reports now,
+        // and keeps the last hash it saw while the record reports none.
+        const saved = current.statuses[signed.chainId]
+        const reported = matching[0] ? relayrDestinationHash(matching[0]) : null
+        const hash = saved?.phase === 'confirmed' ? saved.hash : reported ?? saved?.hash
         if (hash) {
           try {
             const [tx, receipt] = await Promise.all([
