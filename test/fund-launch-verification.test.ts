@@ -152,7 +152,7 @@ describe('FUND launch confirmation', () => {
     const f = fixture({ safe: true, linked: true })
     expect(await verifyFundLaunch(f.client, f.request, f.input, f.receipt, true)).toBe(7n)
     f.receipt.logs.pop()
-    await expect(verifyFundLaunch(f.client, f.request, f.input, f.receipt, true)).rejects.toThrow(/expected Safe/)
+    await expect(verifyFundLaunch(f.client, f.request, f.input, f.receipt, true)).rejects.toThrow('has no ExecutionSuccess or ExecutionFailure from Safe')
   })
   describe('Safe execution events', () => {
     const PROPOSAL = `0x${'ef'.repeat(32)}` as Hex
@@ -169,7 +169,7 @@ describe('FUND launch confirmation', () => {
     })
     it('reads a Safe 1.4.1 ExecutionFailure as a failed launch that can be retried', async () => {
       const f = safeFixture(safeExecutionLog(owner, PROPOSAL, { failed: true }))
-      await expect(verifyFundLaunch(f.client, f.request, f.input, f.receipt, true)).rejects.toThrow(/expected Safe/)
+      await expect(verifyFundLaunch(f.client, f.request, f.input, f.receipt, true)).rejects.toThrow('its call failed (ExecutionFailure)')
       expect(fundLaunchFailed(f.receipt, f.input, true, PROPOSAL)).toBe(true)
       await expect(verifyFailedFundLaunch(f.client, f.request, f.input, f.receipt, true, PROPOSAL)).resolves.toBeUndefined()
       // Without the proposal it names, a successful receipt proves no failure.

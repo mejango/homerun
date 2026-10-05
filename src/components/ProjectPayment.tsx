@@ -173,7 +173,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       const reverify = async () => { guard(); const checked = await verify(address, latestBlock); guard(); latestBlock = checked.blockNumber; return checked }
       const waitForApproval = async (action: PaymentTx, request: TxRequest) => {
         guard()
-        const hash = await action.send(request, { simulationBlockNumber: latestBlock, reverify })
+        const hash = await action.send(request, { reviewedAccount: address, simulationBlockNumber: latestBlock, reverify })
         if (!hash) throw new Error('Approval was cancelled. Nothing further was sent.')
         if (action.isSafe) { setStatus('Approval proposed to Safe. Execute it there, then continue the payment.'); return false }
         setStatus('Confirming approval onchain…')
@@ -227,6 +227,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       const route = swap ? 'Uniswap AMM' : 'Juicebox payment terminal'
       setStatus(`Review and execute the ${route} payment.`); setStage('pay')
       await tx.send({ ...request, label: `Pay ${formatUnits(count, context.decimals)} ${context.symbol} through ${route}; minimum ${formatUnits(latest.minimumTokenCount, 18)} ${tokenLabel}` }, {
+        reviewedAccount: address,
         simulationBlockNumber: latestBlock === undefined ? undefined : checked.blockNumber,
         reviewNotice: noTokens ? `You receive no ${tokenLabel} for this payment. This project allocates 100% of new tokens to its reserved recipients.` : [swap ? 'This route buys existing tokens on Uniswap. It does not add the payment to the project treasury or issue reserved tokens.' : null, latest.minimumTokenCount < minimum ? `The quote decreased. Your protected minimum is now ${formatUnits(latest.minimumTokenCount, 18)} ${tokenLabel}.` : null].filter(Boolean).join(' ') || undefined,
         reverify: async () => {

@@ -223,6 +223,8 @@ describe('global INCOME launch flow', () => {
     await ready(); await click('Review Base deployment')
     expect(marked).toBe(true)
     expect(pending()).toBeNull()
+    // Sent as the FUND owner the deployment was prepared for.
+    expect(runtime.send.mock.calls[0][1].reviewedAccount).toBe(runtime.account)
   })
 
   it('rejects changed encoded request or fee before recording a write', async () => {

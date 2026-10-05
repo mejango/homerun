@@ -60,7 +60,8 @@ export function IncomeReservedTokens({ state, client }: { state: IncomeProjectSt
       const recipients = snapshot.splits.map(split => `${formatUnits(splitAmount(snapshot, split.percent), 18)} INCOME (${split.percent / 10_000_000}% of reserves) to ${recipient(split)}`).join('; ')
       const leftover = snapshot.pending - snapshot.splits.reduce((sum, split) => sum + splitAmount(snapshot, split.percent), 0n)
       await tx.send({ ...buildSendIncomeReservedTokensTx(state.chainId, state.projectId), label: `Distribute pending reserved INCOME (currently ${formatUnits(snapshot.pending, 18)})` }, {
-        reviewNotice: `${recipients}${leftover > 0n ? `${recipients ? '; ' : ''}${formatUnits(leftover, 18)} INCOME remainder to project owner ${snapshot.owner}` : ''}. This permissionless call spends only gas and distributes all reserves using the recipients active when it executes. The amount or ruleset can change before mining or Safe execution. Distributor funding does not immediately make holder rewards collectible. A failed hook can burn its unconsumed tokens.`,
+        reviewedAccount: address,
+        reviewNotice: `${recipients}${leftover > 0n ? `${recipients ? '; ' : ''}${formatUnits(leftover, 18)} INCOME remainder to project owner ${snapshot.owner}` : ''}. This permissionless call spends only gas and distributes all reserves using the recipients active when it executes. A changed amount or ruleset can’t be confirmed here. Distributor funding does not immediately make holder rewards collectible. A failed hook can burn its unconsumed tokens.`,
         reverify: async () => { assertSameIncomeReservedTokens(snapshot, await readIncomeReservedTokens(client, { chainId: state.chainId, projectId: state.projectId })) },
         beforeWrite: () => { setIntent({ snapshot, account: address }) },
       })
@@ -85,11 +86,7 @@ export function IncomeReservedTokens({ state, client }: { state: IncomeProjectSt
     <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={!address || busy || query.isError || !snapshot || snapshot.pending <= 0n} onClick={() => void submit()}>{preparing ? 'Preparing…' : txPhaseLabel(tx.phase, { idle: 'Review distribution', pending: 'Confirming onchain…' })}</button>
     {error && <p className="mt-4 text-sm text-red-800" role="alert">{error}</p>}
     <div className="mt-4 break-words text-sm" role="status" aria-live="polite">
-      {tx.safeProposalHash ? <p>Proposed to Safe. Execution and onchain confirmation are still required.</p> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? verified.data ? <>
-        <p>Distribution confirmed: {formatUnits(verified.data.tokenCount, 18)} INCOME processed.</p>
-        {verified.data.hookFailures > 0 && <p role="alert">{verified.data.hookFailures} reward hook calls failed. Unconsumed ERC-20 tokens are burned by the controller; this receipt does not confirm reward delivery.</p>}
-        {verified.data.projectFallbacks > 0 && <p role="alert">{verified.data.projectFallbacks} project payments failed and used their configured fallback recipients.</p>}
-      </> : verified.isError ? <p role="alert">The transaction was mined, but its distribution could not be verified. {message(verified.error)} <button type="button" className="underline" onClick={() => void verified.refetch()}>Retry verification</button></p> : <p>Transaction mined. Verifying the distribution…</p> : null}
+      {tx.safeProposalHash ? <p>Proposed to Safe. Execution and onchain confirmation are still required.</p> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? verified.data ? <p>Distribution confirmed: {formatUnits(verified.data.tokenCount, 18)} INCOME processed.</p> : verified.isError ? <p role="alert">The transaction was mined, but its distribution could not be verified. {message(verified.error)} <button type="button" className="underline" onClick={() => void verified.refetch()}>Retry verification</button></p> : <p>Transaction mined. Verifying the distribution…</p> : null}
       {tx.error && <p className="text-red-800">{tx.error}</p>}
       {tx.hash && !tx.safeProposalHash && <a className="underline" href={explorerTxUrl(state.chainId, tx.hash) ?? undefined} target="_blank" rel="noreferrer">View transaction</a>}
     </div>

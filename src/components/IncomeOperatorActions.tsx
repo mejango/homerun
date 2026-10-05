@@ -65,6 +65,7 @@ export function IncomeOperatorActions({ state, client }: { state: IncomeProjectS
       const target = request.args[2][0].splits[stage.operatorIndex!].beneficiary
       const otherStages = fresh.stages.filter(item => item.rulesetId !== stage.rulesetId && item.operatorIndex !== null && !isAddressEqual(item.splits[item.operatorIndex].beneficiary, target)).length
       await tx.send({ ...request, label: `Change ${stage.isCurrent ? 'current' : 'upcoming'} INCOME stage Operator` }, {
+        reviewedAccount: address,
         reviewNotice: `On ${displayChainName(state.chainId)}, stage ${stage.rulesetId} will pay its Operator INCOME split to ${target} instead of ${previous}. Split percentages and all other recipients stay as currently configured. Owner authority stays with the current Owner. ${stage.isCurrent ? 'This also changes where pending reserved INCOME is distributed after execution.' : `This stage starts ${new Date(Number(stage.start) * 1_000).toLocaleString()}.`} ${otherStages ? `${otherStages} other stage${otherStages === 1 ? '' : 's'} still require${otherStages === 1 ? 's' : ''} a separate reviewed transaction to use the same Operator.` : 'This is the last remaining stage for this Operator on this chain.'}`,
         reverify: async () => {
           const latest = await readIncomeOperatorSnapshot(client, { chainId: state.chainId, projectId: state.projectId, account: address })

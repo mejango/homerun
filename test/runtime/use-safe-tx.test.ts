@@ -59,6 +59,8 @@ import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const BOB = '0x2222222222222222222222222222222222222222' as Address
+/** Every request below was built for, and reviewed by, Alice. */
+const reviewedByAlice = { reviewedAccount: ALICE }
 const HASH = `0x${'ab'.repeat(32)}` as const
 const EXECUTION_HASH = `0x${'cd'.repeat(32)}` as const
 const EXECUTION_FAILURE = toEventSelector('ExecutionFailure(bytes32,uint256)')
@@ -116,7 +118,7 @@ describe('useSafeTx', () => {
       let result: Awaited<ReturnType<SafeTxValue['send']>> = 'unset' as never
 
       await act(async () => {
-        result = await hook.ref.current!.send(request)
+        result = await hook.ref.current!.send(request, reviewedByAlice)
       })
 
       expect(result).toBeNull()
@@ -134,7 +136,7 @@ describe('useSafeTx', () => {
   it('requests the transaction without a redundant switch when already on its chain', async () => {
     mocks.getAccount.mockImplementation(() => ({ address: ALICE, chainId: 10 }))
     const hook = await renderHook()
-    await act(async () => { await hook.ref.current!.send(request) })
+    await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
     expect(mocks.switchChain).not.toHaveBeenCalled()
     expect(mocks.writeContract).toHaveBeenCalledOnce()
     await act(async () => hook.renderer.unmount())
@@ -145,7 +147,7 @@ describe('useSafeTx', () => {
     let result: Awaited<ReturnType<SafeTxValue['send']>> = null
 
     await act(async () => {
-      result = await hook.ref.current!.send(request)
+      result = await hook.ref.current!.send(request, reviewedByAlice)
     })
 
     expect(result).toBe(HASH)
@@ -176,7 +178,7 @@ describe('useSafeTx', () => {
     const hook = await renderHook()
 
     await act(async () => {
-      await hook.ref.current!.send(request, { simulationBlockNumber: 12_345n })
+      await hook.ref.current!.send(request, { ...reviewedByAlice, simulationBlockNumber: 12_345n })
     })
 
     expect(mocks.publicClient.simulateContract).toHaveBeenCalledWith(
@@ -188,7 +190,7 @@ describe('useSafeTx', () => {
     const hook = await renderHook()
 
     await act(async () => {
-      await hook.ref.current!.send(request, { reviewedInParent: true })
+      await hook.ref.current!.send(request, { ...reviewedByAlice, reviewedInParent: true })
     })
 
     expect(mocks.requestReview).not.toHaveBeenCalled()
@@ -206,7 +208,7 @@ describe('useSafeTx', () => {
     const onWriteRejected = vi.fn()
 
     await act(async () => {
-      await expect(hook.ref.current!.send(request, { beforeWrite, onWriteRejected })).resolves.toBeNull()
+      await expect(hook.ref.current!.send(request, { ...reviewedByAlice, beforeWrite, onWriteRejected })).resolves.toBeNull()
     })
 
     expect(hook.ref.current!.phase).toBe('idle')
@@ -227,7 +229,7 @@ describe('useSafeTx', () => {
     const onWriteRejected = vi.fn()
     mocks.writeContract.mockRejectedValueOnce(new UserRejectedRequestError(new Error('Rejected in wallet')))
     await act(async () => {
-      await expect(hook.ref.current!.send(request, { beforeWrite, onWriteRejected })).resolves.toBeNull()
+      await expect(hook.ref.current!.send(request, { ...reviewedByAlice, beforeWrite, onWriteRejected })).resolves.toBeNull()
     })
     expect(beforeWrite).toHaveBeenCalledOnce()
     expect(onWriteRejected).toHaveBeenCalledOnce()
@@ -238,6 +240,7 @@ describe('useSafeTx', () => {
     const hook = await renderHook()
     await act(async () => {
       await expect(hook.ref.current!.send(request, {
+        ...reviewedByAlice,
         beforeWrite: () => { throw new Error('Recovery storage unavailable') },
       })).resolves.toBeNull()
     })
@@ -253,15 +256,72 @@ describe('useSafeTx', () => {
     const hook = await renderHook()
 
     await act(async () => {
-      const first = hook.ref.current!.send(request)
+      const first = hook.ref.current!.send(request, reviewedByAlice)
       await Promise.resolve()
-      await expect(hook.ref.current!.send(request)).resolves.toBeNull()
+      await expect(hook.ref.current!.send(request, reviewedByAlice)).resolves.toBeNull()
       finishReview(false)
       await first
     })
 
     expect(mocks.requestReview).toHaveBeenCalledTimes(1)
     expect(hook.ref.current!.phase).toBe('idle')
+  })
+
+  it.each([
+    ['its own review', {}],
+    ['a review its parent showed', { reviewedInParent: true }],
+  ])(
+    'refuses, before %s opens, a request reviewed for another account',
+    async (_, options) => {
+      mocks.account = BOB
+      const beforeWrite = vi.fn()
+      const hook = await renderHook()
+
+      await act(async () => {
+        await expect(
+          hook.ref.current!.send(request, { ...options, reviewedAccount: ALICE, beforeWrite }),
+        ).resolves.toBeNull()
+      })
+
+      expect(hook.ref.current).toMatchObject({
+        phase: 'error',
+        busy: false,
+        error: 'The connected account changed. Review again.',
+      })
+      expect(mocks.requestReview).not.toHaveBeenCalled()
+      expect(mocks.switchChain).not.toHaveBeenCalled()
+      expect(beforeWrite).not.toHaveBeenCalled()
+      expect(mocks.publicClient.simulateContract).not.toHaveBeenCalled()
+      expect(mocks.writeContract).not.toHaveBeenCalled()
+    },
+  )
+
+  it('refuses a request whose reviewed account was switched away while its review was open', async () => {
+    mocks.requestReview.mockImplementationOnce(async () => {
+      mocks.account = BOB
+      return true
+    })
+    const hook = await renderHook()
+
+    await act(async () => {
+      await hook.ref.current!.send(request, { reviewedAccount: ALICE })
+    })
+
+    expect(hook.ref.current!.error).toBe('The connected account changed. Review again.')
+    expect(mocks.publicClient.simulateContract).not.toHaveBeenCalled()
+    expect(mocks.writeContract).not.toHaveBeenCalled()
+  })
+
+  it('reviews, simulates and sends as the account the request was reviewed for', async () => {
+    const hook = await renderHook()
+
+    await act(async () => {
+      await hook.ref.current!.send(request, { reviewedAccount: ALICE })
+    })
+
+    expect(mocks.requestReview).toHaveBeenCalledWith({ ...request, account: ALICE }, { label: 'Transfer' })
+    expect(mocks.publicClient.simulateContract).toHaveBeenCalledWith(expect.objectContaining({ account: ALICE }))
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 
   it('fails before simulation when switching changes the account', async () => {
@@ -271,7 +331,7 @@ describe('useSafeTx', () => {
     const hook = await renderHook()
 
     await act(async () => {
-      await hook.ref.current!.send(request)
+      await hook.ref.current!.send(request, reviewedByAlice)
     })
 
     expect(hook.ref.current).toMatchObject({ phase: 'error', busy: false })
@@ -288,7 +348,7 @@ describe('useSafeTx', () => {
     const hook = await renderHook()
 
     await act(async () => {
-      await hook.ref.current!.send(request)
+      await hook.ref.current!.send(request, reviewedByAlice)
     })
 
     expect(hook.ref.current!.error).toMatch(/account changed/i)
@@ -298,7 +358,7 @@ describe('useSafeTx', () => {
   it('keeps a receipt RPC error pending and prevents a duplicate send', async () => {
     const hook = await renderHook()
     await act(async () => {
-      await hook.ref.current!.send(request)
+      await hook.ref.current!.send(request, reviewedByAlice)
     })
 
     mocks.receipt = { data: undefined, isError: true }
@@ -313,7 +373,7 @@ describe('useSafeTx', () => {
     })
     expect(hook.ref.current!.error).toMatch(/do not submit it again/i)
     await act(async () => {
-      await expect(hook.ref.current!.send(request)).resolves.toBeNull()
+      await expect(hook.ref.current!.send(request, reviewedByAlice)).resolves.toBeNull()
     })
     expect(mocks.requestReview).toHaveBeenCalledTimes(1)
   })
@@ -326,7 +386,7 @@ describe('useSafeTx', () => {
     async (status, phase, error) => {
       const hook = await renderHook()
       await act(async () => {
-        await hook.ref.current!.send(request)
+        await hook.ref.current!.send(request, reviewedByAlice)
       })
 
       mocks.receipt = { data: { status, transactionHash: HASH }, isError: false }
@@ -342,13 +402,13 @@ describe('useSafeTx', () => {
 
   it('does not confirm a new action using the previous successful receipt', async () => {
     const hook = await renderHook()
-    await act(async () => { await hook.ref.current!.send(request) })
+    await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
     mocks.receipt = { data: { status: 'success', transactionHash: HASH }, isError: false }
     await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
     expect(hook.ref.current!.phase).toBe('success')
 
     mocks.writeContract.mockResolvedValueOnce(EXECUTION_HASH)
-    await act(async () => { await hook.ref.current!.send(request) })
+    await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
     expect(hook.ref.current).toMatchObject({
       phase: 'pending', busy: true, hash: EXECUTION_HASH, receipt: null,
     })
@@ -371,7 +431,7 @@ describe('useSafeTx', () => {
       } as typeof mocks.publicClient
       const hook = await renderHook()
       await act(async () => {
-        await hook.ref.current!.send(request)
+        await hook.ref.current!.send(request, reviewedByAlice)
       })
       expect(hook.ref.current).toMatchObject({ phase: 'pending', busy: true })
 
@@ -397,7 +457,7 @@ describe('useSafeTx', () => {
     const hook = await renderHook()
 
     await act(async () => {
-      await hook.ref.current!.send(request)
+      await hook.ref.current!.send(request, reviewedByAlice)
     })
     expect(hook.ref.current).toMatchObject({
       phase: 'error',
@@ -417,7 +477,7 @@ describe('useSafeTx', () => {
     const hook = await renderHook()
 
     await act(async () => {
-      await hook.ref.current!.send(request)
+      await hook.ref.current!.send(request, reviewedByAlice)
     })
 
     expect(mocks.requestReview).toHaveBeenCalledWith(
@@ -458,7 +518,7 @@ describe('useSafeTx', () => {
     const hook = await renderHook()
 
     await act(async () => {
-      await hook.ref.current!.send(request)
+      await hook.ref.current!.send(request, reviewedByAlice)
       await Promise.resolve()
       await Promise.resolve()
     })
@@ -469,7 +529,7 @@ describe('useSafeTx', () => {
       confirmationUncertain: true,
     })
     expect(hook.ref.current!.error).toContain('Safe service unavailable')
-    await act(async () => { expect(await hook.ref.current!.send(request)).toBeNull() })
+    await act(async () => { expect(await hook.ref.current!.send(request, reviewedByAlice)).toBeNull() })
     expect(mocks.writeContract).toHaveBeenCalledTimes(1)
   })
 
@@ -477,7 +537,7 @@ describe('useSafeTx', () => {
     mocks.centerWallet = true
     const hook = await renderHook()
     let result: Awaited<ReturnType<SafeTxValue['send']>> = 'unset' as never
-    await act(async () => { result = await hook.ref.current!.send(request) })
+    await act(async () => { result = await hook.ref.current!.send(request, reviewedByAlice) })
     expect(result).toBeNull()
     expect(hook.ref.current).toMatchObject({
       phase: 'error',
@@ -490,7 +550,7 @@ describe('useSafeTx', () => {
   it('names the chain the wallet could not switch to', async () => {
     mocks.switchChain.mockRejectedValueOnce(new Error('User rejected the switch'))
     const hook = await renderHook()
-    await act(async () => { await hook.ref.current!.send(request) })
+    await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
     expect(hook.ref.current).toMatchObject({
       phase: 'error',
       error: 'Switch your wallet to Optimism to continue.',
@@ -513,7 +573,7 @@ describe('useSafeTx', () => {
       const hook = await renderHook()
       const onBeforeWriteAborted = vi.fn()
       let result: Awaited<ReturnType<SafeTxValue['send']>> = 'unset' as never
-      await act(async () => { result = await hook.ref.current!.send(request, { onBeforeWriteAborted }) })
+      await act(async () => { result = await hook.ref.current!.send(request, { ...reviewedByAlice, onBeforeWriteAborted }) })
       expect(result).toBeNull()
       expect(hook.ref.current).toMatchObject({
         phase: 'error',
@@ -532,6 +592,7 @@ describe('useSafeTx', () => {
     let result: Awaited<ReturnType<SafeTxValue['send']>> = 'unset' as never
     await act(async () => {
       result = await hook.ref.current!.send(request, {
+        ...reviewedByAlice,
         beforeWrite: () => {
           events.push('marked')
           // A WalletConnect peer read lands between the marker and the write.
@@ -568,7 +629,7 @@ describe('useSafeTx', () => {
       return HASH
     })
     const hook = await renderHook()
-    await act(async () => { await hook.ref.current!.send(request) })
+    await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
     expect(mocks.writeContract).toHaveBeenCalledWith(expect.objectContaining({ gas: 100_000n }))
     expect(hook.ref.current).toMatchObject({ phase: 'pending', hash: HASH, safeProposalHash: null })
     expect(mocks.waitForSafeExecutionHash).not.toHaveBeenCalled()
@@ -585,7 +646,7 @@ describe('useSafeTx', () => {
     const onBeforeWriteAborted = vi.fn()
     const hook = await renderHook()
     await act(async () => {
-      await hook.ref.current!.send(request, { beforeWrite, onWriteRejected, onBeforeWriteAborted })
+      await hook.ref.current!.send(request, { ...reviewedByAlice, beforeWrite, onWriteRejected, onBeforeWriteAborted })
     })
     expect(order).toEqual(['beforeWrite', 'write', 'rejected'])
     expect(onBeforeWriteAborted).not.toHaveBeenCalled()
@@ -593,7 +654,7 @@ describe('useSafeTx', () => {
     // An account change after the intent was persisted aborts it before the wallet.
     beforeWrite.mockImplementationOnce(() => { mocks.account = BOB })
     await act(async () => {
-      await hook.ref.current!.send(request, { beforeWrite, onWriteRejected, onBeforeWriteAborted })
+      await hook.ref.current!.send(request, { ...reviewedByAlice, beforeWrite, onWriteRejected, onBeforeWriteAborted })
     })
     expect(onBeforeWriteAborted).toHaveBeenCalledOnce()
     expect(mocks.writeContract).toHaveBeenCalledOnce()
@@ -622,7 +683,7 @@ describe('useSafeTx', () => {
       mocks.waitForSafeExecutionHash.mockResolvedValueOnce(executionHash)
       const hook = await renderHook()
       await act(async () => {
-        await hook.ref.current!.send(request)
+        await hook.ref.current!.send(request, reviewedByAlice)
         await Promise.resolve()
         await Promise.resolve()
       })
@@ -649,7 +710,7 @@ describe('useSafeTx', () => {
     mocks.safeConnection = true
     const hook = await renderHook()
     await act(async () => {
-      await hook.ref.current!.send(request)
+      await hook.ref.current!.send(request, reviewedByAlice)
       await Promise.resolve()
       await Promise.resolve()
     })
@@ -677,7 +738,7 @@ describe('useSafeTx', () => {
     )
     const hook = await renderHook()
     await act(async () => {
-      await hook.ref.current!.send(request)
+      await hook.ref.current!.send(request, reviewedByAlice)
       await Promise.resolve()
       await Promise.resolve()
     })

@@ -218,7 +218,7 @@ describe('INCOME Operator receipt confirmation', () => {
       await expect(verify(safeExecutionLog(OWNER, PROPOSAL))).resolves.toEqual({ rulesetId: 90n, recipient: RECIPIENT })
     })
     it('refuses a Safe 1.4.1 ExecutionFailure', async () => {
-      await expect(verify(safeExecutionLog(OWNER, PROPOSAL, { failed: true }))).rejects.toThrow('successful execution by the Safe')
+      await expect(verify(safeExecutionLog(OWNER, PROPOSAL, { failed: true }))).rejects.toThrow('its call failed (ExecutionFailure)')
     })
     it('accepts a Safe 1.3 ExecutionSuccess, whose txHash is in data', async () => {
       await expect(verify(safeExecutionLog(OWNER, PROPOSAL, { version: '1.3' }))).resolves.toEqual({ rulesetId: 90n, recipient: RECIPIENT })

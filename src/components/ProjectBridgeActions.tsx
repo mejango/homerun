@@ -133,7 +133,7 @@ function useBridgeTransaction(chainId: JBChainId) {
     checked.current = null;
     setVerified(null);
     setVerificationError(null);
-    setActive({ request, account: address, safe: tx.isSafe });
+    setActive({ request, account: options.reviewedAccount, safe: tx.isSafe });
     let attemptedWrite = false;
     try {
       await tx.send(request, {
@@ -511,6 +511,7 @@ function BridgePreparation<State extends BridgeProjectState>({
             label: `Approve ${formatUnits(count, 18)} ${adapter.tokenLabel} for the verified bridge`,
           },
           {
+            reviewedAccount: address,
             reverify: async () => {
               const latest = await adapter.readRoute(
                 clientFor,
@@ -548,6 +549,7 @@ function BridgePreparation<State extends BridgeProjectState>({
           label: `Prepare ${formatUnits(count, 18)} ${adapter.tokenLabel} for ${displayChainName(fresh.destination.chainId)}`,
         },
         {
+          reviewedAccount: address,
           reviewNotice: `Beneficiary: ${beneficiary}. At least ${formatUnits(minimum, fresh.sourceContext.decimals)} ${fresh.sourceContext.symbol} of treasury backing moves with your ${adapter.tokenLabel}. Relay and destination claim are separate transactions.`,
           simulationBlockNumber:
             minimumBlock === undefined ? undefined : fresh.source.blockNumber,
@@ -876,6 +878,7 @@ function BridgeMovements<State extends BridgeProjectState>({
             label: `Relay ${adapter.tokenLabel} to ${displayChainName(fresh.destination.chainId)}`,
           },
           {
+            reviewedAccount: address,
             reviewNotice: `This relays the current batch for this backing token. Maximum transaction value: ${formatUnits(value, 18)} ETH. Destination delivery and claims follow separately.`,
             reverify: async () => {
               const latest = await find();
@@ -900,6 +903,7 @@ function BridgeMovements<State extends BridgeProjectState>({
             label: `Claim ${formatUnits(current.leaf.projectTokenCount, 18)} ${adapter.tokenLabel} on ${displayChainName(fresh.destination.chainId)}`,
           },
           {
+            reviewedAccount: address,
             reverify: async () => {
               const latest = await find();
               const prepared = buildProjectBridgeClaim(fresh, latest);

@@ -1,7 +1,7 @@
 'use client'
 
 import { bundleMultisigLaunch, unbundleMultisigLaunch, checkCreateMultisigs, multisigReview, multisigDeploymentCalls, SAFE_CREATE_ABI, verifyMultisigLaunchSimulation } from './create-multisig'
-import { isEip7702DelegatedEoaRuntime } from './cross-chain-authority'
+import { isEip7702DelegatedEoaRuntime } from '@bananapus/nana-sdk-core/safe'
 
 
 import {

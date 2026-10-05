@@ -7,6 +7,7 @@ import {
   permit2TypedData,
   type Permit2SignatureAuthorization,
 } from '@bananapus/nana-sdk-core/v6/permit2'
+import { assertReviewedAccountConnected } from '@/lib/contract-write'
 import { requireTransactionReview } from '@/lib/transaction-review'
 import { assertNoViewAs } from '@/lib/viewAs'
 import type { Address } from 'viem'
@@ -27,6 +28,7 @@ export function useReviewedPermit2Signature(options?: {
       expectedAccount: Address
     }) => {
       assertNoViewAs()
+      assertReviewedAccountConnected(expectedAccount, getAccount(config).address)
       const typedData = permit2TypedData(authorization)
       if (!options?.reviewedInParent) {
         await requireTransactionReview({
@@ -38,12 +40,7 @@ export function useReviewedPermit2Signature(options?: {
       }
       assertNoViewAs()
       let current = getAccount(config)
-      if (
-        !current.address ||
-        current.address.toLowerCase() !== expectedAccount.toLowerCase()
-      ) {
-        throw new Error('Connected account changed. Review the payment again.')
-      }
+      assertReviewedAccountConnected(expectedAccount, current.address)
       if (current.chainId !== authorization.chainId) {
         await switchChainAsync({ chainId: authorization.chainId })
       }

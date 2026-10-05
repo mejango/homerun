@@ -1,8 +1,8 @@
 import { jbSuckerV6Abi, type JBClaim } from '@bananapus/nana-sdk-core/v6'
+import { requireSafeExecutionSuccess, SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 import { decodeEventLog, decodeFunctionData, encodeFunctionData, erc20Abi, isAddressEqual, parseAbi, type Address, type PublicClient, type TransactionReceipt } from 'viem'
 import type { FundTransaction } from './fund-contracts'
 
-const safeAbi = parseAbi(['function execTransaction(address to,uint256 value,bytes data,uint8 operation,uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,address gasToken,address refundReceiver,bytes signatures) returns (bool success)'])
 // IJBSucker.sol events omitted by the SDK's deliberately small write ABI.
 const receiptEvents = parseAbi([
   'event RootToRemote(bytes32 indexed root,address indexed token,uint256 index,uint64 nonce,address caller)',
@@ -24,10 +24,13 @@ export async function verifyFundBridgeReceipt(client: PublicClient, request: Fun
   } else {
     if (!tx.to || !isAddressEqual(tx.to, account)) throw new Error('The expected Safe did not execute this transaction.')
     let decoded
-    try { decoded = decodeFunctionData({ abi: safeAbi, data: tx.input }) }
+    try { decoded = decodeFunctionData({ abi: SAFE_EXEC_ABI, data: tx.input }) }
     catch { throw new Error('This Safe execution format cannot be verified here. Check the execution in Safe.') }
+    if (decoded.functionName !== 'execTransaction') throw new Error('The Safe executed a different bridge payload.')
     const [to, value, innerData, operation] = decoded.args
     if (!isAddressEqual(to, request.address) || value !== (request.value ?? 0n) || innerData.toLowerCase() !== data.toLowerCase() || operation !== 0) throw new Error('The Safe executed a different bridge payload.')
+    // This transaction is the Safe's one execTransaction, so the receipt must hold its one ExecutionSuccess.
+    requireSafeExecutionSuccess(receipt, account, receipt.transactionHash)
   }
   if (request.functionName === 'approve') {
     const [spender, amount] = request.args as readonly [Address, bigint]

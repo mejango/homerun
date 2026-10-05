@@ -34,7 +34,7 @@ export function InitialIncomeMint({ chainId, fundProjectId, incomeProjectId, man
   }, [cache, chainId, fundProjectId, incomeProjectId, tx.phase, tx.receipt])
   const blocked = !client || !address || !state || query.isError || query.isPlaceholderData || state.pending === 0n || !state.started || preparing || tx.busy || tx.phase === 'review'
   async function mint() {
-    if (blocked || !client || !state) return
+    if (blocked || !client || !state || !address) return
     setPreparing(true); setError(null)
     try {
       const reverify = async () => {
@@ -42,7 +42,9 @@ export function InitialIncomeMint({ chainId, fundProjectId, incomeProjectId, man
         if (latest.stageId !== state.stageId || latest.pending !== state.pending || !latest.started) throw new Error('The initial allocation was already minted or its stage has not started. Refresh before continuing.')
         if (latest.owner !== state.owner) throw new Error('The FUND owner changed. Refresh to review the new recipient.')
       }
+      // Permissionless: the recipient is the FUND owner, not the sender.
       await tx.send({ ...buildInitialIncomeMint(state), label: `Mint ${formatUnits(state.pending, 18)} initial INCOME to the FUND owner ${state.owner}` }, {
+        reviewedAccount: address,
         reviewNotice: 'This mints the initial allocation recorded at launch to whoever owns the FUND when it executes; the owner settles it to the snapshot holders per the published allocation. Anyone can send it; the tokens never go to the sender, and it runs once.',
         reverify,
       })

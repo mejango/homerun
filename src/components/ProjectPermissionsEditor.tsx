@@ -35,7 +35,7 @@ export function ProjectPermissionsEditor({ chainId, projectId, client, unavailab
   const busy = preparing || tx.busy
 
   async function submit(reviewed: ProjectAuthorityState, selected: number[], rootConfirmed: boolean) {
-    if (!client || !address || busy || !tx.ready) return
+    if (!client || !address || !reviewed.account || busy || !tx.ready) return
     setPreparing(true); setError(null)
     try {
       if (selected.includes(JBPermissionIdsV6.ROOT) && !rootConfirmed) throw new Error('Confirm the ROOT permission before continuing.')
@@ -47,6 +47,8 @@ export function ProjectPermissionsEditor({ chainId, projectId, client, unavailab
       const names = permissionNames
       const unknown = unknownProjectPermissionIds(reviewed.operatorPermissions)
       await tx.send(request, {
+        // Built from the authority read when Review was pressed, for the account connected then.
+        reviewedAccount: reviewed.account,
         reviewNotice: `On ${displayChainName(chainId)}, update ${reviewed.operator} as a delegate of owner ${reviewed.owner} for project #${projectId} only. Grant: ${names(added)}. Revoke: ${names(removed)}. ${selected.includes(JBPermissionIdsV6.ROOT) ? 'ROOT authorizes every Juicebox project permission and lets this delegate grant non-ROOT permissions to others. It does not transfer the project NFT. ' : ''}${unknown.length ? `Preserve unrecognized permissions ${unknown.join(', ')}. ` : ''}Permissions inherited from the owner’s global grants remain effective and are not edited here.`,
         reverify: checked => reverifyProjectAuthority(client, reviewed, checked, latest => buildProjectPermissionsTx(latest, selected)),
       })

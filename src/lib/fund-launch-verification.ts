@@ -1,15 +1,11 @@
 import { erc2771ForwarderAbi, jbControllerAbi, jbProjectsAbi, jbDirectoryAbi, jbMultiTerminalAbi, jbFundAccessLimitsAbi, jbOmnichainDeployerAbi, jbPricesAbi, jbTokensAbi, USDC_ADDRESSES, type JBChainId } from '@bananapus/nana-sdk-core'
 import { BASE_CURRENCY_USD, tokenCurrencyId, v6Address } from '@bananapus/nana-sdk-core/v6'
-import { decodeEventLog, decodeFunctionData, encodeFunctionData, erc20Abi, isAddressEqual, parseAbi, zeroAddress, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
+import { decodeEventLog, decodeFunctionData, encodeFunctionData, erc20Abi, isAddressEqual, zeroAddress, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import { unbundleMultisigLaunch, verifyCreatedMultisigs } from './create-multisig'
-import { safeExecutionResult } from './safe-execution'
+import { requireSafeExecutionSuccess, SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
 import type { RelayrEntry } from './relayr'
 import { buildFundLaunch, initialFundRuleset, type FundLaunchInput, type FundTransaction } from './fund-contracts'
 import { homerunAllowlistHookAbi, homerunDeployerAbi, registeredAllowlistHook } from './income-contracts'
-
-const safeExecutionAbi = parseAbi([
-  'function execTransaction(address to,uint256 value,bytes data,uint8 operation,uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,address gasToken,address refundReceiver,bytes signatures) returns (bool success)',
-])
 
 export async function checkLaunchDeployment(client: PublicClient, request: FundTransaction): Promise<void> {
   if (await client.getChainId() !== request.chainId) throw new Error('RPC returned the wrong chain.')
@@ -53,14 +49,14 @@ async function verifyMinedCall(client: PublicClient, request: FundTransaction, i
   }
   if (!tx.to || !isAddressEqual(tx.to, input.sender)) throw new Error('This transaction was not executed by the Safe that prepared the deployment.')
   let decoded
-  try { decoded = decodeFunctionData({ abi: safeExecutionAbi, data: tx.input }) }
+  try { decoded = decodeFunctionData({ abi: SAFE_EXEC_ABI, data: tx.input }) }
   catch { throw new Error('This Safe execution format cannot be verified here. Keep the launch record and verify the execution in Safe.') }
   if (decoded.functionName !== 'execTransaction') throw new Error('Unsupported Safe execution method.')
   const [to, value, innerData, operation] = decoded.args
   if (!isAddressEqual(to, request.address) || value !== (request.value ?? 0n) || innerData.toLowerCase() !== data.toLowerCase() || operation !== 0) throw new Error('The Safe executed a different deployment payload.')
   if (!requireSafeSuccess) return
   // This transaction is the Safe's one execTransaction, so the receipt must hold its one ExecutionSuccess.
-  if (safeExecutionResult(receipt, input.sender, receipt.transactionHash).status !== 'success') throw new Error('The receipt does not prove successful execution by the expected Safe.')
+  requireSafeExecutionSuccess(receipt, input.sender, receipt.transactionHash)
 }
 
 /**

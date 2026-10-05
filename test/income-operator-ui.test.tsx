@@ -91,6 +91,7 @@ describe('Owner changes the INCOME Operator', () => {
     expect(request.args).toEqual([7n, 90n, [{ groupId: 1n, splits: [{ ...snapshot().stages[0].splits[0], beneficiary: NEXT }, snapshot().stages[0].splits[1]] }]])
     expect(options.reviewNotice).toContain('1 other stage still requires a separate reviewed transaction')
     expect(options.reviewNotice).toContain('pending reserved INCOME')
+    expect(options.reviewedAccount).toBe(OWNER)
   })
   it('shows and updates the upcoming namespace after the current stage is confirmed', async () => {
     await render(); await recipient(NEXT); await submit()

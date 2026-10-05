@@ -291,6 +291,7 @@ function IncomeCashOut({ state, client, context }: { state: IncomeProjectState; 
       const prepared = await prepareHookAwareCashOut(client, { chainId: state.chainId, projectId: state.projectId, terminal: context.terminal, tokenToReclaim: context.token, cashOutCount: count, holder: address, beneficiary: address, slippageBps: 100n })
       if (prepared.route.minimumReturn <= 0n) throw new Error('No positive protected cash-out return is available.')
       await tx.send({ ...prepared.transaction, label: `Cash out ${units(count)} INCOME for at least ${units(prepared.route.minimumReturn, context.decimals)} ${context.symbol}` }, {
+        reviewedAccount: address,
         reviewNotice: prepared.route.minimumReturn < quote.data.minimumReturn ? `The quote decreased. Your new protected minimum is ${units(prepared.route.minimumReturn, context.decimals)} ${context.symbol}.` : undefined,
         reverify: async () => { const latest = await fresh(client, state, address); matchingContext(latest, context); if (!latest.cashOutsAvailable || count > latest.totalBalance) throw new Error('Cash-out conditions changed during review.') },
       })
@@ -328,7 +329,7 @@ function IncomeTokenActions({ state, client }: { state: IncomeProjectState; clie
       const base = { chainId: state.chainId, projectId: state.projectId, holder: address }
       if (action === 'burn') request = { ...buildBurnTokensTx({ ...base, tokenCount: count, memo: 'Voluntary INCOME burn' }), label: `Permanently burn ${units(count)} INCOME without receiving funds` }
       else { if (!state.tokenAddress) throw new Error('No INCOME ERC-20 is deployed.'); request = { chainId: state.chainId, address: state.tokenAddress, abi: erc20Abi, functionName: 'transfer', args: [destination, count], label: `Transfer ${units(count)} INCOME tokens to ${destination}` } }
-      await tx.send(request, { reverify: async () => {
+      await tx.send(request, { reviewedAccount: address, reverify: async () => {
         const latest = await fresh(client, state, address)
         const available = action === 'burn' ? latest.totalBalance : latest.erc20Balance
         if (count > available) throw new Error('Your INCOME balance changed.')
@@ -396,7 +397,7 @@ export function IncomeBorrow({ state, client, context }: { state: IncomeProjectS
       const permitted = await hasPermissions(client, { chainId: state.chainId, account: address, operator: loans, projectId: state.projectId, permissionIds: [REVLOANS_BURN_PERMISSION_ID], includeRoot: true, includeWildcardProjectId: true })
       if (!permitted) {
         setStage('permission')
-        const hash = await grant.send({ ...buildSetPermissionsTx({ chainId: state.chainId, account: address, operator: loans, projectId: state.projectId, permissionIds: [REVLOANS_BURN_PERMISSION_ID] }), label: 'Allow REVLoans to burn this project’s INCOME as loan collateral' }, { reverify: async () => { await fresh(client, state, address) } })
+        const hash = await grant.send({ ...buildSetPermissionsTx({ chainId: state.chainId, account: address, operator: loans, projectId: state.projectId, permissionIds: [REVLOANS_BURN_PERMISSION_ID] }), label: 'Allow REVLoans to burn this project’s INCOME as loan collateral' }, { reviewedAccount: address, reverify: async () => { await fresh(client, state, address) } })
         const block = await prerequisiteBlock(client, hash, grant.isSafe)
         if (block === null) return
         minimumBlock = block
@@ -407,6 +408,7 @@ export function IncomeBorrow({ state, client, context }: { state: IncomeProjectS
       const latestQuote = await getBorrowableAmount(client, { chainId: state.chainId, revnetId: state.projectId, collateralCount: count, decimals: BigInt(context.decimals), currency: BigInt(context.currency) })
       const minimum = protectedIncomeMinimum(latestQuote.borrowableNow)
       await tx.send({ ...buildProtectedIncomeBorrow({ chainId: state.chainId, revnetId: state.projectId, token: context.token, quotedBorrowAmount: latestQuote.borrowableNow, collateralCount: count, holder: address, beneficiary: address, prepaidFeePercent: prepaid }), label: `Borrow against ${units(count)} INCOME; minimum ${units(minimum, context.decimals)} ${context.symbol} before loan fees` }, {
+        reviewedAccount: address,
         simulationBlockNumber: minimumBlock === undefined ? undefined : latest.blockNumber,
         reviewNotice: `The prepaid source fee is ${optionLabel}. Protocol and REV fees also reduce wallet proceeds. Your INCOME becomes loan collateral; repayment is required to recover it. Unpaid loans can be liquidated after the contract’s ten-year term.`,
         reverify: async () => { const again = await fresh(client, state, address, minimumBlock); matchingContext(again, context); if (!again.cashOutsAvailable || count > again.totalBalance) throw new Error('The borrowing conditions changed during review.') },
@@ -482,7 +484,7 @@ function IncomeRepayDialog({ state, client, loanId, tx, approval, onClose }: { s
         let approved = await client.readContract({ address: current.sourceContext.token, abi: erc20Abi, functionName: 'allowance', args: [address, loansContract], blockNumber: current.blockNumber })
         if (approved < current.loan.amount + current.accruedFee) {
           setStage('approve')
-          const hash = await approval.send({ ...buildErc20ApproveRequest({ chainId: state.chainId, token: current.sourceContext.token, spender: loansContract, amount: current.repayCeiling }), label: `Approve up to ${units(current.repayCeiling, current.sourceContext.decimals)} ${current.sourceContext.symbol} to repay loan ${loanId}` }, { reverify: async () => { await readIncomeLoan(client, { chainId: state.chainId, projectId: state.projectId, loanId, account: address }) } })
+          const hash = await approval.send({ ...buildErc20ApproveRequest({ chainId: state.chainId, token: current.sourceContext.token, spender: loansContract, amount: current.repayCeiling }), label: `Approve up to ${units(current.repayCeiling, current.sourceContext.decimals)} ${current.sourceContext.symbol} to repay loan ${loanId}` }, { reviewedAccount: address, reverify: async () => { await readIncomeLoan(client, { chainId: state.chainId, projectId: state.projectId, loanId, account: address }) } })
           const block = await prerequisiteBlock(client, hash, approval.isSafe)
           if (block === null) return
           prerequisite = block
@@ -497,6 +499,7 @@ function IncomeRepayDialog({ state, client, loanId, tx, approval, onClose }: { s
       setStage('repay')
       const reviewed = current
       await tx.send({ ...buildRepayLoanTx({ chainId: state.chainId, loanId, maxRepayBorrowAmount: maximum, collateralCountToReturn: reviewed.loan.collateral, beneficiary: address, value: tokenNative ? maximum : 0n }), label: `Repay loan ${loanId}; spend at most ${units(maximum, reviewed.sourceContext.decimals)} ${reviewed.sourceContext.symbol}` }, {
+        reviewedAccount: address,
         simulationBlockNumber: prerequisite === undefined ? undefined : reviewed.blockNumber,
         reviewNotice: `Recover ${units(reviewed.loan.collateral)} INCOME. The maximum includes outstanding principal, accrued fees, and a 0.1% principal buffer. Unused funds are refunded.`,
         reverify: async () => { const latest = await readIncomeLoan(client, { chainId: state.chainId, projectId: state.projectId, loanId, account: address }); if (latest.loan.collateral !== reviewed.loan.collateral || latest.loan.amount !== reviewed.loan.amount || latest.loan.amount + latest.accruedFee > maximum) throw new Error('The loan changed or its fees exceeded the reviewed maximum. Review a fresh repayment.'); if (prerequisite !== undefined && latest.blockNumber < prerequisite) throw new Error('The RPC is behind the confirmed approval.') },
@@ -584,7 +587,7 @@ function IncomeAutoIssue({ state, client }: { state: IncomeProjectState; client:
     setPreparing(true); setError(null)
     try {
       const current = await readIncomeAutoIssuance(client, { chainId: state.chainId, projectId: state.projectId, stageId, beneficiary: target })
-      await tx.send({ ...buildAutoIssueTx({ chainId: state.chainId, revnetId: state.projectId, stageId, beneficiary: target }), label: `Materialize ${units(current.amount)} scheduled INCOME for ${target}` }, { reverify: async () => { const latest = await readIncomeAutoIssuance(client, { chainId: state.chainId, projectId: state.projectId, stageId, beneficiary: target }); if (latest.amount !== current.amount) throw new Error('This allocation changed or was already issued.') } })
+      await tx.send({ ...buildAutoIssueTx({ chainId: state.chainId, revnetId: state.projectId, stageId, beneficiary: target }), label: `Materialize ${units(current.amount)} scheduled INCOME for ${target}` }, { reviewedAccount: address, reverify: async () => { const latest = await readIncomeAutoIssuance(client, { chainId: state.chainId, projectId: state.projectId, stageId, beneficiary: target }); if (latest.amount !== current.amount) throw new Error('This allocation changed or was already issued.') } })
     } catch (reason) { setError(message(reason)) } finally { setPreparing(false) }
   }
   return <Panel title="Collect a scheduled allocation">
@@ -614,6 +617,7 @@ function IncomeRewards({ state, client }: { state: IncomeProjectState; client: P
         request = { ...buildIncomeRewardActivation(state.chainId, rewards.fundToken, address), label: 'Activate future FUND-holder rewards by self-delegating FUND voting power' }
       } else request = { ...buildIncomeRewardClaim({ chainId: state.chainId, fundToken: rewards.fundToken, incomeToken: state.tokenAddress, holder: address, collect: action === 'collect' }), label: action === 'collect' ? 'Collect vested INCOME rewards to your wallet' : 'Begin vesting eligible historical INCOME rewards' }
       await tx.send(request, {
+        reviewedAccount: address,
         reviewNotice: action === 'activate' ? 'FUND stays transferable in your wallet. Only ERC-20 voting power at future reward snapshots participates. Existing delegation to someone else is replaced; rewards already snapshotted are unchanged.' : undefined,
         reverify: async () => { const latest = await fresh(client, state, address); if (!latest.rewards || !isAddressEqual(latest.rewards.distributor, rewards.distributor) || !isAddressEqual(latest.rewards.fundToken, rewards.fundToken)) throw new Error('The reward configuration changed during review.') },
       })

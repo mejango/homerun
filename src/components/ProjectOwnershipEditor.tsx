@@ -42,6 +42,7 @@ export function ProjectOwnershipEditor({ chainId, projectId, client, unavailable
       if (fresh.identity !== state.identity) throw new Error('Project ownership or permissions changed. Review the refreshed information before continuing.')
       const request = buildProjectOwnershipTx(fresh, recipient)
       await tx.send(request, {
+        reviewedAccount: address,
         reviewNotice: fresh.kind === 'revnet'
           ? `On ${displayChainName(chainId)}, move INCOME control from ${address} to ${recipient.trim()}. This clears the current control wallet’s project permission slot and replaces the new wallet’s slot with this revnet’s configured Operator permissions. The project NFT remains with REVOwner. Economic Operator split recipients are configured separately under Owners → Splits.`
           : `On ${displayChainName(chainId)}, transfer project #${projectId} ownership from ${fresh.owner} to ${recipient.trim()}. The recipient controls this project’s owner powers. Existing permissions are scoped to the previous owner and will no longer authorize this project; any permissions the recipient previously granted for this project become effective. Other chains require separate ownership transfers. Token balances and economic split recipients are unchanged.`,

@@ -86,6 +86,7 @@ describe('INCOME loans like Juicebox Money', () => {
     ])
     await act(async () => button('Confirm & borrow').click()); await settle()
     expect(runtime.sends.map(sent => sent.request.functionName)).toEqual(['setPermissionsFor', 'borrowFrom'])
+    expect(runtime.sends.map(sent => sent.options.reviewedAccount)).toEqual([WALLET, WALLET])
     const borrow = runtime.sends[1]
     expect(borrow.request.args).toContain(50n)
     expect(borrow.options.simulationBlockNumber).toBe(200n)

@@ -1,9 +1,10 @@
 import { jbControllerAbi, jbSplitsAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { buildSetSplitGroupsTx, RESERVED_TOKEN_SPLIT_GROUP_ID, v6Address } from '@bananapus/nana-sdk-core/v6'
-import { decodeEventLog, decodeFunctionData, encodeFunctionData, getAddress, isAddress, isAddressEqual, parseAbi, zeroAddress, type Address, type ContractFunctionReturnType, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
+import { decodeEventLog, decodeFunctionData, encodeFunctionData, getAddress, isAddress, isAddressEqual, zeroAddress, type Address, type ContractFunctionReturnType, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import { readIncomeProjectState } from './income-state'
 import { isOperatorWallet, OPERATOR_BURN_ADDRESS } from './project-operator-profile'
-import { safeExecutionResult } from './safe-execution'
+import { sameProjectSplits } from './project-splits-edit'
+import { requireSafeExecutionSuccess, SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 
 type Splits = ContractFunctionReturnType<typeof jbSplitsAbi, 'view', 'splitsOf'>
 export type IncomeOperatorStage = { rulesetId: bigint; start: bigint; isCurrent: boolean; splits: Splits; operatorIndex: number | null }
@@ -12,16 +13,7 @@ export type IncomeOperatorSnapshot = {
   controller: Address; owner: Address; account: Address | null; isOwner: boolean
   currentRulesetId: bigint; stages: IncomeOperatorStage[]
 }
-const safeAbi = parseAbi([
-  'function execTransaction(address to,uint256 value,bytes data,uint8 operation,uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,address gasToken,address refundReceiver,bytes signatures) returns (bool success)',
-])
 
-function sameSplits(a: Splits, b: Splits) {
-  return a.length === b.length && a.every((split, index) => {
-    const other = b[index]
-    return split.percent === other.percent && split.projectId === other.projectId && split.preferAddToBalance === other.preferAddToBalance && split.lockedUntil === other.lockedUntil && isAddressEqual(split.beneficiary, other.beneficiary) && isAddressEqual(split.hook, other.hook)
-  })
-}
 
 /** Authority and every remaining split namespace come from one canonical block, never project metadata. */
 export async function readIncomeOperatorSnapshot(client: PublicClient, input: { chainId: JBChainId; projectId: bigint; account?: Address }): Promise<IncomeOperatorSnapshot> {
@@ -74,7 +66,7 @@ export function assertSameIncomeOperatorSnapshot(reviewed: IncomeOperatorSnapsho
   if (latest.blockNumber === reviewed.blockNumber && latest.blockHash.toLowerCase() !== reviewed.blockHash.toLowerCase()) throw new Error('The chain changed during review. Review the refreshed INCOME Operator change.')
   if (!latest.isOwner || !latest.account || !reviewed.account || !isAddressEqual(latest.account, reviewed.account) || latest.blockNumber < reviewed.blockNumber || latest.chainId !== reviewed.chainId || latest.projectId !== reviewed.projectId || !isAddressEqual(latest.controller, reviewed.controller) || !isAddressEqual(latest.owner, reviewed.owner) || latest.currentRulesetId !== reviewed.currentRulesetId || latest.stages.length !== reviewed.stages.length || latest.stages.some((stage, index) => {
     const previous = reviewed.stages[index]
-    return stage.rulesetId !== previous.rulesetId || stage.start !== previous.start || stage.isCurrent !== previous.isCurrent || stage.operatorIndex !== previous.operatorIndex || !sameSplits(stage.splits, previous.splits)
+    return stage.rulesetId !== previous.rulesetId || stage.start !== previous.start || stage.isCurrent !== previous.isCurrent || stage.operatorIndex !== previous.operatorIndex || !sameProjectSplits(stage.splits, previous.splits)
   })) throw new Error('The Owner, INCOME schedule, or split recipients changed during review. Review the refreshed change.')
 }
 
@@ -88,15 +80,16 @@ export async function verifyIncomeOperatorReceipt(client: PublicClient, snapshot
   if (block.hash?.toLowerCase() !== receipt.blockHash.toLowerCase() || transaction.hash.toLowerCase() !== receipt.transactionHash.toLowerCase() || transaction.blockNumber !== receipt.blockNumber || transaction.blockHash?.toLowerCase() !== receipt.blockHash.toLowerCase()) throw new Error('The INCOME Operator receipt is no longer a matching canonical execution.')
   const data = encodeFunctionData(request)
   if (transaction.to && isAddressEqual(transaction.to, account)) {
-    const decoded = decodeFunctionData({ abi: safeAbi, data: transaction.input })
+    const decoded = decodeFunctionData({ abi: SAFE_EXEC_ABI, data: transaction.input })
+    if (decoded.functionName !== 'execTransaction') throw new Error('The Safe executed a different INCOME Operator change.')
     const [to, value, innerData, operation] = decoded.args
     if (!isAddressEqual(to, request.address) || value !== 0n || innerData.toLowerCase() !== data.toLowerCase() || operation !== 0) throw new Error('The Safe executed a different INCOME Operator change.')
     // This transaction is the Safe's one execTransaction, so the receipt must hold its one ExecutionSuccess.
-    if (safeExecutionResult(receipt, account, receipt.transactionHash).status !== 'success') throw new Error('The receipt does not prove successful execution by the Safe.')
+    requireSafeExecutionSuccess(receipt, account, receipt.transactionHash)
   } else if (!transaction.to || !isAddressEqual(transaction.to, request.address) || !isAddressEqual(transaction.from, account) || transaction.value !== 0n || transaction.input.toLowerCase() !== data.toLowerCase()) throw new Error('The mined transaction differs from the reviewed INCOME Operator change.')
   const events = receipt.logs.filter(log => isAddressEqual(log.address, v6Address('JBSplits', snapshot.chainId))).flatMap(log => {
     try { return [decodeEventLog({ abi: jbSplitsAbi, eventName: 'SetSplit', data: log.data, topics: log.topics })] } catch { return [] }
   }).filter(event => event.args.projectId === snapshot.projectId && event.args.rulesetId === rulesetId && event.args.groupId === RESERVED_TOKEN_SPLIT_GROUP_ID)
-  if (events.some(event => !isAddressEqual(event.args.caller, snapshot.controller)) || !sameSplits(request.args[2][0].splits, events.map(event => event.args.split))) throw new Error('The receipt does not prove the exact INCOME Operator change and preserved split recipients.')
+  if (events.some(event => !isAddressEqual(event.args.caller, snapshot.controller)) || !sameProjectSplits(request.args[2][0].splits, events.map(event => event.args.split))) throw new Error('The receipt does not prove the exact INCOME Operator change and preserved split recipients.')
   return { rulesetId, recipient: getAddress(recipient) }
 }

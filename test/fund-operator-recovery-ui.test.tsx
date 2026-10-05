@@ -97,6 +97,7 @@ describe('linked ruleset recovery of a Safe execution', () => {
     await act(async () => button('Verify and resume queued plan')!.click())
     await act(async () => button('Review transaction 1 of 2')!.click())
     expect(runtime.send).toHaveBeenCalledOnce()
+    expect(runtime.send.mock.calls[0][1].reviewedAccount).toBe(ACCOUNT)
     expect(marked).toBe(true)
     expect(deserializeRulesetRecovery(localStorage.getItem(key)!, ROOT, ACCOUNT).submissions.has(8453)).toBe(false)
     expect(host.textContent).not.toContain('Submission started; hash not yet recorded.')

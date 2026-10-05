@@ -195,7 +195,7 @@ describe('live project metadata editor', () => {
     expect(runtime.publish).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ raw: fundMetadata() }), expect.objectContaining({ name: 'Updated garden', ownerIntroduction: 'The community owns the garden.', ownerWallet: DELEGATE, operatorWallet: OWNER }), {})
     expect(vi.mocked(reverifyProjectMetadataEdit).mock.invocationCallOrder[0]).toBeLessThan(runtime.publish.mock.invocationCallOrder[0])
     expect(runtime.publish.mock.invocationCallOrder[0]).toBeLessThan(runtime.send.mock.invocationCallOrder[0])
-    expect(runtime.send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ chainId: 8453, address: v6Address('JBController', 8453), functionName: 'setUriOf', args: [7n, 'ipfs://bafyupdated'] }), expect.objectContaining({ reverify: expect.any(Function), reviewNotice: expect.stringContaining('does not transfer ownership, change payment splits, or change contract terms') }))
+    expect(runtime.send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ chainId: 8453, address: v6Address('JBController', 8453), functionName: 'setUriOf', args: [7n, 'ipfs://bafyupdated'] }), expect.objectContaining({ reviewedAccount: OWNER, reverify: expect.any(Function), reviewNotice: expect.stringContaining('does not transfer ownership, change payment splits, or change contract terms') }))
     expect(reverifyProjectMetadataEdit).toHaveBeenCalledTimes(2)
     expect(host.textContent).not.toContain('confirmed.')
     expect(host.querySelector('[role="dialog"]')).not.toBeNull()

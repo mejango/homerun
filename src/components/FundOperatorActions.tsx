@@ -5,7 +5,7 @@ import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import { getAccount, getPublicClient } from '@wagmi/core'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
-import { decodeEventLog, decodeFunctionData, encodeFunctionData, erc20Abi, formatUnits, getAddress, isAddress, isAddressEqual, parseAbi, zeroAddress, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
+import { decodeEventLog, decodeFunctionData, encodeFunctionData, erc20Abi, formatUnits, getAddress, isAddress, isAddressEqual, zeroAddress, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import { useSafeTx, txPhaseLabel } from '@/hooks/useSafeTx'
 import { FundAssetWithdrawals, type FundAssetAllowanceConfiguration } from '@/components/FundAssetWithdrawals'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
@@ -19,7 +19,7 @@ import {
 } from '@/lib/fund-contracts'
 import { assertFundStateForWrite, readFundProjectState, readLinkedFundProjects, type FundProjectState } from '@/lib/fund-state'
 import { waitForSafeExecutionHash } from '@/lib/safe-connector'
-import { safeExecutionResult } from '@/lib/safe-execution'
+import { SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
 import { wagmiConfig } from '@/providers/Providers'
 import { readableError } from '@/lib/readable-error'
 
@@ -102,7 +102,6 @@ function rebuildPlan(plan: Pick<RulesetPlan, 'states' | 'action' | 'startsAt' | 
 export type RulesetSubmission = { hash: Hex; kind: 'transaction' | 'safe-proposal' } | { kind: 'submission-unknown' }
 type RecoveryRoot = { chainId: number; projectId: bigint }
 const MAX_RECOVERY_BYTES = 262_144
-const safeExecutionAbi = parseAbi(['function execTransaction(address to,uint256 value,bytes data,uint8 operation,uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,address gasToken,address refundReceiver,bytes signatures) returns (bool success)'])
 
 /** Store intent and hashes only. The browser never certifies execution. */
 export function serializeRulesetRecovery(plan: RulesetPlan, submissions: ReadonlyMap<number, RulesetSubmission>, root: RecoveryRoot): string {
@@ -181,9 +180,11 @@ export async function verifyRulesetRecoveryExecution(client: PublicClient, reque
   if (transaction.to && isAddressEqual(transaction.to, request.address) && isAddressEqual(transaction.from, account) && transaction.value === expectedValue && transaction.input.toLowerCase() === expectedData.toLowerCase()) return
   if (transaction.to && isAddressEqual(transaction.to, account)) {
     try {
-      const decoded = decodeFunctionData({ abi: safeExecutionAbi, data: transaction.input })
-      const [to, value, data, operation] = decoded.args
-      if (operation === 0 && isAddressEqual(to, request.address) && value === expectedValue && data.toLowerCase() === expectedData.toLowerCase()) return
+      const decoded = decodeFunctionData({ abi: SAFE_EXEC_ABI, data: transaction.input })
+      if (decoded.functionName === 'execTransaction') {
+        const [to, value, data, operation] = decoded.args
+        if (operation === 0 && isAddressEqual(to, request.address) && value === expectedValue && data.toLowerCase() === expectedData.toLowerCase()) return
+      }
     } catch { /* Unsupported execution wrapper must be reconciled explicitly. */ }
   }
   throw new Error('The recovered transaction does not execute this exact reviewed call. No remaining transaction will be offered until the plan is reconciled.')
@@ -366,6 +367,7 @@ function LinkedRulesetStep({ plan, index, completed, onConfirmed, onCancel, onSu
     try {
       await reverify()
       const hash = await tx.send({ ...request, label: `${RULESET_LABELS[plan.action]} on ${displayChainName(state.chainId)}` }, {
+        reviewedAccount: plan.account,
         reviewNotice: [`This is transaction ${index + 1} of ${plan.requests.length}. Every chain must confirm before ${new Date(plan.startsAt * 1000).toLocaleString()}. Changes are separate transactions and are not atomic.`, rulesetNotice(plan.action)].filter(Boolean).join('\n\n'),
         reverify,
         beforeWrite: () => onBeforeWrite(state.chainId),
@@ -612,10 +614,10 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
       if (rulesetUnavailable) throw new Error(rulesetUnavailable)
       if (action === 'enable-success-minting' && !purchased) throw new Error('Confirm the asset purchase before enabling success mints.')
       if ((action === 'failure-refunds' || action === 'asset-sale-refunds') && !refundAttestation) throw new Error('Confirm the refund or sale outcome before opening cash-outs.')
+      if (!address) throw new Error('Connect the verified project owner wallet.')
       const current = await fresh()
       if (!current.permissions.queueRulesets) throw new Error('This wallet does not have permission to change the project rules.')
       if (current.linkedChainIds.length > 1) {
-        if (!address) throw new Error('Connect the project owner wallet.')
         const states = await readLinkedFundProjects(chainClient, current)
         for (const peer of states) {
           assertFundStateForWrite(peer, address)
@@ -632,6 +634,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
       }
       const request = buildFundRulesetChange({ snapshots: [current.rulesetSnapshot], action, mustStartAtOrAfter: 0 }).requests[0]
       await tx.send({ ...request, label: RULESET_LABELS[action] }, {
+        reviewedAccount: address,
         reviewNotice: rulesetNotice(action),
         reverify: async () => {
           const latest = await fresh()
@@ -670,6 +673,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
       }
       const request = built.requests[0]
       await tx.send({ ...request, label: input.amount === 0n ? 'Remove the asset-purchase withdrawal allowance' : `Set a new gross purchase allowance of ${formatUnits(input.amount, selected.decimals)} ${selected.symbol}` }, {
+        reviewedAccount: address,
         reviewNotice: rulesetNotice('configure-asset-allowance'),
         reverify: async () => {
           const latest = await fresh()
@@ -702,6 +706,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
       const memo = mintKind === 'offchain-contribution' ? `Homerun: offchain contribution ${contributionReference.trim()}` : 'Homerun: owner share after successful purchase'
       const request = buildFundMint({ snapshot: current.rulesetSnapshot, beneficiary: mintRecipient, tokenCount: count, kind: mintKind, memo })
       await tx.send({ ...request, label: `Mint ${formatUnits(count, 18)} FUND to ${mintRecipient}` }, {
+        reviewedAccount: address,
         reviewNotice: mintKind === 'operator-share'
           ? linked ? `Issue exactly ${formatUnits(count, 18)} FUND to the owner on ${displayChainName(state.chainId)}. Reconcile the owner’s holdings on all linked chains, including unclaimed bridged FUND. The owner may distribute these tokens to the operator at their discretion. Homerun does not infer a global ownership percentage from incomplete bridge supply.` : `Target a ${targetShare}% FUND share for the owner after this mint, including the owner’s current FUND. The owner may distribute these tokens to the operator at their discretion. This is an owner-selected allocation, not a contract-enforced entitlement.`
           : `Record ${offchainUsd} USD contributed outside the contract. No payment enters the treasury in this transaction. Check that reference “${contributionReference.trim()}” has not already been minted; the contract does not deduplicate these references.`,
@@ -744,6 +749,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
           if (!request) throw new Error('The required token approval could not be built.')
           setApprovedIntent(returnIntent)
           await approval.send({ ...request, label: `Approve exactly ${formatUnits(returnRaw, context.decimals)} ${context.symbol} for the treasury return` }, {
+            reviewedAccount: address,
             reverify: async () => { verifyContext(await fresh()) },
           })
           return
@@ -752,6 +758,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
       setApprovalNeeded(false)
       const request = buildFundReturn({ ...terminal, amount: returnRaw, reason: returnReason, shouldReturnHeldFees: true })
       await tx.send({ ...request, label: `Return ${formatUnits(returnRaw, context.decimals)} ${context.symbol} to FUND for ${returnReason === 'asset-sale' ? 'the asset sale' : 'refunds'}` }, {
+        reviewedAccount: address,
         simulationBlockNumber: approvalBlock,
         reviewNotice: 'This adds money to the project treasury without minting FUND. It does not change cash-out rules. Opening zero-tax refunds or asset-sale cash-outs is a separate reviewed transaction.',
         reverify: async () => {
