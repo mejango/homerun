@@ -159,7 +159,7 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
         let submitting: ShopWriteSession | null = null
         await reverifyProjectShopWrite(client, captured.plan, account, index, request)
         const hash = await tx.send(request, {
-          reviewedAccount: account,
+          reviewedAccount: captured.plan.snapshot.account,
           reviewNotice: captured.restoring ? 'Cancel shop creation by restoring the shop deployer’s previous permissions for this project. No shop will be created.' : captured.plan.notice,
           reverify: async reviewed => {
             prerequisiteBlock = await verifyShopWriteProgress(client, captured)

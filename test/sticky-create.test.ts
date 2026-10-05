@@ -57,8 +57,10 @@ vi.mock("../src/lib/fund-global-snapshot", () => ({
   readFundGlobalSnapshot: vi.fn(),
 }));
 vi.mock("../src/lib/sticky-state", () => ({ readStickyProjectState: vi.fn() }));
+/** The connected account, the FUND owner unless a test switches it. */
+const connected = vi.hoisted(() => ({ address: undefined as string | undefined }));
 vi.mock("../src/hooks/useWallet", () => ({
-  useWallet: () => ({ address: OWNER }),
+  useWallet: () => ({ address: connected.address ?? OWNER }),
 }));
 const engine = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock("../src/hooks/useSafeTx", () => ({
@@ -435,6 +437,7 @@ const input = () => ({
 });
 beforeEach(() => {
   localStorage.clear();
+  connected.address = undefined;
   registry.StickyDeployer = { 1: DEPLOYER };
   registry.JBTokenDistributor = { 1: DISTRIBUTOR };
   vi.mocked(readFundProjectState).mockReset().mockResolvedValue(fundState());
@@ -991,6 +994,47 @@ describe("creation recovery and duplicate protection", () => {
     } finally {
       await act(async () => root.unmount());
       Reflect.deleteProperty(navigator, "locks");
+      localStorage.clear();
+    }
+  });
+  it("sends a prepared creation only as the account it was prepared for", async () => {
+    const { client } = clientFixture(),
+      container = document.createElement("div"),
+      root = createRoot(container);
+    const NEW_OWNER = "0x6666666666666666666666666666666666666666";
+    const view = (owner: string) =>
+      createElement(StickyCreate, {
+        state: { ...fundState(), owner: owner as Address },
+        client,
+        manifest: manifest(),
+        launchUnavailable: false,
+        onCreated: vi.fn(),
+      });
+    const click = async (label: string) => {
+      const button = [...container.querySelectorAll("button")].find(
+        (node) => node.textContent === label,
+      )!;
+      expect(button.disabled).toBe(false);
+      await act(async () => button.click());
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+    };
+    try {
+      localStorage.clear();
+      await act(async () => root.render(view(OWNER)));
+      await click("Prepare Sticky creation");
+      // The FUND moves to a new owner, who connects before the review.
+      connected.address = NEW_OWNER;
+      await act(async () => root.render(view(NEW_OWNER)));
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+      await click("Review Sticky creation");
+      expect(engine.send).toHaveBeenCalledOnce();
+      expect(engine.send.mock.calls[0][1].reviewedAccount).toBe(OWNER);
+    } finally {
+      await act(async () => root.unmount());
       localStorage.clear();
     }
   });
