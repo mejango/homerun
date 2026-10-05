@@ -25,7 +25,7 @@ The demo and live project pages share the Juicebox-style layout: a large project
 
 The demo **Fund** module shows what the payer receives and a compact ownership chart after one additional payment. INCOME previews credit only the payer’s allocation. Payment previews do not change the project’s received funding or activity history.
 
-**Owners** contains Accounts, Market, Settlement, Splits and Loans. Accounts shows your position above all owners, with both sections visible. Verified linked FUND and INCOME controls appear together. Tabs mount on first use and remain mounted, so changing tabs preserves drafts and pending receipt tracking. Hash links such as `/founderhaus#owners/accounts/all` support direct navigation and browser history.
+**Owners** contains Accounts, Settlement, Splits and Loans. Accounts shows your position above all owners, with both sections visible. Verified linked FUND and INCOME controls appear together. Tabs mount on first use and remain mounted, so changing tabs preserves drafts and pending receipt tracking. Hash links such as `/founderhaus#owners/accounts/all` support direct navigation and browser history.
 
 An **Operator** introduction follows the token representation in Overview. Create supports an operator name, introduction and optional picture; local drafts retain the profile, and published FUND metadata stores the photo on IPFS. These display fields do not grant operator permissions.
 
