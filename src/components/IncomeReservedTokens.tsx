@@ -86,11 +86,7 @@ export function IncomeReservedTokens({ state, client }: { state: IncomeProjectSt
     <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={!address || busy || query.isError || !snapshot || snapshot.pending <= 0n} onClick={() => void submit()}>{preparing ? 'Preparing…' : txPhaseLabel(tx.phase, { idle: 'Review distribution', pending: 'Confirming onchain…' })}</button>
     {error && <p className="mt-4 text-sm text-red-800" role="alert">{error}</p>}
     <div className="mt-4 break-words text-sm" role="status" aria-live="polite">
-      {tx.safeProposalHash ? <p>Proposed to Safe. Execution and onchain confirmation are still required.</p> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? verified.data ? <>
-        <p>Distribution confirmed: {formatUnits(verified.data.tokenCount, 18)} INCOME processed.</p>
-        {verified.data.hookFailures > 0 && <p role="alert">{verified.data.hookFailures} reward hook calls failed. Unconsumed ERC-20 tokens are burned by the controller; this receipt does not confirm reward delivery.</p>}
-        {verified.data.projectFallbacks > 0 && <p role="alert">{verified.data.projectFallbacks} project payments failed and used their configured fallback recipients.</p>}
-      </> : verified.isError ? <p role="alert">The transaction was mined, but its distribution could not be verified. {message(verified.error)} <button type="button" className="underline" onClick={() => void verified.refetch()}>Retry verification</button></p> : <p>Transaction mined. Verifying the distribution…</p> : null}
+      {tx.safeProposalHash ? <p>Proposed to Safe. Execution and onchain confirmation are still required.</p> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? verified.data ? <p>Distribution confirmed: {formatUnits(verified.data.tokenCount, 18)} INCOME processed.</p> : verified.isError ? <p role="alert">The transaction was mined, but its distribution could not be verified. {message(verified.error)} <button type="button" className="underline" onClick={() => void verified.refetch()}>Retry verification</button></p> : <p>Transaction mined. Verifying the distribution…</p> : null}
       {tx.error && <p className="text-red-800">{tx.error}</p>}
       {tx.hash && !tx.safeProposalHash && <a className="underline" href={explorerTxUrl(state.chainId, tx.hash) ?? undefined} target="_blank" rel="noreferrer">View transaction</a>}
     </div>

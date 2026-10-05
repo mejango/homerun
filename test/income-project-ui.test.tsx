@@ -21,7 +21,7 @@ const runtime = vi.hoisted(() => ({
   payQuote: { beneficiaryTokenCount: 0n, reservedTokenCount: 0n },
   mounted: 0, unmounted: 0, busy: false, phase: 'idle',
   reserved: undefined as IncomeReservedSnapshot | undefined, reservedError: false,
-  reservedReceipt: undefined as { tokenCount: bigint; hookFailures: number; projectFallbacks: number } | undefined,
+  reservedReceipt: undefined as { tokenCount: bigint } | undefined, reservedReceiptError: null as Error | null,
   receipt: null as TransactionReceipt | null, safeProposalHash: null as Hex | null,
   readReserved: vi.fn(), queries: vi.fn(),
   invalidateQueries: vi.fn(), send: vi.fn(), readState: vi.fn(), autoIssuance: vi.fn(),
@@ -64,7 +64,7 @@ vi.mock('@tanstack/react-query', () => ({
     : queryKey[0] === 'income-fund-binding' ? { data: runtime.discoveredFund, isError: runtime.discoveryError, refetch: vi.fn() }
     : queryKey[0] === 'project-pay' ? { data: { kind: 'pay', terminal: '0x3333333333333333333333333333333333333333', preview: runtime.payQuote, minimumTokenCount: runtime.payQuote.beneficiaryTokenCount * 99n / 100n, reservedTokenCount: runtime.payQuote.reservedTokenCount, blockNumber: 100n }, isError: false }
     : queryKey[0] === 'income-reserved' ? { data: runtime.reserved, isError: runtime.reservedError, error: new Error('RPC unavailable'), refetch: vi.fn() }
-    : queryKey[0] === 'income-reserved-receipt' ? { data: runtime.reservedReceipt, isError: false }
+    : queryKey[0] === 'income-reserved-receipt' ? { data: runtime.reservedReceipt, isError: !!runtime.reservedReceiptError, error: runtime.reservedReceiptError, refetch: vi.fn() }
       : { data: undefined, isError: false, isFetching: false }
   },
 }))
@@ -99,7 +99,7 @@ describe('INCOME transaction surfaces', () => {
     runtime.address = '0x1111111111111111111111111111111111111111'
     runtime.send.mockReset(); runtime.autoIssuance.mockReset(); runtime.readState.mockReset()
     runtime.readReserved.mockReset(); runtime.invalidateQueries.mockClear(); runtime.queries.mockClear()
-    runtime.reserved = undefined; runtime.reservedError = false; runtime.reservedReceipt = undefined
+    runtime.reserved = undefined; runtime.reservedError = false; runtime.reservedReceipt = undefined; runtime.reservedReceiptError = null
     runtime.receipt = null; runtime.safeProposalHash = null
     runtime.query = { data: state(), isError: false, isPending: false, isFetching: false, isPlaceholderData: false, refetch: vi.fn() }
     runtime.payQuote = { beneficiaryTokenCount: 1n * 10n ** 18n, reservedTokenCount: 4n * 10n ** 18n }
@@ -492,18 +492,29 @@ describe('INCOME transaction surfaces', () => {
     expect(runtime.send).not.toHaveBeenCalled()
   })
 
-  it('refreshes pending reserves and Sticky rewards but reports hook failures separately', async () => {
+  it('refreshes pending reserves and Sticky rewards once the distribution is confirmed', async () => {
     pendingReserved()
     runtime.receipt = { transactionHash: `0x${'b'.repeat(64)}`, blockNumber: 101n, status: 'success' } as TransactionReceipt
     runtime.phase = 'success'
-    runtime.reservedReceipt = { tokenCount: 9n * 10n ** 18n, hookFailures: 1, projectFallbacks: 1 }
+    runtime.reservedReceipt = { tokenCount: 9n * 10n ** 18n }
     await render()
     const reserved = section('Distribute reserved INCOME')
     expect(reserved.textContent).toContain('Distribution confirmed: 9 INCOME processed')
-    expect(reserved.textContent).toContain('does not confirm reward delivery')
-    expect(reserved.textContent).toContain('fallback recipients')
     expect(runtime.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['income-reserved', 1, '7'] })
     expect(runtime.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['sticky-rewards', 1] })
+  })
+
+  it('says what a refused distribution receipt shows, and still refreshes pending reserves', async () => {
+    pendingReserved()
+    runtime.receipt = { transactionHash: `0x${'b'.repeat(64)}`, blockNumber: 101n, status: 'success' } as TransactionReceipt
+    runtime.phase = 'success'
+    runtime.reservedReceiptError = new Error("Project 7's reserved tokens from 0x1: a recipient failed (SplitHookReverted). Keep this transaction, and do not distribute these reserved tokens again.")
+    await render()
+    const reserved = section('Distribute reserved INCOME')
+    expect(reserved.textContent).toContain('The transaction was mined, but its distribution could not be verified.')
+    expect(reserved.textContent).toContain('a recipient failed (SplitHookReverted)')
+    expect(reserved.textContent).not.toContain('Distribution confirmed')
+    expect(runtime.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['income-reserved', 1, '7'] })
   })
 
   it('never presents a Safe proposal as confirmed reserved delivery', async () => {
