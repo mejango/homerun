@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { dependencies, packages, verifyDependencies, workspace } from '../script/deploy.mjs'
@@ -13,6 +13,22 @@ import { dependencies, packages, verifyDependencies, workspace } from '../script
 const owners = { 'revnet-core-v6': 'rev-net', 'croptop-core-v6': 'mejango' }
 // The only submodule the remappings reach is forge-std in nana-core-v6.
 const submodules = { 'nana-core-v6': ['lib/forge-std'] }
+
+/**
+ * The exact versions to install in each sibling once its own install is done: the registry packages among the pins in
+ * script/deploy.mjs, keyed by sibling. `declared(sibling)` gives what the sibling's package.json asks for. A package it
+ * takes from git (@uniswap/permit2 is a GitHub dependency pinned to a commit) is not on the registry and cannot
+ * float, so the sibling's own install already fixed it.
+ */
+export function pinnedInstalls(pins, declared) {
+  const installs = new Map()
+  for (const [path, version] of Object.entries(pins)) {
+    const [sibling, name] = path.split('/node_modules/')
+    if (/^(github:|git[+:]|https?:)/.test(declared(sibling)[name] ?? '')) continue
+    installs.set(sibling, [...(installs.get(sibling) ?? []), `${name}@${version}`])
+  }
+  return installs
+}
 
 function run(command, args, cwd) {
   const result = spawnSync(command, args, { cwd, stdio: 'inherit' })
@@ -31,11 +47,20 @@ function prepareWorkspace() {
     run('git', ['checkout', '--quiet', '--detach', 'FETCH_HEAD'], directory)
     for (const path of submodules[name] ?? []) run('git', ['submodule', 'update', '--quiet', '--init', '--depth', '1', path], directory)
   }
-  // The siblings' lockfiles lag their package.json, so `npm ci` refuses them; their own CI runs `npm install`, and so
-  // does this. The packages that matter are pinned in `packages` and checked below. Scripts stay off: the contracts need
-  // the packages' files, not their install hooks.
-  for (const name of new Set(Object.keys(packages).map(path => path.split('/')[0]))) {
-    run('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund'], resolve(root, name))
+  // The siblings' lockfiles lag their package.json, so `npm ci` refuses them. Their own workflows run `npm install`
+  // (nana-core-v6's with --omit=dev) and so does this, with the dev dependencies: the remappings reach revnet-core-v6's
+  // @uniswap/v4-core, a devDependency. A plain install lets versions float with upstream publishes, so the versions
+  // pinned in `packages` are installed again, exactly, afterwards. Scripts stay off: the contracts need the packages'
+  // files, not their install hooks.
+  const install = ['--ignore-scripts', '--no-audit', '--no-fund']
+  const declared = sibling => {
+    const manifest = JSON.parse(readFileSync(resolve(root, sibling, 'package.json'), 'utf8'))
+    return { ...manifest.dependencies, ...manifest.devDependencies }
+  }
+  const pins = pinnedInstalls(packages, declared)
+  for (const name of new Set(Object.keys(packages).map(path => path.split('/node_modules/')[0]))) {
+    run('npm', ['install', ...install], resolve(root, name))
+    if (pins.has(name)) run('npm', ['install', '--no-save', ...install, ...pins.get(name)], resolve(root, name))
   }
   verifyDependencies()
   console.log(`Workspace ready in ${root}.`)
