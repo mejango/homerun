@@ -154,6 +154,7 @@ jobs:
       - name: Build the production image
         run: |
           docker build --tag homerun:ci \
+            --build-arg NEXT_PUBLIC_VERSION="$GITHUB_SHA" \
             --build-arg NEXT_PUBLIC_SITE_URL=https://homerun.example \
             --build-arg NEXT_PUBLIC_JBCENTER_URL=https://center.example \
             --build-arg NEXT_PUBLIC_BENDYSTRAW_URL=https://bendystraw.example \
@@ -161,7 +162,7 @@ jobs:
             .
       # The root filesystem is read-only. Next writes its caches under /app/.next/cache, so a
       # tmpfs owned by the node user is mounted there.
-      - name: Run the image as non-root and check readiness
+      - name: Run the image as non-root and check it serves the built revision
         run: |
           docker run --detach --name homerun-ci \
             --read-only \
@@ -171,7 +172,9 @@ jobs:
             --publish 127.0.0.1:3000:3000 \
             homerun:ci
           for _ in {1..30}; do
-            if curl --fail --silent --output /dev/null http://127.0.0.1:3000/; then
+            body="$(curl --fail --silent http://127.0.0.1:3000/api/healthz || true)"
+            if [[ "$body" == *"\"revision\":\"$GITHUB_SHA\""* ]]; then
+              curl --fail --silent --output /dev/null http://127.0.0.1:3000/
               test "$(docker inspect --format '{{.Config.User}}' homerun-ci)" = node
               exit 0
             fi
