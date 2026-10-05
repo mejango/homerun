@@ -2,6 +2,7 @@ import { jbControllerAbi, jbSplitsAbi, type JBChainId } from '@bananapus/nana-sd
 import { RESERVED_TOKEN_SPLIT_GROUP_ID, v6Address, verifyReservedDistributionReceipt } from '@bananapus/nana-sdk-core/v6'
 import { decodeFunctionData, encodeFunctionData, isAddressEqual, type Address, type ContractFunctionReturnType, type PublicClient, type TransactionReceipt } from 'viem'
 import { readIncomeProjectState, type IncomeProjectState } from './income-state'
+import { sameProjectSplits } from './project-splits-edit'
 import { requireSafeExecutionSuccess, SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 
 type ReservedSplits = ContractFunctionReturnType<typeof jbSplitsAbi, 'view', 'splitsOf'>
@@ -27,17 +28,11 @@ export async function readIncomeReservedTokens(client: PublicClient, input: { ch
   return { chainId: state.chainId, projectId: state.projectId, blockNumber: state.blockNumber, blockHash: state.blockHash, controller: state.controller, owner: state.owner, tokenAddress: state.tokenAddress, rulesetId: BigInt(state.ruleset.id), cycleNumber: BigInt(state.ruleset.cycleNumber), pending: state.pendingReservedTokens, splits }
 }
 
-function sameSplits(a: ReservedSplits, b: ReservedSplits) {
-  return a.length === b.length && a.every((split, index) => {
-    const other = b[index]
-    return split.percent === other.percent && split.projectId === other.projectId && split.preferAddToBalance === other.preferAddToBalance && split.lockedUntil === other.lockedUntil && isAddressEqual(split.beneficiary, other.beneficiary) && isAddressEqual(split.hook, other.hook)
-  })
-}
 export function assertIncomeReservedProject(snapshot: IncomeReservedSnapshot, state: IncomeProjectState) {
   if (snapshot.chainId !== state.chainId || snapshot.projectId !== state.projectId || !isAddressEqual(snapshot.controller, state.controller) || snapshot.tokenAddress?.toLowerCase() !== state.tokenAddress?.toLowerCase()) throw new Error('The INCOME project contracts changed. Refresh before distributing tokens.')
 }
 export function assertSameIncomeReservedTokens(reviewed: IncomeReservedSnapshot, latest: IncomeReservedSnapshot) {
-  if (latest.blockNumber < reviewed.blockNumber || latest.chainId !== reviewed.chainId || latest.projectId !== reviewed.projectId || !isAddressEqual(latest.controller, reviewed.controller) || !isAddressEqual(latest.owner, reviewed.owner) || latest.tokenAddress?.toLowerCase() !== reviewed.tokenAddress?.toLowerCase() || latest.rulesetId !== reviewed.rulesetId || latest.cycleNumber !== reviewed.cycleNumber || latest.pending !== reviewed.pending || !sameSplits(latest.splits, reviewed.splits)) throw new Error('The reserved INCOME amount or recipients changed during review. Review the refreshed distribution.')
+  if (latest.blockNumber < reviewed.blockNumber || latest.chainId !== reviewed.chainId || latest.projectId !== reviewed.projectId || !isAddressEqual(latest.controller, reviewed.controller) || !isAddressEqual(latest.owner, reviewed.owner) || latest.tokenAddress?.toLowerCase() !== reviewed.tokenAddress?.toLowerCase() || latest.rulesetId !== reviewed.rulesetId || latest.cycleNumber !== reviewed.cycleNumber || latest.pending !== reviewed.pending || !sameProjectSplits(latest.splits, reviewed.splits)) throw new Error('The reserved INCOME amount or recipients changed during review. Review the refreshed distribution.')
   if (latest.pending <= 0n) throw new Error('There is no reserved INCOME to distribute.')
 }
 
