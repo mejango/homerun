@@ -70,8 +70,9 @@ Foundry remappings to the existing protocol libraries. Browser commands
 `test:browser`, `test:create` and `test:a11y` use `BASE_URL` and the installed
 `PLAYWRIGHT_MODULE` against the built local app.
 
-`test:center` exercises an enabled build with fictional issuer
-`https://wallet.homerun.test` and audience `https://api.homerun.test`, manifest
+`test:center` exercises an enabled build with issuer `https://signa.center` and
+audience `https://api.signa.center` (the only https pair a build accepts; the
+suite answers for both origins), manifest
 `browser-fixture`, revision `0x` followed by 64 `1` characters, and a
 `1000000000000000` wei fee bound. Build to `.next-center-test`, serve its standalone
 output at `BASE_URL` (default `http://localhost:54064`), then run `npm run test:center`.
