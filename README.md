@@ -95,8 +95,11 @@ npm run check
 | `npm run test:browser` | Native project/demo behavior, lifecycle calculations, dialogs, local previews and mobile layouts |
 | `npm run test:create` | Native Create flow, draft persistence, review and responsive layouts |
 | `npm run test:a11y` | Automated accessibility checks across the rendered flows |
+| `npm run test:intent` | Create, publish, sponsored deployment and a first payment against a modeled Center; it starts its own servers |
+| `npm run test:center` | The Center wallet sign-in flow against an enabled production build; see [CENTER-WALLET.md](CENTER-WALLET.md) |
+| `npm run test:suites` | The five browser suites above, each with the servers it needs; `node scripts/run-browser-suites.mjs dev` runs one group (`dev`, `intent` or `center`) |
 
-Start the app before browser checks. `BASE_URL`, `PLAYWRIGHT_MODULE`, `CHROME_PATH` and `BROWSER_SCREENSHOT_DIR` override their defaults. The existing workspace Playwright installation and macOS Chrome are used by default. Foundry uses Solidity 0.8.28 and sibling workspace dependencies listed in [remappings.txt](remappings.txt). Automated accessibility checks are limited evidence, not a certification.
+Start the app before the individual browser checks, or let `npm run test:suites` start it. `BASE_URL`, `PLAYWRIGHT_MODULE`, `CHROME_PATH` and `BROWSER_SCREENSHOT_DIR` override their defaults. The individual suites use the existing workspace Playwright installation and macOS Chrome by default; `npm run test:suites` uses the Playwright installed here and its Chromium (`npx playwright install chromium`). Foundry uses Solidity 0.8.28 and sibling workspace dependencies listed in [remappings.txt](remappings.txt). Automated accessibility checks are limited evidence, not a certification.
 
 [FUND_FORK_VERIFICATION.md](docs/FUND_FORK_VERIFICATION.md) records an earlier fork run of the FUND lifecycle (29 local transactions) against the pre-deployer launch path. The current path launches through `HomerunDeployer`, which is not deployed yet; the fork script needs to deploy it locally before that run can be repeated. The production rollout is [DEPLOYMENT.md](DEPLOYMENT.md).
 

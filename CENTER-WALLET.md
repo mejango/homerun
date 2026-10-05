@@ -74,7 +74,7 @@ Foundry remappings to the existing protocol libraries. Browser commands
 audience `https://api.signa.center` (the only https pair a build accepts),
 manifest `browser-fixture`, revision `0x` followed by 64 `1` characters, and a
 `1000000000000000` wei fee bound. Build to `.next-center-test`, serve its standalone
-output at `BASE_URL` (default `http://localhost:54064`), then run `npm run test:center`.
+output at `BASE_URL` (default `http://localhost:54064`), then run `npm run test:center`; `node scripts/run-browser-suites.mjs center` does all three.
 It uses the actual app and pinned SDK with explicitly modeled Center responses to
 check chooser cancellation, the framed sign-in, URL scrubbing, a lost exchange reply, exact retry,
 original-page restoration, reload and sign-out. It writes a sanitized report and
