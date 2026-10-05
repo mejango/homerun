@@ -764,7 +764,7 @@ function TokenTerms({ p }: { p: Projection }) {
       <summary>Modeled token terms</summary>
       <p>
         Each contributed dollar receives 10,000 FUND. After purchase,
-        contributors share {percent(100 - p.operatorFundPercent)} of FUND and
+        contributors share {percent(100 - p.operatorFundPercent)} of FUND and{" "}
         {p.separateOwnerOperator ? 'the Owner holds' : 'operators hold'} {percent(p.operatorFundPercent)}. Each FUND has the same
         share of net asset-sale proceeds.
       </p>
@@ -1036,7 +1036,7 @@ function PhasePanel({
           {(phase === "refunding" || complete) && (
             <>
               <p>
-                Refunds redeem FUND proportionally. There is no cash-out tax,
+                Refunds redeem FUND proportionally. There is no cash-out tax,{" "}
                 {p.separateOwnerOperator ? 'Owner' : 'operator'} success mint or INCOME allocation. Expenses can reduce
                 recovery; protocol fees may apply. Off-chain contributions are
                 refunded off-chain.

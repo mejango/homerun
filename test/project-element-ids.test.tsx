@@ -100,3 +100,12 @@ describe.each([['the demo', false], ['a local preview', true]] as const)('the mo
     }
   })
 })
+
+describe.each([['the demo', false], ['a local preview', true]] as const)('the Stages sentences that name a role on %s', (_page, custom) => {
+  it('keep the space before the role', async () => {
+    await openEveryPanel('refunding', custom)
+    const stages = host.querySelector('[id$="-panel-stages"]')!.textContent!
+    expect(stages).toMatch(/of FUND and (operators hold|the Owner holds) \d+(\.\d+)?%/)
+    expect(stages).toMatch(/no cash-out tax, (Owner|operator) success mint/)
+  })
+})
