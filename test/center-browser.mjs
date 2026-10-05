@@ -10,7 +10,7 @@ const issuer = 'https://signa.center', audience = 'https://api.signa.center'
 const wallet = '0x1111111111111111111111111111111111111111'
 // The modeled issuer is a public https origin while the app is on localhost; Chrome's local network access
 // checks would otherwise block the frame's navigation from the one to the other, which production never has.
-const browser = await chromium.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true,
+const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true,
   args: ['--disable-features=LocalNetworkAccessChecks,LocalNetworkAccessForNavigations,PrivateNetworkAccessForNavigations'] })
 const context = await browser.newContext({ viewport: { width: 1200, height: 900 }, reducedMotion: 'reduce' })
 const page = await context.newPage(), errors = []
