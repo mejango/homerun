@@ -1,8 +1,8 @@
 import { jbControllerAbi, jbSplitsAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { RESERVED_TOKEN_SPLIT_GROUP_ID, v6Address } from '@bananapus/nana-sdk-core/v6'
-import { decodeEventLog, decodeFunctionData, encodeFunctionData, isAddressEqual, parseAbi, type Address, type ContractFunctionReturnType, type PublicClient, type TransactionReceipt } from 'viem'
+import { decodeEventLog, decodeFunctionData, encodeFunctionData, isAddressEqual, type Address, type ContractFunctionReturnType, type PublicClient, type TransactionReceipt } from 'viem'
 import { readIncomeProjectState, type IncomeProjectState } from './income-state'
-import { requireSafeExecutionSuccess } from '@bananapus/nana-sdk-core/safe-service'
+import { requireSafeExecutionSuccess, SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 
 type ReservedSplits = ContractFunctionReturnType<typeof jbSplitsAbi, 'view', 'splitsOf'>
 export type IncomeReservedSnapshot = {
@@ -10,9 +10,6 @@ export type IncomeReservedSnapshot = {
   controller: Address; owner: Address; tokenAddress: Address | null; rulesetId: bigint
   pending: bigint; splits: ReservedSplits
 }
-const safeAbi = parseAbi([
-  'function execTransaction(address to,uint256 value,bytes data,uint8 operation,uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,address gasToken,address refundReceiver,bytes signatures) returns (bool success)',
-])
 
 /** The SDK has no convenience builder for this permissionless controller call. */
 export function buildSendIncomeReservedTokensTx(chainId: JBChainId, projectId: bigint) {
@@ -53,7 +50,8 @@ export async function verifyIncomeReservedReceipt(client: PublicClient, reviewed
   if (block.hash?.toLowerCase() !== receipt.blockHash.toLowerCase() || transaction.hash.toLowerCase() !== receipt.transactionHash.toLowerCase() || transaction.blockNumber !== receipt.blockNumber || transaction.blockHash?.toLowerCase() !== receipt.blockHash.toLowerCase()) throw new Error('The reserved INCOME receipt is no longer a matching canonical execution.')
   const data = encodeFunctionData(request)
   if (transaction.to && isAddressEqual(transaction.to, account)) {
-    const decoded = decodeFunctionData({ abi: safeAbi, data: transaction.input })
+    const decoded = decodeFunctionData({ abi: SAFE_EXEC_ABI, data: transaction.input })
+    if (decoded.functionName !== 'execTransaction') throw new Error('The Safe executed a different reserved INCOME call.')
     const [to, value, innerData, operation] = decoded.args
     if (!isAddressEqual(to, request.address) || value !== 0n || innerData.toLowerCase() !== data.toLowerCase() || operation !== 0) throw new Error('The Safe executed a different reserved INCOME call.')
     // This transaction is the Safe's one execTransaction, so the receipt must hold its one ExecutionSuccess.

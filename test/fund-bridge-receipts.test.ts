@@ -3,6 +3,7 @@ import { buildBridgePrepareTx, buildBridgeClaimTx, buildToRemoteTx, jbSuckerV6Ab
 import { encodeAbiParameters, encodeEventTopics, encodeFunctionData, erc20Abi, padHex, parseAbi, zeroAddress, zeroHash, type Abi, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import { verifyFundBridgeReceipt } from '../src/lib/fund-bridge-receipts'
 import type { FundTransaction } from '../src/lib/fund-contracts'
+import { safeExecutionLog } from './support/safe-logs'
 
 const account = '0x1111111111111111111111111111111111111111' as const
 const sucker = '0x2222222222222222222222222222222222222222' as const
@@ -34,7 +35,8 @@ function fixture(kind: 'prepare' | 'send' | 'claim' | 'approve' = 'prepare', saf
   const data = encodeFunctionData(request)
   const transaction = { from: safe ? other : account, to: safe ? account : request.address, value: safe ? 0n : request.value ?? 0n,
     input: safe ? encodeFunctionData({ abi: safeAbi, functionName: 'execTransaction', args: [request.address, request.value ?? 0n, data, 0, 0n, 0n, 0n, zeroAddress, zeroAddress, '0x'] }) : data }
-  const receipt = { status: 'success', transactionHash: hash, blockHash, blockNumber: 42n, logs: [event] } as unknown as TransactionReceipt
+  // A Safe's one execTransaction logs its one execution result.
+  const receipt = { status: 'success', transactionHash: hash, blockHash, blockNumber: 42n, logs: safe ? [event, safeExecutionLog(account, hash)] : [event] } as unknown as TransactionReceipt
   const rpc = { getChainId: vi.fn(async () => 8453), getBlock: vi.fn(async () => ({ hash: blockHash })), getTransaction: vi.fn(async () => transaction), readContract: vi.fn(async () => 100n) }
   return { client: rpc as unknown as PublicClient, rpc, request, receipt, transaction }
 }
@@ -46,7 +48,7 @@ it.each([['prepare', 'prepared'], ['send', 'sent'], ['claim', 'claimed'], ['appr
 })
 it('rejects a successful outer receipt with no matching sucker effect', async () => {
   const f = fixture('claim', true)
-  f.receipt.logs = []
+  f.receipt.logs = [safeExecutionLog(account, hash)] as unknown as TransactionReceipt['logs']
   await expect(verifyFundBridgeReceipt(f.client, f.request, f.receipt, account, true)).rejects.toThrow(/exactly one matching/)
 })
 it.each(['sender', 'target', 'payload', 'value'] as const)('rejects a different mined %s', async field => {
@@ -56,6 +58,17 @@ it.each(['sender', 'target', 'payload', 'value'] as const)('rejects a different 
   if (field === 'payload') f.transaction.input = '0x'
   if (field === 'value') f.transaction.value = 1n
   await expect(verifyFundBridgeReceipt(f.client, f.request, f.receipt, account, false)).rejects.toThrow(/mined call/)
+})
+it.each(['prepare', 'send', 'claim', 'approve'] as const)('confirms a Safe %s only with the Safe’s own ExecutionSuccess', async kind => {
+  const f = fixture(kind, true)
+  await expect(verifyFundBridgeReceipt(f.client, f.request, f.receipt, account, true)).resolves.toBeDefined()
+  const [effect] = f.receipt.logs
+  f.receipt.logs = [effect]
+  await expect(verifyFundBridgeReceipt(f.client, f.request, f.receipt, account, true)).rejects.toThrow('has no ExecutionSuccess or ExecutionFailure from Safe')
+  f.receipt.logs = [effect, safeExecutionLog(account, hash, { failed: true })] as unknown as TransactionReceipt['logs']
+  await expect(verifyFundBridgeReceipt(f.client, f.request, f.receipt, account, true)).rejects.toThrow('its call failed (ExecutionFailure)')
+  f.receipt.logs = [effect, safeExecutionLog(other, hash)] as unknown as TransactionReceipt['logs']
+  await expect(verifyFundBridgeReceipt(f.client, f.request, f.receipt, account, true)).rejects.toThrow('has no ExecutionSuccess or ExecutionFailure from Safe')
 })
 it('checks direct Safe call identity and its exact successful sucker event', async () => {
   const f = fixture('prepare', true)

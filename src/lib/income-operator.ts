@@ -1,9 +1,9 @@
 import { jbControllerAbi, jbSplitsAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { buildSetSplitGroupsTx, RESERVED_TOKEN_SPLIT_GROUP_ID, v6Address } from '@bananapus/nana-sdk-core/v6'
-import { decodeEventLog, decodeFunctionData, encodeFunctionData, getAddress, isAddress, isAddressEqual, parseAbi, zeroAddress, type Address, type ContractFunctionReturnType, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
+import { decodeEventLog, decodeFunctionData, encodeFunctionData, getAddress, isAddress, isAddressEqual, zeroAddress, type Address, type ContractFunctionReturnType, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import { readIncomeProjectState } from './income-state'
 import { isOperatorWallet, OPERATOR_BURN_ADDRESS } from './project-operator-profile'
-import { requireSafeExecutionSuccess } from '@bananapus/nana-sdk-core/safe-service'
+import { requireSafeExecutionSuccess, SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 
 type Splits = ContractFunctionReturnType<typeof jbSplitsAbi, 'view', 'splitsOf'>
 export type IncomeOperatorStage = { rulesetId: bigint; start: bigint; isCurrent: boolean; splits: Splits; operatorIndex: number | null }
@@ -12,9 +12,6 @@ export type IncomeOperatorSnapshot = {
   controller: Address; owner: Address; account: Address | null; isOwner: boolean
   currentRulesetId: bigint; stages: IncomeOperatorStage[]
 }
-const safeAbi = parseAbi([
-  'function execTransaction(address to,uint256 value,bytes data,uint8 operation,uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,address gasToken,address refundReceiver,bytes signatures) returns (bool success)',
-])
 
 function sameSplits(a: Splits, b: Splits) {
   return a.length === b.length && a.every((split, index) => {
@@ -88,7 +85,8 @@ export async function verifyIncomeOperatorReceipt(client: PublicClient, snapshot
   if (block.hash?.toLowerCase() !== receipt.blockHash.toLowerCase() || transaction.hash.toLowerCase() !== receipt.transactionHash.toLowerCase() || transaction.blockNumber !== receipt.blockNumber || transaction.blockHash?.toLowerCase() !== receipt.blockHash.toLowerCase()) throw new Error('The INCOME Operator receipt is no longer a matching canonical execution.')
   const data = encodeFunctionData(request)
   if (transaction.to && isAddressEqual(transaction.to, account)) {
-    const decoded = decodeFunctionData({ abi: safeAbi, data: transaction.input })
+    const decoded = decodeFunctionData({ abi: SAFE_EXEC_ABI, data: transaction.input })
+    if (decoded.functionName !== 'execTransaction') throw new Error('The Safe executed a different INCOME Operator change.')
     const [to, value, innerData, operation] = decoded.args
     if (!isAddressEqual(to, request.address) || value !== 0n || innerData.toLowerCase() !== data.toLowerCase() || operation !== 0) throw new Error('The Safe executed a different INCOME Operator change.')
     // This transaction is the Safe's one execTransaction, so the receipt must hold its one ExecutionSuccess.

@@ -5,7 +5,7 @@ import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import { getAccount, getPublicClient } from '@wagmi/core'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
-import { decodeEventLog, decodeFunctionData, encodeFunctionData, erc20Abi, formatUnits, getAddress, isAddress, isAddressEqual, parseAbi, zeroAddress, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
+import { decodeEventLog, decodeFunctionData, encodeFunctionData, erc20Abi, formatUnits, getAddress, isAddress, isAddressEqual, zeroAddress, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import { useSafeTx, txPhaseLabel } from '@/hooks/useSafeTx'
 import { FundAssetWithdrawals, type FundAssetAllowanceConfiguration } from '@/components/FundAssetWithdrawals'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
@@ -19,7 +19,7 @@ import {
 } from '@/lib/fund-contracts'
 import { assertFundStateForWrite, readFundProjectState, readLinkedFundProjects, type FundProjectState } from '@/lib/fund-state'
 import { waitForSafeExecutionHash } from '@/lib/safe-connector'
-import { safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
+import { SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
 import { wagmiConfig } from '@/providers/Providers'
 import { readableError } from '@/lib/readable-error'
 
@@ -102,7 +102,6 @@ function rebuildPlan(plan: Pick<RulesetPlan, 'states' | 'action' | 'startsAt' | 
 export type RulesetSubmission = { hash: Hex; kind: 'transaction' | 'safe-proposal' } | { kind: 'submission-unknown' }
 type RecoveryRoot = { chainId: number; projectId: bigint }
 const MAX_RECOVERY_BYTES = 262_144
-const safeExecutionAbi = parseAbi(['function execTransaction(address to,uint256 value,bytes data,uint8 operation,uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,address gasToken,address refundReceiver,bytes signatures) returns (bool success)'])
 
 /** Store intent and hashes only. The browser never certifies execution. */
 export function serializeRulesetRecovery(plan: RulesetPlan, submissions: ReadonlyMap<number, RulesetSubmission>, root: RecoveryRoot): string {
@@ -181,9 +180,11 @@ export async function verifyRulesetRecoveryExecution(client: PublicClient, reque
   if (transaction.to && isAddressEqual(transaction.to, request.address) && isAddressEqual(transaction.from, account) && transaction.value === expectedValue && transaction.input.toLowerCase() === expectedData.toLowerCase()) return
   if (transaction.to && isAddressEqual(transaction.to, account)) {
     try {
-      const decoded = decodeFunctionData({ abi: safeExecutionAbi, data: transaction.input })
-      const [to, value, data, operation] = decoded.args
-      if (operation === 0 && isAddressEqual(to, request.address) && value === expectedValue && data.toLowerCase() === expectedData.toLowerCase()) return
+      const decoded = decodeFunctionData({ abi: SAFE_EXEC_ABI, data: transaction.input })
+      if (decoded.functionName === 'execTransaction') {
+        const [to, value, data, operation] = decoded.args
+        if (operation === 0 && isAddressEqual(to, request.address) && value === expectedValue && data.toLowerCase() === expectedData.toLowerCase()) return
+      }
     } catch { /* Unsupported execution wrapper must be reconciled explicitly. */ }
   }
   throw new Error('The recovered transaction does not execute this exact reviewed call. No remaining transaction will be offered until the plan is reconciled.')

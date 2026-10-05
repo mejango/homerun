@@ -4,13 +4,15 @@ import {
   encodeFunctionData,
   isAddress,
   isAddressEqual,
-  parseAbi,
   type Address,
   type Hex,
   type PublicClient,
 } from "viem";
 import type { FundTransaction } from "./fund-contracts";
-import { safeExecutionResult } from "@bananapus/nana-sdk-core/safe-service";
+import {
+  SAFE_EXEC_ABI,
+  safeExecutionResult,
+} from "@bananapus/nana-sdk-core/safe-service";
 
 export type StickyPending = {
   version: 1;
@@ -28,9 +30,6 @@ export type StickyPending = {
 };
 export type StickyStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 const HASH = /^0x[\da-fA-F]{64}$/;
-const safeAbi = parseAbi([
-  "function execTransaction(address to,uint256 value,bytes data,uint8 operation,uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,address gasToken,address refundReceiver,bytes signatures) payable returns (bool success)",
-]);
 export function stickySessionKey(
   chainId: number,
   projectId: bigint,
@@ -180,9 +179,13 @@ export async function verifyStickyExecution(
     if (!isAddressEqual(transaction.to, record.holder))
       throw new Error("The execution is not from the saved Safe.");
     const decoded = decodeFunctionData({
-      abi: safeAbi,
+      abi: SAFE_EXEC_ABI,
       data: transaction.input,
     });
+    if (decoded.functionName !== "execTransaction")
+      throw new Error(
+        "The Safe execution does not match the saved single Sticky call.",
+      );
     const [target, value, data, operation] = decoded.args;
     if (
       !isAddressEqual(target, record.target) ||

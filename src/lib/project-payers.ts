@@ -2,7 +2,7 @@ import { jbDirectoryAbi, jbProjectsAbi, NATIVE_TOKEN, type JBChainId } from '@ba
 import { buildDeployProjectPayerTx, JB_PROJECT_PAYER_DEPLOYER, jbProjectPayerDeployerAbi, v6Address } from '@bananapus/nana-sdk-core/v6'
 import { decodeEventLog, decodeFunctionData, encodeFunctionData, isAddress, isAddressEqual, parseAbi, zeroAddress, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import { bendystraw } from './bendystraw'
-import { safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
+import { SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
 
 export type ProjectPayerRow = {
   chainId: number; projectId: number; version: number; address: Address
@@ -33,9 +33,6 @@ export async function getProjectPayerAddresses(chainId: JBChainId, projectId: bi
 }
 
 export const payerFactoryReadAbi = parseAbi(['function DIRECTORY() view returns (address)', 'function IMPLEMENTATION() view returns (address)'])
-const safeAbi = parseAbi([
-  'function execTransaction(address to,uint256 value,bytes data,uint8 operation,uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,address gasToken,address refundReceiver,bytes signatures) returns (bool success)',
-])
 export type PayerSettings = {
   chainId: JBChainId; projectId: string; beneficiary: Address; owner: Address; memo: string; addToBalance: boolean
 }
@@ -95,7 +92,8 @@ export async function verifyPayerReceipt(client: PublicClient, attempt: PayerAtt
   const data = encodeFunctionData(request)
   if (attempt.safe) {
     if (!transaction.to || !isAddressEqual(transaction.to, account)) throw new Error('The payer transaction did not execute through the reviewed Safe.')
-    const decoded = decodeFunctionData({ abi: safeAbi, data: transaction.input })
+    const decoded = decodeFunctionData({ abi: SAFE_EXEC_ABI, data: transaction.input })
+    if (decoded.functionName !== 'execTransaction') throw new Error('The Safe executed a different payer deployment call.')
     const [target, value, innerData, operation] = decoded.args
     if (!isAddressEqual(target, request.address) || value !== 0n || innerData.toLowerCase() !== data.toLowerCase() || operation !== 0) throw new Error('The Safe executed a different payer deployment call.')
     if (receipt.status === 'reverted') throw new Error('The Safe execution attempt reverted without consuming the proposal. The original proposal may still execute; keep it pending.')
