@@ -15,6 +15,8 @@ Every constructor argument of both contracts is the same address on all eight ch
 
 The contracts compile against the sibling protocol checkouts named in `remappings.txt` (`../../nana-core-v6` and so on), not npm packages. `script/deploy.mjs` pins the reviewed commit of every sibling that appears in the compiled deployer's `metadata.sources` (eleven checkouts) and the version of every npm package reached through their `node_modules` (OpenZeppelin, Permit2, Solady, PRBMath, Chainlink CCIP); proposals and verification refuse a sibling at another commit or with changes under its `src/` (tests and scratch files do not compile into the contracts), a package at another version, and an uncommitted Homerun checkout. Rehearsals allow development changes. Update the pins when a reviewed revision changes, and rerun every rehearsal. `npm run test:deployment` checks that the pin set still covers every source root of the compiled artifact.
 
+On a machine that has only this repository, `node scripts/prepare-workspace.mjs` creates the eleven checkouts at those revisions in `HOMERUN_WORKSPACE_PATH` (default `../..`), installs the pinned packages and runs `verifyDependencies`. CI does this before the Forge tests.
+
 Use the Foundry and Node versions the workspace uses, then:
 
 ```sh
