@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { dependencies, packages, verifyDependencies, workspace } from '../script/deploy.mjs'
 
 // Builds the workspace remappings.txt expects on a machine that has only this repository: every sibling protocol
@@ -18,7 +19,7 @@ function run(command, args, cwd) {
   if (result.error || result.status !== 0) throw new Error(`${command} ${args.join(' ')} failed in ${cwd}`)
 }
 
-try {
+function prepareWorkspace() {
   const root = resolve(workspace())
   mkdirSync(root, { recursive: true })
   for (const [name, revision] of Object.entries(dependencies)) {
@@ -38,7 +39,13 @@ try {
   }
   verifyDependencies()
   console.log(`Workspace ready in ${root}.`)
-} catch (error) {
-  console.error(error.message)
-  process.exitCode = 1
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  try {
+    prepareWorkspace()
+  } catch (error) {
+    console.error(error.message)
+    process.exitCode = 1
+  }
 }
