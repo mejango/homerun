@@ -2,7 +2,7 @@ import { jbDirectoryAbi, jbProjectsAbi, NATIVE_TOKEN, type JBChainId } from '@ba
 import { buildDeployProjectPayerTx, JB_PROJECT_PAYER_DEPLOYER, jbProjectPayerDeployerAbi, v6Address } from '@bananapus/nana-sdk-core/v6'
 import { decodeEventLog, decodeFunctionData, encodeFunctionData, isAddress, isAddressEqual, parseAbi, zeroAddress, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import { bendystraw } from './bendystraw'
-import { safeExecutionResult } from './safe-execution'
+import { safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
 
 export type ProjectPayerRow = {
   chainId: number; projectId: number; version: number; address: Address

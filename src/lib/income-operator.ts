@@ -3,7 +3,7 @@ import { buildSetSplitGroupsTx, RESERVED_TOKEN_SPLIT_GROUP_ID, v6Address } from 
 import { decodeEventLog, decodeFunctionData, encodeFunctionData, getAddress, isAddress, isAddressEqual, parseAbi, zeroAddress, type Address, type ContractFunctionReturnType, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import { readIncomeProjectState } from './income-state'
 import { isOperatorWallet, OPERATOR_BURN_ADDRESS } from './project-operator-profile'
-import { safeExecutionResult } from './safe-execution'
+import { requireSafeExecutionSuccess } from '@bananapus/nana-sdk-core/safe-service'
 
 type Splits = ContractFunctionReturnType<typeof jbSplitsAbi, 'view', 'splitsOf'>
 export type IncomeOperatorStage = { rulesetId: bigint; start: bigint; isCurrent: boolean; splits: Splits; operatorIndex: number | null }
@@ -92,7 +92,7 @@ export async function verifyIncomeOperatorReceipt(client: PublicClient, snapshot
     const [to, value, innerData, operation] = decoded.args
     if (!isAddressEqual(to, request.address) || value !== 0n || innerData.toLowerCase() !== data.toLowerCase() || operation !== 0) throw new Error('The Safe executed a different INCOME Operator change.')
     // This transaction is the Safe's one execTransaction, so the receipt must hold its one ExecutionSuccess.
-    if (safeExecutionResult(receipt, account, receipt.transactionHash).status !== 'success') throw new Error('The receipt does not prove successful execution by the Safe.')
+    requireSafeExecutionSuccess(receipt, account, receipt.transactionHash)
   } else if (!transaction.to || !isAddressEqual(transaction.to, request.address) || !isAddressEqual(transaction.from, account) || transaction.value !== 0n || transaction.input.toLowerCase() !== data.toLowerCase()) throw new Error('The mined transaction differs from the reviewed INCOME Operator change.')
   const events = receipt.logs.filter(log => isAddressEqual(log.address, v6Address('JBSplits', snapshot.chainId))).flatMap(log => {
     try { return [decodeEventLog({ abi: jbSplitsAbi, eventName: 'SetSplit', data: log.data, topics: log.topics })] } catch { return [] }

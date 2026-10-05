@@ -94,7 +94,7 @@ describe('reserved INCOME receipt confirmation', () => {
     const f = fixture()
     f.transaction.to = ACCOUNT
     f.transaction.input = encodeFunctionData({ abi: safeAbi, functionName: 'execTransaction', args: [f.reviewed.controller, 0n, encodeFunctionData(buildSendIncomeReservedTokensTx(1, 7n)), 0, 0n, 0n, 0n, zeroAddress, zeroAddress, '0x'] })
-    await expect(verifyIncomeReservedReceipt(f.rpc, f.reviewed, ACCOUNT, f.receipt)).rejects.toThrow('successful execution by the Safe')
+    await expect(verifyIncomeReservedReceipt(f.rpc, f.reviewed, ACCOUNT, f.receipt)).rejects.toThrow('has no ExecutionSuccess or ExecutionFailure from Safe')
     f.receipt.logs.push(log('ExecutionSuccess', { txHash: TX_HASH, payment: 0n }, ACCOUNT, safeAbi))
     await expect(verifyIncomeReservedReceipt(f.rpc, f.reviewed, ACCOUNT, f.receipt)).resolves.toMatchObject({ tokenCount: 1000n })
     f.transaction.input = encodeFunctionData({ abi: safeAbi, functionName: 'execTransaction', args: [f.reviewed.controller, 0n, encodeFunctionData(buildSendIncomeReservedTokensTx(1, 8n)), 0, 0n, 0n, 0n, zeroAddress, zeroAddress, '0x'] })
@@ -114,7 +114,7 @@ describe('reserved INCOME receipt confirmation', () => {
       await expect(verify(safeExecutionLog(ACCOUNT, PROPOSAL))).resolves.toMatchObject({ tokenCount: 1000n })
     })
     it('refuses a Safe 1.4.1 ExecutionFailure', async () => {
-      await expect(verify(safeExecutionLog(ACCOUNT, PROPOSAL, { failed: true }))).rejects.toThrow('successful execution by the Safe')
+      await expect(verify(safeExecutionLog(ACCOUNT, PROPOSAL, { failed: true }))).rejects.toThrow('its call failed (ExecutionFailure)')
     })
     it('accepts a Safe 1.3 ExecutionSuccess, whose txHash is in data', async () => {
       await expect(verify(safeExecutionLog(ACCOUNT, PROPOSAL, { version: '1.3' }))).resolves.toMatchObject({ tokenCount: 1000n })

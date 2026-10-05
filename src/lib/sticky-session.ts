@@ -10,7 +10,7 @@ import {
   type PublicClient,
 } from "viem";
 import type { FundTransaction } from "./fund-contracts";
-import { safeExecutionResult } from "./safe-execution";
+import { safeExecutionResult } from "@bananapus/nana-sdk-core/safe-service";
 
 export type StickyPending = {
   version: 1;

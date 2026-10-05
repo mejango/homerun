@@ -2,7 +2,7 @@ import { erc2771ForwarderAbi, jbControllerAbi, jbProjectsAbi, jbDirectoryAbi, jb
 import { BASE_CURRENCY_USD, tokenCurrencyId, v6Address } from '@bananapus/nana-sdk-core/v6'
 import { decodeEventLog, decodeFunctionData, encodeFunctionData, erc20Abi, isAddressEqual, parseAbi, zeroAddress, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import { unbundleMultisigLaunch, verifyCreatedMultisigs } from './create-multisig'
-import { safeExecutionResult } from './safe-execution'
+import { requireSafeExecutionSuccess, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
 import type { RelayrEntry } from './relayr'
 import { buildFundLaunch, initialFundRuleset, type FundLaunchInput, type FundTransaction } from './fund-contracts'
 import { homerunAllowlistHookAbi, homerunDeployerAbi, registeredAllowlistHook } from './income-contracts'
@@ -60,7 +60,7 @@ async function verifyMinedCall(client: PublicClient, request: FundTransaction, i
   if (!isAddressEqual(to, request.address) || value !== (request.value ?? 0n) || innerData.toLowerCase() !== data.toLowerCase() || operation !== 0) throw new Error('The Safe executed a different deployment payload.')
   if (!requireSafeSuccess) return
   // This transaction is the Safe's one execTransaction, so the receipt must hold its one ExecutionSuccess.
-  if (safeExecutionResult(receipt, input.sender, receipt.transactionHash).status !== 'success') throw new Error('The receipt does not prove successful execution by the expected Safe.')
+  requireSafeExecutionSuccess(receipt, input.sender, receipt.transactionHash)
 }
 
 /**

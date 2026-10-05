@@ -19,7 +19,7 @@ import {
 } from '@/lib/fund-contracts'
 import { assertFundStateForWrite, readFundProjectState, readLinkedFundProjects, type FundProjectState } from '@/lib/fund-state'
 import { waitForSafeExecutionHash } from '@/lib/safe-connector'
-import { safeExecutionResult } from '@/lib/safe-execution'
+import { safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
 import { wagmiConfig } from '@/providers/Providers'
 import { readableError } from '@/lib/readable-error'
 

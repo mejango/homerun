@@ -20,7 +20,7 @@ import { displayChainName } from '@/lib/chainDisplay'
 import { SUPPORTED_CHAINS } from '@/lib/chains'
 import { plannedNetworks } from '../../web/create-networks.mjs'
 import { isSafeConnection, useSafeConnection, waitForSafeExecutionHash } from '@/lib/safe-connector'
-import { safeExecutionResult } from '@/lib/safe-execution'
+import { safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
 import { intentPath } from '@bananapus/nana-sdk-core/jbcenter'
 import { projectPath } from '@/lib/urn'
 

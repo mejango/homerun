@@ -2,7 +2,7 @@ import { jbControllerAbi, jbSplitsAbi, type JBChainId } from '@bananapus/nana-sd
 import { RESERVED_TOKEN_SPLIT_GROUP_ID, v6Address } from '@bananapus/nana-sdk-core/v6'
 import { decodeEventLog, decodeFunctionData, encodeFunctionData, isAddressEqual, parseAbi, type Address, type ContractFunctionReturnType, type PublicClient, type TransactionReceipt } from 'viem'
 import { readIncomeProjectState, type IncomeProjectState } from './income-state'
-import { safeExecutionResult } from './safe-execution'
+import { requireSafeExecutionSuccess } from '@bananapus/nana-sdk-core/safe-service'
 
 type ReservedSplits = ContractFunctionReturnType<typeof jbSplitsAbi, 'view', 'splitsOf'>
 export type IncomeReservedSnapshot = {
@@ -57,7 +57,7 @@ export async function verifyIncomeReservedReceipt(client: PublicClient, reviewed
     const [to, value, innerData, operation] = decoded.args
     if (!isAddressEqual(to, request.address) || value !== 0n || innerData.toLowerCase() !== data.toLowerCase() || operation !== 0) throw new Error('The Safe executed a different reserved INCOME call.')
     // This transaction is the Safe's one execTransaction, so the receipt must hold its one ExecutionSuccess.
-    if (safeExecutionResult(receipt, account, receipt.transactionHash).status !== 'success') throw new Error('The receipt does not prove successful execution by the Safe.')
+    requireSafeExecutionSuccess(receipt, account, receipt.transactionHash)
   } else if (!transaction.to || !isAddressEqual(transaction.to, request.address) || !isAddressEqual(transaction.from, account) || transaction.value !== 0n || transaction.input.toLowerCase() !== data.toLowerCase()) throw new Error('The mined transaction differs from the reviewed reserved INCOME call.')
 
   const events = receipt.logs.filter(log => isAddressEqual(log.address, request.address)).flatMap(log => {

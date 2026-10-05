@@ -12,6 +12,7 @@ const IMPL = '0x3333333333333333333333333333333333333333' as Address
 const HASH = `0x${'aa'.repeat(32)}` as Hex
 const BLOCK = `0x${'bb'.repeat(32)}` as Hex
 const PROPOSAL = `0x${'cc'.repeat(32)}` as Hex
+const OTHER_PROPOSAL = `0x${'dd'.repeat(32)}` as Hex
 const safeAbi = parseAbi(['function execTransaction(address to,uint256 value,bytes data,uint8 operation,uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,address gasToken,address refundReceiver,bytes signatures) returns (bool success)', 'event ExecutionSuccess(bytes32 txHash,uint256 payment)', 'event ExecutionFailure(bytes32 txHash,uint256 payment)'])
 function attempt(): PayerAttempt {
   return { version: 1, settings: { chainId: 1, projectId: '7', beneficiary: zeroAddress, owner: zeroAddress, addToBalance: false, memo: 'Homerun' }, account: ACCOUNT, safe: false, phase: 'submitted', hash: HASH, afterBlock: '99' }
@@ -125,6 +126,25 @@ describe('payer deployment receipt proof', () => {
     })
     it('ignores another Safe’s failure in the same receipt', async () => {
       await expect(verify(safeExecutionLog(IMPL, PROPOSAL, { failed: true }), safeExecutionLog(ACCOUNT, PROPOSAL))).resolves.toEqual({ status: 'confirmed', payer: PAYER })
+    })
+    it('lets no other proposal of this Safe decide the saved one', async () => {
+      await expect(verify(safeExecutionLog(ACCOUNT, OTHER_PROPOSAL))).rejects.toThrow('reviewed Safe')
+      await expect(verify(safeExecutionLog(ACCOUNT, OTHER_PROPOSAL, { failed: true }), safeExecutionLog(ACCOUNT, PROPOSAL))).resolves.toEqual({ status: 'confirmed', payer: PAYER })
+    })
+    it('proves an execution whose Safe paid its executor a refund, in either layout', async () => {
+      const [success] = safeExecutionLog(ACCOUNT, PROPOSAL).topics
+      const refund = encodeAbiParameters([{ type: 'uint256' }], [5n])
+      await expect(verify({ address: ACCOUNT, topics: [success, PROPOSAL], data: refund })).resolves.toEqual({ status: 'confirmed', payer: PAYER })
+      await expect(verify({ address: ACCOUNT, topics: [success], data: `${PROPOSAL}${refund.slice(2)}` })).resolves.toEqual({ status: 'confirmed', payer: PAYER })
+    })
+    it('proves nothing from two results for the saved proposal', async () => {
+      await expect(verify(safeExecutionLog(ACCOUNT, PROPOSAL), safeExecutionLog(ACCOUNT, PROPOSAL, { failed: true }))).rejects.toThrow('reviewed Safe')
+    })
+    it('proves nothing while the Safe logged a malformed execution event, whichever proposal it names', async () => {
+      const [success] = safeExecutionLog(ACCOUNT, PROPOSAL).topics
+      // Another proposal's hash, with a payment that is not one word.
+      await expect(verify({ address: ACCOUNT, topics: [success, OTHER_PROPOSAL], data: '0x' }, safeExecutionLog(ACCOUNT, PROPOSAL))).rejects.toThrow('reviewed Safe')
+      await expect(verify({ address: ACCOUNT, topics: [success, PROPOSAL], data: '0x' })).rejects.toThrow('reviewed Safe')
     })
   })
   it('releases only an EOA revert or a consumed Safe proposal with ExecutionFailure', async () => {
