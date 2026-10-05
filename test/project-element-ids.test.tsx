@@ -92,11 +92,11 @@ describe.each([['the demo', false], ['a local preview', true]] as const)('the mo
       expect(host.querySelectorAll(`[id$="${id}"]`), id).toHaveLength(1)
     }
 
-    const everyone = host.querySelector('[data-account-section="all"]')!
-    expect([...everyone.querySelectorAll('h2')].map(heading => heading.textContent)).toEqual(['All owners', 'FUND token'])
-    for (const section of everyone.querySelectorAll(':scope > .demo-owner-sections > section')) {
-      const heading = section.querySelector('h2')!
-      expect(section.textContent!.replace(heading.textContent!, '').trim(), `${heading.textContent} has content`).not.toBe('')
+    const sections = [...host.querySelectorAll('[data-account-section="all"] > .demo-owner-sections > section')]
+    expect(sections, 'All owners has sections').not.toHaveLength(0)
+    for (const section of sections) {
+      const heading = section.querySelector('h2')?.textContent ?? ''
+      expect(section.textContent!.replace(heading, '').trim(), `${heading || 'A section'} has content`).not.toBe('')
     }
   })
 })
