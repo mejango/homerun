@@ -757,7 +757,8 @@ function ReserveStress({
   );
 }
 
-function TokenTerms({ p }: { p: Projection }) {
+/** Rendered in Stages and in Owners; a page that has opened both keeps every id unique through `idPrefix`. */
+function TokenTerms({ p, idPrefix = "" }: { p: Projection; idPrefix?: string }) {
   return (
     <details className="holder-choices">
       <summary>Modeled token terms</summary>
@@ -770,19 +771,19 @@ function TokenTerms({ p }: { p: Projection }) {
       <dl className="math-values">
         <div>
           <dt>Total asset tokens after purchase</dt>
-          <dd id="fund-total-supply">{number(p.fundTotalSupply)}</dd>
+          <dd id={`${idPrefix}fund-total-supply`}>{number(p.fundTotalSupply)}</dd>
         </div>
         <div>
           <dt>Asset tokens for {p.separateOwnerOperator ? 'the Owner' : 'operators'}</dt>
-          <dd id="operator-fund-mint">{number(p.separateOwnerOperator ? p.fundOwnerMint : p.fundOperatorMint)}</dd>
+          <dd id={`${idPrefix}operator-fund-mint`}>{number(p.separateOwnerOperator ? p.fundOwnerMint : p.fundOperatorMint)}</dd>
         </div>
         <div>
           <dt>New INCOME per $1 of revenue</dt>
-          <dd id="rev-issuance-rate">{number(p.currentIssuanceRate)}</dd>
+          <dd id={`${idPrefix}rev-issuance-rate`}>{number(p.currentIssuanceRate)}</dd>
         </div>
         <div>
           <dt>INCOME currently outstanding</dt>
-          <dd id="rev-total-supply">{number(p.revSupply)}</dd>
+          <dd id={`${idPrefix}rev-total-supply`}>{number(p.revSupply)}</dd>
         </div>
       </dl>
       <p>
@@ -801,7 +802,8 @@ function TokenTerms({ p }: { p: Projection }) {
   );
 }
 
-function Allocation({ p }: { p: Projection }) {
+/** Rendered in Stages and in Owners; `idPrefix` keeps the id unique once both are open. */
+function Allocation({ p, idPrefix = "" }: { p: Projection; idPrefix?: string }) {
   const planned = !p.revenuePreminted;
   const items: [number, string][] = planned
     ? [
@@ -827,7 +829,7 @@ function Allocation({ p }: { p: Projection }) {
           <span key={label} style={{ flex: value }} />
         ))}
       </div>
-      <div className="issuance-split" id="rev-payment-split">
+      <div className="issuance-split" id={`${idPrefix}rev-payment-split`}>
         {items.map(([value, label]) => (
           <div key={label}>
             <strong>{percent(value)}</strong>
@@ -2064,7 +2066,7 @@ function DemoOwners({
               </div>
             </section>
             <FundTokenTermsSection terms={terms} />
-            <TokenTerms p={p} />
+            <TokenTerms p={p} idPrefix="owners-" />
           </div>
         ) : (
           unavailable
@@ -2087,7 +2089,7 @@ function DemoOwners({
           <div className="demo-owner-sections">
             <section className="demo-section">
               <h2>Splits</h2>
-              <Allocation p={p} />
+              <Allocation p={p} idPrefix="owners-" />
             </section>
             {splitEditor}
           </div>
