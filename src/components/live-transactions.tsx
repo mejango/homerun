@@ -70,11 +70,10 @@ function useConfirmPlan<Plan>(tx: Tx) {
         setReviewed(account ? { plan, account } : null)
       } catch (reason) { setReviewed(null); setError(errorMessage(reason)) } finally { setPreparing(false) }
     },
+    /** Sends the plan as the account it was built for; the engine refuses any other connected account. */
     async run(write: (plan: Plan, account: Address) => Promise<unknown>) {
       if (!reviewed) return
       setError(null)
-      // Another account would send this account's plan.
-      if (!address || !isAddressEqual(address, reviewed.account)) { setError('The connected account changed. Review again.'); return }
       try { await write(reviewed.plan, reviewed.account) } catch (reason) { setError(errorMessage(reason)) }
     },
     /** A Safe proposal keeps tracking after close; anything else starts over. */
@@ -176,7 +175,7 @@ export function CashOutPanel({ state, client, contextIndex }: { state: FundProje
       reviewNotice: minimum < quote.data!.minimumReturn ? `The quote changed. You will receive at least ${units(minimum, context.decimals)} ${context.symbol}, down from ${units(quote.data!.minimumReturn, context.decimals)} ${context.symbol}.` : undefined,
     }
   })
-  const send = () => address && confirm.run((plan, account) => tx.send(plan.request, {
+  const send = () => confirm.run((plan, account) => tx.send(plan.request, {
     reviewedAccount: account,
     reviewNotice: plan.reviewNotice,
     reverify: async () => {
@@ -238,7 +237,7 @@ export function HolderActions({ state, client }: { state: FundProjectState; clie
     if (!state.tokenAddress) throw new Error('No FUND ERC-20 is deployed.')
     return { action, count, destination, request: { chainId: state.chainId, address: state.tokenAddress, abi: erc20Abi, functionName: 'transfer', args: [destination, count], label: `Transfer ${units(count)} FUND tokens to ${destination}` } }
   })
-  const send = () => address && confirm.run((plan, account) => tx.send(plan.request, { reviewedAccount: account, reverify: async () => {
+  const send = () => confirm.run((plan, account) => tx.send(plan.request, { reviewedAccount: account, reverify: async () => {
     const fresh = await freshState(client, state, account)
     if (plan.count > (plan.action === 'burn' ? fresh.creditBalance + fresh.erc20Balance : fresh.erc20Balance)) throw new Error('Your token balance changed. Review a new amount.')
     if (fresh.tokenAddress !== state.tokenAddress) throw new Error('The project token changed. Refresh and review again.')

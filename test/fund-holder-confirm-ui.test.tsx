@@ -17,12 +17,14 @@ const UNIT = 10n ** 18n
 const runtime = vi.hoisted(() => ({
   address: undefined as Address | undefined,
   fresh: undefined as unknown,
+  /** The account each fresh read was for. */
+  readFor: [] as Address[],
   tx: { phase: 'idle', busy: false, isSafe: false, error: null as string | null, hash: null as Hex | null, safeProposalHash: null as Hex | null, receipt: null, send: vi.fn(), reset: vi.fn() },
   quote: vi.fn(), prepare: vi.fn(),
 }))
 vi.mock('wagmi', async importOriginal => ({ ...await importOriginal<typeof import('wagmi')>(), usePublicClient: () => ({}) }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address }) }))
-vi.mock('@/lib/fund-state', () => ({ readFundWriteState: async () => runtime.fresh }))
+vi.mock('@/lib/fund-state', () => ({ readFundWriteState: async (_client: unknown, _state: unknown, account: Address) => { runtime.readFor.push(account); return runtime.fresh } }))
 vi.mock('@/hooks/useSafeTx', () => ({ txPhaseLabel: (_: string, labels: { idle: string }) => labels.idle, useSafeTx: () => runtime.tx }))
 vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
   ...await importOriginal<typeof import('@bananapus/nana-sdk-core/v6')>(),
@@ -59,6 +61,7 @@ const dialogText = () => document.querySelector('[data-tx-confirm]')?.textConten
 beforeEach(() => {
   runtime.address = WALLET
   runtime.fresh = state
+  runtime.readFor = []
   Object.assign(runtime.tx, { phase: 'idle', busy: false, error: null, hash: null, safeProposalHash: null })
   runtime.tx.send.mockReset().mockResolvedValue(null); runtime.tx.reset.mockReset()
   runtime.quote.mockReset().mockResolvedValue({ minimumReturn: 9_000_000n })
@@ -131,7 +134,8 @@ describe('FUND holder actions confirm like Juicebox Money', () => {
     expect(host.querySelector('[role="alert"]')?.textContent).toContain('No positive protected return')
   })
 
-  it('refuses a cash out reviewed for another account, whose tokens and proceeds it names', async () => {
+  // The engine refuses a send from any other account (test/reviewed-account-ui.test.tsx).
+  it('sends a cash out as the account it was reviewed for, whose tokens and proceeds it names', async () => {
     await render(<CashOutPanel state={state} client={{} as never} contextIndex={0} />)
     await type('FUND to cash out', '10'); await settle()
     await click('Review cash-out'); await settle()
@@ -140,14 +144,17 @@ describe('FUND holder actions confirm like Juicebox Money', () => {
     runtime.address = OTHER_WALLET
     await render(<CashOutPanel state={state} client={{} as never} contextIndex={0} />)
     await click('Confirm & cash out')
-    expect(runtime.tx.send).not.toHaveBeenCalled()
-    expect(dialogText()).toContain('The connected account changed. Review again.')
+    const [, options] = runtime.tx.send.mock.calls[0] as [TxRequest, TxSendOptions]
+    expect(options.reviewedAccount).toBe(WALLET)
+    runtime.readFor = []
+    await options.reverify!({} as TxRequest)
+    expect(runtime.readFor).toEqual([WALLET])
   })
 
   it.each([
     ['burn', 'Review burn', 'Confirm & burn'],
     ['transferTokens', 'Review transfer', 'Confirm & transfer'],
-  ] as const)('refuses a %s reviewed for another account', async (action, review, confirm) => {
+  ] as const)('sends a %s as the account it was reviewed for', async (action, review, confirm) => {
     await render(<HolderActions state={state} client={{} as never} />)
     await act(async () => {
       const select = host.querySelector('select')!
@@ -160,8 +167,11 @@ describe('FUND holder actions confirm like Juicebox Money', () => {
     runtime.address = OTHER_WALLET
     await render(<HolderActions state={state} client={{} as never} />)
     await click(confirm)
-    expect(runtime.tx.send).not.toHaveBeenCalled()
-    expect(dialogText()).toContain('The connected account changed. Review again.')
+    const [, options] = runtime.tx.send.mock.calls[0] as [TxRequest, TxSendOptions]
+    expect(options.reviewedAccount).toBe(WALLET)
+    runtime.readFor = []
+    await options.reverify!({} as TxRequest)
+    expect(runtime.readFor).toEqual([WALLET])
   })
 
   it('reviews a transfer with its recipient before sending', async () => {
