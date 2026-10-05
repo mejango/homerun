@@ -5,7 +5,8 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { chromium } from 'playwright'
 import { expect } from '@playwright/test'
-const base = process.env.BASE_URL || 'http://localhost:54064'
+import { centerPort } from './support/browser-suites.mjs'
+const base = process.env.BASE_URL || `http://127.0.0.1:${centerPort}`
 const issuer = 'https://signa.center', audience = 'https://api.signa.center'
 const wallet = '0x1111111111111111111111111111111111111111'
 // The modeled issuer is a public https origin while the app is on localhost; Chrome's local network access

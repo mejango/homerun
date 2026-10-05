@@ -7,6 +7,7 @@
 import { existsSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { expect } from '@playwright/test';
+import { devPort } from './support/browser-suites.mjs';
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ? pathToFileURL(process.env.PLAYWRIGHT_MODULE).href : '@playwright/test');
 const { default: AxeBuilder } = await import(process.env.AXE_MODULE ? pathToFileURL(process.env.AXE_MODULE).href : '@axe-core/playwright');
 const systemChrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -16,7 +17,7 @@ const context = await browser.newContext({ viewport: { width: 1440, height: 1000
 const page = await context.newPage();
 page.setDefaultTimeout(15_000);
 page.setDefaultNavigationTimeout(120_000);
-const demoURL = new URL('/founderhaus', process.env.BASE_URL || 'http://localhost:3010/').href;
+const demoURL = new URL('/founderhaus', process.env.BASE_URL || `http://localhost:${devPort()}/`).href;
 const homeURL = new URL('/', demoURL).href;
 const ownerActions = [['raising', 'enable_refunds'], ['funded', 'complete_purchase'], ['earning', 'enable_sale_redemptions']];
 let violations = 0;
