@@ -99,6 +99,7 @@ function ProjectMetadataEditorContent({ chainId, projectId, client, unavailable 
       if (!mounted.current) return
       const request = buildProjectMetadataEditTx(editing.snapshot, pinned.uri)
       await tx.send(request, {
+        reviewedAccount: address,
         reviewNotice: `Update the published details for project #${projectId} on ${displayChainName(chainId)}. Other phases and networks have separate project details. The published operating plan describes expectations; this transaction does not transfer ownership, change payment splits, or change contract terms.`,
         reverify: async () => {
           if (!mounted.current) throw new Error('The details editor has closed. Reopen it to review this update.')

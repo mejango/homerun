@@ -56,7 +56,7 @@ describe('project permission controls', () => {
     expect(button('Review permission changes').disabled).toBe(false)
     await act(async () => button('Review permission changes').click())
     await act(async () => button('Confirm & save').click())
-    expect(mocks.send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ functionName: 'setPermissionsFor', args: [OWNER, { operator: DELEGATE, projectId: 7n, permissionIds: [1] }] }), expect.objectContaining({ reviewNotice: expect.stringContaining('ROOT authorizes every Juicebox project permission') }))
+    expect(mocks.send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ functionName: 'setPermissionsFor', args: [OWNER, { operator: DELEGATE, projectId: 7n, permissionIds: [1] }] }), expect.objectContaining({ reviewedAccount: OWNER, reviewNotice: expect.stringContaining('ROOT authorizes every Juicebox project permission') }))
   })
 
   it('shows global and unknown grants while preserving future bits in the submitted project scope', async () => {
@@ -108,7 +108,7 @@ describe('project ownership controls', () => {
     await act(async () => checkbox('I understand the new owner').click())
     await act(async () => button('Review ownership change').click())
     await act(async () => button('Confirm & transfer').click())
-    expect(mocks.send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ functionName: 'safeTransferFrom', args: [OWNER, DELEGATE, 7n] }), expect.objectContaining({ reviewNotice: expect.stringContaining('Other chains require separate ownership transfers') }))
+    expect(mocks.send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ functionName: 'safeTransferFrom', args: [OWNER, DELEGATE, 7n] }), expect.objectContaining({ reviewedAccount: OWNER, reviewNotice: expect.stringContaining('Other chains require separate ownership transfers') }))
   })
 
   it('blocks a stale owner and presents only control-wallet rotation for a verified revnet', async () => {

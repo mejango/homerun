@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { encodeFunctionData, type Hex } from 'viem'
+import { encodeFunctionData, type Address, type Hex } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { useSafeTx, type TxPhase, type TxRequest } from './useSafeTx'
 import { useWallet } from './useWallet'
@@ -20,6 +20,12 @@ const INVALIDATE_PREFIXES = ['project-admin', 'project-authority', 'project-meta
 const errorMessage = (reason: unknown) => reason instanceof Error ? reason.message : 'The project update could not be completed.'
 type Resolution = { key: string; id: string; status: 'confirmed' | 'reverted'; hash: Hex; label: string }
 export type ProjectAdminSendOptions = {
+  /**
+   * The account the update was built for, whose authority the editor read.
+   * Only that account may send it: while another is connected, nothing is
+   * reviewed or sent.
+   */
+  reviewedAccount: Address
   /** Re-read authority and rebuild the exact request from current mined state. */
   reverify: (request: TxRequest) => Promise<unknown>
   reviewNotice?: string
@@ -158,7 +164,7 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
           submitting = null; submittedId.current = null; changed()
         }
         const hash = await tx.send(captured, {
-          reviewedAccount: address,
+          reviewedAccount: options.reviewedAccount,
           reviewNotice: options.reviewNotice,
           reverify: async reviewed => {
             await latestConfirmedBlock()
@@ -169,7 +175,7 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
             assertNoViewAs()
             if (requestIdentity(captured) !== identity) throw new Error('The project update changed during review. Review it again.')
             const afterBlock = await latestConfirmedBlock()
-            submitting = beginProjectAdminSubmission(localStorage, key, { request: captured, projectId, account: address, safe: tx.isSafe, afterBlock })
+            submitting = beginProjectAdminSubmission(localStorage, key, { request: captured, projectId, account: options.reviewedAccount, safe: tx.isSafe, afterBlock })
             submittedId.current = submitting.id
             changed()
           },

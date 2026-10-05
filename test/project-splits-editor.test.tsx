@@ -108,6 +108,7 @@ describe('project split editing', () => {
     expect(request.args[2]).toHaveLength(1)
     expect(request.args[2][0].splits[0].beneficiary).toBe(NEXT)
     expect(request.args[2][0].splits[1]).toEqual(snapshot().stages[1].groups[0].splits[1])
+    expect(options.reviewedAccount).toBe(OWNER)
     expect(options.reviewNotice).toContain('queued stage 100')
     expect(options.reviewNotice).toContain('30%')
     expect(options.reviewNotice).toContain(NEXT)

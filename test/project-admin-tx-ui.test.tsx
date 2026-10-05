@@ -24,6 +24,7 @@ import { ProjectAdminTransactionStatus } from '@/components/ProjectAdminTransact
 import { projectAdminSessionKey, readProjectAdminPending } from '@/lib/project-admin-session'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as const
+const OTHER_ACCOUNT = '0x3333333333333333333333333333333333333333' as const
 const TARGET = '0x2222222222222222222222222222222222222222' as const
 const EXECUTION = `0x${'ab'.repeat(32)}` as Hex
 const PROPOSAL = `0x${'cd'.repeat(32)}` as Hex
@@ -50,7 +51,8 @@ function Panel({ feature, projectId = 7n }: { feature: string; projectId?: bigin
   const tx = useProjectAdminTx({ chainId: 8453, projectId, onConfirmed: callbacks.get(feature) })
   handles.set(feature, tx)
   return <section data-feature={feature}>
-    <button disabled={!tx.ready || tx.busy} onClick={() => void tx.send(request(feature), { reverify: runtime.reverify })}>{feature}</button>
+    {/* An editor that read the project's authority for the owner. */}
+    <button disabled={!tx.ready || tx.busy} onClick={() => void tx.send(request(feature), { reviewedAccount: OWNER, reverify: runtime.reverify })}>{feature}</button>
     <output data-phase>{tx.phase}</output>
     <ProjectAdminTransactionStatus tx={tx} />
   </section>
@@ -127,6 +129,14 @@ function canonicalExecution({ safe = false, wrongPayload = false, reverted = fal
 }
 
 describe('project administrative transaction recovery', () => {
+  it('sends, and records, the account the editor reviewed for, not the one its hook sees connected', async () => {
+    runtime.account = OTHER_ACCOUNT
+    await render()
+    await click('Metadata')
+    expect(runtime.send.mock.calls[0][1].reviewedAccount).toBe(OWNER)
+    expect(readProjectAdminPending(localStorage, KEY)).toMatchObject({ holder: OWNER })
+  })
+
   it('persists the exact reviewed call before wallet submission and keeps a returned hash pending', async () => {
     await render()
     await click('Metadata')

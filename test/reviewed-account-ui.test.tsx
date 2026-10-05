@@ -1,8 +1,9 @@
 /**
- * A FUND cash out, burn or transfer, and an INCOME loan, are built for the
- * account that reviewed them: its tokens, its proceeds, its collateral. When
- * the wallet switches to another account before the confirm, or between a
- * loan's permission and its borrow, nothing more reaches the wallet: the real
+ * A FUND cash out, burn or transfer, an INCOME loan, and a project permissions
+ * update are built for the account that reviewed them: its tokens, its
+ * proceeds, its collateral, the authority read for it. When the wallet
+ * switches to another account before the confirm, or between a loan's
+ * permission and its borrow, nothing more reaches the wallet: the real
  * useSafeTx and the SDK's reviewed write refuse the send before its review
  * opens, and the dialog says why.
  */
@@ -10,10 +11,11 @@ import './dialog-shim'
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { parseAbi, type Address } from 'viem'
+import { isAddressEqual, parseAbi, type Address, type Hex } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FundProjectState } from '@/lib/fund-state'
 import type { IncomeProjectState } from '@/lib/income-state'
+import type { ProjectAuthorityState } from '@/lib/project-authority'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const BOB = '0x2222222222222222222222222222222222222222' as Address
@@ -22,6 +24,8 @@ const RECIPIENT = '0x4444444444444444444444444444444444444444' as Address
 const TOKEN = '0x5555555555555555555555555555555555555555' as Address
 const USDC = '0x7777777777777777777777777777777777777777' as Address
 const CONTROLLER = '0x8888888888888888888888888888888888888888' as Address
+const DELEGATE = '0x9999999999999999999999999999999999999999' as Address
+const BLOCK_HASH = `0x${'ef'.repeat(32)}` as Hex
 const UNIT = 10n ** 18n
 const CHANGED = 'The connected account changed. Review again.'
 
@@ -60,6 +64,12 @@ vi.mock('@/lib/income-state', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/income-state')>()),
   readIncomeProjectState: async () => ({ ...income, blockNumber: 200n }),
 }))
+// Alice owns project 7; Bob can manage its permissions too. Each read is for the connected account.
+vi.mock('@/lib/project-authority', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/project-authority')>()),
+  readProjectAuthority: async (_client: unknown, input: { account?: Address | null; operator?: Address | null }) => authority(input.account ?? null, input.operator ?? null),
+  reverifyProjectAuthority: async () => undefined,
+}))
 vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
   ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/v6')>()),
   getHookAwareCashOutQuote: m.quote,
@@ -71,6 +81,7 @@ vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
 import { sentHash, wallet } from './support/fake-wallet'
 import { CashOutPanel, HolderActions } from '@/components/live-transactions'
 import { IncomeBorrow } from '@/components/IncomeProject'
+import { ProjectPermissionsEditor } from '@/components/ProjectPermissionsEditor'
 
 const fund = {
   chainId: 1, projectId: 7n, blockNumber: 100n, account: ALICE, controller: CONTROLLER,
@@ -83,6 +94,15 @@ const income = {
   chainId: 1, projectId: 9n, blockNumber: 100n, controller: CONTROLLER, tokenAddress: TOKEN,
   totalBalance: 100n * UNIT, cashOutsAvailable: true, accountingContexts: [incomeContext],
 } as unknown as IncomeProjectState
+function authority(account: Address | null, operator: Address | null): ProjectAuthorityState {
+  const isOwner = !!account && isAddressEqual(account, ALICE)
+  return {
+    chainId: 1, projectId: 7n, account, owner: ALICE, controller: CONTROLLER, kind: 'project', blockNumber: 100n, blockHash: BLOCK_HASH,
+    isOwner, isRevnetOperator: false, canTransfer: isOwner, canManagePermissions: !!account,
+    accountPermissions: 0n, accountGlobalPermissions: 0n, operator, operatorPermissions: 0n, operatorGlobalPermissions: 0n,
+    identity: `${account}:${operator}`,
+  }
+}
 const cashOutAbi = parseAbi([
   'function cashOutTokensOf(address holder,uint256 projectId,uint256 cashOutCount,address tokenToReclaim,uint256 minTokensReclaimed,address beneficiary,bytes metadata) returns (uint256 reclaimAmount)',
 ])
@@ -214,5 +234,48 @@ describe('an INCOME loan reviewed for one account', () => {
       { functionName: 'setPermissionsFor', account: ALICE },
       { functionName: 'borrowFrom', account: ALICE },
     ])
+  })
+})
+
+describe('a project permissions update reviewed for one account', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    // The project admin journal coordinates tabs through Web Locks, and reads the latest block.
+    Object.defineProperty(navigator, 'locks', {
+      configurable: true,
+      value: { request: async (_name: string, _options: unknown, task: (lock: object) => Promise<unknown>) => task({}) },
+    })
+    Object.assign(wallet.client, { getBlock: vi.fn(async () => ({ number: 100n, hash: BLOCK_HASH })) })
+  })
+  afterEach(() => {
+    Reflect.deleteProperty(navigator, 'locks')
+    localStorage.clear()
+  })
+
+  async function reviewGrant() {
+    await render(<ProjectPermissionsEditor chainId={1} projectId={7n} client={wallet.client as never} />)
+    await type('Delegate wallet', DELEGATE)
+    await click('Look up permissions')
+    const payouts = [...host.querySelectorAll('label')].find(node => node.textContent?.startsWith('Send payouts'))!.querySelector('input')!
+    await act(async () => payouts.click())
+    await click('Review permission changes')
+    expect(dialogText()).toContain('Save permissions')
+  }
+
+  it('never reviews or sends from an account switched to before confirming', async () => {
+    await reviewGrant()
+    await switchTo(BOB)
+    await click('Confirm & save')
+
+    expect(wallet.writeContract).not.toHaveBeenCalled()
+    expect(wallet.requestReview).not.toHaveBeenCalled()
+    expect(dialogText()).toContain(CHANGED)
+  })
+
+  it('sends from the account that reviewed it', async () => {
+    await reviewGrant()
+    await click('Confirm & save')
+
+    expect(wallet.writes()).toEqual([{ functionName: 'setPermissionsFor', account: ALICE }])
   })
 })
