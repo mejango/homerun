@@ -152,6 +152,7 @@ it('frees the move when its approval stops before the wallet', async () => {
   })
   await act(async () => approve().click())
   expect(runtime.send).toHaveBeenCalledOnce()
+  expect(runtime.send.mock.calls[0][1].reviewedAccount).toBe(runtime.address)
   expect(approve().disabled).toBe(false)
 })
 

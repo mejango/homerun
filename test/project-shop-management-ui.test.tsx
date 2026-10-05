@@ -245,6 +245,7 @@ describe('live project shop management', () => {
     await reviewNext()
     expect(runtime.send.mock.calls[0][0]).toBe(prepared.requests[2])
     expect(runtime.send.mock.calls[0][1].reviewNotice).toContain('Cancel shop creation by restoring')
+    expect(runtime.send.mock.calls[0][1].reviewedAccount).toBe(WALLET)
     expect(runtime.send.mock.calls[0][1].reviewNotice).not.toBe(prepared.notice)
     await settled(() => expect(host.textContent).toContain('The previous permissions have been restored. Shop creation was cancelled.'))
     expect(runtime.saved.get(KEY)?.completed).toHaveLength(2)

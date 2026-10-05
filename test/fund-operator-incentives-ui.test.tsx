@@ -75,6 +75,7 @@ describe('FUND success allocation belongs to the owner', () => {
     expect(decoded.functionName).toBe('mintTokensOf')
     expect(decoded.args?.slice(0, 3)).toEqual([7n, 18_750_000_000_000_000_000n, OWNER])
     expect(options.reviewNotice).toContain('owner may distribute these tokens to the operator at their discretion')
+    expect(options.reviewedAccount).toBe(runtime.account)
     await options.reverify()
     expect(runtime.readContract.mock.calls.every(([input]) => input.args[0] === OWNER)).toBe(true)
   })

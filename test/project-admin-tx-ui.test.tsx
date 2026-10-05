@@ -131,6 +131,8 @@ describe('project administrative transaction recovery', () => {
     await render()
     await click('Metadata')
     expect(runtime.reverify).toHaveBeenCalledWith(request('Metadata'))
+    // Sent as the account whose update the journal records.
+    expect(runtime.send.mock.calls[0][1].reviewedAccount).toBe(OWNER)
     const saved = readProjectAdminPending(localStorage, KEY)
     expect(saved).toMatchObject({ label: 'Metadata', hash: EXECUTION, afterBlock: '100' })
     expect(localStorage.getItem(KEY)).not.toMatch(/"abi"|"request"|"functionName"|"args"/)

@@ -129,6 +129,15 @@ describe('reviewed Permit2 signatures', () => {
     expect(wallet.switchChainAsync).not.toHaveBeenCalled()
   })
 
+  it.each([OTHER, undefined])('refuses before its review opens while another account, or none, is connected: %s', async address => {
+    wallet.account.address = address
+    installReview()
+    await expect(sign()).rejects.toThrow('The connected account changed. Review again.')
+    expect(review).not.toHaveBeenCalled()
+    expect(wallet.switchChainAsync).not.toHaveBeenCalled()
+    expect(wallet.signTypedDataAsync).not.toHaveBeenCalled()
+  })
+
   it.each([OTHER, undefined])('rejects a changed or disconnected account after review: %s', async address => {
     const pending = deferred<boolean>()
     review.mockReturnValue(pending.promise)
@@ -136,7 +145,7 @@ describe('reviewed Permit2 signatures', () => {
     const result = sign()
     wallet.account.address = address
     pending.resolve(true)
-    await expect(result).rejects.toThrow('Connected account changed')
+    await expect(result).rejects.toThrow('The connected account changed. Review again.')
     expect(wallet.signTypedDataAsync).not.toHaveBeenCalled()
     expect(wallet.switchChainAsync).not.toHaveBeenCalled()
   })
@@ -231,7 +240,7 @@ describe('reviewed Permit2 signatures', () => {
     await expect(sign()).resolves.toBe(SIGNATURE)
     wallet.signTypedDataAsync.mockClear()
     wallet.account.address = OTHER
-    await expect(sign()).rejects.toThrow('Connected account changed')
+    await expect(sign()).rejects.toThrow('The connected account changed. Review again.')
     expect(wallet.signTypedDataAsync).not.toHaveBeenCalled()
     wallet.account.address = ACCOUNT
     setViewAs(OTHER)

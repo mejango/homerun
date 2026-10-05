@@ -452,6 +452,7 @@ describe('INCOME transaction surfaces', () => {
     expect(options.reviewNotice).toContain('amount or ruleset can change')
     expect(options.reviewNotice).toContain('does not immediately make holder rewards collectible')
     expect(options.reviewedInParent).toBeUndefined()
+    expect(options.reviewedAccount).toBe(runtime.address)
     expect(runtime.readReserved).toHaveBeenCalledOnce()
     await options.reverify()
     expect(runtime.readReserved).toHaveBeenCalledTimes(2)

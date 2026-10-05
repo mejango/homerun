@@ -323,6 +323,7 @@ export function StickyCreate({
           label: "Create Sticky SHARE for this FUND project",
         },
         {
+          reviewedAccount: address,
           reviewNotice:
             "This creates a separate Juicebox staking project and SHARE token, owned permanently by the stock Sticky factory. It moves no FUND and deploys no INCOME. SHARE transfers are locked; unstaking uses zero cash-out tax and current backing. Rewards use snapshot balances, not streak age; zero-tax staking permits short-lived snapshot participation. The initial INCOME snapshot predates this creation.",
           reverify: async () => {

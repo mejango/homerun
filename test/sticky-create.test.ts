@@ -986,6 +986,8 @@ describe("creation recovery and duplicate protection", () => {
       expect(engine.send).toHaveBeenCalledOnce();
       expect(marked).toBe(true);
       expect(readStickyCreationPending(localStorage, 1, 7n)).toBeNull();
+      // Sent as the FUND owner the creation was prepared for.
+      expect(engine.send.mock.calls[0][1].reviewedAccount).toBe(OWNER);
     } finally {
       await act(async () => root.unmount());
       Reflect.deleteProperty(navigator, "locks");

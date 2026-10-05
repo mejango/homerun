@@ -47,6 +47,7 @@ describe('project payer controls', () => {
     const [request, options] = mocks.send.mock.calls[0]
     expect(request.functionName).toBe('deployProjectPayer')
     expect(options.reviewNotice).toContain('Routing is immutable')
+    expect(options.reviewedAccount).toBe(mocks.address)
     expect(mocks.factory).toHaveBeenCalledTimes(3)
     expect(JSON.parse(localStorage.getItem(KEY)!)).toMatchObject({ phase: 'submitted', hash: HASH, afterBlock: '100', safe: false })
     expect(host.textContent).toContain('Submitted. Verifying')

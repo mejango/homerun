@@ -68,6 +68,7 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
     if (setup && !setup.hash) throw new Error('The multisig setup stopped before its hash was saved. Recover the transaction in Deployment recovery before continuing.')
     if (!setup) {
       const hash = await setupTx.send({ ...multisigDeploymentRequest(request.chainId, plans), label: 'Create project multisigs' }, {
+        reviewedAccount: session.input.sender,
         reviewNotice: multisigReview(plans),
         reverify: async () => { sameSender(getAccount(wagmiConfig).address, session.input.sender); await checkCreateMultisigs(client, plans) },
         beforeWrite: () => {
@@ -102,6 +103,7 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
       const safe = isSafeConnection(wagmiConfig)
       await ensureMultisigs(safe)
       const hash = await tx.send({ ...request, label: `Launch ${session.name} FUND on ${chain.name}` }, {
+        reviewedAccount: session.input.sender,
         reverify: async () => {
           sameSender(getAccount(wagmiConfig).address, session.input.sender)
           await checkLaunchDeployment(publicClient(request.chainId), request)

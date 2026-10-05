@@ -177,6 +177,7 @@ describe('shared payment execution', () => {
     expect(request.value).toBe(UNIT)
     expect(options.reviewNotice).toContain('quote decreased')
     expect(options.reviewNotice).toContain('88 FUND')
+    expect(options.reviewedAccount).toBe(WALLET)
     expect(options.simulationBlockNumber).toBe(100n)
   })
 

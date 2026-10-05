@@ -66,6 +66,7 @@ describe('initial INCOME mint to the FUND owner', () => {
     expect(request.address).toBe(HELPER); expect(request.functionName).toBe('mintInitialAllocation'); expect(request.args).toEqual([7n])
     expect(request.label).toContain(`250000 initial INCOME to the FUND owner ${OWNER}`)
     expect(options.reviewNotice).toContain('tokens never go to the sender')
+    expect(options.reviewedAccount).toBe(runtime.address)
     await expect(options.reverify!(request as never)).resolves.toBeUndefined()
     runtime.read.mockResolvedValueOnce(allocation({ pending: 0n }))
     await expect(options.reverify!(request as never)).rejects.toThrow('already minted')

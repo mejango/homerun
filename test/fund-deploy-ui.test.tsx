@@ -107,6 +107,8 @@ describe('Create submission recovery', () => {
       return null
     })
     await launch()
+    // Sent as the launch's saved sender, the account it was prepared for.
+    expect(runtime.send.mock.calls.at(-1)![1].reviewedAccount).toBe(saved().input.sender)
     expect(saved().statuses[8453].phase).toBe('signing')
     expect(host.textContent).toContain('Check your wallet history')
     expect(host.textContent).not.toContain('Review and deploy FUND')

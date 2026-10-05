@@ -158,6 +158,7 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
           submitting = null; submittedId.current = null; changed()
         }
         const hash = await tx.send(captured, {
+          reviewedAccount: address,
           reviewNotice: options.reviewNotice,
           reverify: async reviewed => {
             await latestConfirmedBlock()

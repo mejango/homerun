@@ -224,6 +224,8 @@ describe("Sticky holder recovery and independent loading", () => {
       );
       expect(marked).toBe(true);
       expect(readStickyPending(localStorage, key)).toBeNull();
+      // Sent as the holder whose credits it claims.
+      expect(mocks.send.mock.calls[0][1].reviewedAccount).toBe(HOLDER);
     } finally {
       Reflect.deleteProperty(navigator, "locks");
     }

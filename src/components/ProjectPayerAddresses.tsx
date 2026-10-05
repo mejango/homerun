@@ -105,6 +105,7 @@ function ProjectPayerAddressContext({ chainId, projectId, tokenLabel = 'Project 
       await checkPayerFactory(client, chainId, projectId)
       const saved: PayerAttempt = { version: 1, id: crypto.randomUUID(), settings, account: wallet.address, safe: tx.isSafe, phase: 'signing', afterBlock: '0' }
       const hash = await tx.send({ ...request, label: `Create ${tokenLabel} payer address` }, {
+        reviewedAccount: saved.account,
         reviewNotice: `Create a dedicated payer address for project #${projectId} on ${displayChainName(chainId)}. ${addToBalance ? 'ETH received adds to the project balance without minting tokens.' : `ETH received pays the project; ${tokenLabel} goes to ${isAddressEqual(selectedBeneficiary, zeroAddress) ? 'the original payer' : selectedBeneficiary}. Direct ETH transfers accept the current minting rate with no minimum token amount.`} ${editable ? `Admin ${selectedOwner} may change the routing and beneficiary later.` : 'Routing is immutable because the admin is the zero address.'} Sending other tokens directly does not forward them. This creates a payer contract and spends only gas; it does not deploy a FUND or INCOME project.`,
         reverify: async () => { await checkPayerFactory(client, chainId, projectId) },
         beforeWrite: async () => {

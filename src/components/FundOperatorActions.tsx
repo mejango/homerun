@@ -366,6 +366,7 @@ function LinkedRulesetStep({ plan, index, completed, onConfirmed, onCancel, onSu
     try {
       await reverify()
       const hash = await tx.send({ ...request, label: `${RULESET_LABELS[plan.action]} on ${displayChainName(state.chainId)}` }, {
+        reviewedAccount: plan.account,
         reviewNotice: [`This is transaction ${index + 1} of ${plan.requests.length}. Every chain must confirm before ${new Date(plan.startsAt * 1000).toLocaleString()}. Changes are separate transactions and are not atomic.`, rulesetNotice(plan.action)].filter(Boolean).join('\n\n'),
         reverify,
         beforeWrite: () => onBeforeWrite(state.chainId),
@@ -612,10 +613,10 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
       if (rulesetUnavailable) throw new Error(rulesetUnavailable)
       if (action === 'enable-success-minting' && !purchased) throw new Error('Confirm the asset purchase before enabling success mints.')
       if ((action === 'failure-refunds' || action === 'asset-sale-refunds') && !refundAttestation) throw new Error('Confirm the refund or sale outcome before opening cash-outs.')
+      if (!address) throw new Error('Connect the verified project owner wallet.')
       const current = await fresh()
       if (!current.permissions.queueRulesets) throw new Error('This wallet does not have permission to change the project rules.')
       if (current.linkedChainIds.length > 1) {
-        if (!address) throw new Error('Connect the project owner wallet.')
         const states = await readLinkedFundProjects(chainClient, current)
         for (const peer of states) {
           assertFundStateForWrite(peer, address)
@@ -632,6 +633,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
       }
       const request = buildFundRulesetChange({ snapshots: [current.rulesetSnapshot], action, mustStartAtOrAfter: 0 }).requests[0]
       await tx.send({ ...request, label: RULESET_LABELS[action] }, {
+        reviewedAccount: address,
         reviewNotice: rulesetNotice(action),
         reverify: async () => {
           const latest = await fresh()
@@ -670,6 +672,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
       }
       const request = built.requests[0]
       await tx.send({ ...request, label: input.amount === 0n ? 'Remove the asset-purchase withdrawal allowance' : `Set a new gross purchase allowance of ${formatUnits(input.amount, selected.decimals)} ${selected.symbol}` }, {
+        reviewedAccount: address,
         reviewNotice: rulesetNotice('configure-asset-allowance'),
         reverify: async () => {
           const latest = await fresh()
@@ -702,6 +705,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
       const memo = mintKind === 'offchain-contribution' ? `Homerun: offchain contribution ${contributionReference.trim()}` : 'Homerun: owner share after successful purchase'
       const request = buildFundMint({ snapshot: current.rulesetSnapshot, beneficiary: mintRecipient, tokenCount: count, kind: mintKind, memo })
       await tx.send({ ...request, label: `Mint ${formatUnits(count, 18)} FUND to ${mintRecipient}` }, {
+        reviewedAccount: address,
         reviewNotice: mintKind === 'operator-share'
           ? linked ? `Issue exactly ${formatUnits(count, 18)} FUND to the owner on ${displayChainName(state.chainId)}. Reconcile the owner’s holdings on all linked chains, including unclaimed bridged FUND. The owner may distribute these tokens to the operator at their discretion. Homerun does not infer a global ownership percentage from incomplete bridge supply.` : `Target a ${targetShare}% FUND share for the owner after this mint, including the owner’s current FUND. The owner may distribute these tokens to the operator at their discretion. This is an owner-selected allocation, not a contract-enforced entitlement.`
           : `Record ${offchainUsd} USD contributed outside the contract. No payment enters the treasury in this transaction. Check that reference “${contributionReference.trim()}” has not already been minted; the contract does not deduplicate these references.`,
@@ -744,6 +748,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
           if (!request) throw new Error('The required token approval could not be built.')
           setApprovedIntent(returnIntent)
           await approval.send({ ...request, label: `Approve exactly ${formatUnits(returnRaw, context.decimals)} ${context.symbol} for the treasury return` }, {
+            reviewedAccount: address,
             reverify: async () => { verifyContext(await fresh()) },
           })
           return
@@ -752,6 +757,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
       setApprovalNeeded(false)
       const request = buildFundReturn({ ...terminal, amount: returnRaw, reason: returnReason, shouldReturnHeldFees: true })
       await tx.send({ ...request, label: `Return ${formatUnits(returnRaw, context.decimals)} ${context.symbol} to FUND for ${returnReason === 'asset-sale' ? 'the asset sale' : 'refunds'}` }, {
+        reviewedAccount: address,
         simulationBlockNumber: approvalBlock,
         reviewNotice: 'This adds money to the project treasury without minting FUND. It does not change cash-out rules. Opening zero-tax refunds or asset-sale cash-outs is a separate reviewed transaction.',
         reverify: async () => {

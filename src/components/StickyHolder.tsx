@@ -210,7 +210,7 @@ function useStickyTx(state: StickyProjectState) {
     tx.phase,
     tx.receipt,
   ]);
-  async function send(request: TxRequest, options?: TxSendOptions) {
+  async function send(request: TxRequest, options: TxSendOptions) {
     if (
       !address ||
       !client ||
@@ -227,7 +227,7 @@ function useStickyTx(state: StickyProjectState) {
     const hash = await tx.send(request, {
       ...options,
       beforeWrite: async () => {
-        await options?.beforeWrite?.();
+        await options.beforeWrite?.();
         if ((await client.getChainId()) !== state.chainId)
           throw new Error("The Sticky RPC changed networks.");
         const block = await client.getBlock({ blockTag: "latest" });
@@ -255,13 +255,13 @@ function useStickyTx(state: StickyProjectState) {
       onWriteRejected: async () => {
         if (record) clearStickyPending(localStorage, key, record);
         changedJournal();
-        await options?.onWriteRejected?.();
+        await options.onWriteRejected?.();
       },
       // Nothing reached the wallet, so the saved transaction is withdrawn.
       onBeforeWriteAborted: async () => {
         if (record) clearStickyPending(localStorage, key, record);
         changedJournal();
-        await options?.onBeforeWriteAborted?.();
+        await options.onBeforeWriteAborted?.();
       },
     });
     if (hash) {
@@ -659,6 +659,7 @@ function StickyStake({
             label: `Claim ${units(claim)} FUND credits as ERC20 before staking`,
           },
           {
+            reviewedAccount: address,
             reverify: async () => {
               const latest = await fresh(client, current, address);
               if (claim > latest.fundCreditBalance)
@@ -680,6 +681,7 @@ function StickyStake({
               : `Approve exactly ${units(count)} FUND for the Sticky terminal`,
           },
           {
+            reviewedAccount: address,
             simulationBlockNumber: current.blockNumber,
             reverify: async () => {
               const latest = await fresh(
@@ -711,6 +713,7 @@ function StickyStake({
           label: `Stake ${units(count)} FUND; receive at least ${units(latestQuote.minimumShares)} SHARE`,
         },
         {
+          reviewedAccount: address,
           simulationBlockNumber: current.blockNumber,
           reviewNotice: `Your FUND moves into the Sticky pool. The permanent unstaking tax is ${formatUnits(current.cashOutTaxRate, 2)}%, plus applicable terminal fees. ${quote.data && latestQuote.minimumShares < quote.data.minimumShares ? "The SHARE quote decreased since it was displayed." : ""}`,
           reverify: async () => {
@@ -859,6 +862,7 @@ function StickyUnstake({
           label: `Unstake ${units(count)} SHARE; receive at least ${units(latestQuote.minimumFund)} FUND`,
         },
         {
+          reviewedAccount: address,
           reviewNotice: `${count === current.shareBalance ? "This exits your entire SHARE position and ends your current staking streak. " : "This consumes your newest SHARE tranches first. "}${latestQuote.minimumFund < quote.data.minimumFund ? "The protected FUND return decreased since it was displayed." : ""}`,
           reverify: async () => {
             const latest = await fresh(client, current, address);
@@ -995,6 +999,7 @@ export function StickyRewards({
             : `Begin vesting ${units(latest.eligibleUnvested)} INCOME rewards`,
         },
         {
+          reviewedAccount: address,
           reviewNotice: collect
             ? "Collection also starts vesting any eligible completed rounds. Current-round rewards remain unavailable."
             : `These rewards unlock in equal portions at the next ${latest.vestingRounds.toString()} round boundaries after this claim. Each round lasts ${duration(latest.roundDuration)}.`,
