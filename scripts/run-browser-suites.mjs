@@ -1,9 +1,8 @@
-import { spawnSync } from 'node:child_process'
 import { cp } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from '@playwright/test'
-import { runGroups, runSuite, startServer, stopAll, summarize, waitForServer, warmRoutes } from './suite-runner.mjs'
+import { runCommand, runGroups, runSuite, startServer, stopAll, summarize, waitForServer, warmRoutes } from './suite-runner.mjs'
 
 // Runs the browser suites with the servers each one needs, one group after the other, and exits non-zero when any
 // of them failed, so one run reports every broken suite. CI runs this; a developer machine runs it the same way:
@@ -16,6 +15,10 @@ import { runGroups, runSuite, startServer, stopAll, summarize, waitForServer, wa
 //         (port 54064). The manifest and fee pins it builds with have the right shape and nothing else: the suite
 //         models every Center response, and the issuer and audience are the ones the app defaults to.
 //
+// A suite that runs for more than 10 minutes is stopped with the workers it forked and counts as a failure; they take
+// one to two minutes each. The Center build gets 15 minutes. A hung suite therefore ends the run in failure, with the
+// server logs in test-results/, instead of running into the CI job's own limit.
+//
 // CHROME_PATH and PLAYWRIGHT_MODULE default to Playwright's own Chromium (npx playwright install chromium) and the
 // Playwright installed here. Server logs go to test-results/.
 
@@ -26,6 +29,8 @@ const env = {
   CHROME_PATH: process.env.CHROME_PATH || chromium.executablePath(),
   PLAYWRIGHT_MODULE: process.env.PLAYWRIGHT_MODULE || join(root, 'node_modules/playwright/index.mjs'),
 }
+const suiteTimeoutMs = 10 * 60_000
+const buildTimeoutMs = 15 * 60_000
 const centerDist = '.next-center-test'
 const centerWallet = {
   NEXT_PUBLIC_CENTER_WALLET_ENABLED: 'true',
@@ -56,7 +61,8 @@ const groups = {
   },
   async center(suite) {
     const base = 'http://localhost:54064'
-    const build = spawnSync('npm', ['run', 'build'], { cwd: root, env: { ...env, ...centerWallet, NEXT_DIST_DIR: centerDist }, stdio: 'inherit' })
+    const build = await runCommand('npm', ['run', 'build'], { cwd: root, env: { ...env, ...centerWallet, NEXT_DIST_DIR: centerDist }, timeoutMs: buildTimeoutMs })
+    if (build.timedOut) throw new Error(`the Center-enabled build timed out after ${buildTimeoutMs / 60_000} minutes`)
     if (build.status !== 0) throw new Error('the Center-enabled build failed')
     // A standalone server serves neither public/ nor the build's static files itself.
     await cp(join(root, 'public'), join(root, centerDist, 'standalone/public'), { recursive: true })
@@ -81,7 +87,7 @@ if (unknown.length) {
   process.exit(2)
 }
 const outcomes = await runGroups(groups, selected, {
-  run: ({ extraEnv, ...suite }) => runSuite({ ...suite, cwd: root, env: { ...env, ...extraEnv } }),
+  run: ({ extraEnv, ...suite }) => runSuite({ ...suite, cwd: root, env: { ...env, ...extraEnv }, timeoutMs: suiteTimeoutMs }),
 })
 const { lines, exitCode } = summarize(outcomes)
 for (const line of lines) console.log(line)

@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { mkdir, open } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -66,16 +66,50 @@ export async function warmRoutes(base, routes, log = console.log) {
   }
 }
 
-/** Runs one suite to completion and describes how it went. */
-export async function runSuite({ name, command, args, cwd, env, log = console.log }) {
+/**
+ * Runs a command with its output on ours, in a process group of its own. One that outlives `timeoutMs` is stopped
+ * together with the workers it forked, and reported as timed out.
+ */
+export async function runCommand(command, args, { cwd, env, timeoutMs }) {
+  if (!(timeoutMs > 0)) throw new TypeError('A command needs a time limit: timeoutMs must be positive.')
+  const child = spawn(command, args, { cwd, env, detached: true, stdio: 'inherit' })
+  await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject) })
+  running.add(child.pid)
+  const exited = new Promise(resolve => child.once('exit', (status, signal) => resolve({ status, signal })))
+  let timedOut = false
+  let killer
+  const timer = setTimeout(() => {
+    timedOut = true
+    signalGroup(child.pid, 'SIGTERM')
+    killer = setTimeout(() => signalGroup(child.pid, 'SIGKILL'), 10_000)
+  }, timeoutMs)
+  const { status, signal } = await exited
+  clearTimeout(timer)
+  clearTimeout(killer)
+  signalGroup(child.pid, 'SIGKILL')
+  running.delete(child.pid)
+  return { status, signal, timedOut }
+}
+
+/** Runs one suite to completion, or to its time limit, and describes how it went. */
+export async function runSuite({ name, command, args, cwd, env, timeoutMs, log = console.log }) {
   const started = Date.now()
   const header = [command, ...args].join(' ')
   if (process.env.GITHUB_ACTIONS) log(`::group::${header}`)
   else log(`\n=== ${header} ===`)
-  const result = spawnSync(command, args, { cwd, env, stdio: 'inherit' })
+  let result
+  try {
+    result = await runCommand(command, args, { cwd, env, timeoutMs })
+  } catch (error) {
+    if (error instanceof TypeError) throw error
+    result = { status: null, error }
+  }
   if (process.env.GITHUB_ACTIONS) log('::endgroup::')
-  const ok = result.status === 0
-  const reason = ok ? undefined : result.status === null ? `killed by ${result.signal}` : `exited with ${result.status}`
+  const ok = result.status === 0 && !result.timedOut
+  const reason = ok ? undefined
+    : result.timedOut ? `timed out after ${timeoutMs / 1000} s`
+      : result.error ? `could not start: ${result.error.message}`
+        : result.status === null ? `killed by ${result.signal}` : `exited with ${result.status}`
   if (!ok && process.env.GITHUB_ACTIONS) log(`::error title=Browser suite failed::${header} ${reason}`)
   return { name, ok, seconds: Math.round((Date.now() - started) / 1000), reason }
 }

@@ -74,11 +74,13 @@ jobs:
         run: npx playwright install --with-deps chromium
       # test:browser, test:create and test:a11y share a development server, test:intent starts its
       # own servers and test:center needs a build with the Center wallet enabled. Every suite runs
-      # even when an earlier one fails.
+      # even when an earlier one fails, and one that runs past 10 minutes is stopped and fails. The
+      # step's own limit keeps the diagnostics upload inside the job's.
       - name: Run the browser suites
+        timeout-minutes: 30
         run: npm run test:suites
       - name: Upload browser diagnostics
-        if: failure()
+        if: ${{ failure() || cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: browser-diagnostics

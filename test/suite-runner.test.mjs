@@ -9,10 +9,10 @@ import { runGroups, runSuite, startServer, summarize, waitForServer } from '../s
 
 const quiet = () => {}
 const node = source => [process.execPath, ['-e', source]]
-const run = ({ extraEnv, ...suite }) => runSuite({ ...suite, cwd: process.cwd(), env: { ...process.env, ...extraEnv } })
-const runAll = async groups => {
+const runWithin = timeoutMs => ({ extraEnv, ...suite }) => runSuite({ ...suite, cwd: process.cwd(), env: { ...process.env, ...extraEnv }, timeoutMs })
+const runAll = async (groups, timeoutMs = 30_000) => {
   const errors = []
-  const outcomes = await runGroups(groups, Object.keys(groups), { run, log: quiet, logError: message => errors.push(message) })
+  const outcomes = await runGroups(groups, Object.keys(groups), { run: runWithin(timeoutMs), log: quiet, logError: message => errors.push(message) })
   return { outcomes, errors, ...summarize(outcomes) }
 }
 
@@ -25,11 +25,56 @@ test('a run passes only when every suite passed', () => {
 
 test('a suite is judged by its exit status', async () => {
   const [command, args] = node('')
-  assert.equal((await runSuite({ name: 'passes', command, args, cwd: process.cwd(), env: process.env, log: quiet })).ok, true)
+  assert.equal((await runSuite({ name: 'passes', command, args, cwd: process.cwd(), env: process.env, timeoutMs: 30_000, log: quiet })).ok, true)
   const [failing, failingArgs] = node('process.exit(3)')
-  const failed = await runSuite({ name: 'fails', command: failing, args: failingArgs, cwd: process.cwd(), env: process.env, log: quiet })
+  const failed = await runSuite({ name: 'fails', command: failing, args: failingArgs, cwd: process.cwd(), env: process.env, timeoutMs: 30_000, log: quiet })
   assert.equal(failed.ok, false)
   assert.equal(failed.reason, 'exited with 3')
+})
+
+test('a suite that cannot start is a failed suite', async () => {
+  const outcome = await runSuite({ name: 'missing', command: '/nonexistent/suite-runner-test-binary', args: [], cwd: process.cwd(), env: process.env, timeoutMs: 30_000, log: quiet })
+  assert.equal(outcome.ok, false)
+  assert.match(outcome.reason, /^could not start: /)
+})
+
+test('a suite without a time limit is refused', async () => {
+  const [command, args] = node('')
+  await assert.rejects(runSuite({ name: 'unbounded', command, args, cwd: process.cwd(), env: process.env, log: quiet }), TypeError)
+})
+
+test('a suite that outlives its time limit is stopped and counts as a failure', async () => {
+  const [command, args] = node('setInterval(() => {}, 1000)')
+  const started = Date.now()
+  const outcome = await runSuite({ name: 'hangs', command, args, cwd: process.cwd(), env: process.env, timeoutMs: 300, log: quiet })
+  assert.equal(outcome.ok, false)
+  assert.equal(outcome.reason, 'timed out after 0.3 s')
+  assert.ok(Date.now() - started < 5000, 'the suite was stopped soon after its limit')
+})
+
+test('a time limit stops the workers the suite forked', async () => {
+  const logDirectory = await mkdtemp(join(tmpdir(), 'suite-runner-'))
+  const pidFile = join(logDirectory, 'worker.pid')
+  const [command, args] = node(`
+    const worker = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+    require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(worker.pid))
+    setInterval(() => {}, 1000)`)
+  const outcome = await runSuite({ name: 'forks', command, args, cwd: process.cwd(), env: process.env, timeoutMs: 1500, log: quiet })
+  assert.equal(outcome.ok, false)
+  const workerPid = Number(await readFile(pidFile, 'utf8'))
+  await assert.rejects(async () => { process.kill(workerPid, 0) }, { code: 'ESRCH' })
+})
+
+test('a suite that times out fails the run and the suites after it still run', async () => {
+  const { outcomes, exitCode } = await runAll({
+    only: async suite => {
+      await suite('hangs', ...node('setInterval(() => {}, 1000)'))
+      await suite('after', ...node(''))
+    },
+  }, 300)
+  assert.deepEqual(outcomes.map(({ name, ok }) => [name, ok]), [['hangs', false], ['after', true]])
+  assert.match(outcomes[0].reason, /^timed out/)
+  assert.equal(exitCode, 1)
 })
 
 test('when every suite passes the run exits zero', async () => {
