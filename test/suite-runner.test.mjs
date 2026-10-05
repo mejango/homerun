@@ -5,7 +5,7 @@ import { createServer } from 'node:http'
 import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { runGroups, runSuite, startServer, summarize, waitForServer } from '../scripts/suite-runner.mjs'
+import { requireFreePort, runGroups, runSuite, startServer, summarize, waitForServer } from '../scripts/suite-runner.mjs'
 
 const quiet = () => {}
 const node = source => [process.execPath, ['-e', source]]
@@ -124,11 +124,34 @@ test('a server that is running and answering is ready', async () => {
   const { service, url } = await answeringOn()
   const { server } = await serverWith('setInterval(() => {}, 1000)')
   try {
-    await waitForServer(url, server, 5)
+    await waitForServer(url, server, 5, { settleMs: 50 })
   } finally {
     await server.stop()
     service.close()
   }
+})
+
+test('an answer is not trusted when the server exits right after it', async () => {
+  const { service, url } = await answeringOn()
+  const { server } = await serverWith('setTimeout(() => process.exit(1), 300)')
+  try {
+    await assert.rejects(waitForServer(url, server, 5, { settleMs: 1000 }), /the server exited right after .* first answered/)
+  } finally {
+    await server.stop()
+    service.close()
+  }
+})
+
+test('a port that already answers is refused, and named', async () => {
+  const { service } = await answeringOn()
+  const { port } = service.address()
+  try {
+    await assert.rejects(requireFreePort(port, '127.0.0.1'), new RegExp(`port ${port} already answers`))
+  } finally {
+    service.close()
+    await once(service, 'close')
+  }
+  await requireFreePort(port, '127.0.0.1')
 })
 
 test('a server that exits before it answers is not ready', async () => {

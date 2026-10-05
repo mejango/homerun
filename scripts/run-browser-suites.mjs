@@ -2,7 +2,7 @@ import { cp } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from '@playwright/test'
-import { runCommand, runGroups, runSuite, startServer, stopAll, summarize, waitForServer, warmRoutes } from './suite-runner.mjs'
+import { requireFreePort, runCommand, runGroups, runSuite, startServer, stopAll, summarize, waitForServer, warmRoutes } from './suite-runner.mjs'
 
 // Runs the browser suites with the servers each one needs, one group after the other, and exits non-zero when any
 // of them failed, so one run reports every broken suite. CI runs this; a developer machine runs it the same way:
@@ -14,6 +14,9 @@ import { runCommand, runGroups, runSuite, startServer, stopAll, summarize, waitF
 // center  test:center needs a production build with the Center wallet enabled, served from its standalone output
 //         (port 54064). The manifest and fee pins it builds with have the right shape and nothing else: the suite
 //         models every Center response, and the issuer and audience are the ones the app defaults to.
+//
+// A group whose port already answers does not start, and says which port: a server that finds its port taken exits, and
+// the suites would otherwise run against whatever is already there.
 //
 // A suite that runs for more than 10 minutes is stopped with the workers it forked and counts as a failure; they take
 // one to two minutes each. The Center build gets 15 minutes. A hung suite therefore ends the run in failure, with the
@@ -29,6 +32,8 @@ const env = {
   CHROME_PATH: process.env.CHROME_PATH || chromium.executablePath(),
   PLAYWRIGHT_MODULE: process.env.PLAYWRIGHT_MODULE || join(root, 'node_modules/playwright/index.mjs'),
 }
+const devPort = 3010
+const centerPort = 54064
 const suiteTimeoutMs = 10 * 60_000
 const buildTimeoutMs = 15 * 60_000
 const centerDist = '.next-center-test'
@@ -46,7 +51,8 @@ const npmRun = (suite, script, extraEnv) => suite(script, 'npm', ['run', script]
 
 const groups = {
   async dev(suite) {
-    const base = 'http://localhost:3010/'
+    const base = `http://localhost:${devPort}/`
+    await requireFreePort(devPort)
     const server = await startServer({ name: 'dev', command: 'npm', args: ['run', 'dev'], cwd: root, env, logDirectory: results })
     try {
       await waitForServer(base, server, 300)
@@ -60,7 +66,8 @@ const groups = {
     await npmRun(suite, 'test:intent')
   },
   async center(suite) {
-    const base = 'http://localhost:54064'
+    const base = `http://localhost:${centerPort}`
+    await requireFreePort(centerPort)
     const build = await runCommand('npm', ['run', 'build'], { cwd: root, env: { ...env, ...centerWallet, NEXT_DIST_DIR: centerDist }, timeoutMs: buildTimeoutMs })
     if (build.timedOut) throw new Error(`the Center-enabled build timed out after ${buildTimeoutMs / 60_000} minutes`)
     if (build.status !== 0) throw new Error('the Center-enabled build failed')
@@ -69,7 +76,7 @@ const groups = {
     await cp(join(root, centerDist, 'static'), join(root, centerDist, 'standalone', centerDist, 'static'), { recursive: true })
     const server = await startServer({
       name: 'center', command: process.execPath, args: [join(root, centerDist, 'standalone/server.js')],
-      cwd: root, env: { ...env, PORT: '54064', HOSTNAME: '0.0.0.0' }, logDirectory: results,
+      cwd: root, env: { ...env, PORT: String(centerPort), HOSTNAME: '0.0.0.0' }, logDirectory: results,
     })
     try {
       await waitForServer(`${base}/founderhaus`, server, 60)

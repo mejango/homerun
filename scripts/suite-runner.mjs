@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { mkdir, open } from 'node:fs/promises'
+import { connect } from 'node:net'
 import { join } from 'node:path'
 
 // The process and summary code behind scripts/run-browser-suites.mjs. Every server leads its own process group, so
@@ -39,15 +40,38 @@ export async function startServer({ name, command, args, cwd, env, logDirectory 
   }
 }
 
-export async function waitForServer(url, server, seconds) {
+/** Whether something already accepts connections on the port. */
+export function portAnswers(port, host = 'localhost') {
+  return new Promise(resolve => {
+    const socket = connect({ port, host })
+    socket.setTimeout(2_000)
+    socket.once('connect', () => { socket.destroy(); resolve(true) })
+    // A listener whose backlog is full does not refuse, it stalls.
+    socket.once('timeout', () => { socket.destroy(); resolve(true) })
+    socket.once('error', () => resolve(false))
+  })
+}
+
+/** A server started on a port that already answers is not the server a suite would talk to. */
+export async function requireFreePort(port, host = 'localhost') {
+  if (await portAnswers(port, host)) throw new Error(`port ${port} already answers; stop whatever listens on it before running these suites`)
+}
+
+const exited = server => server.child.exitCode !== null || server.child.signalCode !== null
+
+/** Waits for the URL to answer, and for the server that was started for it to still be running afterwards. */
+export async function waitForServer(url, server, seconds, { settleMs = 2_000 } = {}) {
   const deadline = Date.now() + seconds * 1000
   while (Date.now() < deadline) {
-    if (server.child.exitCode !== null || server.child.signalCode !== null) throw new Error(`the server exited before ${url} answered`)
-    try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(30_000) })
-      await response.arrayBuffer()
-      if (response.ok) return
-    } catch { /* not listening yet */ }
+    if (exited(server)) throw new Error(`the server exited before ${url} answered`)
+    const answered = await fetch(url, { signal: AbortSignal.timeout(30_000) })
+      .then(async response => { await response.arrayBuffer(); return response.ok }, () => false)
+    if (answered) {
+      // Another process on the port can answer before this server finds the port taken and exits.
+      await new Promise(resolve => setTimeout(resolve, settleMs))
+      if (exited(server)) throw new Error(`the server exited right after ${url} first answered, so the answer may have come from another process on that port`)
+      return
+    }
     await new Promise(resolve => setTimeout(resolve, 2_000))
   }
   throw new Error(`${url} did not answer within ${seconds} seconds`)
