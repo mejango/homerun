@@ -62,17 +62,41 @@ afterEach(async () => {
   host.remove()
 })
 
+/** Renders the page in a stage, then opens every project tab and every Owners section so every panel is mounted at once. */
+async function openEveryPanel(phase: ProjectPhase, custom: boolean) {
+  const project = custom
+    ? saveCreatedProject({ ...CREATE_DEFAULTS, ownerMode: 'existing', operatorMode: 'existing', name: 'Community house', photo: 'data:image/png;base64,aW1hZ2U=' })
+    : undefined
+  await act(async () => root.render(<DemoProjectPage project={project} />))
+  await selectPhase(phase)
+  for (const label of ['Overview', 'Shop', 'Extras', 'Operators', 'Owners']) await tab(label)
+  const sections = ownerSections()
+  expect(sections).toContain('Accounts')
+  for (const section of sections) await tab(section, 'Ownership sections')
+}
+
 describe.each([['the demo', false], ['a local preview', true]] as const)('element ids on %s', (_page, custom) => {
   it.each(phases)('stay unique in the %s stage once every project tab and Owners section has been opened', async phase => {
-    const project = custom
-      ? saveCreatedProject({ ...CREATE_DEFAULTS, ownerMode: 'existing', operatorMode: 'existing', name: 'Community house', photo: 'data:image/png;base64,aW1hZ2U=' })
-      : undefined
-    await act(async () => root.render(<DemoProjectPage project={project} />))
-    await selectPhase(phase)
-    for (const label of ['Overview', 'Shop', 'Extras', 'Operators', 'Owners']) await tab(label)
-    const sections = ownerSections()
-    expect(sections).toContain('Accounts')
-    for (const section of sections) await tab(section, 'Ownership sections')
+    await openEveryPanel(phase, custom)
     expect(duplicateIds()).toEqual([])
+  })
+})
+
+describe.each([['the demo', false], ['a local preview', true]] as const)('the modeled token terms on %s', (_page, custom) => {
+  it.each(phases)('print once, in Stages, in the %s stage, and leave Owners, Accounts whole', async phase => {
+    await openEveryPanel(phase, custom)
+    const printed = [...host.querySelectorAll('summary')].filter(summary => summary.textContent === 'Modeled token terms')
+    expect(printed).toHaveLength(1)
+    expect(printed[0].closest('[role="tabpanel"]')?.id).toMatch(/-panel-stages$/)
+    for (const id of ['fund-total-supply', 'operator-fund-mint', 'rev-issuance-rate', 'rev-total-supply']) {
+      expect(host.querySelectorAll(`[id$="${id}"]`), id).toHaveLength(1)
+    }
+
+    const everyone = host.querySelector('[data-account-section="all"]')!
+    expect([...everyone.querySelectorAll('h2')].map(heading => heading.textContent)).toEqual(['All owners', 'FUND token'])
+    for (const section of everyone.querySelectorAll(':scope > .demo-owner-sections > section')) {
+      const heading = section.querySelector('h2')!
+      expect(section.textContent!.replace(heading.textContent!, '').trim(), `${heading.textContent} has content`).not.toBe('')
+    }
   })
 })
