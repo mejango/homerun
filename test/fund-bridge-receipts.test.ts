@@ -70,6 +70,15 @@ it.each(['prepare', 'send', 'claim', 'approve'] as const)('confirms a Safe %s on
   f.receipt.logs = [effect, safeExecutionLog(other, hash)] as unknown as TransactionReceipt['logs']
   await expect(verifyFundBridgeReceipt(f.client, f.request, f.receipt, account, true)).rejects.toThrow('has no ExecutionSuccess or ExecutionFailure from Safe')
 })
+it.each(['prepare', 'send', 'claim', 'approve'] as const)('reads a Safe %s’s one execution event, which names its safeTxHash, in either layout', async kind => {
+  // The proposal's hash, not the execution transaction's: the Safe's one execTransaction logs it.
+  const safeTxHash = `0x${'ee'.repeat(32)}` as Hex
+  for (const version of ['1.4.1', '1.3'] as const) {
+    const f = fixture(kind, true)
+    f.receipt.logs = [f.receipt.logs[0], safeExecutionLog(account, safeTxHash, { version })] as unknown as TransactionReceipt['logs']
+    await expect(verifyFundBridgeReceipt(f.client, f.request, f.receipt, account, true)).resolves.toBeDefined()
+  }
+})
 it('checks direct Safe call identity and its exact successful sucker event', async () => {
   const f = fixture('prepare', true)
   expect(await verifyFundBridgeReceipt(f.client, f.request, f.receipt, account, true)).toBe('prepared')
