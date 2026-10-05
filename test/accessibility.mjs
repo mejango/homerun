@@ -42,6 +42,12 @@ async function owners(account = 'You') {
   await expect(page.locator('[data-account-section=all]')).toBeVisible();
   await page.locator(`[data-account-section="${account.toLowerCase()}"]`).scrollIntoViewIfNeeded();
 }
+/** The Owners sections the page offers, read from its own tab list while the Owners tab is open. */
+async function ownerSections() {
+  const sections = await page.getByRole('tablist', { name: 'Ownership sections' }).getByRole('tab').allInnerTexts();
+  expect(sections, 'The Owners tab lists its sections').toContain('Accounts');
+  return sections;
+}
 async function phase(value) {
   await tab('Stages');
   const stage = ['earning', 'liquidated'].includes(value) ? value : 'raising';
@@ -107,7 +113,7 @@ try {
     await analyze(`project tab: ${section}`);
   }
   await owners();
-  for (const section of ['Accounts', 'Market', 'Settlement', 'Splits', 'Loans']) {
+  for (const section of await ownerSections()) {
     await tab(section);
     await analyze(`Owners: ${section}`);
   }

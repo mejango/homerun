@@ -10,7 +10,7 @@
     "npm": ">=11"
   },
   "scripts": {
-    "dev": "next dev --webpack --port 3010",
+    "dev": "node scripts/stage-public.mjs && next dev --webpack --port 3010",
     "build": "node scripts/stage-public.mjs && next build --webpack",
     "test": "node --test test/*.test.mjs",
     "test:browser": "node test/browser-flow.mjs",

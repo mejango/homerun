@@ -330,7 +330,7 @@ try {
       await field("raisedPercent", 0);
       await page.locator("#pay-amount").fill("500");
       await expect(page.locator("#pay-output")).toHaveText("5,000,000");
-      await expect(page.locator("#project-raised")).toHaveText("$0");
+      await expect(page.locator("#project-raised")).toHaveText("$0.00");
       assert.equal(await dollars("#pay-result-balance"), 500);
       await paymentShare(100);
       await field("raisedPercent", 10);
@@ -502,11 +502,11 @@ try {
       await phase("earning");
       await field("monthlyRent", 0);
       await reveal("#your-loan-cash");
-      await expect(page.locator("#your-loan-cash")).toHaveText("$0");
+      await expect(page.locator("#your-loan-cash")).toHaveText("$0.00");
       await expect(page.locator("#loan-status")).toContainText("No cash");
       await field("opsReserve", 0);
       await expect(page.locator("#phase-panel")).toContainText(
-        "$72,000 of costs remain unpaid",
+        "$72,000.00 of costs remain unpaid",
       );
     },
   );
@@ -538,7 +538,7 @@ try {
       assert.equal(await dollars("#your-fund-sale"), 6538.99);
       assert.equal(await dollars("#combined-cashout"), 7188.81);
       await field("salePrice", 600000);
-      await expect(page.locator("#fund-sale-cash")).toHaveText("$598,000");
+      await expect(page.locator("#fund-sale-cash")).toHaveText("$598,000.00");
       await page.locator("#pay-review").click();
       await expect(page.locator("#pay-dialog")).toContainText(
         "Nothing is signed",
@@ -776,10 +776,10 @@ try {
     await page.goto(new URL(`/project?id=${id}`, base).href);
     await expect(page.locator('.simulator')).toHaveAttribute('data-ready', 'true', { timeout: 120_000 });
     await expect(page.locator('h1')).toHaveText('Neighborhood equipment');
-    await expect(page.locator('#project-raised')).toHaveText('$0');
+    await expect(page.locator('#project-raised')).toHaveText('$0.00');
     await page.locator('#pay-amount').fill('2500');
     await expect(page.locator('#pay-output')).toHaveText('25,000,000');
-    await expect(page.locator('#project-raised')).toHaveText('$0');
+    await expect(page.locator('#project-raised')).toHaveText('$0.00');
     assert.equal(await dollars('#pay-result-balance'), 2500);
     await paymentShare(100);
     await expect(page.locator('.demo-model-note')).toContainText('Local project preview');
