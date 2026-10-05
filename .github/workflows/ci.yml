@@ -1,0 +1,198 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-build:
+    name: Test and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CI: true
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Use pinned Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Lint
+        run: npm run lint
+      # Local hash comparison only: a browser query whose document is missing from the
+      # persisted registry is rejected by the relay, so drift here silently breaks a
+      # feature. The live-schema half of the script stays out of CI so a third-party
+      # outage cannot fail the build.
+      - name: Check persisted Bendystraw operation registry
+        run: npm run check:indexer
+      - name: Run model and unit tests
+        run: npm test
+      - name: Run component and integration tests
+        run: npm run test:live
+      - name: Build production application
+        run: npm run build
+      # tsc reads the next-env.d.ts that the build writes.
+      - name: Type-check
+        run: npm run typecheck
+
+  browser:
+    name: Browser suites
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      CI: true
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Use pinned Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      # test:browser, test:create and test:a11y share a development server, test:intent starts its
+      # own servers and test:center needs a build with the Center wallet enabled. Every suite runs
+      # even when an earlier one fails.
+      - name: Run the browser suites
+        run: npm run test:suites
+      - name: Upload browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: browser-diagnostics
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  forge-fmt:
+    name: Forge format
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with:
+          version: v1.8.1
+      - name: Check formatting
+        run: forge fmt --check
+
+  forge-test:
+    name: Forge tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: extensions/homerun
+    steps:
+      # remappings.txt points at sibling checkouts two levels above this repository, so it is
+      # checked out at the same depth the other protocol checkouts are created at.
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: extensions/homerun
+          persist-credentials: false
+      - name: Use pinned Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: extensions/homerun/.nvmrc
+          cache: npm
+          cache-dependency-path: extensions/homerun/package-lock.json
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with:
+          version: v1.8.1
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      # The revisions and package versions come from script/deploy.mjs, the same pins the
+      # deployment commands refuse to run without.
+      - name: Prepare the pinned protocol workspace
+        run: node scripts/prepare-workspace.mjs
+      - name: Run the contract tests
+        run: npm run test:contracts
+      - name: Run the deployment tests
+        run: npm run test:deployment
+      - name: Check contract sizes
+        run: sh scripts/forge.sh build --sizes --skip '*/test/**'
+
+  container-smoke:
+    name: Container smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the production image
+        run: |
+          docker build --tag homerun:ci \
+            --build-arg NEXT_PUBLIC_SITE_URL=https://homerun.example \
+            --build-arg NEXT_PUBLIC_JBCENTER_URL=https://center.example \
+            --build-arg NEXT_PUBLIC_BENDYSTRAW_URL=https://bendystraw.example \
+            --build-arg NEXT_PUBLIC_TESTNET_BENDYSTRAW_URL=https://testnet.bendystraw.example \
+            .
+      # The root filesystem is read-only. Next writes its caches under /app/.next/cache, so a
+      # tmpfs owned by the node user is mounted there.
+      - name: Run the image as non-root and check readiness
+        run: |
+          docker run --detach --name homerun-ci \
+            --read-only \
+            --tmpfs /app/.next/cache:uid=1000,gid=1000 \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --publish 127.0.0.1:3000:3000 \
+            homerun:ci
+          for _ in {1..30}; do
+            if curl --fail --silent --output /dev/null http://127.0.0.1:3000/; then
+              test "$(docker inspect --format '{{.Config.User}}' homerun-ci)" = node
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs homerun-ci
+          exit 1
+      - name: Remove smoke-test container
+        if: always()
+        run: docker rm --force homerun-ci || true
+
+  audit:
+    name: Production dependency audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Use pinned Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+      - name: Reject high or critical production dependency advisories
+        run: npm run audit:prod

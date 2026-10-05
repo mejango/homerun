@@ -27,6 +27,7 @@
     "typecheck": "tsc --noEmit",
     "test:live": "vitest run",
     "lint": "eslint src scripts --max-warnings=0",
+    "audit:prod": "npm audit --omit=dev --audit-level=high",
     "dev:prototype": "node scripts/serve.mjs",
     "build:prototype": "node scripts/build.mjs",
     "test:deployment": "FOUNDRY_PROFILE=deploy node scripts/test-contracts.mjs --match-path \"test/deployment/*.t.sol\" && node --test test/deployment/*.test.cjs test/deployment/*.test.mjs",
