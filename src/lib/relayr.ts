@@ -899,6 +899,28 @@ export async function relayrPay(
   return hash
 }
 
+type RelayrBundleRead = { paymentReceived: unknown; records: RelayrTransactionRecord[] }
+
+/**
+ * One read of Relayr's bundle, never from a cache: a cached answer could hide
+ * a payment or a destination result. Resolves with what Relayr reports when
+ * the answer names exactly this bundle, null when it does not, and
+ * 'not-found' on a 404. Throws while Relayr is unreachable.
+ */
+async function readRelayrBundle(
+  uuid: string,
+  timeoutMs = RELAYR_STATUS_REQUEST_TIMEOUT_MS,
+): Promise<RelayrBundleRead | 'not-found' | null> {
+  const response = await relayrFetch(`${RELAYR_API}/v1/bundle/${uuid}`, { cache: 'no-store' }, timeoutMs)
+  if (response.status === 404) return 'not-found'
+  if (!response.ok) return null
+  const { bundle_uuid: echoed, transactions, payment_received: paymentReceived } =
+    ((await response.json()) ?? {}) as { bundle_uuid?: unknown; transactions?: unknown; payment_received?: unknown }
+  return typeof echoed === 'string' && echoed.toLowerCase() === uuid.toLowerCase() && Array.isArray(transactions)
+    ? { paymentReceived, records: transactions as RelayrTransactionRecord[] }
+    : null
+}
+
 export async function relayrPoll(
   uuid: string,
   expectedCount: number,
@@ -918,12 +940,8 @@ export async function relayrPoll(
   for (;;) {
     try {
       const elapsed = Date.now() - started
-      const response = await relayrFetch(
-        `${RELAYR_API}/v1/bundle/${uuid}`,
-        undefined,
-        Math.min(RELAYR_STATUS_REQUEST_TIMEOUT_MS, Math.max(timeoutMs - elapsed, 1)),
-      )
-      if (response.status === 404) {
+      const read = await readRelayrBundle(uuid, Math.min(RELAYR_STATUS_REQUEST_TIMEOUT_MS, Math.max(timeoutMs - elapsed, 1)))
+      if (read === 'not-found') {
         consecutiveNotFound += 1
         if (consecutiveNotFound >= RELAYR_NOT_FOUND_ATTEMPTS) {
           throw new RelayrExecutionError(
@@ -937,11 +955,8 @@ export async function relayrPoll(
       } else {
         consecutiveNotFound = 0
       }
-      if (response.ok) {
-        const body = (await response.json()) as {
-          transactions?: RelayrTransactionRecord[]
-        }
-        const records = body.transactions ?? []
+      const records = read && read !== 'not-found' ? read.records : null
+      if (records) {
         lastRecords = records
         onUpdate?.(records)
         if (
