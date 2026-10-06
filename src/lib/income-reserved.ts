@@ -54,10 +54,12 @@ export async function verifyIncomeReservedReceipt(client: PublicClient, reviewed
   } else if (!transaction.to || !isAddressEqual(transaction.to, request.address) || !isAddressEqual(transaction.from, account) || transaction.value !== 0n || transaction.input.toLowerCase() !== data.toLowerCase()) throw new Error('The mined transaction differs from the reviewed reserved INCOME call.')
 
   // Every reviewed split got exactly its share of the reviewed reserves, and no recipient failed.
-  verifyReservedDistributionReceipt(receipt, {
+  const { tokenCount } = verifyReservedDistributionReceipt(receipt, {
     controller: request.address, tokens: v6Address('JBTokens', reviewed.chainId), projectId: reviewed.projectId,
     rulesetId: reviewed.rulesetId, cycleNumber: reviewed.cycleNumber, owner: reviewed.owner, caller: account,
     tokenCount: reviewed.pending, splits: reviewed.splits,
   })
+  // The SDK accepts a distribution of at least the reviewed count; this confirms only the reviewed count itself.
+  if (tokenCount !== reviewed.pending) throw new Error(`Project ${reviewed.projectId}'s reserved tokens from ${request.address}: ${tokenCount.toLocaleString('en-US')} tokens were distributed, not the reviewed ${reviewed.pending.toLocaleString('en-US')}. Keep this transaction, and do not distribute these reserved tokens again.`)
   return { tokenCount: reviewed.pending }
 }

@@ -213,6 +213,7 @@ describe('Safe connector transaction boundaries', () => {
     // app-URL map — `basesep` is hosted while `opsepolia`/`arb1-sep` 404.
     expect(fetch).toHaveBeenCalledWith(
       `https://api.safe.global/tx-service/base/api/v1/multisig-transactions/${PROPOSAL}/`,
+      expect.anything(),
     )
   })
 

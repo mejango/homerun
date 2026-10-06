@@ -80,6 +80,9 @@ export function jbCenterRpcTransport(
         baseUrl: jbCenterBaseUrl(),
         fetch: typeof window === 'undefined' ? serverFetch : browserFetch,
         timeoutMs,
+        // The SDK's provider retries -32001 itself; `retryWhileBehindHead` is
+        // the one retry here, so a lagging node is asked six times, not 36.
+        blockLagRetryDelaysMs: [],
       }),
     ),
     { retryCount: 1 },
