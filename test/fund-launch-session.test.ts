@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fixtures/homerun-deployer')).withHomerunDeployer(await importOriginal()))
 
 import { zeroAddress, zeroHash, type Hex } from 'viem'
-import { FUND_LAUNCH_KEY, archiveLaunch, canCancelLaunch, decodeLaunchSession, discardUnsignedLaunch, encodeLaunchSession, refreshLaunchCreationFee, saveLaunch, sameSender, updateLaunchStatus, type FundLaunchSession } from '../src/lib/fund-launch-session'
+import { FUND_LAUNCH_KEY, archiveLaunch, canCancelLaunch, cancelUnsubmittedLaunch, decodeLaunchSession, discardUnsignedLaunch, encodeLaunchSession, refreshLaunchCreationFee, saveLaunch, sameSender, updateLaunchStatus, type FundLaunchSession } from '../src/lib/fund-launch-session'
 
 const owner = '0x1111111111111111111111111111111111111111' as const
 const salt = `0x${'12'.repeat(32)}` as Hex
@@ -127,5 +127,49 @@ describe('durable FUND deployment journal', () => {
     archiveLaunch(saved.input.salt)
     expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()
     expect(JSON.parse(localStorage.getItem(`${FUND_LAUNCH_KEY}:history`)!)).toHaveLength(1)
+  })
+})
+
+describe('cancelling a relayed launch', () => {
+  const stubLocks = () => vi.stubGlobal('navigator', { locks: { request: async (_name: string, _options: unknown, fn: (lock: object) => Promise<void>) => fn({}) } })
+  const published = (relayr: Partial<NonNullable<FundLaunchSession['relayr']>> = {}): FundLaunchSession => ({
+    ...session(), transport: 'relayr', statuses: { 8453: { phase: 'authorized' }, 10: { phase: 'authorized' } },
+    relayr: { account: owner, phase: 'quoted', signed: [], records: [], published: true, ...relayr },
+  })
+
+  it('offers cancelling a published launch only once its requests were found dead', () => {
+    expect(canCancelLaunch(published())).toBe(false)
+    expect(canCancelLaunch(published({ abandonable: true }))).toBe(true)
+    // A chain already created stays created; the launch's record keeps its project.
+    const partial = published({ abandonable: true })
+    partial.statuses = { 8453: { phase: 'confirmed', hash, projectId: '12' }, 10: { phase: 'expired' } }
+    expect(canCancelLaunch(partial)).toBe(true)
+  })
+
+  it('removes a published launch only when its requests are proven dead now, keeping its record', async () => {
+    stubLocks()
+    const saved = saveLaunch(published({ abandonable: true }))
+    await expect(cancelUnsubmittedLaunch(saved.input.salt)).rejects.toThrow(/can still run/)
+    await expect(cancelUnsubmittedLaunch(saved.input.salt, async () => false)).rejects.toThrow(/can still run/)
+    expect(localStorage.getItem(FUND_LAUNCH_KEY)).not.toBeNull()
+    await cancelUnsubmittedLaunch(saved.input.salt, async launch => launch.relayr?.abandonable === true)
+    expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()
+    expect(JSON.parse(localStorage.getItem(`${FUND_LAUNCH_KEY}:cancelled:${saved.input.salt}`)!).relayr.abandonable).toBe(true)
+  })
+
+  it('refuses a published launch that was not found dead, however the proof answers', async () => {
+    stubLocks()
+    const saved = saveLaunch(published())
+    await expect(cancelUnsubmittedLaunch(saved.input.salt, async () => true)).rejects.toThrow(/may already be submitted/)
+    expect(localStorage.getItem(FUND_LAUNCH_KEY)).not.toBeNull()
+  })
+
+  it('asks for no proof of a launch that never published a signature', async () => {
+    stubLocks()
+    const proof = vi.fn(async () => false)
+    const saved = saveLaunch({ ...session(), transport: 'relayr', statuses: { 8453: { phase: 'signing' }, 10: { phase: 'ready' } }, relayr: { account: owner, phase: 'signing', signed: [], records: [] } })
+    await cancelUnsubmittedLaunch(saved.input.salt, proof)
+    expect(proof).not.toHaveBeenCalled()
+    expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()
   })
 })

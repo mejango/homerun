@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fixtures/homerun-deployer')).withHomerunDeployer(await importOriginal()))
 
-import { encodeFunctionResult, toHex, encodeFunctionData, type Address, type Hex } from 'viem'
+import { HttpRequestError, encodeFunctionResult, toHex, encodeFunctionData, type Address, type Hex } from 'viem'
 import { erc2771ForwarderAbi, JBCoreContracts, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import type { RelayrEntry, RelayrPayment, RelayrQuote, RelayrTransactionRecord } from '@/lib/relayr'
 
@@ -45,9 +45,9 @@ vi.mock('@/lib/relayr', async importOriginal => ({
   },
 }))
 
-import { relayrDestinationHash, relayrPaymentDetails, relayrPaymentLabel, RelayrPaymentSubmittedError, RELAYR_PAYMENT_ADDRESS, RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_SELECTOR } from '@/lib/relayr'
+import { relayrDestinationHash, relayrHeldMessage, relayrPaymentDetails, relayrPaymentLabel, RelayrPaymentSubmittedError, RELAYR_PAYMENT_ADDRESS, RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_SELECTOR } from '@/lib/relayr'
 import { predictMultisig, MULTICALL3, CREATE_BATCH_ABI, unbundleMultisigLaunch, type CreateMultisig } from '@/lib/create-multisig'
-import { canRelayrLaunch, runRelayrLaunch } from '@/lib/fund-launch-relayr'
+import { canRelayrLaunch, launchRequestsDead, runRelayrLaunch } from '@/lib/fund-launch-relayr'
 import { FUND_LAUNCH_KEY, canCancelLaunch, cancelUnsubmittedLaunch, loadLaunchSession, saveLaunch as saveLaunchSession, type FundLaunchSession as LaunchSession } from '@/lib/fund-launch-session'
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111' as Address
@@ -57,6 +57,9 @@ const BLOCK = `0x${'bb'.repeat(32)}` as Hex
 const NOW = 1_900_000_000
 const BUNDLE = '00000000-0000-0000-0000-000000000001'
 const TESTNETS = [11155111, 11155420, 84532, 421614]
+const MAY_HAVE_RUN = 'This launch\'s earlier signature may already have run. Check the project, then cancel creation to start over.'
+const CHANGED = 'The launch changed since this review. Cancel creation to start over.'
+const UNCHECKED = 'Couldn\'t check the launch. Try again.'
 let storage: Map<string, string>
 let quote: RelayrQuote
 let entries: RelayrEntry[]
@@ -141,7 +144,7 @@ beforeEach(() => {
     expect(nonce).toBe(0n)
     return { review: { calls: [{ chainId: call.chainId, from: account, to: call.target, data: call.data, value: call.value }], authorization: { type: 'test' } }, sign: async () => ({ chain: call.chainId, target: jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][call.chainId as JBChainId],
       value: call.value.toString(), data: encodeFunctionData({ abi: erc2771ForwarderAbi, functionName: 'execute',
-        args: [{ from: account, to: call.target, value: call.value, gas: call.gas, deadline: NOW + 3600,
+        args: [{ from: account, to: call.target, value: call.value, gas: call.gas, deadline: Math.floor(Date.now() / 1000) + 3600,
           data: call.data, signature: `0x${'dd'.repeat(65)}` }] }) }) }
   })
   entries = []
@@ -152,7 +155,7 @@ beforeEach(() => {
     expect(loadLaunchSession()?.relayr?.signed).toHaveLength(signed.length)
     entries = signed
     quote = { bundle_uuid: '00000000-0000-0000-0000-000000000001',
-      payment_info: offeredPaymentChains.map(chain => paymentFor(chain)),
+      payment_info: offeredPaymentChains.map(chain => paymentFor(chain, Math.floor(Date.now() / 1000) + 600)),
       expectedTransactions: signed.map((entry, i) => ({ txUuid: txId(i), chain: entry.chain, entry: { ...entry, virtual_nonce: 0 } })) }
     records = signed.map((entry, i) => recordFor(entry, i, { state: 'Confirmed', data: { hash: hashFor(entry.chain) } }))
     return quote
@@ -709,11 +712,14 @@ describe('relayed launch execution and recovery', () => {
     expect(loadLaunchSession()?.statuses[1].projectId).toBe('101')
   })
 
-  it('refuses a retry if the prior authorization nonce was consumed between attempts', async () => {
+  it('refuses a retry if the prior authorization nonce was consumed between attempts, and offers cancelling', async () => {
     failed.add(10)
     await expect(run()).rejects.toThrow('unfinished')
+    expect(canCancelLaunch(loadLaunchSession()!)).toBe(false)
     clients.get(10)!.readContract.mockImplementation(async ({ functionName }) => functionName === 'nonces' ? 1n : true)
-    await expect(run()).rejects.toThrow('earlier launch authorization')
+    await expect(run()).rejects.toThrow(MAY_HAVE_RUN)
+    expect(canCancelLaunch(loadLaunchSession()!)).toBe(true)
+    expect(m.forward).toHaveBeenCalledTimes(2)
     expect(m.pay).toHaveBeenCalledTimes(1)
   })
 
@@ -817,6 +823,223 @@ describe('relayed launch execution and recovery', () => {
 
 
 
+
+  describe('what a published launch does next, from the finalized chain', () => {
+    /** Every chain's finalized block is at `timestamp`. */
+    const finalizedAt = (timestamp: number) => {
+      for (const client of clients.values()) client.getBlock.mockResolvedValue({ number: 123n, hash: BLOCK, timestamp: BigInt(timestamp) })
+    }
+    /** The forwarder expects `nonce` next from the signer on each of `chains`. */
+    const noncesAre = (nonce: bigint, chains: number[] = [...clients.keys()]) => {
+      for (const chain of chains) clients.get(chain)!.readContract.mockImplementation(async ({ functionName }) => functionName === 'nonces' ? nonce : true)
+    }
+    /** Signed, quoted and published, and left unpaid at the funding choice. */
+    const publishedUnpaid = async () => {
+      m.funding.mockRejectedValueOnce(new Error('Funding selection cancelled'))
+      await expect(run()).rejects.toThrow('cancelled')
+    }
+    /** Paid for, with no destination hash anywhere. */
+    const paidUnproven = async () => {
+      m.poll.mockImplementation(async () => { records = []; throw new Error('provider unavailable') })
+      await expect(run()).rejects.toThrow('unfinished')
+    }
+    /** Past every signed deadline at the finalized block and by the device clock. */
+    const pastDeadlines = () => {
+      finalizedAt(NOW + 3601)
+      vi.mocked(Date.now).mockReturnValue((NOW + 3601) * 1000)
+    }
+
+    it('settles a paid launch whose forwarder nonces moved, with no destination hash, as ran: cancelling only, never a retry', async () => {
+      await paidUnproven()
+      expect(canCancelLaunch(loadLaunchSession()!)).toBe(false)
+      finalizedAt(NOW + 3601)
+      noncesAre(1n)
+      await expect(run()).rejects.toThrow(MAY_HAVE_RUN)
+      expect(loadLaunchSession()?.relayr?.abandonable).toBe(true)
+      expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'unresolved', error: MAY_HAVE_RUN }, 10: { phase: 'unresolved', error: MAY_HAVE_RUN } })
+      expect(canCancelLaunch(loadLaunchSession()!)).toBe(true)
+      await expect(run()).rejects.toThrow(MAY_HAVE_RUN)
+      expect(m.pay).toHaveBeenCalledTimes(1)
+      expect(m.quote).toHaveBeenCalledTimes(1)
+      expect(m.forward).toHaveBeenCalledTimes(2)
+    })
+
+    it('keeps a paid launch held while one chain\'s request moved and another can still run', async () => {
+      await paidUnproven()
+      noncesAre(1n, [1])
+      await expect(run()).rejects.toThrow('unresolved')
+      expect(loadLaunchSession()?.relayr?.abandonable).not.toBe(true)
+      expect(canCancelLaunch(loadLaunchSession()!)).toBe(false)
+      expect(m.pay).toHaveBeenCalledTimes(1)
+    })
+
+    it('holds a paid launch while the node cannot answer which of its requests ran', async () => {
+      await paidUnproven()
+      for (const client of clients.values()) client.getBlock.mockRejectedValue(new Error('node unavailable'))
+      await expect(run()).rejects.toThrow('unresolved')
+      expect(loadLaunchSession()?.relayr?.abandonable).not.toBe(true)
+      expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'unresolved' }, 10: { phase: 'unresolved' } })
+      expect(m.forward).toHaveBeenCalledTimes(2)
+      expect(m.pay).toHaveBeenCalledTimes(1)
+    })
+
+    it('signs a paid launch again at its saved nonces once every request expired unused and the recheck passed', async () => {
+      await paidUnproven()
+      pastDeadlines()
+      m.poll.mockImplementation(async (_uuid, _count, update) => { update(records); return records })
+      await run()
+      expect(m.forward.mock.calls.slice(2).map(([call, _account, nonce]) => [call.chainId, nonce])).toEqual([[1, 0n], [10, 0n]])
+      expect(m.pay).toHaveBeenCalledTimes(2)
+      expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'confirmed' }, 10: { phase: 'confirmed' } })
+    })
+
+    it('offers only cancelling, after one line, once every published request is dead and one nonce moved', async () => {
+      await publishedUnpaid()
+      expect(canCancelLaunch(loadLaunchSession()!)).toBe(false)
+      finalizedAt(NOW + 3601)
+      // Ethereum's nonce moved: another action used it, or anyone holding the request ran it.
+      noncesAre(1n, [1])
+      await expect(run()).rejects.toThrow(MAY_HAVE_RUN)
+      expect(canCancelLaunch(loadLaunchSession()!)).toBe(true)
+      expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'unresolved', error: MAY_HAVE_RUN }, 10: { phase: 'authorized' } })
+      await expect(run()).rejects.toThrow(MAY_HAVE_RUN)
+      expect(m.forward).toHaveBeenCalledTimes(2)
+      expect(m.quote).toHaveBeenCalledTimes(1)
+      expect(m.pay).not.toHaveBeenCalled()
+    })
+
+    it('holds a published launch while another chain\'s request can still run, and says until when', async () => {
+      await publishedUnpaid()
+      // Ethereum's nonce moved; Optimism's request can run until NOW + 3600.
+      noncesAre(1n, [1])
+      await expect(run()).rejects.toThrow(relayrHeldMessage(NOW + 3600))
+      expect(canCancelLaunch(loadLaunchSession()!)).toBe(false)
+      expect(m.forward).toHaveBeenCalledTimes(2)
+      expect(m.funding).toHaveBeenCalledTimes(1)
+      expect(m.pay).not.toHaveBeenCalled()
+    })
+
+    it('holds a published launch whose finalized nonce fell below a saved one, rather than letting it be cancelled', async () => {
+      noncesAre(1n)
+      const prepare = m.forward.getMockImplementation()!
+      m.forward.mockImplementation((call, account) => prepare(call, account, 0n))
+      await publishedUnpaid()
+      // A reorg dropped an earlier forwarded transaction: the finalized nonce is below the saved one.
+      finalizedAt(NOW + 3601)
+      noncesAre(0n)
+      await expect(run()).rejects.toThrow(relayrHeldMessage(0))
+      expect(canCancelLaunch(loadLaunchSession()!)).toBe(false)
+      expect(m.pay).not.toHaveBeenCalled()
+    })
+
+    it('offers cancelling a published launch once every request expired unused, and signs it again at its saved nonces after the recheck', async () => {
+      await publishedUnpaid()
+      expect(canCancelLaunch(loadLaunchSession()!)).toBe(false)
+      pastDeadlines()
+      const estimated = clients.get(10)!.estimateGas.mock.calls.length
+      await expect(run()).rejects.toThrow('expired unused')
+      expect(clients.get(10)!.estimateGas.mock.calls.length).toBeGreaterThan(estimated)
+      expect(canCancelLaunch(loadLaunchSession()!)).toBe(true)
+      await run()
+      expect(m.forward.mock.calls.slice(2).map(([call, _account, nonce]) => [call.chainId, nonce])).toEqual([[1, 0n], [10, 0n]])
+      expect(m.pay).toHaveBeenCalledTimes(1)
+      expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'confirmed' }, 10: { phase: 'confirmed' } })
+    })
+
+    it('does not sign a published launch again when its recheck refuses, and offers cancelling', async () => {
+      await publishedUnpaid()
+      pastDeadlines()
+      clients.get(10)!.estimateGas.mockRejectedValue(new Error('launch prerequisites changed'))
+      await expect(run()).rejects.toThrow(CHANGED)
+      expect(canCancelLaunch(loadLaunchSession()!)).toBe(true)
+      expect(loadLaunchSession()?.relayr).toMatchObject({ phase: 'quoted', signed: [expect.anything(), expect.anything()] })
+      expect(loadLaunchSession()?.relayr?.superseded).toBeUndefined()
+      await expect(run()).rejects.toThrow(CHANGED)
+      expect(m.forward).toHaveBeenCalledTimes(2)
+      expect(m.pay).not.toHaveBeenCalled()
+    })
+
+    it('holds a published launch whose recheck cannot reach the chain, and decides nothing', async () => {
+      await publishedUnpaid()
+      pastDeadlines()
+      clients.get(10)!.estimateGas.mockRejectedValue(new HttpRequestError({ url: 'https://rpc.example', body: {}, details: 'fetch failed' }))
+      await expect(run()).rejects.toThrow(UNCHECKED)
+      expect(canCancelLaunch(loadLaunchSession()!)).toBe(false)
+      expect(loadLaunchSession()?.relayr?.abandonable).toBeUndefined()
+      expect(loadLaunchSession()?.relayr?.superseded).toBeUndefined()
+      expect(m.forward).toHaveBeenCalledTimes(2)
+      // The node answers again, so the launch can be signed again or cancelled.
+      clients.get(10)!.estimateGas.mockResolvedValue(2_000_000n)
+      await expect(run()).rejects.toThrow('expired unused')
+      expect(canCancelLaunch(loadLaunchSession()!)).toBe(true)
+    })
+
+    it('refreshes a published launch at the same nonces while its requests can still run', async () => {
+      await publishedUnpaid()
+      m.fee.mockResolvedValue(18n)
+      // The forwarder runs one request per nonce, so the old and new signatures cannot both run.
+      await expect(run()).rejects.toThrow('creation fee changed')
+      expect(loadLaunchSession()?.relayr).toMatchObject({ phase: 'signing', signed: [], retryNonces: { 1: '0', 10: '0' } })
+      await run()
+      expect(m.forward.mock.calls.slice(2).map(([call, _account, nonce]) => [call.chainId, call.value, nonce])).toEqual([[1, 18n, 0n], [10, 18n, 0n]])
+      expect(m.pay).toHaveBeenCalledTimes(1)
+    })
+
+    it('retains an ambiguous payment, and permits cancelling only after both canonical deadlines pass', async () => {
+      m.pay.mockImplementation(async (_p, _a, _u, _destinations, { reverify: verify, onSending: sending }) => {
+        await verify(); sending(); throw new Error('no hash returned')
+      })
+      await expect(run()).rejects.toThrow('no hash returned')
+      m.poll.mockImplementation(async () => { throw new Error('provider unavailable') })
+      // The destinations' requests expired unused, but the payment chain's finalized block is before its deadline.
+      for (const chainId of [1, 10]) clients.get(chainId)!.getBlock.mockResolvedValue({ number: 123n, hash: BLOCK, timestamp: BigInt(NOW + 3601) })
+      await expect(run()).rejects.toThrow('may have sent')
+      expect(canCancelLaunch(loadLaunchSession()!)).toBe(false)
+      finalizedAt(NOW + 3601)
+      await expect(run()).rejects.toThrow('earlier payment may have been charged')
+      expect(loadLaunchSession()?.relayr?.phase).toBe('payment-signing')
+      expect(canCancelLaunch(loadLaunchSession()!)).toBe(true)
+      expect(m.pay).toHaveBeenCalledTimes(1)
+      expect(m.forward).toHaveBeenCalledTimes(2)
+    })
+
+    describe('cancelling a published launch', () => {
+      it('releases a launch settled as ran, and keeps its record', async () => {
+        await paidUnproven()
+        finalizedAt(NOW + 3601)
+        noncesAre(1n)
+        await expect(run()).rejects.toThrow(MAY_HAVE_RUN)
+        const settled = loadLaunchSession()!
+        expect(await launchRequestsDead(settled)).toBe(true)
+        await cancelUnsubmittedLaunch(settled.input.salt, launchRequestsDead)
+        expect(loadLaunchSession()).toBeNull()
+        expect(JSON.parse(storage.get(`${FUND_LAUNCH_KEY}:cancelled:${settled.input.salt}`)!).relayr.abandonable).toBe(true)
+      })
+
+      it('refuses while a request can still run, whatever the saved record says', async () => {
+        await publishedUnpaid()
+        const stale = loadLaunchSession()!
+        stale.relayr!.abandonable = true
+        saveLaunchSession(stale)
+        expect(canCancelLaunch(stale)).toBe(true)
+        expect(await launchRequestsDead(stale)).toBe(false)
+        await expect(cancelUnsubmittedLaunch(stale.input.salt, launchRequestsDead)).rejects.toThrow('can still run')
+        await expect(cancelUnsubmittedLaunch(stale.input.salt)).rejects.toThrow('can still run')
+        expect(loadLaunchSession()).not.toBeNull()
+      })
+
+      it('refuses while the node cannot say whether a request ran', async () => {
+        await publishedUnpaid()
+        pastDeadlines()
+        await expect(run()).rejects.toThrow('expired unused')
+        for (const client of clients.values()) client.getBlock.mockRejectedValue(new Error('node unavailable'))
+        const settled = loadLaunchSession()!
+        expect(await launchRequestsDead(settled)).toBe(false)
+        await expect(cancelUnsubmittedLaunch(settled.input.salt, launchRequestsDead)).rejects.toThrow('can still run')
+        expect(loadLaunchSession()).not.toBeNull()
+      })
+    })
+  })
 
   it('retains independently observed destination hashes when a later provider response omits them', async () => {
     clients.get(10)!.getTransactionReceipt.mockRejectedValueOnce(new Error('receipt unavailable'))

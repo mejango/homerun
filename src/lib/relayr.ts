@@ -193,6 +193,29 @@ class RelayrPaymentRevertedError extends Error {
   constructor() { super('Relayr payment reverted onchain.') }
 }
 
+/**
+ * The client the SDK's session rules read a chain's finalized block through
+ * (relayrRequestStates, relayrRequestsDead and relayrDeadlinePassed). None
+ * while the chain has no client here, which those rules read as unknown.
+ */
+export function relayrChainClient(chainId: number): ReturnType<typeof publicClient> | undefined {
+  try {
+    return publicClient(chainId as JBChainId)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The line a launch shows while one of its old requests can still run: until
+ * `until` (seconds), or, once the clock is past it, until a finalized block is.
+ */
+export function relayrHeldMessage(until: number, nowMs = Date.now()): string {
+  return until * 1_000 > nowMs
+    ? `This launch's earlier signature can still run until ${new Date(until * 1_000).toLocaleString()}. Try again after that.`
+    : "This launch's earlier signature may still run. Try again in a few minutes."
+}
+
 /** Only an explicit wallet rejection proves that this send did not happen. */
 export function relayrErrorIsDefiniteNoSubmission(error: unknown): boolean {
   let current = error

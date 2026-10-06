@@ -83,11 +83,12 @@ const transitions: Record<LaunchStatus['phase'], readonly LaunchStatus['phase'][
   ready: ['ready', 'signing'],
   authorized: ['authorized', 'signing', 'confirmed', 'reverted', 'expired', 'unresolved'],
   unresolved: ['unresolved', 'signing', 'confirmed', 'reverted', 'expired'],
-  expired: ['expired', 'signing'],
+  // Until a chain is confirmed, what its request is found to have done can change as the finalized chain moves on.
+  expired: ['expired', 'signing', 'unresolved', 'reverted'],
   signing: ['signing', 'pending', 'confirmed', 'reverted', 'authorized', 'unresolved', 'expired'],
   pending: ['pending', 'confirmed', 'reverted'],
   confirmed: ['confirmed'],
-  reverted: ['reverted', 'signing'],
+  reverted: ['reverted', 'signing', 'unresolved', 'expired'],
 }
 
 function assertTransition(previous: LaunchStatus, next: LaunchStatus, cancelled = false): void {
@@ -171,6 +172,8 @@ export function discardUnsignedLaunch(salt: Hex): boolean {
 
 export function canCancelLaunch(session: FundLaunchSession): boolean {
   if (session.transport === 'intent') return !session.intentId
+  // Every request the launch published was found dead at a canonical finalized block (ruling R117), so none can run again.
+  if (session.relayr?.abandonable === true) return true
   const phases = session.transport === 'relayr' ? ['ready', 'signing', 'authorized'] : ['ready']
   return Object.values(session.statuses).every(status => phases.includes(status.phase) && !status.hash && !status.executionHash)
     && (!session.relayr || (['signing', 'quoting'].includes(session.relayr.phase)
@@ -178,15 +181,19 @@ export function canCancelLaunch(session: FundLaunchSession): boolean {
       && !session.relayr.superseded?.length && !session.relayr.records.length))
 }
 
-/** Discard only unpublished work, while excluding writers in every browser tab. */
-export async function cancelUnsubmittedLaunch(salt: Hex): Promise<void> {
+/**
+ * Discard only unpublished work, or a launch whose published requests are proven dead now (ruling R117),
+ * while excluding writers in every browser tab. A published launch with no proof is never cancelled.
+ */
+export async function cancelUnsubmittedLaunch(salt: Hex, requestsDead?: (session: FundLaunchSession) => Promise<boolean>): Promise<void> {
   if (!navigator.locks) throw new Error('This browser cannot coordinate cancellation across tabs.')
   await navigator.locks.request('homerun:fund-launch', { ifAvailable: true }, async relayLock => {
     if (!relayLock) throw new Error('Finish or close the active wallet request before cancelling.')
-    await navigator.locks.request(`homerun:fund-launch:${salt}`, { ifAvailable: true }, directLock => {
+    await navigator.locks.request(`homerun:fund-launch:${salt}`, { ifAvailable: true }, async directLock => {
       if (!directLock) throw new Error('Finish or close the active wallet request before cancelling.')
       const session = requireLaunch(salt)
       if (!canCancelLaunch(session)) throw new Error('This launch may already be submitted. Resume it to check its execution before starting another.')
+      if (session.relayr?.published && !(await requestsDead?.(session))) throw new Error('A request of this launch can still run. Resume it to check it before cancelling.')
       localStorage.setItem(`${FUND_LAUNCH_KEY}:cancelled:${salt}`, encodeLaunchSession(session))
       localStorage.removeItem(FUND_LAUNCH_KEY)
     })

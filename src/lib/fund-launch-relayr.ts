@@ -26,10 +26,21 @@ import { verifyFundLaunch } from '@/lib/fund-launch-verification'
 import { loadLaunchSession, saveLaunch as saveLaunchSession, type LaunchStatus as LaunchChainStatus, type FundLaunchSession as LaunchSession } from '@/lib/fund-launch-session'
 import { gasWithHeadroom } from '@bananapus/nana-sdk-core/review'
 import {
+  relayrDeadlinePassed,
+  relayrRequestStates,
+  relayrRequestsDead,
+  relayrRequestsVerdict,
+  relayrSessionOutcome,
+  relayrSignedRequests,
+  type RelayrSessionOutcome,
+} from '@bananapus/nana-sdk-core/review/relayr'
+import {
   prepareForwardedTx,
   TRUSTED_FORWARDER_ABI,
+  relayrChainClient,
   relayrDestinationHash,
   relayrDestinationRecords,
+  relayrHeldMessage,
   relayrPay,
   relayrPaymentDetails,
   relayrPaymentOptions,
@@ -50,6 +61,13 @@ import { requireFundingChainSelection, requireTransactionReview } from '@/lib/tr
 
 const activeLaunches = new Set<string>()
 class LaunchSignaturesNeedRefresh extends Error {}
+
+/** The line a launch shows once every request it published is dead and one may have run (ruling R114). */
+const LAUNCH_MAY_HAVE_RUN = 'This launch\'s earlier signature may already have run. Check the project, then cancel creation to start over.'
+/** The line a launch shows once every request it published is dead, none ran, and the launch's recheck refuses its calls. */
+const LAUNCH_CHANGED = 'The launch changed since this review. Cancel creation to start over.'
+/** The line a launch shows while the node cannot answer its recheck, which decides nothing. */
+const LAUNCH_UNCHECKED = 'Couldn\'t check the launch. Try again.'
 
 type SignedLaunch = {
   chainId: number
@@ -115,6 +133,38 @@ function requestOf(signed: SignedLaunch, plans: LaunchSession['input']['multisig
     throw new Error('The saved launch authorization changed.')
   }
   return request
+}
+
+/**
+ * What the launch has published to Relayr: the requests it quoted, and every one it replaced. A request signed and
+ * not yet quoted has left this browser's record only.
+ */
+function publishedSigned(journal: LaunchRelayrJournal): SignedLaunch[] {
+  return [...(journal.phase === 'signing' ? [] : journal.signed), ...(journal.superseded ?? [])]
+}
+
+/**
+ * The requests among `signed` on chains not yet created, as the SDK's session rules read them: each its forwarder
+ * execute, with the nonce it was signed at. `requests` is null when one cannot be read, and none then counts as dead.
+ */
+function outstandingOf(session: LaunchSession, signed: readonly SignedLaunch[]) {
+  const outstanding = signed.filter(item => session.statuses[item.chainId]?.phase !== 'confirmed')
+  const nonces = outstanding.map(item => item.nonce)
+  let requests: ReturnType<typeof relayrSignedRequests> = null
+  try {
+    requests = relayrSignedRequests(outstanding.map(item => unbundleMultisigLaunch(item.entry, session.input.multisigs)), nonces)
+  } catch { /* A saved call that cannot be read is classified as unknown. */ }
+  return { outstanding, nonces, requests }
+}
+
+/**
+ * Ruling R117: whether every request the launch published is dead at a canonical finalized block on its chain,
+ * anything unknown counting as live. The launch reserves its signer's forwarder nonces exactly while one is live, so
+ * only a launch for which this holds may be cancelled.
+ */
+export async function launchRequestsDead(session: LaunchSession): Promise<boolean> {
+  const { requests } = outstandingOf(session, session.relayr ? publishedSigned(session.relayr) : [])
+  return relayrRequestsDead(relayrChainClient, requests)
 }
 
 function walletRejected(error: unknown): boolean {
@@ -231,36 +281,85 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress, 
     }
     for (const signed of journal?.signed ?? []) pinnedRequest(signed)
     for (const signed of journal?.superseded ?? []) pinnedRequest(signed)
-    const unusedSignaturesExpired = async (signed: SignedLaunch[]): Promise<boolean> => {
-      if (!signed.length) return false
-      try {
-        for (const item of signed) {
-          if (current.statuses[item.chainId]?.phase === 'confirmed') continue
-          const client = publicClient(item.chainId as JBChainId)
-          const block = await client.getBlock({ blockTag: 'finalized' })
-          const nonce = await client.readContract({ address: forwarderFor(item.chainId), abi: erc2771ForwarderAbi,
-            functionName: 'nonces', args: [account], blockNumber: block.number })
-          const canonical = await client.getBlock({ blockNumber: block.number })
-          if (canonical.hash !== block.hash || block.timestamp <= BigInt(item.deadline) || nonce !== BigInt(item.nonce)) return false
+    /**
+     * The launch's recheck (ruling R114): on each chain, its Safes can still be created and its call, at the creation
+     * fee now, still estimates. The SDK runs it only once every request the launch published is dead and unused.
+     */
+    const recheckLaunch = async (chainIds: readonly number[]) => {
+      for (const chainId of chainIds) {
+        const client = publicClient(chainId as JBChainId)
+        await checkCreateMultisigs(client, current.input.multisigs)
+        const creationFee = await getProjectCreationFee(client, chainId as JBChainId)
+        await estimateLaunch(client, account, requestFor(current, chainId, creationFee), creationFee)
+      }
+    }
+    /**
+     * What the SDK's session rules (rulings R104, R114 and R117) let the launch do next with the requests it published
+     * on chains not yet created, each classified at one canonical finalized block on its chain; `states` follow
+     * `outstanding`. Null when none is outstanding. Without `recheck`, a launch whose requests all expired unused ends
+     * as `expired`, which no flow here signs again on its own.
+     */
+    const classify = async (target: LaunchRelayrJournal, { recheck = true } = {}) => {
+      const { outstanding, nonces, requests } = outstandingOf(current, publishedSigned(target))
+      if (!outstanding.length) return null
+      const states = requests ? await relayrRequestStates(relayrChainClient, requests) : []
+      const outcome = await relayrSessionOutcome(relayrRequestsVerdict(states), {
+        nonces, ...(recheck ? { recheck: () => recheckLaunch([...new Set(outstanding.map(item => item.chainId))]) } : {}),
+      })
+      return { outstanding, states, outcome }
+    }
+    /** A chain whose request may have run is never signed again: it reads unresolved, and the line says why. */
+    const markRan = ({ outstanding, states }: NonNullable<Awaited<ReturnType<typeof classify>>>) => {
+      for (const chainId of new Set(outstanding.map(item => item.chainId))) {
+        if (outstanding.some((item, index) => item.chainId === chainId && states[index] && !states[index].live && states[index].mayHaveRun)) {
+          status(chainId, { phase: 'unresolved', hash: current.statuses[chainId]?.hash, error: LAUNCH_MAY_HAVE_RUN })
         }
-        return true
-      } catch { return false }
+      }
     }
-    const originalPaymentExpired = async (): Promise<boolean> => {
-      if (!journal?.paymentDeadline) return false
-      try {
-        const client = publicClient(journal.paymentChainId as JBChainId)
-        const block = await client.getBlock({ blockTag: 'finalized' })
-        const canonical = await client.getBlock({ blockNumber: block.number })
-        return canonical.hash === block.hash && block.timestamp > BigInt(journal.paymentDeadline)
-      } catch { return false }
-    }
-    if (journal?.published && !journal.abandonable &&
-        ['signing', 'quoting', 'quoted'].includes(journal.phase) &&
-        await unusedSignaturesExpired([...journal.signed, ...(journal.superseded ?? [])])) {
-      journal.abandonable = true
+    /** Marks the journal for cancelling and ends the run: every request it published is dead, and it is not signed again. */
+    const abandon = (target: LaunchRelayrJournal, line: string, cause?: unknown): never => {
+      target.abandonable = true
       persist()
-      throw new Error('All outstanding launch authorizations expired unused. You can change the setup or retry this launch; any earlier relay payments are not refunded automatically.')
+      throw new Error(line, cause === undefined ? undefined : { cause })
+    }
+    /**
+     * Ends the run for an outcome that allows no new signature or payment: a request that can still run while another
+     * may have run, a finalized nonce below a saved one, a recheck the node could not answer, or every request dead and
+     * the launch not to be signed again. Returns the outcomes that may go on.
+     */
+    const requireGoOn = (target: LaunchRelayrJournal, outcome: RelayrSessionOutcome): Extract<RelayrSessionOutcome, { kind: 'refresh' | 're-sign' | 'discard' }> => {
+      if (outcome.kind === 'hold') throw new Error(relayrHeldMessage(outcome.until))
+      if (outcome.kind === 'reorg-hold') throw new Error(relayrHeldMessage(0))
+      if (outcome.kind === 'unchecked') throw new Error(LAUNCH_UNCHECKED, { cause: outcome.error })
+      if (outcome.kind === 'discard' && outcome.reason !== 'expired') {
+        return abandon(target, outcome.reason === 'ran' ? LAUNCH_MAY_HAVE_RUN : LAUNCH_CHANGED, outcome.error)
+      }
+      return outcome
+    }
+    /** The original payment's deadline has passed at a canonical finalized block on its chain. */
+    const originalPaymentExpired = async (): Promise<boolean> => {
+      const client = journal?.paymentChainId === undefined ? undefined : relayrChainClient(journal.paymentChainId)
+      return !!journal?.paymentDeadline && !!client && relayrDeadlinePassed(client, journal.paymentDeadline)
+    }
+    /**
+     * While a published request can still run (ruling R114), when its last one stops. Until then the launch signs again
+     * only at the saved nonces.
+     */
+    let heldUntil: number | null = null
+    if (journal?.published && ['signing', 'quoting', 'quoted'].includes(journal.phase)) {
+      const classified = await classify(journal)
+      if (classified) {
+        if (classified.outcome.kind === 'discard' && classified.outcome.reason === 'ran') markRan(classified)
+        const outcome = requireGoOn(journal, classified.outcome)
+        if (outcome.kind === 'refresh') {
+          heldUntil = outcome.until
+        } else if (!journal.abandonable) {
+          // Every request expired unused and the recheck passed: the launch may be cancelled, or signed again at its saved nonces.
+          journal.abandonable = true
+          persist()
+          throw new Error('All outstanding launch authorizations expired unused. You can change the setup or retry this launch; any earlier relay payments are not refunded automatically.')
+        }
+      }
     }
     if (journal?.abandonable && ['signing', 'quoting', 'quoted'].includes(journal.phase) && journal.signed.length) {
       const previous = journal
@@ -293,9 +392,10 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress, 
       const original = journal!
       // Relayr's status only points at hashes, and only when its records are exactly this quote's.
       const destinations = relayrDestinationRecords(original.records, bindings)
-      let allDone = true
-      let allRemainingRetryable = true
-      let allRemainingExpired = true
+      /** Chains whose launch reverted at the destination, which leaves the forwarder's nonce unused. */
+      const reverted = new Set<number>()
+      /** Chains whose destination is not proven, with the last hash seen for each and why. */
+      const waiting = new Map<number, { hash?: Hex; error: string }>()
       for (const signed of original.signed) {
         const request = pinnedRequest(signed)
         const client = publicClient(signed.chainId as JBChainId)
@@ -323,11 +423,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress, 
             status(signed.chainId, { phase: 'confirmed', hash, projectId })
             return 'confirmed'
           }
-          // A reverted execute leaves the nonce unused. Its old authorization can only compete
-          // with a retry of that SAME nonce, never create an additional project after a success.
-          const nonce = await client.readContract({ address: forwarderFor(signed.chainId), abi: erc2771ForwarderAbi,
-            functionName: 'nonces', args: [account] })
-          if (nonce !== BigInt(signed.nonce)) throw new Error('The launch authorization was consumed elsewhere.')
+          // A reverted execute leaves the nonce unused. Whether its old authorization can still run, or another
+          // request used the nonce, is classified below at a canonical finalized block.
           status(signed.chainId, { phase: 'reverted', hash, error: 'The destination launch reverted.' })
           return 'reverted'
         }
@@ -352,45 +449,44 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress, 
           }
           if (proven === 'confirmed') continue
           if (proven === 'reverted') {
-            allDone = false
-            allRemainingExpired = false
+            reverted.add(signed.chainId)
             continue
           }
-          status(signed.chainId, { phase: 'unresolved', hash: saved?.hash ?? candidates[0],
+          waiting.set(signed.chainId, { hash: saved?.hash ?? candidates[0],
             error: failure instanceof Error ? failure.message : 'Destination confirmation is unavailable.' })
         } else {
-          // At a canonical block after expiry, an unchanged nonce proves this authorization
-          // never succeeded and can no longer do so. Wall-clock expiry alone proves neither.
-          try {
-            const block = await client.getBlock({ blockTag: 'finalized' })
-            const nonce = await client.readContract({ address: forwarderFor(signed.chainId), abi: erc2771ForwarderAbi,
-              functionName: 'nonces', args: [account], blockNumber: block.number })
-            const canonical = await client.getBlock({ blockNumber: block.number })
-            if (block.hash === canonical.hash && block.timestamp > BigInt(request.deadline) && nonce === BigInt(signed.nonce)) {
-              status(signed.chainId, { phase: 'expired', error: 'The unexecuted launch authorization expired.' })
-              allDone = false
-              continue
-            }
-          } catch { /* An unavailable RPC cannot prove absence of execution. */ }
-          status(signed.chainId, { phase: 'unresolved', error: destinations.refusal ?? 'Waiting for the original Relayr destination transaction.' })
+          waiting.set(signed.chainId, { error: destinations.refusal ?? 'Waiting for the original Relayr destination transaction.' })
         }
-        allDone = false
-        allRemainingRetryable = false
       }
-      if (allDone) return true
-      if (allRemainingRetryable) {
-        current.relayr = {
-          account, phase: 'signing', signed: [], records: [],
-          published: true,
-          ...(allRemainingExpired ? { abandonable: true } : {}),
-          superseded: [...(original.superseded ?? []), ...original.signed]
-            .filter(item => current.statuses[item.chainId]?.phase !== 'confirmed'),
-          retryNonces: Object.fromEntries(original.signed.filter(item => current.statuses[item.chainId]?.phase !== 'confirmed')
-            .map(item => [item.chainId, item.nonce])),
-        }
-        delete current.paymentChainId
-        persist()
+      if (!reverted.size && !waiting.size) return true
+      // Ruling R114: what is not proven at a destination is classified at a canonical finalized block, whatever Relayr
+      // reports. An unavailable node cannot prove that a request did not run, and a nonce that moved means it may have.
+      // A request that is not dead can only compete with a retry at that same nonce, never create another project.
+      const classified = (await classify(original, { recheck: !(original.phase === 'payment-signing' && !original.paymentHash) }))!
+      const { outstanding, states, outcome } = classified
+      const ownStates = (chainId: number) => outstanding.flatMap((item, index) => item.chainId === chainId ? [states[index]] : [])
+      const expired = (chainId: number) => ownStates(chainId).length > 0 && ownStates(chainId).every(state => state && !state.live && state.unused)
+      for (const [chainId, { hash, error }] of waiting) {
+        const seen = hash ? { hash } : {}
+        if (expired(chainId)) status(chainId, { phase: 'expired', ...seen, error: 'The unexecuted launch authorization expired.' })
+        else status(chainId, { phase: 'unresolved', ...seen, error })
       }
+      markRan(classified)
+      if (outcome.kind === 'hold' || outcome.kind === 'reorg-hold') return false
+      const next = requireGoOn(original, outcome)
+      // Requests that can still run are signed again only for chains that reverted or expired, at their saved nonces.
+      if (next.kind === 'refresh' && ![...waiting.keys()].every(expired)) return false
+      current.relayr = {
+        account, phase: 'signing', signed: [], records: [],
+        published: true,
+        ...(next.kind === 'refresh' ? {} : { abandonable: true }),
+        superseded: [...(original.superseded ?? []), ...original.signed]
+          .filter(item => current.statuses[item.chainId]?.phase !== 'confirmed'),
+        retryNonces: Object.fromEntries(original.signed.filter(item => current.statuses[item.chainId]?.phase !== 'confirmed')
+          .map(item => [item.chainId, item.nonce])),
+      }
+      delete current.paymentChainId
+      persist()
       return false
     }
 
@@ -413,7 +509,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress, 
       if (journal.phase === 'payment-signing' && !journal.paymentHash) {
         current.relayr = journal
         current.paymentChainId = journal.paymentChainId
-        if (await unusedSignaturesExpired([...journal.signed, ...(journal.superseded ?? [])]) &&
+        const classified = await classify(journal, { recheck: false })
+        if (classified?.outcome.kind === 'discard' && classified.outcome.reason === 'expired' &&
             await originalPaymentExpired()) journal.abandonable = true
         persist()
         throw new Error(journal.abandonable
@@ -525,6 +622,11 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress, 
     try {
       await verifySigned()
     } catch (error) {
+      // Ruling R114: while a published request can still run, the launch signs again only at the saved nonces, never
+      // later ones, and says until when otherwise.
+      if (heldUntil !== null && !(error instanceof LaunchSignaturesNeedRefresh)) {
+        throw new Error(relayrHeldMessage(heldUntil), { cause: error })
+      }
       if (error instanceof LaunchSignaturesNeedRefresh) {
         // No payment has been attempted here. Old and new authorizations retain the SAME
         // per-chain nonce, so even previously published signatures cannot create duplicates.
