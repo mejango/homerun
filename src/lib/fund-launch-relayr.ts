@@ -126,7 +126,10 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress, 
   account: Address
   onStatus: (chainId: number, status: LaunchChainStatus & { error?: string }) => void
   onProgress: (message: string) => void
-  /** The page's: when it aborts, the wait for a Safe to execute the payment ends, and the payment stays sent. */
+  /**
+   * The page's. When it aborts, the payment's wait for a Safe to execute it ends and the payment stays sent. This
+   * launch refuses Safe wallets, so that wait is not reached today.
+   */
   signal?: AbortSignal
 }): Promise<void> {
   assertNoViewAs()

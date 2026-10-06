@@ -175,7 +175,9 @@ export function FundDeploy({ values, onLockChange, importedRecord, onRecordUsed 
   const [progress, setProgress] = useState('')
   const [runId, setRunId] = useState(0)
   const busyRef = useRef(false)
-  // A relayed launch runs while this page is open; leaving it ends the run's waits.
+  // Leaving this page aborts the relayed run's signal, which ends only the wait for a
+  // Safe to execute its payment; runRelayrLaunch refuses Safe wallets, so that wait is
+  // not reached today.
   const relayed = useRef<AbortController | null>(null)
   useEffect(() => () => relayed.current?.abort(), [])
   useEffect(() => {
