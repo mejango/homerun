@@ -19,6 +19,7 @@ import {
   type Address,
   type Abi,
   type Hex,
+  type TransactionReceipt,
 } from 'viem'
 import { wagmiConfig } from '@/providers/Providers'
 import { buildFundLaunch, type FundTransaction } from '@/lib/fund-contracts'
@@ -26,6 +27,7 @@ import { verifyFundLaunch } from '@/lib/fund-launch-verification'
 import { loadLaunchSession, saveLaunch as saveLaunchSession, type LaunchStatus as LaunchChainStatus, type FundLaunchSession as LaunchSession } from '@/lib/fund-launch-session'
 import { gasWithHeadroom } from '@bananapus/nana-sdk-core/review'
 import {
+  RelayrDestinationRevertedError,
   TRUSTED_FORWARDER_ABI,
   relayrDeadlinePassed,
   relayrDestinationHash,
@@ -38,6 +40,7 @@ import {
   relayrSessionOutcome,
   relayrSignedRequests,
   relayrSupportsChains,
+  verifyRelayrDestination,
   type RelayrPayment,
   type RelayrSessionOutcome,
 } from '@bananapus/nana-sdk-core/review/relayr'
@@ -435,26 +438,20 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         }
         /** Proves the hash is the signed launch on this chain, and records the destination as confirmed or reverted. */
         const prove = async (hash: Hex): Promise<'confirmed' | 'reverted'> => {
-          const [tx, receipt] = await Promise.all([
-            client.getTransaction({ hash }), client.getTransactionReceipt({ hash }),
-          ])
-          if (!tx.to || !isAddressEqual(tx.to, signed.entry.target) || tx.input !== signed.entry.data ||
-              tx.value !== BigInt(signed.entry.value) || receipt.transactionHash !== hash ||
-              tx.hash !== hash || tx.chainId !== signed.chainId || tx.blockHash !== receipt.blockHash) {
-            throw new Error('Relayr destination transaction does not match the signed launch.')
+          let receipt: TransactionReceipt
+          try {
+            receipt = await verifyRelayrDestination(client, { entry: signed.entry, hash })
+          } catch (error) {
+            if (!(error instanceof RelayrDestinationRevertedError)) throw error
+            // A reverted execute leaves the nonce unused. Whether its old authorization can still run, or another
+            // request used the nonce, is classified below at a canonical finalized block.
+            status(signed.chainId, { phase: 'reverted', hash, error: 'The destination launch reverted.' })
+            return 'reverted'
           }
-          const canonical = await client.getBlock({ blockNumber: receipt.blockNumber })
-          if (canonical.hash !== receipt.blockHash) throw new Error('The destination receipt is no longer canonical.')
-          if (receipt.status === 'success') {
-            const projectId = (await verifyFundLaunch(client, requestFor(current, signed.chainId, request.value), current.input, receipt, false, signed.entry)).toString()
-            if (!projectId) throw new Error('The launch confirmed but its project ID could not be verified.')
-            status(signed.chainId, { phase: 'confirmed', hash, projectId })
-            return 'confirmed'
-          }
-          // A reverted execute leaves the nonce unused. Whether its old authorization can still run, or another
-          // request used the nonce, is classified below at a canonical finalized block.
-          status(signed.chainId, { phase: 'reverted', hash, error: 'The destination launch reverted.' })
-          return 'reverted'
+          const projectId = (await verifyFundLaunch(client, requestFor(current, signed.chainId, request.value), current.input, receipt, false, signed.entry)).toString()
+          if (!projectId) throw new Error('The launch confirmed but its project ID could not be verified.')
+          status(signed.chainId, { phase: 'confirmed', hash, projectId })
+          return 'confirmed'
         }
         // A confirmed chain keeps its verified hash. Any other chain tries the hash its record reports now, then
         // the last hash it saw, and a hash that failed never replaces the one it saw. A node reports hashes in

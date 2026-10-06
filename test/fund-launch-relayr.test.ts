@@ -104,10 +104,11 @@ function makeClient(chainId: number) {
     getTransaction: vi.fn(async ({ hash }: { hash: Hex }) => {
       const entry = entries.find(item => hashFor(item.chain) === hash.toLowerCase())
       if (!entry) throw new Error('Transaction not found')
-      return { hash: hash.toLowerCase() as Hex, to: entry.target, input: entry.data, value: BigInt(entry.value), chainId: entry.chain, blockHash: BLOCK }
+      return { hash: hash.toLowerCase() as Hex, to: entry.target, input: entry.data, value: BigInt(entry.value), chainId: entry.chain, blockHash: BLOCK, blockNumber: 123n }
     }),
     getTransactionReceipt: vi.fn(async ({ hash }: { hash: Hex }) => ({
-      transactionHash: hash.toLowerCase() as Hex, blockHash: BLOCK, blockNumber: 123n, status: failed.has(chainId) ? 'reverted' : 'success', logs: [],
+      transactionHash: hash.toLowerCase() as Hex, to: entries.find(item => hashFor(item.chain) === hash.toLowerCase())?.target,
+      blockHash: BLOCK, blockNumber: 123n, status: failed.has(chainId) ? 'reverted' : 'success', logs: [],
     })),
   }
 }
@@ -598,6 +599,24 @@ describe('relayed launch execution and recovery', () => {
       expect(clients.get(10)!.getTransaction.mock.calls.map(([call]) => call.hash)).toEqual([hashFor(10), unknown, hashFor(10)])
     })
 
+    it('is not proven by a receipt that names another contract than the signed call', async () => {
+      clients.get(10)!.getTransactionReceipt.mockImplementation(async ({ hash }) => ({ transactionHash: hash.toLowerCase(), to: TARGET,
+        blockHash: BLOCK, blockNumber: 123n, status: 'success', logs: [] }) as never)
+      await expect(run()).rejects.toThrow('unfinished')
+      expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'confirmed' }, 10: { phase: 'unresolved' } })
+      expect(m.projectId).toHaveBeenCalledTimes(1)
+    })
+
+    it('is not proven by a transaction and a receipt that disagree on their block', async () => {
+      clients.get(10)!.getTransaction.mockImplementation(async ({ hash }) => {
+        const entry = entries.find(item => hashFor(item.chain) === hash.toLowerCase())!
+        return { hash: hash.toLowerCase(), to: entry.target, input: entry.data, value: BigInt(entry.value), chainId: entry.chain, blockHash: BLOCK, blockNumber: 124n } as never
+      })
+      await expect(run()).rejects.toThrow('unfinished')
+      expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'confirmed' }, 10: { phase: 'unresolved' } })
+      expect(m.projectId).toHaveBeenCalledTimes(1)
+    })
+
     it('is proven in lowercase when Relayr reports it in uppercase', async () => {
       const upper = `0x${hashFor(10).slice(2).toUpperCase()}` as Hex
       expect(upper).not.toBe(hashFor(10))
@@ -658,7 +677,8 @@ describe('relayed launch execution and recovery', () => {
       clients.get(10)!.getTransactionReceipt.mockRejectedValueOnce(new Error('receipt unavailable')).mockRejectedValueOnce(new Error('receipt unavailable'))
       await expect(run()).rejects.toThrow('unresolved')
       // The status says why the hash Relayr reports now could not be proven.
-      expect(loadLaunchSession()?.statuses[10]).toMatchObject({ phase: 'unresolved', hash: hashFor(10), error: 'Transaction not found' })
+      expect(loadLaunchSession()?.statuses[10]).toMatchObject({ phase: 'unresolved', hash: hashFor(10),
+        error: `Could not read destination transaction ${unknown} on chain 10. Keep the original bundle pending; do not pay again.` })
       listing(() => [])
       await run()
       expect(loadLaunchSession()?.statuses[10]).toMatchObject({ phase: 'confirmed', hash: hashFor(10), projectId: '110' })
