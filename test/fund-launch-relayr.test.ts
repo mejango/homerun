@@ -940,6 +940,16 @@ describe('relayed launch execution and recovery', () => {
       expect(m.pay).not.toHaveBeenCalled()
     })
 
+    it('refuses a saved authorization whose calldata is not exactly a forwarder execute, which no rule could classify', async () => {
+      await publishedUnpaid()
+      const saved = loadLaunchSession()!
+      saved.relayr!.signed[0].entry.data = `${saved.relayr!.signed[0].entry.data}${'00'.repeat(32)}`
+      saveLaunchSession(saved)
+      finalizedAt(NOW + 3601)
+      await expect(run()).rejects.toThrow('The saved launch is not a forwarder execution.')
+      expect(m.pay).not.toHaveBeenCalled()
+    })
+
     it('offers cancelling a published launch once every request expired unused, and signs it again at its saved nonces after the recheck', async () => {
       await publishedUnpaid()
       expect(canCancelLaunch(loadLaunchSession()!)).toBe(false)

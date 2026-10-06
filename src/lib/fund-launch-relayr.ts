@@ -31,6 +31,7 @@ import {
   TRUSTED_FORWARDER_ABI,
   relayrDeadlinePassed,
   relayrDestinationHash,
+  relayrForwardRequest,
   relayrPaymentChains,
   relayrPaymentDetails,
   relayrPaymentOptions,
@@ -139,9 +140,8 @@ function requestOf(signed: SignedLaunch, plans: LaunchSession['input']['multisig
   signed = { ...signed, entry: unbundleMultisigLaunch(signed.entry, plans) }
   if (!isAddressEqual(signed.entry.target, forwarderFor(signed.chainId)) ||
       signed.entry.chain !== signed.chainId) throw new Error('The saved launch forwarder changed.')
-  const decoded = decodeFunctionData({ abi: erc2771ForwarderAbi, data: signed.entry.data })
-  if (decoded.functionName !== 'execute') throw new Error('The saved launch is not a forwarder execution.')
-  const request = decoded.args[0]
+  const request = relayrForwardRequest(signed.entry)
+  if (!request) throw new Error('The saved launch is not a forwarder execution.')
   if (request.deadline !== signed.deadline || request.value !== BigInt(signed.entry.value)) {
     throw new Error('The saved launch authorization changed.')
   }
@@ -647,9 +647,9 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       onProgress(`Sign the launch authorization for ${chainName(chainId)}.`)
       status(chainId, { phase: 'signing' })
       const entry = await prepared.sign()
-      const decoded = decodeFunctionData({ abi: erc2771ForwarderAbi, data: entry.data })
-      if (decoded.functionName !== 'execute') throw new Error('Invalid launch authorization.')
-      journal.signed.push({ chainId, entry: bundleMultisigLaunch(entry, current.input.multisigs), nonce: nonce.toString(), deadline: decoded.args[0].deadline })
+      const signedRequest = relayrForwardRequest(entry)
+      if (!signedRequest) throw new Error('Invalid launch authorization.')
+      journal.signed.push({ chainId, entry: bundleMultisigLaunch(entry, current.input.multisigs), nonce: nonce.toString(), deadline: signedRequest.deadline })
       persist()
       status(chainId, { phase: 'authorized' })
     }
