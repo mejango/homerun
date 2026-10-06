@@ -128,8 +128,15 @@ try {
   assert.equal(page.url(), base + '/founderhaus')
   assert.equal(context.pages().length, 1, 'no popup opened')
   await expect(page.getByRole('dialog')).toBeVisible()
-  await frame.getByRole('link', { name: 'Return to Homerun' }).click()
-  await exchangeStarted
+  // A click that reaches the new Center frame before it takes input is dropped without a navigation, so click again
+  // until Center receives the exchange, unless the frame has already left for the callback.
+  const returnLink = frame.getByRole('link', { name: 'Return to Homerun' })
+  const exchangeWithin = milliseconds => Promise.race([exchangeStarted.then(() => true), new Promise(resolve => setTimeout(resolve, milliseconds, false).unref())])
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    await returnLink.click()
+    if (await exchangeWithin(2000) || await returnLink.count() === 0) break
+  }
+  assert.ok(await exchangeWithin(15000), 'Center receives the exchange')
   await expect(frame.getByRole('heading', { name: 'Signing you in…' })).toBeVisible()
   await expect.poll(() => frame.locator('main').evaluate(node => getComputedStyle(node).paddingTop)).toBe('20px')
   await expect.poll(() => page.locator('iframe[name="juicebox-center-frame"]').evaluate(node => node.getBoundingClientRect().height)).toBeLessThan(200)
