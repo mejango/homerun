@@ -442,6 +442,10 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
             binding.entry.data !== signed.entry.data || binding.entry.value !== signed.entry.value) {
           throw new Error('The saved launch quote does not match its signed destination.')
         }
+        const saved = current.statuses[signed.chainId]
+        // A created chain keeps the hash it was verified with: reading it again can only fail, and a failed read cannot
+        // undo a creation.
+        if (saved?.phase === 'confirmed') continue
         /** Proves the hash is the signed launch on this chain, and records the destination as confirmed or reverted. */
         const prove = async (hash: Hex): Promise<'confirmed' | 'reverted'> => {
           let receipt: TransactionReceipt
@@ -459,14 +463,13 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
           status(signed.chainId, { phase: 'confirmed', hash, projectId })
           return 'confirmed'
         }
-        // A confirmed chain keeps its verified hash. Any other chain tries the hash its record reports now, then
-        // the last hash it saw, and a hash that failed never replaces the one it saw. A node reports hashes in
-        // lowercase, so candidates are lowercased before they are compared and de-duplicated.
-        const saved = current.statuses[signed.chainId]
+        // A chain tries the hash its record reports now, then the last hash it saw, and a hash that failed never
+        // replaces the one it saw. A node reports hashes in lowercase, so candidates are lowercased before they are
+        // compared and de-duplicated.
         const record = destinations.records[index]
         const reported = record ? relayrDestinationHash(record) : null
-        const candidates = [...new Set((saved?.phase === 'confirmed' ? [saved.hash] : [reported, saved?.hash])
-          .map(hash => hash?.toLowerCase()))].filter((hash): hash is Hex => !!hash)
+        const candidates = [...new Set([reported, saved?.hash].map(hash => hash?.toLowerCase()))]
+          .filter((hash): hash is Hex => !!hash)
         if (candidates.length) {
           let proven: 'confirmed' | 'reverted' | undefined
           let failure: unknown
@@ -493,7 +496,10 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       // Ruling R114: what is not proven at a destination is classified at a canonical finalized block, whatever Relayr
       // reports. An unavailable node cannot prove that a request did not run, and a nonce that moved means it may have.
       // A request that is not dead can only compete with a retry at that same nonce, never create another project.
-      const classified = (await classify(original, { recheck: !(original.phase === 'payment-signing' && !original.paymentHash) }))!
+      const classified = await classify(original, { recheck: !(original.phase === 'payment-signing' && !original.paymentHash) })
+      // Every chain left here is not created, so one of its requests is outstanding. With none to classify, nothing can
+      // decide the launch, and it stays unresolved.
+      if (!classified) return false
       const { outstanding, states, outcome } = classified
       const ownStates = (chainId: number) => outstanding.flatMap((item, index) => item.chainId === chainId ? [states[index]] : [])
       const expired = (chainId: number) => ownStates(chainId).length > 0 && ownStates(chainId).every(state => state && !state.live && state.unused)

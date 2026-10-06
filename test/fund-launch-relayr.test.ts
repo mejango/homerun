@@ -1157,6 +1157,20 @@ describe('relayed launch execution and recovery', () => {
       })
     })
 
+    it('does not prove a chain it created again, so a node that fails on it ends neither the run nor the launch', async () => {
+      // First Continue: Ethereum is created, and Relayr has not named Optimism's destination yet.
+      listing(list => list.map(record => record.request?.chain === 10 ? { ...record, status: { state: 'Pending' } } : record))
+      await expect(run()).rejects.toThrow('unfinished')
+      expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'confirmed' }, 10: { phase: 'unresolved' } })
+      // Second Continue: Optimism is named and proves, and the node fails when Ethereum's saved hash is read again.
+      listing(list => list)
+      clients.get(1)!.getTransaction.mockClear()
+      clients.get(1)!.getTransaction.mockRejectedValue(new Error('node unavailable'))
+      await run()
+      expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'confirmed', projectId: '101' }, 10: { phase: 'confirmed', projectId: '110' } })
+      expect(clients.get(1)!.getTransaction).not.toHaveBeenCalled()
+    })
+
     describe('cancelling a published launch', () => {
       it('releases a launch settled as ran, and keeps its record', async () => {
         await paidUnproven()
