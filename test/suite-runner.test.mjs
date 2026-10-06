@@ -9,11 +9,20 @@ import { requireFreePort, runGroups, runSuite, startServer, summarize, waitForSe
 
 const quiet = () => {}
 const node = source => [process.execPath, ['-e', source]]
-const runWithin = timeoutMs => ({ extraEnv, ...suite }) => runSuite({ ...suite, cwd: process.cwd(), env: { ...process.env, ...extraEnv }, timeoutMs })
-const runAll = async (groups, timeoutMs = 30_000) => {
+// Each suite gets a generous limit unless `limits` names a shorter one: a no-op suite must not race a loaded machine.
+const runWithin = limits => ({ extraEnv, ...suite }) => runSuite({ ...suite, cwd: process.cwd(), env: { ...process.env, ...extraEnv }, timeoutMs: limits[suite.name] ?? 30_000 })
+const runAll = async (groups, limits = {}) => {
   const errors = []
-  const outcomes = await runGroups(groups, Object.keys(groups), { run: runWithin(timeoutMs), log: quiet, logError: message => errors.push(message) })
+  const outcomes = await runGroups(groups, Object.keys(groups), { run: runWithin(limits), log: quiet, logError: message => errors.push(message) })
   return { outcomes, errors, ...summarize(outcomes) }
+}
+
+/** A killed process stays visible to kill(pid, 0) as a zombie until its parent, or init, reaps it. */
+async function goneWithin(pid, milliseconds = 2000) {
+  for (const deadline = Date.now() + milliseconds; ; await new Promise(resolve => setTimeout(resolve, 20))) {
+    try { process.kill(pid, 0) } catch (error) { if (error.code === 'ESRCH') return true; throw error }
+    if (Date.now() >= deadline) return false
+  }
 }
 
 test('a run passes only when every suite passed', () => {
@@ -59,10 +68,10 @@ test('a time limit stops the workers the suite forked', async () => {
     const worker = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
     require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(worker.pid))
     setInterval(() => {}, 1000)`)
-  const outcome = await runSuite({ name: 'forks', command, args, cwd: process.cwd(), env: process.env, timeoutMs: 1500, log: quiet })
+  const outcome = await runSuite({ name: 'forks', command, args, cwd: process.cwd(), env: process.env, timeoutMs: 3000, log: quiet })
   assert.equal(outcome.ok, false)
   const workerPid = Number(await readFile(pidFile, 'utf8'))
-  await assert.rejects(async () => { process.kill(workerPid, 0) }, { code: 'ESRCH' })
+  assert.ok(await goneWithin(workerPid), `the worker ${workerPid} is gone`)
 })
 
 test('a suite that times out fails the run and the suites after it still run', async () => {
@@ -71,7 +80,7 @@ test('a suite that times out fails the run and the suites after it still run', a
       await suite('hangs', ...node('setInterval(() => {}, 1000)'))
       await suite('after', ...node(''))
     },
-  }, 300)
+  }, { hangs: 300 })
   assert.deepEqual(outcomes.map(({ name, ok }) => [name, ok]), [['hangs', false], ['after', true]])
   assert.match(outcomes[0].reason, /^timed out/)
   assert.equal(exitCode, 1)
@@ -132,12 +141,14 @@ test('a server that is running and answering is ready', async () => {
 })
 
 test('an answer is not trusted when the server exits right after it', async () => {
-  const { service, url } = await answeringOn()
-  const { server } = await serverWith('setTimeout(() => process.exit(1), 300)')
+  // The answer comes from something else, and the server that was started dies once it has been given.
+  let started
+  const { service, url } = await answeringOn((_request, response) => { response.end('ok'); started.child.kill('SIGKILL') })
+  started = (await serverWith('setInterval(() => {}, 1000)')).server
   try {
-    await assert.rejects(waitForServer(url, server, 5, { settleMs: 1000 }), /the server exited right after .* first answered/)
+    await assert.rejects(waitForServer(url, started, 5, { settleMs: 500 }), /the server exited right after .* first answered/)
   } finally {
-    await server.stop()
+    await started.stop()
     service.close()
   }
 })
@@ -174,5 +185,5 @@ test('stopping a server stops the workers it forked', async () => {
   assert.ok(workerPid, 'the server reported its worker')
   process.kill(workerPid, 0)
   await server.stop()
-  await assert.rejects(async () => { process.kill(workerPid, 0) }, { code: 'ESRCH' })
+  assert.ok(await goneWithin(workerPid), `the worker ${workerPid} is gone`)
 })
