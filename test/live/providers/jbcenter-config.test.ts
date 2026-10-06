@@ -27,6 +27,14 @@ describe('Homerun JB Center deployment origins', () => {
     expect(jbCenterBaseUrl()).toBe('https://dev.juicebox.center')
   })
 
+  it('treats a whitespace-only endpoint or site URL as unset', () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    vi.stubEnv('NEXT_PUBLIC_SITE_URL', ' \t\n ')
+    vi.stubEnv('NEXT_PUBLIC_JBCENTER_URL', ' \t\n ')
+    expect(jbCenterAppOrigin()).toBe('https://homerun.money')
+    expect(jbCenterBaseUrl()).toBe(JBCENTER_DEFAULT_URL)
+  })
+
   it('respects an explicitly configured endpoint without altering the real app origin', () => {
     vi.stubEnv('NEXT_PUBLIC_JBCENTER_URL', 'https://center.example')
     expect(jbCenterBaseUrl('https://homerun.money/path')).toBe('https://center.example')

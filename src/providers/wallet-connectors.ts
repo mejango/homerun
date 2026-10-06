@@ -8,11 +8,11 @@ import { lazyConnector, wasRecentConnector } from './lazy-connector'
 const APP = {
   name: 'Homerun',
   description: "Run your homes' investments and revenues.",
-  url: process.env.NEXT_PUBLIC_SITE_URL ?? 'https://homerun.money',
+  url: process.env.NEXT_PUBLIC_SITE_URL?.trim() || 'https://homerun.money',
 }
 
 const WALLET_CONNECT_PROJECT_ID =
-  process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID ?? ''
+  process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID?.trim() ?? ''
 
 /**
  * WalletConnect — the only route to mobile wallets that aren't in this browser.
