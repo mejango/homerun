@@ -49,7 +49,7 @@ export function createJBCenterIpfsClient(
       ) {
         throw new Error(`${label}: ${error.message}`, { cause: error })
       }
-      throw new Error(`${label} — try again.`, { cause: error })
+      throw new Error(`${label}. Try again.`, { cause: error })
     }
   }
 
