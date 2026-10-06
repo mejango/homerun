@@ -1,5 +1,7 @@
-FROM node:26.7-alpine AS build
+FROM node:26.7-alpine AS base
 WORKDIR /app
+
+FROM base AS build
 COPY package.json package-lock.json ./
 COPY vendor ./vendor
 RUN npm ci --ignore-scripts --no-audit --no-fund
@@ -23,8 +25,8 @@ ARG NEXT_PUBLIC_VERSION
 ARG RAILWAY_GIT_COMMIT_SHA
 ENV NEXT_PUBLIC_VERSION=${NEXT_PUBLIC_VERSION:-${RAILWAY_GIT_COMMIT_SHA}}
 RUN npm run build
-FROM node:26.7-alpine
-WORKDIR /app
+
+FROM base
 ENV NODE_ENV=production HOSTNAME=0.0.0.0 PORT=3000 NEXT_TELEMETRY_DISABLED=1
 COPY --from=build --chown=node:node /app/.next/standalone ./
 COPY --from=build --chown=node:node /app/.next/static ./.next/static
