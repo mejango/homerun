@@ -175,6 +175,9 @@ export function FundDeploy({ values, onLockChange, importedRecord, onRecordUsed 
   const [progress, setProgress] = useState('')
   const [runId, setRunId] = useState(0)
   const busyRef = useRef(false)
+  // A relayed launch runs while this page is open; leaving it ends the run's waits.
+  const relayed = useRef<AbortController | null>(null)
+  useEffect(() => () => relayed.current?.abort(), [])
   useEffect(() => {
     try { const saved = localStorage.getItem(FUND_LAUNCH_KEY); if (saved) setSession(decodeLaunchSession(saved)) }
     catch (cause) { setError(message(cause)) }
@@ -217,7 +220,9 @@ export function FundDeploy({ values, onLockChange, importedRecord, onRecordUsed 
         next = persist({ ...next, transport: 'relayr' })
       }
       if (next.transport === 'relayr') {
-        await runRelayrLaunch({ session: next, account: next.input.sender, onStatus: () => setSession(loadLaunchSession()), onProgress: setProgress })
+        const controller = new AbortController()
+        relayed.current = controller
+        await runRelayrLaunch({ session: next, account: next.input.sender, onStatus: () => setSession(loadLaunchSession()), onProgress: setProgress, signal: controller.signal })
         setProgress('Your project is created on every selected chain.')
       } else {
         setProgress('Confirm the deployment in your wallet.')

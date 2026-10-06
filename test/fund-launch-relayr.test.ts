@@ -45,7 +45,7 @@ vi.mock('@/lib/relayr', async importOriginal => ({
   },
 }))
 
-import { relayrDestinationHash, relayrPaymentDetails, relayrPaymentLabel, RELAYR_PAYMENT_ADDRESS, RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_SELECTOR } from '@/lib/relayr'
+import { relayrDestinationHash, relayrPaymentDetails, relayrPaymentLabel, RelayrPaymentSubmittedError, RELAYR_PAYMENT_ADDRESS, RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_SELECTOR } from '@/lib/relayr'
 import { predictMultisig, MULTICALL3, CREATE_BATCH_ABI, unbundleMultisigLaunch, type CreateMultisig } from '@/lib/create-multisig'
 import { canRelayrLaunch, runRelayrLaunch } from '@/lib/fund-launch-relayr'
 import { FUND_LAUNCH_KEY, canCancelLaunch, cancelUnsubmittedLaunch, loadLaunchSession, saveLaunch as saveLaunchSession, type FundLaunchSession as LaunchSession } from '@/lib/fund-launch-session'
@@ -737,6 +737,24 @@ describe('relayed launch execution and recovery', () => {
     await expect(run()).rejects.toThrow('unresolved')
     expect(m.funding).toHaveBeenCalledTimes(1)
     expect(loadLaunchSession()?.relayr?.paymentChainId).toBe(funding)
+  })
+
+  it("hands the launch's signal to its payment, and a payment whose Safe wait it ends stays sent and is never paid again", async () => {
+    const page = new AbortController()
+    let handed: AbortSignal | undefined
+    m.pay.mockImplementationOnce(async (_p, _a, _u, _destinationChainIds, submitted, verify, sending, signal) => {
+      handed = signal
+      await verify(); sending(); submitted(HASH)
+      page.abort()
+      throw new RelayrPaymentSubmittedError(HASH, 8453)
+    })
+    await expect(runRelayrLaunch({ session: loadLaunchSession()!, account: m.account, onStatus: vi.fn(), onProgress: vi.fn(), signal: page.signal }))
+      .rejects.toThrow('Do not pay again')
+    expect(handed).toBe(page.signal)
+    expect(loadLaunchSession()?.relayr).toMatchObject({ phase: 'submitted', paymentHash: HASH })
+    await run()
+    expect(m.pay).toHaveBeenCalledTimes(1)
+    expect(m.funding).toHaveBeenCalledTimes(1)
   })
 
   it('allows retrying a positively rejected funding prompt', async () => {

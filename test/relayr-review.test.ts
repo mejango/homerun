@@ -12,6 +12,7 @@ const m = vi.hoisted(() => ({
   review: vi.fn(),
   send: vi.fn(),
   signTypedData: vi.fn(),
+  waitSafe: vi.fn(),
 }))
 
 // The payment contract is authenticated by its code hash; stand in for its runtime code.
@@ -27,7 +28,7 @@ vi.mock('@/lib/transaction-review', async importOriginal => ({
 }))
 vi.mock('@/lib/safe-connector', () => ({
   isSafeConnection: () => m.safe, SAFE_NONCE_GUIDANCE: 'Safe nonce guidance',
-  waitForSafeExecutionHash: async (_chainId: number, hash: Hex) => hash,
+  waitForSafeExecutionHash: m.waitSafe,
 }))
 const client = vi.hoisted(() => ({
   readContract: vi.fn(async ({ functionName }: { functionName: string }) => functionName === 'nonces'
@@ -43,6 +44,7 @@ vi.mock('@/lib/wallet-core', () => ({
 import {
   prepareForwardedTx,
   relayrPay,
+  RelayrPaymentSubmittedError,
   RELAYR_NATIVE_TOKEN,
   RELAYR_PAYMENT_ADDRESS,
   RELAYR_PAYMENT_SELECTOR,
@@ -57,6 +59,7 @@ beforeEach(() => {
   m.review.mockResolvedValue(undefined)
   m.send.mockResolvedValue(HASH)
   m.signTypedData.mockResolvedValue(`0x${'dd'.repeat(65)}`)
+  m.waitSafe.mockImplementation(async (_chainId: number, hash: Hex) => hash)
 })
 
 describe('relayed request review', () => {
@@ -93,5 +96,34 @@ describe('Relayr payment review', () => {
     expect(reviewed.safeTxGas).toBe(0n)
     expect(reviewed).not.toHaveProperty('gas')
     expect(m.send.mock.calls[0][0].gas).toBe(0n)
+  })
+
+  it('waits for the Safe to execute the payment with the signal of the flow that sent it', async () => {
+    m.safe = true
+    const flow = new AbortController()
+    await relayrPay(payment, m.account, BUNDLE, [1, 10], undefined, undefined, undefined, flow.signal)
+    expect(m.waitSafe).toHaveBeenCalledWith(8453, HASH, { signal: flow.signal })
+  })
+
+  it('reads a Safe wait that its flow ends as a payment sent and not yet confirmed, never a failed one', async () => {
+    m.safe = true
+    m.waitSafe.mockImplementation((_chainId: number, _hash: Hex, options?: { signal?: AbortSignal }) =>
+      new Promise((_resolve, reject) => {
+        options?.signal?.addEventListener('abort', () => reject(new DOMException('Safe execution wait aborted', 'AbortError')), { once: true })
+      }))
+    const flow = new AbortController()
+    const submitted = vi.fn()
+    const paying = relayrPay(payment, m.account, BUNDLE, [1, 10], submitted, undefined, undefined, flow.signal)
+      .catch((error: unknown) => error)
+    await vi.waitFor(() => expect(m.waitSafe).toHaveBeenCalledOnce())
+    flow.abort()
+
+    const error = await paying
+    expect(error).toBeInstanceOf(RelayrPaymentSubmittedError)
+    expect(error).toMatchObject({ hash: HASH, chainId: 8453 })
+    expect(String(error)).toContain('Do not pay again')
+    expect(submitted).toHaveBeenCalledWith(HASH)
+    expect(client.waitForTransactionReceipt).not.toHaveBeenCalled()
+    expect(m.send).toHaveBeenCalledOnce()
   })
 })

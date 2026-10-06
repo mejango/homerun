@@ -121,11 +121,13 @@ function walletRejected(error: unknown): boolean {
  * One authorization per destination, one reviewed payment on the user's selected chain.
  * The launch journal owns recovery: provider labels never establish creation or permit a new payment.
  */
-export async function runRelayrLaunch({ session, account, onStatus, onProgress }: {
+export async function runRelayrLaunch({ session, account, onStatus, onProgress, signal }: {
   session: LaunchSession
   account: Address
   onStatus: (chainId: number, status: LaunchChainStatus & { error?: string }) => void
   onProgress: (message: string) => void
+  /** The page's: when it aborts, the wait for a Safe to execute the payment ends, and the payment stays sent. */
+  signal?: AbortSignal
 }): Promise<void> {
   assertNoViewAs()
   // Signing moves the wallet to each destination, so the fee picker prefers the chain it started on.
@@ -583,7 +585,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       }, verifySigned, () => {
         journal!.phase = 'payment-signing'
         persist() // reload during the wallet prompt cannot silently pay again
-      })
+      }, signal)
     } catch (error) {
       if (journal.phase === 'payment-signing' && !journal.paymentHash && walletRejected(error)) {
         journal.phase = 'quoted'
