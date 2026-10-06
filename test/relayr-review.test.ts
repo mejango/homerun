@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { decodeFunctionData, type Address, type Hex } from 'viem'
 import { erc2771ForwarderAbi } from '@bananapus/nana-sdk-core'
 import {
+  MAX_RELAYR_SENT_PAYMENTS,
   RELAYR_NATIVE_TOKEN,
   RELAYR_PAYMENT_ADDRESS,
   RELAYR_PAYMENT_SELECTOR,
@@ -11,6 +12,7 @@ import {
   RelayrPaymentRevertedError,
   RelayrProofError,
   type RelayrPayment,
+  type RelayrSentPayment,
 } from '@bananapus/nana-sdk-core/review/relayr'
 
 const m = vi.hoisted(() => ({
@@ -47,7 +49,6 @@ import {
   relayrPay,
   RelayrPaymentSubmittedError,
 } from '@/lib/relayr'
-import { MAX_RELAYR_SENT_PAYMENTS, type RelayrSentPayment } from '@/lib/relayr-payments'
 
 const TARGET = '0x2222222222222222222222222222222222222222' as Address
 const BUNDLE = '00000000-0000-0000-0000-000000000001'
