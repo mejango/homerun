@@ -28,6 +28,7 @@ import { gasWithHeadroom } from '@bananapus/nana-sdk-core/review'
 import {
   TRUSTED_FORWARDER_ABI,
   relayrDeadlinePassed,
+  relayrDestinationHash,
   relayrPaymentChains,
   relayrPaymentDetails,
   relayrPaymentOptions,
@@ -43,7 +44,6 @@ import {
 import {
   prepareForwardedTx,
   relayrChainClient,
-  relayrDestinationHash,
   relayrDestinationRecords,
   relayrHeldMessage,
   relayrPay,

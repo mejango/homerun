@@ -5,11 +5,12 @@ import type { Address, Hex } from 'viem'
 
 vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: undefined }) }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
-vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => false, SAFE_NONCE_GUIDANCE: '', waitForSafeExecutionHash: vi.fn() }))
+vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => false }))
 vi.mock('@/lib/wallet-core', () => ({ publicClient: vi.fn(), connectedWallet: vi.fn() }))
 
+import { relayrDestinationHash, relayrRecordChain } from '@bananapus/nana-sdk-core/review/relayr'
 import {
-  relayrDestinationHash, relayrDestinationRecords, relayrPostBundle, relayrRecordChain,
+  relayrDestinationRecords, relayrPostBundle,
   type RelayrEntry, type RelayrTransactionBinding, type RelayrTransactionRecord,
 } from '@/lib/relayr'
 

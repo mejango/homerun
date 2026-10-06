@@ -17,7 +17,11 @@ import {
   RelayrProofError,
   quoteExpired,
   relayrDeadlinePassed,
+  relayrDestinationHash,
   relayrPaymentDetails,
+  relayrProgress,
+  relayrRecordChain,
+  relayrStateIsSuccess,
   relayrSupportsChains,
   requireRelayrBundleUnpaid,
   requireRelayrPaymentRetry,
@@ -128,7 +132,6 @@ export type RelayrQuote = {
   expectedTransactions?: RelayrTransactionBinding[]
 }
 
-type RelayrProgressSummary = { confirmed: number; failed: number; pending: number; total: number }
 export type RelayrExecutionErrorCode =
   | 'RELAYR_FAILED'
   | 'RELAYR_TIMEOUT'
@@ -193,35 +196,6 @@ export function relayrHeldMessage(until: number, nowMs = Date.now()): string {
   return until * 1_000 > nowMs
     ? `This launch's earlier signature can still run until ${new Date(until * 1_000).toLocaleString()}. Try again after that.`
     : "This launch's earlier signature may still run. Try again in a few minutes."
-}
-
-export function relayrStateIsSuccess(state?: string): boolean {
-  const normalized = state?.trim().toLowerCase()
-  return normalized === 'success' || normalized === 'completed'
-}
-
-export function relayrStateIsFailed(state?: string): boolean {
-  return state?.trim().toLowerCase() === 'failed'
-}
-
-export function relayrProgress(
-  records: RelayrTransactionRecord[],
-  expectedCount = records.length,
-): RelayrProgressSummary {
-  const total = Math.max(expectedCount, records.length)
-  const confirmed = records.filter(record =>
-    relayrStateIsSuccess(record.status?.state),
-  ).length
-  const failed = records.filter(record =>
-    relayrStateIsFailed(record.status?.state),
-  ).length
-
-  return {
-    confirmed,
-    failed,
-    pending: Math.max(total - confirmed - failed, 0),
-    total,
-  }
 }
 
 class RelayrHttpTimeoutError extends Error {
@@ -379,7 +353,6 @@ export async function buildForwardedTx(call: RelayrCall, expectedAccount: Addres
 }
 
 const RELAYR_MAX_UINT256 = (1n << 256n) - 1n
-const RELAYR_HASH_RE = /^0x[0-9a-f]{64}$/iu
 const RELAYR_UNBOUND_QUOTE =
   'Relayr did not bind every quoted transaction to a unique ID. Nothing was paid.'
 const RELAYR_QUOTE_UNRETURNED =
@@ -1002,23 +975,6 @@ export async function relayrPoll(
     }
     await new Promise(resolve => setTimeout(resolve, intervalMs))
   }
-}
-
-/** The destination transaction hash a record reports, if it is a transaction hash. */
-export function relayrDestinationHash(
-  record: RelayrTransactionRecord,
-): Hex | null {
-  const data = record?.status?.data
-  const hash = data?.hash ?? data?.transaction?.hash
-  return typeof hash === 'string' && RELAYR_HASH_RE.test(hash) ? hash : null
-}
-
-/** Relayr's live status schema nests the destination chain under request. */
-export function relayrRecordChain(
-  record: RelayrTransactionRecord,
-): number | null {
-  const chain = record?.request?.chain ?? record?.chain
-  return Number.isSafeInteger(chain) && Number(chain) > 0 ? Number(chain) : null
 }
 
 /**

@@ -3,7 +3,7 @@ vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fix
 
 import { HttpRequestError, encodeFunctionResult, toHex, encodeFunctionData, type Address, type Hex } from 'viem'
 import { erc2771ForwarderAbi, JBCoreContracts, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
-import { RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_ADDRESS, RELAYR_PAYMENT_SELECTOR, RelayrPaymentRevertedError, type RelayrPayment } from '@bananapus/nana-sdk-core/review/relayr'
+import { RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_ADDRESS, RELAYR_PAYMENT_SELECTOR, RelayrPaymentRevertedError, relayrDestinationHash, type RelayrPayment } from '@bananapus/nana-sdk-core/review/relayr'
 import type { RelayrEntry, RelayrQuote, RelayrTransactionRecord } from '@/lib/relayr'
 
 const m = vi.hoisted(() => ({
@@ -44,7 +44,7 @@ vi.mock('@/lib/relayr', async importOriginal => ({
   },
 }))
 
-import { relayrDestinationHash, relayrHeldMessage, relayrPaymentLabel } from '@/lib/relayr'
+import { relayrHeldMessage, relayrPaymentLabel } from '@/lib/relayr'
 import { predictMultisig, MULTICALL3, CREATE_BATCH_ABI, unbundleMultisigLaunch, type CreateMultisig } from '@/lib/create-multisig'
 import { canRelayrLaunch, launchRequestsDead, runRelayrLaunch } from '@/lib/fund-launch-relayr'
 import { FUND_LAUNCH_KEY, canCancelLaunch, cancelUnsubmittedLaunch, loadLaunchSession, saveLaunch as saveLaunchSession, type FundLaunchSession as LaunchSession } from '@/lib/fund-launch-session'
