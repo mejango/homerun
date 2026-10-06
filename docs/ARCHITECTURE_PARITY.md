@@ -34,11 +34,24 @@ The transaction review queue, reviewed contract write, gas headroom, Safe servic
 
 ## Relayed launch recovery (2026-10-06 parity pass)
 
-The fund launch decides what a signed Relayr launch does next from finalized chain state, through the SDK's session rules (`@bananapus/nana-sdk-core/review/relayr`, 2.22.0), and pays and proves its quote the way jbm's launch does. The copied code is jbm's at #112 (`27c40e98e26dd2393ae6cf0ca739dd12e158e2d8`):
+The fund launch decides what a signed Relayr launch does next from finalized chain state, and what a reverted payment allows, through the SDK's Relayr rules (`@bananapus/nana-sdk-core/review/relayr`, 2.23.0). They are Juicebox Money's (rulings R104, R114 and R117), and Homerun keeps no copy of them:
 
-- `relayr-payments.ts` is jbm's file byte for byte (sha256 `b0cd5bceebc621c18b3da687b62afa18ed8e4d429dfe2be921f1cc6ac0f0cdb7`).
-- In `relayr.ts`, `relayrPostBundle`, `relayrPaymentLabel`, `requireRelayrRetry`, `relayrRetryOption`, `proveSavedRelayrPayment`, `relayrPaymentAttemptOutcome`, `relayrChainClient`, `readRelayrBundle`, `readRelayrBundleIfNamed`, `relayrRecordPending`, `relayrBundleFunded`, `relayrPaidQuoteOpen`, `relayrQuotedOptions`, `relayrQuoteUnfundable`, `revertedRelayrQuote` and `relayrPoll` are jbm's line for line. Three of their doc comments say "launch" where jbm's say "session" or "action". `relayrPay` is jbm's without its `note` and `reverifyBeforeSendOnly` options and the details its `onSending` passes, which only jbm's project actions use. `relayrHeldMessage` is jbm's rule in this app's words, and shows the time with `toLocaleString()`.
-- In `fund-launch-relayr.ts`, the reverted quote's release, the resume proof of the saved payment, the retry option, and the payment with its attempt outcome follow jbm's `launch-relayr.ts` at that commit.
+- The session rules: `relayrSignedRequests`, `relayrRequestStates`, `relayrRequestsVerdict`, `relayrSessionOutcome`, `relayrRequestsDead` and `relayrDeadlinePassed`.
+- The rules of a quote whose payment reverted: `revertedRelayrQuote` (funded, payable or released), `relayrRetryOption`, `requireRelayrRetry`, `proveSavedRelayrPayment`, `relayrPaymentAttemptOutcome`, `relayrPaidQuoteOpen` and `relayrQuotedOptions`, and the journal of payments sent: `sentRelayrPayment`, `relayrSentPaymentsSnapshot`, `MAX_RELAYR_SENT_PAYMENTS` and `RELAYR_UUID_RE`. `relayrChainClient` is the lookup they read a chain through, and a chain this app has no client for reads as unknown.
+
+What stays here is jbm's at #112 (`27c40e98e26dd2393ae6cf0ca739dd12e158e2d8`):
+
+- In `relayr.ts`, `relayrPostBundle`, `relayrPaymentLabel` and `relayrPoll` are jbm's line for line, and `relayrChainClient` and `readRelayrBundle` are jbm's code with their doc comments changed. `readRelayrBundle` stays for `relayrPoll`, which counts Relayr's consecutive 404s, where the SDK's `readRelayrBundle` reads a 404 as any failed read. `relayrPay` is jbm's without its `note` and `reverifyBeforeSendOnly` options and the details its `onSending` passes, which only jbm's project actions use, and it asks the SDK's `requireRelayrRetry` right before the wallet opens. `relayrHeldMessage` is jbm's rule in this app's words, and shows the time with `toLocaleString()`.
+- In `fund-launch-relayr.ts`, the reverted quote's release, the resume proof of the saved payment, the retry option, and the payment with its attempt outcome follow jbm's `launch-relayr.ts` at that commit, through the SDK's functions.
+
+The SDK's rules differ from jbm's copies at that commit, which Homerun held until 2.23.0. Each difference holds the quote or refuses the payment, never the reverse, and `fund-launch-relayr.test.ts` or `relayr-review.test.ts` pins each:
+
+- A saved payment's deadline must be its calldata's deadline word. A saved launch with another is refused as invalid, and the retry rule refuses it. jbm's release read the saved deadline alone.
+- A payment filed under another bundle than its quote holds the quote, neither payable nor released.
+- Amounts and deadlines are read as the SDK reads any untrusted number, so a padded or signed string is not a number. An option quoted so is never the one to pay again, and an option whose amount cannot be read, coming before its twin on the same chain and calldata, ends the search refused.
+- Payment options that are not a list hold the quote, and payments that are not a list are refused.
+- A bundle ID that is not a Relayr ID is never read.
+- The retry rule refuses, as `invalid`, payments that are not a list and any list the sent-payment journal refuses, and a chain without a client as `unknown`.
 
 Deliberate differences, each pinned by a test: a signature not yet quoted is never counted as published, and a replaced one counts as dead when the journal proves it was never posted (jbm's launch counts a `signing` journal's signatures); a saved payment that proves to be another transaction no longer blocks cancelling once every request is dead (jbm's launch rethrows it on every resume); an unpublished journal with saved retry nonces may be cancelled (jbm's `canAbandonRelayrLaunch` refuses it), since nothing of it was posted. Homerun has no other relayed action, so it keeps no forwarder reservation ledger and no account view of pending relayed work.
 

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { decodeFunctionData, type Address, type Hex } from 'viem'
 import { erc2771ForwarderAbi } from '@bananapus/nana-sdk-core'
 import {
+  MAX_RELAYR_SENT_PAYMENTS,
   RELAYR_NATIVE_TOKEN,
   RELAYR_PAYMENT_ADDRESS,
   RELAYR_PAYMENT_SELECTOR,
@@ -11,6 +12,7 @@ import {
   RelayrPaymentRevertedError,
   RelayrProofError,
   type RelayrPayment,
+  type RelayrSentPayment,
 } from '@bananapus/nana-sdk-core/review/relayr'
 
 const m = vi.hoisted(() => ({
@@ -19,6 +21,8 @@ const m = vi.hoisted(() => ({
   review: vi.fn(),
   send: vi.fn(),
   signTypedData: vi.fn(),
+  /** Chains this app has no client for. */
+  noClient: [] as number[],
 }))
 
 vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: m.account }) }))
@@ -38,7 +42,10 @@ const client = vi.hoisted(() => ({
   getBlock: vi.fn(),
 }))
 vi.mock('@/lib/wallet-core', () => ({
-  publicClient: () => client,
+  publicClient: (chainId: number) => {
+    if (m.noClient.includes(chainId)) throw new Error(`No client for chain ${chainId}`)
+    return client
+  },
   connectedWallet: async () => ({ wallet: { sendTransaction: m.send, signTypedData: m.signTypedData }, account: m.account }),
 }))
 
@@ -47,7 +54,6 @@ import {
   relayrPay,
   RelayrPaymentSubmittedError,
 } from '@/lib/relayr'
-import { MAX_RELAYR_SENT_PAYMENTS, type RelayrSentPayment } from '@/lib/relayr-payments'
 
 const TARGET = '0x2222222222222222222222222222222222222222' as Address
 const BUNDLE = '00000000-0000-0000-0000-000000000001'
@@ -60,6 +66,7 @@ const PAYMENT_RUNTIME = '0x608060405260043610156010575f80fd5b5f3560e01c63103903a
 
 beforeEach(() => {
   m.safe = false
+  m.noClient = []
   m.review.mockResolvedValue(undefined)
   m.send.mockResolvedValue(FIRST)
   m.signTypedData.mockResolvedValue(`0x${'dd'.repeat(65)}`)
@@ -255,6 +262,38 @@ describe('Relayr payment', () => {
     it('is never paid again when a saved payment belongs to another bundle', async () => {
       await expect(pay({ sent: [{ ...sentUnder(EARLIER), bundleUuid: '00000000-0000-0000-0000-000000000002' }] }))
         .rejects.toThrow('belongs to another bundle')
+      expect(m.send).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      ['earlier', -1],
+      ['later', 1],
+    ])('is never paid again, and nothing is read, when a saved payment\'s deadline is %s than the one its calldata pays until', async (_label, offset) => {
+      const error = await pay({ sent: [{ ...sentUnder(EARLIER), deadline: String(deadline + offset) }] }).catch((thrown: unknown) => thrown)
+      expect(error).toBeInstanceOf(RelayrPaymentRetryError)
+      expect(error).toMatchObject({ reason: 'invalid' })
+      expect(m.send).not.toHaveBeenCalled()
+      expect(vi.mocked(fetch)).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      ['a payment that is null', [null]],
+      ['a payment with no fields', [{}]],
+      ['a payment with only its bundle', [{ bundleUuid: BUNDLE }]],
+      ['payments that are not a list', { length: 1 }],
+    ])('is never paid again, and nothing is read, for %s', async (_label, sent) => {
+      const error = await pay({ sent: sent as never }).catch((thrown: unknown) => thrown)
+      expect(error).toBeInstanceOf(RelayrPaymentRetryError)
+      expect(error).toMatchObject({ reason: 'invalid' })
+      expect(m.send).not.toHaveBeenCalled()
+      expect(vi.mocked(fetch)).not.toHaveBeenCalled()
+    })
+
+    it('is never paid again while a chain a payment was sent on has no client here', async () => {
+      m.noClient = [1]
+      const error = await pay({ sent: [{ ...sentUnder(EARLIER), chainId: 1 }] }).catch((thrown: unknown) => thrown)
+      expect(error).toBeInstanceOf(RelayrPaymentRetryError)
+      expect(error).toMatchObject({ reason: 'unknown' })
       expect(m.send).not.toHaveBeenCalled()
     })
 
