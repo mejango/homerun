@@ -140,6 +140,25 @@ test('a server that is running and answering is ready', async () => {
   }
 })
 
+test('a response that fails after its headers is no answer yet, and the wait goes on', async () => {
+  let requests = 0
+  const { service, url } = await answeringOn((request, response) => {
+    // The first request gets its headers and then loses the connection; the next is served.
+    if (++requests > 1) return response.end('ok')
+    response.writeHead(200, { 'content-length': 100 })
+    response.flushHeaders()
+    setTimeout(() => request.socket.destroy(), 20)
+  })
+  const { server } = await serverWith('setInterval(() => {}, 1000)')
+  try {
+    await waitForServer(url, server, 10, { settleMs: 50, intervalMs: 50 })
+    assert.ok(requests >= 2, 'the reset response did not count as an answer')
+  } finally {
+    await server.stop()
+    service.close()
+  }
+})
+
 test('an answer is not trusted when the server exits right after it', async () => {
   // The answer comes from something else, and the server that was started dies once it has been given.
   let started

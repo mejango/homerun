@@ -60,19 +60,21 @@ export async function requireFreePort(port, host = 'localhost') {
 const exited = server => server.child.exitCode !== null || server.child.signalCode !== null
 
 /** Waits for the URL to answer, and for the server that was started for it to still be running afterwards. */
-export async function waitForServer(url, server, seconds, { settleMs = 2_000 } = {}) {
+export async function waitForServer(url, server, seconds, { settleMs = 2_000, intervalMs = 2_000 } = {}) {
   const deadline = Date.now() + seconds * 1000
   while (Date.now() < deadline) {
     if (exited(server)) throw new Error(`the server exited before ${url} answered`)
+    // A response that fails after its headers (a reset, a timeout while the body is read) is no answer yet.
     const answered = await fetch(url, { signal: AbortSignal.timeout(30_000) })
-      .then(async response => { await response.arrayBuffer(); return response.ok }, () => false)
+      .then(async response => { await response.arrayBuffer(); return response.ok })
+      .catch(() => false)
     if (answered) {
       // Another process on the port can answer before this server finds the port taken and exits.
       await new Promise(resolve => setTimeout(resolve, settleMs))
       if (exited(server)) throw new Error(`the server exited right after ${url} first answered, so the answer may have come from another process on that port`)
       return
     }
-    await new Promise(resolve => setTimeout(resolve, 2_000))
+    await new Promise(resolve => setTimeout(resolve, intervalMs))
   }
   throw new Error(`${url} did not answer within ${seconds} seconds`)
 }
