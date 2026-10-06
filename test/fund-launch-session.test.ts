@@ -164,6 +164,17 @@ describe('cancelling a relayed launch', () => {
     expect(localStorage.getItem(FUND_LAUNCH_KEY)).not.toBeNull()
   })
 
+  it('cancels a launch whose signatures were refreshed before anything was published, with no proof to ask for', async () => {
+    stubLocks()
+    const proof = vi.fn(async () => false)
+    const saved = saveLaunch({ ...session(), transport: 'relayr', statuses: { 8453: { phase: 'authorized' }, 10: { phase: 'ready' } },
+      relayr: { account: owner, phase: 'signing', signed: [], records: [], retryNonces: { 8453: '0' } } })
+    expect(canCancelLaunch(saved)).toBe(true)
+    await cancelUnsubmittedLaunch(saved.input.salt, proof)
+    expect(proof).not.toHaveBeenCalled()
+    expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()
+  })
+
   it('asks for no proof of a launch that never published a signature', async () => {
     stubLocks()
     const proof = vi.fn(async () => false)
