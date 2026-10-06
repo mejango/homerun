@@ -67,14 +67,16 @@ and real funding are not part of this checkpoint.
 Use Node >=24.1/npm >=11. `npm run check` covers lint, indexer schema, model and
 component tests, production build and contracts. In an isolated checkout, resolve
 Foundry remappings to the existing protocol libraries. Browser commands
-`test:browser`, `test:create` and `test:a11y` use `BASE_URL` and the installed
+`test:browser`, `test:create`, `test:a11y` and `test:shop` use `BASE_URL` and the installed
 `PLAYWRIGHT_MODULE` against the built local app.
 
-`test:center` exercises an enabled build with issuer `https://signa.center` and
-audience `https://api.signa.center` (the only https pair a build accepts),
-manifest `browser-fixture`, revision `0x` followed by 64 `1` characters, and a
-`1000000000000000` wei fee bound. Build to `.next-center-test`, serve its standalone
-output at `BASE_URL` (default `http://localhost:54064`), then run `npm run test:center`.
+`test:center` exercises a build with the Center wallet enabled: issuer
+`https://signa.center` and audience `https://api.signa.center` (the only https
+pair a build accepts, and the app's defaults) and a fixture manifest and fee
+bound of the right shape. The fixture values and the port are in
+`test/support/browser-suites.mjs`. Build to `.next-center-test`, serve its
+standalone output at `BASE_URL` (default: `127.0.0.1` on that port), then run
+`npm run test:center`; `node scripts/run-browser-suites.mjs center` does all three.
 It uses the actual app and pinned SDK with explicitly modeled Center responses to
 check chooser cancellation, the framed sign-in, URL scrubbing, a lost exchange reply, exact retry,
 original-page restoration, reload and sign-out. It writes a sanitized report and

@@ -4,10 +4,9 @@
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { decodeAbiParameters } from 'viem';
+import { isEntrypoint } from '../scripts/entrypoint.mjs';
 import { networks } from './deploy.mjs';
 
 export const contracts = [
@@ -102,7 +101,7 @@ async function explorerFetch(url) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (isEntrypoint(import.meta.url)) {
   try {
     if (process.argv.length !== 3) throw new Error('Usage: artifacts.mjs <testnets|mainnets>');
     await emit(process.argv[2]);

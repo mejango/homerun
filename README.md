@@ -95,8 +95,15 @@ npm run check
 | `npm run test:browser` | Native project/demo behavior, lifecycle calculations, dialogs, local previews and mobile layouts |
 | `npm run test:create` | Native Create flow, draft persistence, review and responsive layouts |
 | `npm run test:a11y` | Automated accessibility checks across the rendered flows |
+| `npm run test:shop` | The demo FUND shop at 1440, 390 and 320 px: validate, upload, review, save, reload, edit, remove and reset, with axe and an overflow check on the editor, review and inventory |
+| `npm run test:intent` | Create, publish, sponsored deployment and a first payment against a modeled Center; it starts its own servers |
+| `npm run test:center` | The Center wallet sign-in flow against an enabled production build; see [CENTER-WALLET.md](CENTER-WALLET.md) |
+| `npm run test:suites` | The six browser suites above, each with the servers it needs; `node scripts/run-browser-suites.mjs dev` runs one group (`dev`, `intent` or `center`) |
+| `npm run audit:prod` | `npm audit` of the production dependencies, failing on high or critical advisories |
 
-Start the app before browser checks. `BASE_URL`, `PLAYWRIGHT_MODULE`, `CHROME_PATH` and `BROWSER_SCREENSHOT_DIR` override their defaults. The existing workspace Playwright installation and macOS Chrome are used by default. Foundry uses Solidity 0.8.28 and sibling workspace dependencies listed in [remappings.txt](remappings.txt). Automated accessibility checks are limited evidence, not a certification.
+GitHub Actions runs `.github/workflows/ci.yml` on every pull request and on main: lint, the indexer registry check, the unit and component tests, the production build and typecheck; the six browser suites; `forge fmt --check`; the Forge tests, deployment tests and contract sizes against the pinned protocol checkouts; a smoke test of the Dockerfile image, which must serve the built revision at `/api/healthz`; and the production dependency audit.
+
+Start the app before the individual browser checks, or let `npm run test:suites` start it. `BASE_URL`, `PLAYWRIGHT_MODULE`, `CHROME_PATH` and `BROWSER_SCREENSHOT_DIR` override their defaults. The individual suites use the existing workspace Playwright installation and macOS Chrome by default; `npm run test:suites` uses the Playwright installed here and its Chromium (`npx playwright install chromium`). Foundry uses Solidity 0.8.28 and sibling workspace dependencies listed in [remappings.txt](remappings.txt). Automated accessibility checks are limited evidence, not a certification.
 
 [FUND_FORK_VERIFICATION.md](docs/FUND_FORK_VERIFICATION.md) records an earlier fork run of the FUND lifecycle (29 local transactions) against the pre-deployer launch path. The current path launches through `HomerunDeployer`, which is not deployed yet; the fork script needs to deploy it locally before that run can be repeated. The production rollout is [DEPLOYMENT.md](DEPLOYMENT.md).
 
@@ -120,7 +127,7 @@ Start the app before browser checks. `BASE_URL`, `PLAYWRIGHT_MODULE`, `CHROME_PA
 
 ## Build and deploy
 
-`npm run build` creates `.next/standalone`; `npm start` runs the standalone server locally. The multi-stage [Dockerfile](Dockerfile) installs application dependencies, builds Next, and copies the standalone runtime, static chunks and public assets into the runtime image. It runs as the `node` user on `0.0.0.0:$PORT`.
+`npm run build` creates `.next/standalone`; `npm start` runs the standalone server locally. The multi-stage [Dockerfile](Dockerfile) installs application dependencies, builds Next, and copies the standalone runtime, static chunks and public assets into the runtime image. It runs as the `node` user on `0.0.0.0:$PORT` and declares a `HEALTHCHECK` on `/api/healthz`. The base image is pinned by tag and digest; the comment above `FROM` says how to read the current digest.
 
 [railway.json](railway.json) selects the Dockerfile and checks `/` before routing traffic. Railway supplies the runtime port; the custom domain must target that port. Deploying this web application does not deploy or enable the Homerun contracts; those deploy through the Sphinx workflow in [DEPLOYMENT.md](DEPLOYMENT.md), from this repository.
 

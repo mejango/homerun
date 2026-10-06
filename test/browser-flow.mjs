@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { expect } from "@playwright/test";
 import { CREATE_DEFAULTS, CREATED_PROJECTS_KEY } from '../web/create-model.mjs';
+import { devPort } from './support/browser-suites.mjs';
 
 const { chromium } = await import(
   (process.env.PLAYWRIGHT_MODULE
@@ -27,7 +28,7 @@ const context = await browser.newContext({
   reducedMotion: "reduce",
 });
 const page = await context.newPage();
-const base = process.env.BASE_URL || "http://localhost:3010";
+const base = process.env.BASE_URL || `http://localhost:${devPort()}`;
 const demoURL = new URL("/founderhaus", base).href;
 const errors = [];
 const failures = [];

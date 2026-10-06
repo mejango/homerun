@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { devPort } from './support/browser-suites.mjs';
 
 const moduleURL = (override, fallback) => override ? pathToFileURL(override) : new URL(fallback, import.meta.url);
 const { chromium } = await import(moduleURL(process.env.PLAYWRIGHT_MODULE, '../node_modules/playwright/index.mjs').href);
@@ -10,7 +11,7 @@ const { default: AxeBuilder } = await import(moduleURL(process.env.AXE_MODULE, '
 const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce', acceptDownloads: true });
 const page = await context.newPage();
-const home = process.env.BASE_URL || 'http://localhost:3010/';
+const home = process.env.BASE_URL || `http://localhost:${devPort()}/`;
 const errors = [], failures = [];
 let checks = 0;
 page.setDefaultTimeout(15_000);
