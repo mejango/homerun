@@ -449,7 +449,7 @@ describe('INCOME transaction surfaces', () => {
     expect(request.functionName).toBe('sendReservedTokensToSplitsOf')
     expect(request.args).toEqual([7n])
     expect(options.reviewNotice).toContain(state().owner)
-    expect(options.reviewNotice).toContain('A changed amount or ruleset can’t be confirmed here.')
+    expect(options.reviewNotice).toContain('A smaller amount or another ruleset can’t be confirmed here.')
     expect(options.reviewNotice).toContain('does not immediately make holder rewards collectible')
     expect(options.reviewedInParent).toBeUndefined()
     expect(options.reviewedAccount).toBe(runtime.address)

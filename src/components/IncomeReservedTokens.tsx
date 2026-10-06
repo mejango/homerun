@@ -61,7 +61,7 @@ export function IncomeReservedTokens({ state, client }: { state: IncomeProjectSt
       const leftover = snapshot.pending - snapshot.splits.reduce((sum, split) => sum + splitAmount(snapshot, split.percent), 0n)
       await tx.send({ ...buildSendIncomeReservedTokensTx(state.chainId, state.projectId), label: `Distribute pending reserved INCOME (currently ${formatUnits(snapshot.pending, 18)})` }, {
         reviewedAccount: address,
-        reviewNotice: `${recipients}${leftover > 0n ? `${recipients ? '; ' : ''}${formatUnits(leftover, 18)} INCOME remainder to project owner ${snapshot.owner}` : ''}. This permissionless call spends only gas and distributes all reserves using the recipients active when it executes. A changed amount or ruleset can’t be confirmed here. Distributor funding does not immediately make holder rewards collectible. A failed hook can burn its unconsumed tokens.`,
+        reviewNotice: `${recipients}${leftover > 0n ? `${recipients ? '; ' : ''}${formatUnits(leftover, 18)} INCOME remainder to project owner ${snapshot.owner}` : ''}. This permissionless call spends only gas and distributes all reserves using the recipients active when it executes. A smaller amount or another ruleset can’t be confirmed here. Distributor funding does not immediately make holder rewards collectible. A failed hook can burn its unconsumed tokens.`,
         reverify: async () => { assertSameIncomeReservedTokens(snapshot, await readIncomeReservedTokens(client, { chainId: state.chainId, projectId: state.projectId })) },
         beforeWrite: () => { setIntent({ snapshot, account: address }) },
       })
