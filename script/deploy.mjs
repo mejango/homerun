@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { isEntrypoint } from '../scripts/entrypoint.mjs';
 import { absoluteRemappings } from '../scripts/forge-remappings.mjs';
 
 // Every sibling checkout that compiles into the contracts (the artifact's `metadata.sources` roots), at its reviewed
@@ -230,7 +229,7 @@ export async function run(action, group, {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (isEntrypoint(import.meta.url)) {
   try {
     if (process.argv.length !== 4) throw new Error('Usage: deploy.sh <preflight|rehearse|propose|broadcast|verify|artifacts> <testnets|mainnets>');
     await run(process.argv[2], process.argv[3]);

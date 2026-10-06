@@ -11,6 +11,7 @@ import { execFileSync } from 'node:child_process'
 import { CCIP_SUCKER_DEPLOYER_ADDRESSES, jbContractAddress, USDC_ADDRESSES } from '@bananapus/nana-sdk-core'
 import { concatHex, encodeAbiParameters, getAddress, getCreate2Address, isAddress, keccak256, padHex, toHex, zeroAddress, type AbiParameter, type Address, type Hex } from 'viem'
 import { HOMERUN_ALLOWLIST_HOOK, HOMERUN_DEPLOYER } from '../src/lib/homerun-addresses'
+import { isEntrypoint } from './entrypoint.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const workspace = resolve(root, '../..')
@@ -288,7 +289,7 @@ export async function prepareIncomeRelease() {
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntrypoint(import.meta.url)) {
   if (process.argv.length > 2) throw new Error('This offline evidence script accepts no wallet, address, broadcast, or network options.')
   const manifest = await prepareIncomeRelease()
   process.stdout.write(`${JSON.stringify(manifest, (_key, value) => typeof value === 'bigint' ? value.toString() : value, 2)}\n`)
