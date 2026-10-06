@@ -1,133 +1,64 @@
 // @vitest-environment node
-import { readdirSync, readFileSync } from 'node:fs'
-import { join, relative, resolve } from 'node:path'
+import { join, relative } from 'node:path'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
+import { bindingsOf, findReaders, idOf, LIB, parse, SRC, sourcesUnder, type Source } from './support/bendystraw-readers'
 
 /**
  * A page's Bendystraw reads go with the page's signal: react-query's, or one the page aborts when it is left. When the
  * page is left, what it asked Bendystraw for stops, and a read whose page is gone sends nothing.
  *
- * The readers are found from the source, so a new one is checked as soon as it exists: every function a module of
- * src/lib exports that calls `bendystraw`, `getPagedItems` or another reader. Every use of a reader in the browser's
- * code (src/components and src/hooks) is a call that gives it a `signal`.
+ * The readers are found from the source (test/support/bendystraw-readers.ts says what that search follows and what it
+ * does not). Every use of a reader in the browser's code, src/components and src/hooks, is a call that gives it a
+ * signal: `{ signal }`, `{ signal: x }` with x other than `undefined`, `null` or `void`, or a signal passed as itself.
+ *
+ * Not checked: a page's own helper that takes an optional signal and hands it to a reader (ProjectActivity's
+ * fetchPage) is checked where it calls the reader, not where it is called; and server code (src/app), which has no
+ * page signal.
  */
 
-const SRC = resolve('src')
-const LIB = join(SRC, 'lib')
+/** Whether a value gives nothing: `undefined`, `null` or `void` anything. */
+const nothing = (value: ts.Expression) =>
+  (ts.isIdentifier(value) && value.text === 'undefined') || value.kind === ts.SyntaxKind.NullKeyword || ts.isVoidExpression(value)
 
-function sources(dir: string): string[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
-    const path = join(dir, entry.name)
-    return entry.isDirectory() ? sources(path) : /\.tsx?$/.test(entry.name) && !entry.name.endsWith('.d.ts') ? [path] : []
-  })
-}
-
-const parse = (path: string) => ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest, true)
-
-/** The `@/lib/...` name of a module of src/lib. */
-const moduleOf = (path: string) => `@/lib/${relative(LIB, path).replace(/\.tsx?$/, '')}`
-
-/** Each name a source imports from a module of src/lib, as `module#name`. */
-function imported(source: ts.SourceFile, path: string): Map<string, string> {
-  const names = new Map<string, string>()
-  for (const statement of source.statements) {
-    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue
-    const specifier = statement.moduleSpecifier.text
-    const module = specifier.startsWith('@/lib/')
-      ? specifier
-      : specifier.startsWith('./') && path.startsWith(LIB)
-        ? moduleOf(join(LIB, specifier))
-        : null
-    const bindings = statement.importClause?.namedBindings
-    if (!module || !bindings || !ts.isNamedImports(bindings)) continue
-    for (const element of bindings.elements) {
-      names.set(element.name.text, `${module}#${(element.propertyName ?? element.name).text}`)
-    }
-  }
-  return names
-}
-
-/** The functions a module exports, by name, with the names each one calls. */
-function exportedFunctions(source: ts.SourceFile): Map<string, Set<string>> {
-  const called = (body: ts.Node) => {
-    const names = new Set<string>()
-    const visit = (node: ts.Node) => {
-      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) names.add(node.expression.text)
-      ts.forEachChild(node, visit)
-    }
-    visit(body)
-    return names
-  }
-  const exported = (node: ts.Node) =>
-    ts.canHaveModifiers(node) && !!ts.getModifiers(node)?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword)
-  const functions = new Map<string, Set<string>>()
-  for (const statement of source.statements) {
-    if (ts.isFunctionDeclaration(statement) && statement.name && statement.body && exported(statement)) {
-      functions.set(statement.name.text, called(statement.body))
-    }
-    if (ts.isVariableStatement(statement) && exported(statement)) {
-      for (const declaration of statement.declarationList.declarations) {
-        const value = declaration.initializer
-        if (ts.isIdentifier(declaration.name) && value && (ts.isArrowFunction(value) || ts.isFunctionExpression(value))) {
-          functions.set(declaration.name.text, called(value.body))
-        }
-      }
-    }
-  }
-  return functions
-}
-
-/** Every reader, as `module#name`. */
-function findReaders(): Set<string> {
-  const modules = sources(LIB).map(path => {
-    const source = parse(path)
-    return { module: moduleOf(path), imports: imported(source, path), functions: exportedFunctions(source) }
-  })
-  const readers = new Set(['@/lib/bendystraw#bendystraw'])
-  for (let grew = true; grew;) {
-    grew = false
-    for (const { module, imports, functions } of modules) {
-      for (const [name, called] of functions) {
-        const id = `${module}#${name}`
-        if (readers.has(id)) continue
-        const resolved = [...called].map(callee => imports.get(callee) ?? `${module}#${callee}`)
-        if (resolved.some(callee => readers.has(callee))) {
-          readers.add(id)
-          grew = true
-        }
-      }
-    }
-  }
-  return readers
-}
-
-/** Whether an argument gives a signal: a name `signal` anywhere in it (`{ signal }`, `leave.current?.signal`). */
+/** Whether an argument gives a signal. */
 function givesSignal(argument: ts.Expression): boolean {
-  let found = false
-  const visit = (node: ts.Node) => {
-    if (found) return
-    if (ts.isIdentifier(node) && node.text === 'signal') found = true
-    ts.forEachChild(node, visit)
+  while (ts.isParenthesizedExpression(argument) || ts.isAsExpression(argument) || ts.isNonNullExpression(argument)) {
+    argument = argument.expression
   }
-  visit(argument)
-  return found
+  if (ts.isIdentifier(argument)) return argument.text === 'signal'
+  if (ts.isPropertyAccessExpression(argument)) return argument.name.text === 'signal'
+  if (!ts.isObjectLiteralExpression(argument)) return false
+  return argument.properties.some(property =>
+    (ts.isShorthandPropertyAssignment(property) && property.name.text === 'signal') ||
+    (ts.isPropertyAssignment(property) && property.name.getText() === 'signal' && !nothing(property.initializer)))
 }
 
-/** Each use of a reader in the browser's code that does not give it a signal, as `file:line name`. */
-function unsignalled(readers: Set<string>): string[] {
+/** Whether an identifier reads a binding, rather than naming a property or an import. */
+function reads(identifier: ts.Identifier): boolean {
+  const parent = identifier.parent
+  if (ts.isImportSpecifier(parent) || ts.isImportClause(parent) || ts.isNamespaceImport(parent)) return false
+  if (ts.isPropertyAccessExpression(parent) && parent.name === identifier) return false
+  if ((ts.isPropertyAssignment(parent) || ts.isMethodDeclaration(parent) || ts.isPropertyDeclaration(parent)) && parent.name === identifier) return false
+  return true
+}
+
+/** Each use of a reader in `sources` that does not give it a signal, as `file:line name`. */
+function unsignalled(sources: Source[], readers: Set<string>): string[] {
   const misses: string[] = []
-  for (const path of [...sources(join(SRC, 'components')), ...sources(join(SRC, 'hooks'))]) {
-    const source = parse(path)
-    const imports = imported(source, path)
+  for (const file of sources) {
+    const source = parse(file)
+    const bindings = bindingsOf(source, file.path)
     const visit = (node: ts.Node) => {
-      const id = ts.isIdentifier(node) ? imports.get(node.text) : undefined
-      if (id && readers.has(id) && !ts.isImportSpecifier(node.parent)) {
+      // A reader is named by an imported identifier, or by `x.name` on a namespace import.
+      const named = ts.isIdentifier(node) && reads(node) && bindings.names.has(node.text)
+      const spaced = ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && bindings.namespaces.has(node.expression.text)
+      const id = named || spaced ? idOf(node as ts.Expression, bindings) : undefined
+      if (id && readers.has(id)) {
         const call = node.parent
-        const ok = ts.isCallExpression(call) && call.expression === node && call.arguments.some(givesSignal)
-        if (!ok) {
+        if (!(ts.isCallExpression(call) && call.expression === node && call.arguments.some(givesSignal))) {
           const { line } = source.getLineAndCharacterOfPosition(node.getStart())
-          misses.push(`${relative(SRC, path)}:${line + 1} ${node.text}`)
+          misses.push(`${relative(SRC, file.path)}:${line + 1} ${node.getText()}`)
         }
       }
       ts.forEachChild(node, visit)
@@ -137,10 +68,11 @@ function unsignalled(readers: Set<string>): string[] {
   return misses
 }
 
+const browserCode = () => [...sourcesUnder(join(SRC, 'components')), ...sourcesUnder(join(SRC, 'hooks'))]
+
 describe("a page's Bendystraw reads", () => {
   it('are found from the source', () => {
     const readers = findReaders()
-    // The readers the pages call today; the gate below checks whatever this finds.
     for (const reader of [
       '@/lib/bendystraw#getProject',
       '@/lib/bendystraw#getPagedItems',
@@ -149,12 +81,62 @@ describe("a page's Bendystraw reads", () => {
       '@/lib/project-participants#getProjectHolders',
       '@/lib/project-payers#getProjectPayerAddresses',
       '@/lib/project-shop#readShopCustomers',
-    ]) expect(readers).toContain(reader)
-    expect(readers).not.toContain('@/lib/bendystraw#normalizeBendystrawUrl')
-    expect(readers).not.toContain('@/lib/project-participants#formatParticipantBalance')
+      // Behind React's cache().
+      '@/lib/project-seed#loadProjectSeed',
+    ]) expect(readers.has(reader), reader).toBe(true)
+    expect(readers.has('@/lib/bendystraw#normalizeBendystrawUrl')).toBe(false)
+    expect(readers.has('@/lib/project-participants#formatParticipantBalance')).toBe(false)
   })
 
   it('give each reader a signal', () => {
-    expect(unsignalled(findReaders())).toEqual([])
+    expect(unsignalled(browserCode(), new Set(findReaders().keys()))).toEqual([])
+  })
+})
+
+describe('the search for readers', () => {
+  const lib = (name: string, text: string): Source => ({ path: join(LIB, `${name}.ts`), text })
+  const found = findReaders([
+    lib('bendystraw', 'export async function bendystraw() {}'),
+    lib('hidden', "import { bendystraw } from './bendystraw'\nconst helper = () => bendystraw()\nexport async function viaHelper() { return helper() }"),
+    lib('cached', "import { cache } from 'react'\nimport { viaHelper } from '@/lib/hidden'\nexport const cached = cache(async () => viaHelper())"),
+    lib('stored', "import { unstable_cache } from 'next/cache'\nimport { viaHelper } from './hidden'\nconst kept = unstable_cache(async () => viaHelper(), ['kept'])\nexport { kept as stored }"),
+    lib('spaced', "import * as hidden from '@/lib/hidden'\nexport function viaNamespace() { return hidden.viaHelper() }"),
+    lib('again', "export { viaNamespace as again } from './spaced'"),
+    lib('fallback', "import read from './defaulted'\nexport const viaDefault = () => read()"),
+    lib('defaulted', "import { bendystraw } from './bendystraw'\nexport default async function read() { return bendystraw() }"),
+    lib('plain', 'export function plain() { return 1 }'),
+  ])
+
+  it('follows helpers, cache wrappers, namespaces, defaults and re-exports', () => {
+    expect([...found.keys()].sort()).toEqual([
+      '@/lib/again#again', '@/lib/bendystraw#bendystraw', '@/lib/cached#cached', '@/lib/defaulted#default',
+      '@/lib/defaulted#read', '@/lib/fallback#viaDefault', '@/lib/hidden#helper', '@/lib/hidden#viaHelper',
+      '@/lib/spaced#viaNamespace', '@/lib/stored#kept', '@/lib/stored#stored',
+    ])
+    expect(found.get('@/lib/hidden#helper')).toEqual({ exported: false })
+    expect(found.get('@/lib/stored#kept')).toEqual({ exported: false })
+    expect(found.get('@/lib/stored#stored')).toEqual({ exported: true })
+  })
+
+  it('refuses a call without a signal, with one that gives nothing, or a reader used as a value', () => {
+    const readers = new Set(found.keys())
+    const page = (code: string) => unsignalled([{
+      path: join(SRC, 'components', 'Page.tsx'),
+      text: `import { viaHelper } from '@/lib/hidden'\nimport * as spaced from '@/lib/spaced'\n${code}`,
+    }], readers)
+    expect(page('useQuery({ queryFn: ({ signal }) => viaHelper(1, { signal }) })')).toEqual([])
+    expect(page('viaHelper(1, { network, signal: controller.signal })')).toEqual([])
+    expect(page('viaHelper(signal)')).toEqual([])
+    expect(page('spaced.viaNamespace({ signal })')).toEqual([])
+    for (const code of [
+      'viaHelper(1)',
+      'viaHelper(1, { signal: undefined })',
+      'viaHelper(1, { network, signal: null })',
+      'viaHelper(1, { signal: void 0 })',
+      'viaHelper(1, { signals })',
+      'spaced.viaNamespace()',
+      'const read = viaHelper',
+      'items.map(viaHelper)',
+    ]) expect(page(code), code).toHaveLength(1)
   })
 })

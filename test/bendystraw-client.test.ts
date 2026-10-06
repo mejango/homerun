@@ -22,6 +22,7 @@ import { getLoans } from '@/lib/loans-queries'
 import { getProjectHolders, getProjectParticipants } from '@/lib/project-participants'
 import { getProjectPayerAddresses } from '@/lib/project-payers'
 import { readShopCustomers } from '@/lib/project-shop'
+import { findReaders } from './support/bendystraw-readers'
 
 function response(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } })
@@ -209,23 +210,36 @@ describe("a caller's signal", () => {
 
   const ACCOUNT = '0x1111111111111111111111111111111111111111' as const
   const readers: [string, (signal: AbortSignal) => Promise<unknown>][] = [
-    ['getProject', signal => getProject(8453, 11, { signal })],
-    ['getSuckerGroupProjects', signal => getSuckerGroupProjects('group', 8453, { signal })],
-    ['searchProjects', signal => searchProjects('asset', 24, { signal })],
-    ['getProjectActivity', signal => getProjectActivity('group', 20, 8453, 0, { signal })],
-    ['getProjectActivityByProject', signal => getProjectActivityByProject(8453, 11, 20, 0, { signal })],
-    ['getProjectsOwnedBy', signal => getProjectsOwnedBy([ACCOUNT], { signal })],
-    ['getProjectsByRefs', signal => getProjectsByRefs([{ chainId: 8453, projectId: 11, version: 6 }], { signal })],
-    ['getAccountTokenHoldings', signal => getAccountTokenHoldings(ACCOUNT, { signal })],
-    ['getAccountActivity', signal => getAccountActivity(ACCOUNT, { signal })],
-    ['getOperatorGrants', signal => getOperatorGrants(ACCOUNT, { signal })],
-    ['getAccountNfts', signal => getAccountNfts(ACCOUNT, { signal })],
-    ['getLoans', signal => getLoans(11, 8453, { signal })],
-    ['getProjectParticipants', signal => getProjectParticipants(8453, 11, 0, 25, { signal })],
-    ['getProjectHolders', signal => getProjectHolders([[8453, 11], [10, 4]], { signal })],
-    ['getProjectPayerAddresses', signal => getProjectPayerAddresses(8453, 11n, { signal })],
-    ['readShopCustomers', signal => readShopCustomers({ chainId: 8453, projectId: 11n, hook: ACCOUNT, signal })],
+    ['@/lib/bendystraw#getProject', signal => getProject(8453, 11, { signal })],
+    ['@/lib/bendystraw#getSuckerGroupProjects', signal => getSuckerGroupProjects('group', 8453, { signal })],
+    ['@/lib/bendystraw#searchProjects', signal => searchProjects('asset', 24, { signal })],
+    ['@/lib/bendystraw#getProjectActivity', signal => getProjectActivity('group', 20, 8453, 0, { signal })],
+    ['@/lib/bendystraw#getProjectActivityByProject', signal => getProjectActivityByProject(8453, 11, 20, 0, { signal })],
+    ['@/lib/bendystraw#getProjectsOwnedBy', signal => getProjectsOwnedBy([ACCOUNT], { signal })],
+    ['@/lib/bendystraw#getProjectsByRefs', signal => getProjectsByRefs([{ chainId: 8453, projectId: 11, version: 6 }], { signal })],
+    ['@/lib/bendystraw#getAccountTokenHoldings', signal => getAccountTokenHoldings(ACCOUNT, { signal })],
+    ['@/lib/bendystraw#getAccountActivity', signal => getAccountActivity(ACCOUNT, { signal })],
+    ['@/lib/bendystraw#getOperatorGrants', signal => getOperatorGrants(ACCOUNT, { signal })],
+    ['@/lib/bendystraw#getAccountNfts', signal => getAccountNfts(ACCOUNT, { signal })],
+    ['@/lib/loans-queries#getLoans', signal => getLoans(11, 8453, { signal })],
+    ['@/lib/project-participants#getProjectParticipants', signal => getProjectParticipants(8453, 11, 0, 25, { signal })],
+    ['@/lib/project-participants#getProjectHolders', signal => getProjectHolders([[8453, 11], [10, 4]], { signal })],
+    ['@/lib/project-payers#getProjectPayerAddresses', signal => getProjectPayerAddresses(8453, 11n, { signal })],
+    ['@/lib/project-shop#readShopCustomers', signal => readShopCustomers({ chainId: 8453, projectId: 11n, hook: ACCOUNT, signal })],
   ]
+
+  /** The readers the table leaves out, and why. */
+  const unlisted = new Map([
+    ['@/lib/bendystraw#bendystraw', 'The cases above stop it under way on both paths.'],
+    ['@/lib/bendystraw#getPagedItems', 'The paging readers in the table go through it.'],
+    ['@/lib/project-seed#loadProjectSeed', 'Server only: React’s cache() keys on its arguments, so it takes no signal, and it waits at most 2.5 s for the read.'],
+  ])
+
+  it('covers every reader another module can import', () => {
+    const importable = [...findReaders()].filter(([, reader]) => reader.exported).map(([id]) => id)
+    expect(readers.map(([id]) => id).sort()).toEqual(importable.filter(id => !unlisted.has(id)).sort())
+    for (const id of unlisted.keys()) expect(importable, id).toContain(id)
+  })
 
   it.each(readers)('%s sends nothing once its caller has left', async (_name, read) => {
     const { sent } = network(() => response({}, 400))
