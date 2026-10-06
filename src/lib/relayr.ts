@@ -15,14 +15,15 @@ import {
   RELAYR_PAYMENT_GAS,
   RelayrPaymentRevertedError,
   RelayrProofError,
+  bindRelayrQuote,
   quoteExpired,
   relayrDeadlinePassed,
+  relayrBundleRequest,
   relayrDestinationHash,
   relayrPaymentDetails,
   relayrProgress,
   relayrRecordChain,
   relayrStateIsSuccess,
-  relayrSupportsChains,
   requireRelayrBundleUnpaid,
   requireRelayrPaymentRetry,
   requireRelayrPaymentRuntime,
@@ -353,10 +354,6 @@ export async function buildForwardedTx(call: RelayrCall, expectedAccount: Addres
 }
 
 const RELAYR_MAX_UINT256 = (1n << 256n) - 1n
-const RELAYR_UNBOUND_QUOTE =
-  'Relayr did not bind every quoted transaction to a unique ID. Nothing was paid.'
-const RELAYR_QUOTE_UNRETURNED =
-  'Relayr did not return the quoted transactions. Nothing was paid.'
 const RELAYR_NO_PROOF =
   'This saved Relayr bundle lacks exact destination proof. Keep it pending and verify the original transactions; do not pay again.'
 const RELAYR_NOT_IDENTIFIED =
@@ -424,38 +421,16 @@ function isRequestFor(request: unknown, entry: RelayrEntry, nonce: 'required' | 
       : typeof quoted !== 'number' || typeof entry.virtual_nonce !== 'number' || quoted === entry.virtual_nonce)
 }
 
-/** Relayr's records for exactly this bundle, each with the request it carries. */
-async function relayrBundleRecords(bundleUuid: string): Promise<RelayrTransactionRecord[]> {
-  let body: { bundle_uuid?: unknown; transactions?: unknown } | null
-  try {
-    const response = await relayrFetch(
-      `${RELAYR_API}/v1/bundle/${bundleUuid}`,
-      undefined,
-      RELAYR_STATUS_REQUEST_TIMEOUT_MS,
-    )
-    if (!response.ok) throw new Error(`Relayr HTTP ${response.status}`)
-    body = await response.json()
-  } catch (cause) {
-    throw new Error(RELAYR_QUOTE_UNRETURNED, { cause })
-  }
-  if (!body || uuidOf(body.bundle_uuid) !== bundleUuid || !Array.isArray(body.transactions)) {
-    throw new Error(RELAYR_QUOTE_UNRETURNED)
-  }
-  return body.transactions
-}
-
+/**
+ * Post the signed calls and bind Relayr's quote to them with the SDK: each call
+ * takes the one quoted ID whose record carries its exact request, and the
+ * bundle's records are exactly the quoted IDs. Throws, with nothing paid,
+ * otherwise.
+ */
 export async function relayrPostBundle(
   transactions: RelayrEntry[],
 ): Promise<RelayrQuote> {
-  if (!relayrSupportsChains([...new Set(transactions.map(transaction => transaction.chain))])) {
-    throw new Error('Choose supported destinations from one network family: mainnets or testnets.')
-  }
-  const nextNonce = new Map<number, number>()
-  const ordered = transactions.map(transaction => {
-    const nonce = nextNonce.get(transaction.chain) ?? 0
-    nextNonce.set(transaction.chain, nonce + 1)
-    return { ...transaction, virtual_nonce: nonce }
-  })
+  const request = relayrBundleRequest(transactions)
   let response: Response
   try {
     response = await relayrFetch(
@@ -463,10 +438,7 @@ export async function relayrPostBundle(
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          transactions: ordered,
-          virtual_nonce_mode: 'ChainIndependent',
-        }),
+        body: JSON.stringify(request),
       },
       RELAYR_QUOTE_TIMEOUT_MS,
     )
@@ -478,70 +450,7 @@ export async function relayrPostBundle(
     }
     throw error
   }
-  if (!response.ok) {
-    const detail = await response.text().catch(() => '')
-    throw new Error(
-      `Relayr HTTP ${response.status}${detail ? `: ${detail.slice(0, 240)}` : ''}`,
-    )
-  }
-  const body = (await response.json()) as Partial<RelayrQuote> & {
-    tx_uuids?: unknown
-    txn_uuids?: unknown
-  }
-  const bundleUuid = uuidOf(body.bundle_uuid)
-  if (!bundleUuid) {
-    throw new Error('Relayr returned no valid bundle ID. Nothing was paid.')
-  }
-  const currentIds = Array.isArray(body.tx_uuids) ? body.tx_uuids : null
-  const legacyIds = Array.isArray(body.txn_uuids) ? body.txn_uuids : null
-  if (
-    currentIds &&
-    legacyIds &&
-    JSON.stringify(currentIds) !== JSON.stringify(legacyIds)
-  ) {
-    throw new Error('Relayr returned conflicting transaction IDs. Nothing was paid.')
-  }
-  const txUuids = (currentIds ?? legacyIds ?? []).map(uuidOf)
-  if (
-    txUuids.length !== ordered.length ||
-    txUuids.some(uuid => uuid === null) ||
-    new Set(txUuids).size !== ordered.length ||
-    !Array.isArray(body.payment_info)
-  ) {
-    throw new Error(RELAYR_UNBOUND_QUOTE)
-  }
-  const quotedIds = new Set(txUuids)
-  let records: RelayrTransactionRecord[] = Array.isArray(body.transactions) ? body.transactions : []
-  if (records.length !== ordered.length || records.some(record => uuidOf(record?.tx_uuid) === null || !record?.request)) {
-    records = await relayrBundleRecords(bundleUuid)
-  }
-  // Every record carries one of the quoted IDs, once. With every posted
-  // transaction bound to its own record below, the records are then exactly
-  // the quoted IDs.
-  const recordIds = records.map(record => uuidOf(record?.tx_uuid))
-  if (
-    recordIds.some(uuid => uuid === null || !quotedIds.has(uuid)) ||
-    new Set(recordIds).size !== records.length
-  ) {
-    throw new Error(RELAYR_UNBOUND_QUOTE)
-  }
-  // Relayr lists a bundle's transactions out of request order, so each posted
-  // transaction takes the quoted ID whose record carries its exact request.
-  const bound = ordered.map(entry => {
-    const matches = records.filter(record => isRequestFor(record?.request, entry, 'required'))
-    if (matches.length !== 1) throw new Error(RELAYR_UNBOUND_QUOTE)
-    return matches[0]
-  })
-  return {
-    bundle_uuid: bundleUuid,
-    payment_info: body.payment_info,
-    transactions: bound,
-    expectedTransactions: ordered.map((entry, index) => ({
-      txUuid: uuidOf(bound[index].tx_uuid)!,
-      chain: entry.chain,
-      entry,
-    })),
-  }
+  return bindRelayrQuote(response, request)
 }
 
 export function relayrPaymentLabel(payment: RelayrPayment): string {

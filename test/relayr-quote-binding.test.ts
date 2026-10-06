@@ -144,6 +144,17 @@ describe('Relayr quote binding', () => {
     await expect(relayrPostBundle([entry(1), { ...entry(10), value: String(2n ** 53n - 1n) }])).resolves.toBeTruthy()
   })
 
+  it.each([
+    ['a value that is not a number', { value: 'abc' }],
+    ['a value that is not a whole number', { value: '1.5' }],
+    ['a target that is not an address', { target: '0x1234' as Address }],
+    ['calldata that is not hex', { data: 'beef' as Hex }],
+  ])('posts nothing when a call carries %s', async (_name, change) => {
+    const fetcher = relayr()
+    await expect(relayrPostBundle([entry(1), { ...entry(10), ...change }])).rejects.toThrow('A Relayr bundle transaction is malformed.')
+    expect(fetcher).not.toHaveBeenCalled()
+  })
+
   it('reads the bundle ID it echoes in any case', async () => {
     relayr({ listed: LIVE_ORDER, echo: BUNDLE.toUpperCase() })
     await expect(relayrPostBundle(entries)).resolves.toMatchObject({ bundle_uuid: BUNDLE })
