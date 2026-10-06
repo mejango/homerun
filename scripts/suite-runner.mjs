@@ -160,6 +160,6 @@ export async function runGroups(groups, selected, { run, log = console.log, logE
 }
 
 export function summarize(outcomes) {
-  const lines = ['\nBrowser suites', ...outcomes.map(({ name, ok, seconds }) => `  ${ok ? 'PASS' : 'FAIL'} ${name} (${seconds}s)`)]
+  const lines = ['\nBrowser suites', ...outcomes.map(({ name, ok, seconds, reason }) => `  ${ok ? 'PASS' : 'FAIL'} ${name} (${seconds}s)${reason ? `: ${reason}` : ''}`)]
   return { lines, exitCode: outcomes.every(outcome => outcome.ok) ? 0 : 1 }
 }

@@ -32,6 +32,22 @@ test('a run passes only when every suite passed', () => {
   assert.deepEqual(failed.lines, ['\nBrowser suites', '  PASS a (1s)', '  FAIL b (2s)'])
 })
 
+test('a failed suite is listed with the reason it failed', () => {
+  const { lines } = summarize([
+    { name: 'a', ok: true, seconds: 1 },
+    { name: 'b', ok: false, seconds: 2, reason: 'exited with 1' },
+    { name: 'c', ok: false, seconds: 600, reason: 'timed out after 600 s' },
+    { name: 'dev', ok: false, seconds: 0, reason: 'port 3010 already answers; stop whatever listens on it before running these suites' },
+  ])
+  assert.deepEqual(lines, [
+    '\nBrowser suites',
+    '  PASS a (1s)',
+    '  FAIL b (2s): exited with 1',
+    '  FAIL c (600s): timed out after 600 s',
+    '  FAIL dev (0s): port 3010 already answers; stop whatever listens on it before running these suites',
+  ])
+})
+
 test('a suite is judged by its exit status', async () => {
   const [command, args] = node('')
   assert.equal((await runSuite({ name: 'passes', command, args, cwd: process.cwd(), env: process.env, timeoutMs: 30_000, log: quiet })).ok, true)
@@ -75,7 +91,7 @@ test('a time limit stops the workers the suite forked', async () => {
 })
 
 test('a suite that times out fails the run and the suites after it still run', async () => {
-  const { outcomes, exitCode } = await runAll({
+  const { outcomes, lines, exitCode } = await runAll({
     only: async suite => {
       await suite('hangs', ...node('setInterval(() => {}, 1000)'))
       await suite('after', ...node(''))
@@ -83,6 +99,7 @@ test('a suite that times out fails the run and the suites after it still run', a
   }, { hangs: 300 })
   assert.deepEqual(outcomes.map(({ name, ok }) => [name, ok]), [['hangs', false], ['after', true]])
   assert.match(outcomes[0].reason, /^timed out/)
+  assert.match(lines.join('\n'), /FAIL hangs \(\d+s\): timed out after 0\.3 s/)
   assert.equal(exitCode, 1)
 })
 
