@@ -1,4 +1,5 @@
-FROM node:26.7-alpine AS base
+# The digest is the multi-platform index of the tag: docker buildx imagetools inspect node:26.7-alpine
+FROM node:26.7-alpine@sha256:aadf416b2cdce311a8811ba3f0608a61b77dbf997500e2eafe781b51f6a0b019 AS base
 WORKDIR /app
 
 FROM base AS build
@@ -33,4 +34,5 @@ COPY --from=build --chown=node:node /app/.next/static ./.next/static
 COPY --from=build --chown=node:node /app/public ./public
 USER node
 EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 CMD ["node", "server.js"]

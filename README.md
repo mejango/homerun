@@ -126,7 +126,7 @@ Start the app before the individual browser checks, or let `npm run test:suites`
 
 ## Build and deploy
 
-`npm run build` creates `.next/standalone`; `npm start` runs the standalone server locally. The multi-stage [Dockerfile](Dockerfile) installs application dependencies, builds Next, and copies the standalone runtime, static chunks and public assets into the runtime image. It runs as the `node` user on `0.0.0.0:$PORT`.
+`npm run build` creates `.next/standalone`; `npm start` runs the standalone server locally. The multi-stage [Dockerfile](Dockerfile) installs application dependencies, builds Next, and copies the standalone runtime, static chunks and public assets into the runtime image. It runs as the `node` user on `0.0.0.0:$PORT` and declares a `HEALTHCHECK` on `/api/healthz`. The base image is pinned by tag and digest; the comment above `FROM` says how to read the current digest.
 
 [railway.json](railway.json) selects the Dockerfile and checks `/` before routing traffic. Railway supplies the runtime port; the custom domain must target that port. Deploying this web application does not deploy or enable the Homerun contracts; those deploy through the Sphinx workflow in [DEPLOYMENT.md](DEPLOYMENT.md), from this repository.
 
