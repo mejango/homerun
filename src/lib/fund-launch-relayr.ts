@@ -28,6 +28,8 @@ import { loadLaunchSession, saveLaunch as saveLaunchSession, type LaunchStatus a
 import { gasWithHeadroom } from '@bananapus/nana-sdk-core/review'
 import {
   RelayrDestinationRevertedError,
+  RelayrPaymentRevertedError,
+  RelayrProofError,
   TRUSTED_FORWARDER_ABI,
   relayrDeadlinePassed,
   relayrDestinationHash,
@@ -81,6 +83,8 @@ const LAUNCH_CHANGED = 'The launch changed since this review. Cancel creation to
 const LAUNCH_UNCHECKED = 'Couldn\'t check the launch. Try again, or cancel creation.'
 /** The same line once a payment was made, which cancelling does not refund. */
 const LAUNCH_UNCHECKED_PAID = 'Couldn\'t check the launch. Try again, or cancel creation; the payment already made is not refunded.'
+/** The line a launch shows once every request it published is dead and unused, and the payment it saved is another transaction. */
+const LAUNCH_PAYMENT_UNMATCHED = 'The saved payment couldn\'t be matched to this launch and isn\'t refunded. Cancel creation to start over.'
 
 type SignedLaunch = {
   chainId: number
@@ -543,10 +547,23 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       // is, since it may still land.
       if (journal.phase === 'submitted' || journal.phase === 'executing') {
         const resumed = journal
-        await proveSavedRelayrPayment(resumed.payments, account, () => {
-          resumed.phase = 'payment-reverted'
-          persist()
-        })
+        try {
+          await proveSavedRelayrPayment(resumed.payments, account, () => {
+            resumed.phase = 'payment-reverted'
+            persist()
+          })
+        } catch (error) {
+          if (!(error instanceof RelayrProofError) || error instanceof RelayrPaymentRevertedError) throw error
+          // The saved hash is another transaction, which no later resume can change. While a request of the launch can
+          // still run, the refusal stands; once every one is dead, the launch may be cancelled (ruling R114).
+          const classified = await classify(resumed, { recheck: false })
+          if (classified?.outcome.kind === 'discard') {
+            const ran = classified.outcome.reason === 'ran'
+            if (ran) markRan(classified)
+            abandon(resumed, ran ? LAUNCH_MAY_HAVE_RUN : LAUNCH_PAYMENT_UNMATCHED, error)
+          }
+          throw error
+        }
       }
       onProgress('Checking the original payment and destination transactions. No new payment will be requested.')
       try {

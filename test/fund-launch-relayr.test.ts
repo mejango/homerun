@@ -1261,6 +1261,75 @@ describe('relayed launch execution and recovery', () => {
       })
     })
 
+    describe('a saved payment the funding chain shows to be another transaction', () => {
+      const UNMATCHED = 'The saved payment couldn\'t be matched to this launch and isn\'t refunded. Cancel creation to start over.'
+      const REFUSED = 'does not match the reviewed Relayr payment'
+      /** The hash the launch saved for its payment is mined on the funding chain as a call to another contract. */
+      const anotherTransaction = () => {
+        const funding = clients.get(8453)!
+        funding.getTransaction.mockImplementation(async ({ hash }) => ({ hash, chainId: 8453, from: ACCOUNT, to: TARGET, input: '0x', value: 200n,
+          blockHash: BLOCK, blockNumber: 123n } as never))
+        funding.getTransactionReceipt.mockImplementation(async ({ hash }) => ({ transactionHash: hash, to: TARGET, blockHash: BLOCK, blockNumber: 123n,
+          status: 'success', logs: [] } as never))
+      }
+
+      it('keeps refusing while a request of the launch can still run', async () => {
+        await paidUnproven()
+        anotherTransaction()
+        await expect(run()).rejects.toThrow(REFUSED)
+        expect(canCancelLaunch(loadLaunchSession()!)).toBe(false)
+        expect(m.pay).toHaveBeenCalledTimes(1)
+      })
+
+      it('keeps refusing while one request can still run and another one moved', async () => {
+        await paidUnproven()
+        anotherTransaction()
+        noncesAre(1n, [1])
+        await expect(run()).rejects.toThrow(REFUSED)
+        expect(canCancelLaunch(loadLaunchSession()!)).toBe(false)
+      })
+
+      it('offers cancelling once every request is dead and unused, and says the payment could not be matched', async () => {
+        await paidUnproven()
+        anotherTransaction()
+        pastDeadlines()
+        await expect(run()).rejects.toThrow(UNMATCHED)
+        const saved = loadLaunchSession()!
+        expect(saved.relayr).toMatchObject({ phase: 'executing', abandonable: true })
+        expect(canCancelLaunch(saved)).toBe(true)
+        await expect(run()).rejects.toThrow(UNMATCHED)
+        await cancelUnsubmittedLaunch(saved.input.salt, launchRequestsDead)
+        expect(loadLaunchSession()).toBeNull()
+        expect(m.pay).toHaveBeenCalledTimes(1)
+        expect(m.quote).toHaveBeenCalledTimes(1)
+        expect(m.forward).toHaveBeenCalledTimes(2)
+      })
+
+      it('still takes a payment that reverted for a reverted one, with every request dead and unused', async () => {
+        await paidUnproven()
+        const funding = clients.get(8453)!
+        funding.getTransaction.mockImplementation(async ({ hash }) => ({ hash, chainId: 8453, from: ACCOUNT, to: RELAYR_PAYMENT_ADDRESS,
+          input: paymentFor(8453).calldata, value: 200n, blockHash: BLOCK, blockNumber: 123n } as never))
+        funding.getTransactionReceipt.mockImplementation(async ({ hash }) => ({ transactionHash: hash, to: RELAYR_PAYMENT_ADDRESS, blockHash: BLOCK,
+          blockNumber: 123n, status: 'reverted', logs: [] } as never))
+        pastDeadlines()
+        await expect(run()).rejects.toThrow('reverted')
+        expect(loadLaunchSession()?.relayr).toMatchObject({ phase: 'payment-reverted' })
+        expect(loadLaunchSession()?.relayr?.abandonable).not.toBe(true)
+      })
+
+      it('settles it as ran when a request\'s nonce moved, whatever the payment is', async () => {
+        await paidUnproven()
+        anotherTransaction()
+        finalizedAt(NOW + 3601)
+        noncesAre(1n)
+        await expect(run()).rejects.toThrow(MAY_HAVE_RUN)
+        expect(loadLaunchSession()?.relayr?.abandonable).toBe(true)
+        expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'unresolved', error: MAY_HAVE_RUN }, 10: { phase: 'unresolved', error: MAY_HAVE_RUN } })
+        expect(canCancelLaunch(loadLaunchSession()!)).toBe(true)
+      })
+    })
+
     describe('cancelling a published launch', () => {
       it('releases a launch settled as ran, and keeps its record', async () => {
         await paidUnproven()
