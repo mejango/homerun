@@ -73,8 +73,8 @@ export type ShopCustomerItem = {
 }
 
 /** These are indexed NFT owners, never authority for transfers or redemption. */
-export async function readShopCustomers({ chainId, projectId, hook, owner, offset = 0 }: {
-  chainId: JBChainId; projectId: bigint; hook: Address; owner?: Address; offset?: number
+export async function readShopCustomers({ chainId, projectId, hook, owner, offset = 0, signal }: {
+  chainId: JBChainId; projectId: bigint; hook: Address; owner?: Address; offset?: number; signal?: AbortSignal
 }): Promise<{ items: ShopCustomerItem[]; totalCount: number; nextOffset: number | null; skipped: number }> {
   const id = Number(projectId)
   if (projectId <= 0n || !Number.isSafeInteger(id) || id > 2_147_483_647) throw new Error('This project ID is outside the indexer’s supported range.')
@@ -88,7 +88,7 @@ export async function readShopCustomers({ chainId, projectId, hook, owner, offse
         items { chainId projectId createdAt mintTx tokenId owner tierId hook { address } }
       }
     }`,
-    { where, limit: SHOP_CUSTOMER_PAGE_SIZE, offset }, { chainId, policy: 'live' },
+    { where, limit: SHOP_CUSTOMER_PAGE_SIZE, offset }, { chainId, policy: 'live', signal },
   )
   const { items: rows, totalCount } = result.nfts
   if (!Number.isSafeInteger(totalCount) || totalCount < 0 || rows.length > SHOP_CUSTOMER_PAGE_SIZE) throw new Error('The indexer returned an invalid customer page.')

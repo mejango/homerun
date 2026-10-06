@@ -50,11 +50,12 @@ const LOANS_QUERY = `
 export async function getLoans(
   projectId: number,
   chainId: number,
+  { signal }: { signal?: AbortSignal } = {},
 ): Promise<{ items: BsLoan[]; totalCount: number }> {
   return getPagedItems<BsLoan>(
     LOANS_QUERY,
     'loans',
     { projectId, chainId },
-    { pageSize: 250, max: Number.POSITIVE_INFINITY },
+    { pageSize: 250, max: Number.POSITIVE_INFINITY, signal },
   )
 }

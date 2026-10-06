@@ -17,12 +17,12 @@ const PROJECT_PAYERS_QUERY = `query HomerunProjectPayers($where: projectPayerFil
 }`
 
 /** Exact chain/project/version filtering; never substitute a terminal for a payer. */
-export async function getProjectPayerAddresses(chainId: JBChainId, projectId: bigint): Promise<ProjectPayerRow[]> {
+export async function getProjectPayerAddresses(chainId: JBChainId, projectId: bigint, { signal }: { signal?: AbortSignal } = {}): Promise<ProjectPayerRow[]> {
   if (projectId <= 0n || projectId > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('The project ID cannot be queried by the indexer.')
   const rows: ProjectPayerRow[] = []
   for (let offset = 0; ; offset += 250) {
     const data = await bendystraw<{ projectPayers: { totalCount: number; items: ProjectPayerRow[] } }>(PROJECT_PAYERS_QUERY,
-      { where: { chainId, projectId: Number(projectId), version: 6 }, limit: 250, offset }, { chainId, policy: 'live' })
+      { where: { chainId, projectId: Number(projectId), version: 6 }, limit: 250, offset }, { chainId, policy: 'live', signal })
     const page = data.projectPayers
     rows.push(...page.items.filter(row => row.chainId === chainId && row.projectId === Number(projectId) && row.version === 6 && isAddress(row.address) && !isAddressEqual(row.address, zeroAddress) && isAddress(row.defaultBeneficiary) && isAddress(row.owner) && typeof row.defaultAddToBalance === 'boolean'))
     if (offset + page.items.length >= page.totalCount) break

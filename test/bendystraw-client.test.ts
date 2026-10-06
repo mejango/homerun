@@ -3,17 +3,25 @@ import { webcrypto } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import {
   bendystraw,
+  getAccountActivity,
+  getAccountNfts,
   getAccountTokenHoldings,
+  getOperatorGrants,
   getProject,
   getProjectActivity,
   getProjectActivityByProject,
   getProjectsByRefs,
   getProjectsOwnedBy,
+  getSuckerGroupProjects,
   normalizeBendystrawUrl,
   searchProjects,
   type BsProject,
 } from '@/lib/bendystraw'
 import registry from '@/lib/bendystraw-operation-registry.json'
+import { getLoans } from '@/lib/loans-queries'
+import { getProjectHolders, getProjectParticipants } from '@/lib/project-participants'
+import { getProjectPayerAddresses } from '@/lib/project-payers'
+import { readShopCustomers } from '@/lib/project-shop'
 
 function response(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } })
@@ -149,6 +157,84 @@ describe('V6 account discovery and pagination', () => {
     await searchProjects('11', 3)
     expect(fetcher).toHaveBeenCalledTimes(2)
     expect(request(fetcher.mock.calls[0][1]).variables).toEqual({ where: { AND: [{ version: 6 }, { OR: [{ name_contains_nocase: '11' }, { projectId: 11 }] }] }, limit: 3 })
+  })
+})
+
+describe("a caller's signal", () => {
+  /**
+   * A fetch as the platform's behaves: a request whose signal has aborted is
+   * never sent, and one under way stops when its signal aborts. With `answer`,
+   * a request that is sent is answered at once.
+   */
+  function network(answer?: () => Response) {
+    const sent: string[] = []
+    const fetcher = vi.fn<typeof fetch>((input, init) => {
+      init?.signal?.throwIfAborted()
+      sent.push(String(input))
+      if (answer) return Promise.resolve(answer())
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
+      })
+    })
+    vi.stubGlobal('fetch', fetcher)
+    return { fetcher, sent }
+  }
+
+  it('stops a server read under way, and does not retry it', async () => {
+    const { fetcher } = network()
+    const page = new AbortController()
+    const read = getProject(8453, 11, { signal: page.signal }).catch((error: unknown) => error)
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce())
+    const left = new Error('left the page')
+    page.abort(left)
+
+    expect(await read).toBe(left)
+    expect(fetcher).toHaveBeenCalledOnce()
+  })
+
+  it('stops a browser read under way, and does not retry it', async () => {
+    vi.stubGlobal('window', {})
+    vi.stubGlobal('crypto', webcrypto)
+    const { fetcher } = network()
+    const page = new AbortController()
+    const read = getProject(8453, 11, { signal: page.signal }).catch((error: unknown) => error)
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce())
+    expect(fetcher.mock.calls[0][0]).toBe('/api/bendystraw/mainnet/query')
+    const left = new Error('left the page')
+    page.abort(left)
+
+    expect(await read).toBe(left)
+    expect(fetcher).toHaveBeenCalledOnce()
+  })
+
+  const ACCOUNT = '0x1111111111111111111111111111111111111111' as const
+  const readers: [string, (signal: AbortSignal) => Promise<unknown>][] = [
+    ['getProject', signal => getProject(8453, 11, { signal })],
+    ['getSuckerGroupProjects', signal => getSuckerGroupProjects('group', 8453, { signal })],
+    ['searchProjects', signal => searchProjects('asset', 24, { signal })],
+    ['getProjectActivity', signal => getProjectActivity('group', 20, 8453, 0, { signal })],
+    ['getProjectActivityByProject', signal => getProjectActivityByProject(8453, 11, 20, 0, { signal })],
+    ['getProjectsOwnedBy', signal => getProjectsOwnedBy([ACCOUNT], { signal })],
+    ['getProjectsByRefs', signal => getProjectsByRefs([{ chainId: 8453, projectId: 11, version: 6 }], { signal })],
+    ['getAccountTokenHoldings', signal => getAccountTokenHoldings(ACCOUNT, { signal })],
+    ['getAccountActivity', signal => getAccountActivity(ACCOUNT, { signal })],
+    ['getOperatorGrants', signal => getOperatorGrants(ACCOUNT, { signal })],
+    ['getAccountNfts', signal => getAccountNfts(ACCOUNT, { signal })],
+    ['getLoans', signal => getLoans(11, 8453, { signal })],
+    ['getProjectParticipants', signal => getProjectParticipants(8453, 11, 0, 25, { signal })],
+    ['getProjectHolders', signal => getProjectHolders([[8453, 11], [10, 4]], { signal })],
+    ['getProjectPayerAddresses', signal => getProjectPayerAddresses(8453, 11n, { signal })],
+    ['readShopCustomers', signal => readShopCustomers({ chainId: 8453, projectId: 11n, hook: ACCOUNT, signal })],
+  ]
+
+  it.each(readers)('%s sends nothing once its caller has left', async (_name, read) => {
+    const { sent } = network(() => response({}, 400))
+    const page = new AbortController()
+    const left = new Error('left the page')
+    page.abort(left)
+
+    await expect(read(page.signal)).rejects.toBe(left)
+    expect(sent).toEqual([])
   })
 })
 
