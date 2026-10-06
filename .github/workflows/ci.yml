@@ -171,17 +171,21 @@ jobs:
             --security-opt no-new-privileges \
             --publish 127.0.0.1:3000:3000 \
             homerun:ci
+          fail() {
+            echo "::error::$1"
+            docker logs homerun-ci
+            exit 1
+          }
           for _ in {1..30}; do
             body="$(curl --fail --silent http://127.0.0.1:3000/api/healthz || true)"
             if [[ "$body" == *"\"revision\":\"$GITHUB_SHA\""* ]]; then
-              curl --fail --silent --output /dev/null http://127.0.0.1:3000/
-              test "$(docker inspect --format '{{.Config.User}}' homerun-ci)" = node
+              curl --fail --silent --show-error --output /dev/null http://127.0.0.1:3000/ || fail "/ did not answer with a success status"
+              test "$(docker inspect --format '{{.Config.User}}' homerun-ci)" = node || fail "the container does not run as node"
               exit 0
             fi
             sleep 1
           done
-          docker logs homerun-ci
-          exit 1
+          fail "/api/healthz did not report revision $GITHUB_SHA within 30 seconds (last response: ${body:-none})"
       - name: Remove smoke-test container
         if: always()
         run: docker rm --force homerun-ci || true
