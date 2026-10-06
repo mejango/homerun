@@ -757,33 +757,33 @@ function ReserveStress({
   );
 }
 
-/** Rendered in Stages and in Owners; a page that has opened both keeps every id unique through `idPrefix`. */
-function TokenTerms({ p, idPrefix = "" }: { p: Projection; idPrefix?: string }) {
+/** The modeled token terms. Printed once, under How the money moves in Stages. */
+function TokenTerms({ p }: { p: Projection }) {
   return (
     <details className="holder-choices">
       <summary>Modeled token terms</summary>
       <p>
         Each contributed dollar receives 10,000 FUND. After purchase,
-        contributors share {percent(100 - p.operatorFundPercent)} of FUND and
+        contributors share {percent(100 - p.operatorFundPercent)} of FUND and{" "}
         {p.separateOwnerOperator ? 'the Owner holds' : 'operators hold'} {percent(p.operatorFundPercent)}. Each FUND has the same
         share of net asset-sale proceeds.
       </p>
       <dl className="math-values">
         <div>
           <dt>Total asset tokens after purchase</dt>
-          <dd id={`${idPrefix}fund-total-supply`}>{number(p.fundTotalSupply)}</dd>
+          <dd id="fund-total-supply">{number(p.fundTotalSupply)}</dd>
         </div>
         <div>
           <dt>Asset tokens for {p.separateOwnerOperator ? 'the Owner' : 'operators'}</dt>
-          <dd id={`${idPrefix}operator-fund-mint`}>{number(p.separateOwnerOperator ? p.fundOwnerMint : p.fundOperatorMint)}</dd>
+          <dd id="operator-fund-mint">{number(p.separateOwnerOperator ? p.fundOwnerMint : p.fundOperatorMint)}</dd>
         </div>
         <div>
           <dt>New INCOME per $1 of revenue</dt>
-          <dd id={`${idPrefix}rev-issuance-rate`}>{number(p.currentIssuanceRate)}</dd>
+          <dd id="rev-issuance-rate">{number(p.currentIssuanceRate)}</dd>
         </div>
         <div>
           <dt>INCOME currently outstanding</dt>
-          <dd id={`${idPrefix}rev-total-supply`}>{number(p.revSupply)}</dd>
+          <dd id="rev-total-supply">{number(p.revSupply)}</dd>
         </div>
       </dl>
       <p>
@@ -1036,7 +1036,7 @@ function PhasePanel({
           {(phase === "refunding" || complete) && (
             <>
               <p>
-                Refunds redeem FUND proportionally. There is no cash-out tax,
+                Refunds redeem FUND proportionally. There is no cash-out tax,{" "}
                 {p.separateOwnerOperator ? 'Owner' : 'operator'} success mint or INCOME allocation. Expenses can reduce
                 recovery; protocol fees may apply. Off-chain contributions are
                 refunded off-chain.
@@ -2066,7 +2066,6 @@ function DemoOwners({
               </div>
             </section>
             <FundTokenTermsSection terms={terms} />
-            <TokenTerms p={p} idPrefix="owners-" />
           </div>
         ) : (
           unavailable
