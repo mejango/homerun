@@ -24,7 +24,7 @@ import {
 import { wagmiConfig } from '@/providers/Providers'
 import { buildFundLaunch, type FundTransaction } from '@/lib/fund-contracts'
 import { verifyFundLaunch } from '@/lib/fund-launch-verification'
-import { loadLaunchSession, saveLaunch as saveLaunchSession, type LaunchStatus as LaunchChainStatus, type FundLaunchSession as LaunchSession } from '@/lib/fund-launch-session'
+import { LAUNCH_JOURNAL_PHASES, loadLaunchSession, saveLaunch as saveLaunchSession, type LaunchStatus as LaunchChainStatus, type FundLaunchSession as LaunchSession } from '@/lib/fund-launch-session'
 import { gasWithHeadroom } from '@bananapus/nana-sdk-core/review'
 import {
   RelayrDestinationRevertedError,
@@ -271,7 +271,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         journal.signed.length > current.input.chainIds.length ||
         new Set(journal.signed.map(item => item.chainId)).size !== journal.signed.length ||
         journal.signed.some(item => !current.input.chainIds.includes(item.chainId)) ||
-        !['signing', 'quoting', 'quoted', 'payment-signing', 'submitted', 'executing', 'payment-reverted'].includes(journal.phase) ||
+        !LAUNCH_JOURNAL_PHASES.includes(journal.phase) ||
         (journal.payments !== undefined && !relayrSentPaymentsSnapshot(journal.payments)))) {
       throw new Error('The saved Relayr launch is invalid. Keep its original transaction records before continuing.')
     }
@@ -404,7 +404,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         } else {
           // Relayr's answer matters only while a request can still run (ruling R114).
           unreleased = null
-          if (!journal.abandonable) {
+          if (journal.abandonable !== true) {
             // Every request expired unused and the recheck passed: the launch may be cancelled, or signed again at its saved nonces.
             journal.abandonable = true
             persist()
@@ -414,7 +414,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       }
     }
     if (unreleased) throw heldUntil === null ? unreleased : new Error(relayrHeldMessage(heldUntil), { cause: unreleased })
-    if (journal?.abandonable && ['signing', 'quoting', 'quoted', 'payment-reverted'].includes(journal.phase) && journal.signed.length) {
+    if (journal?.abandonable === true && ['signing', 'quoting', 'quoted', 'payment-reverted'].includes(journal.phase) && journal.signed.length) {
       const previous = journal
       journal = { account, phase: 'signing', signed: [], records: [],
         published: true, abandonable: true,
@@ -587,7 +587,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         if (classified?.outcome.kind === 'discard' && classified.outcome.reason === 'expired' &&
             await originalPaymentExpired()) journal.abandonable = true
         persist()
-        throw new Error(journal.abandonable
+        throw new Error(journal.abandonable === true
           ? 'The launch authorizations and payment quote expired. You may abandon this launch, but the earlier payment may have been charged; check your wallet. No refund is implied.'
           : 'Your wallet may have sent the Relayr payment without returning its hash. Check its activity before another payment.')
       }

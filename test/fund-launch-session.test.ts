@@ -174,6 +174,65 @@ describe('cancelling a relayed launch', () => {
   })
 })
 
+describe('reading a saved Relayr journal', () => {
+  type Journal = Record<string, any>
+  const call = (chain: number) => ({ chain, target: owner, data: '0x1234', value: '0' })
+  const signed = (chainId: number) => ({ chainId, entry: call(chainId), nonce: '0', deadline: 1_900_003_600 })
+  const journal = (): Journal => ({ account: owner, phase: 'quoted', signed: [signed(8453), signed(10)], superseded: [{ ...signed(10), unposted: true }],
+    retryNonces: { 8453: '0', 10: '0' }, records: [], published: true, abandonable: true })
+  const decoded = (relayr: unknown) => decodeLaunchSession(JSON.stringify({ ...JSON.parse(encodeLaunchSession(session())), transport: 'relayr',
+    statuses: { 8453: { phase: 'authorized' }, 10: { phase: 'authorized' } }, relayr }))
+
+  it('keeps a journal that rotated its signatures and marked those it never posted', () => {
+    expect(decoded(journal()).relayr).toEqual(journal())
+    expect(decoded({ account: owner, phase: 'signing', signed: [], records: [] }).relayr?.phase).toBe('signing')
+  })
+
+  it.each<[string, (value: Journal) => void]>([
+    ['no account', value => { delete value.account }],
+    ['an account that is not an address', value => { value.account = '0x12' }],
+    ['an unknown phase', value => { value.phase = 'done' }],
+    ['signatures that are not a list', value => { value.signed = {} }],
+    ['signatures that are an empty string', value => { value.signed = '' }],
+    ['superseded signatures that are not a list', value => { value.superseded = {} }],
+    ['superseded signatures that are an empty string', value => { value.superseded = '' }],
+    ['records that are not a list', value => { value.records = {} }],
+    ['a quote asked for and no published mark', value => { delete value.published }],
+    ['a published mark other than true', value => { value.published = 'yes' }],
+    ['a journal still signing with a published mark of false', value => { value.phase = 'signing'; value.published = false }],
+    ['abandonable set to false', value => { value.abandonable = false }],
+    ['abandonable set to a string', value => { value.abandonable = 'true' }],
+    ['a signature of a chain outside the launch', value => { value.signed[0] = signed(1) }],
+    ['a deadline that is not a positive integer', value => { value.signed[0].deadline = 0 }],
+    ['a nonce that is not decimal', value => { value.signed[0].nonce = '0x1' }],
+    ['a signature without its call', value => { delete value.signed[0].entry }],
+    ['a call on another chain than its signature', value => { value.signed[0].entry.chain = 10 }],
+    ['a call to something that is not an address', value => { value.signed[0].entry.target = 'forwarder' }],
+    ['call data that is not hex', value => { value.signed[0].entry.data = '0x123' }],
+    ['a call value that is not decimal', value => { value.signed[0].entry.value = '0x1' }],
+    ['a superseded signature that cannot be read', value => { value.superseded[0].nonce = 1 }],
+    ['an unposted mark other than true', value => { value.superseded[0].unposted = 'yes' }],
+    ['saved nonces that are not a map', value => { value.retryNonces = [] }],
+    ['a saved nonce of a chain outside the launch', value => { value.retryNonces = { 1: '0' } }],
+    ['a saved nonce that is not decimal', value => { value.retryNonces = { 8453: 0 } }],
+  ])('refuses a journal with %s', (_name, change) => {
+    const value = journal()
+    change(value)
+    expect(() => decoded(value)).toThrow()
+  })
+
+  it('refuses a journal that is not an object', () => {
+    for (const value of [null, 'journal', 7]) expect(() => decoded(value)).toThrow()
+  })
+
+  it('refuses to save a journal it would refuse to read, so no record can be written that frees a launch wrongly', () => {
+    const unpublished = { ...session(), transport: 'relayr' as const, statuses: { 8453: { phase: 'authorized' as const }, 10: { phase: 'authorized' as const } },
+      relayr: { ...journal(), published: undefined, abandonable: undefined } as unknown as FundLaunchSession['relayr'] }
+    expect(() => saveLaunch(unpublished)).toThrow()
+    expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()
+  })
+})
+
 describe('what a relayed launch chain may read as the finalized chain moves on', () => {
   const statusOf = (phase: string, hash: Hex = '0x' + 'ab'.repeat(32) as Hex) => ({
     ready: { phase: 'ready' }, authorized: { phase: 'authorized' }, unresolved: { phase: 'unresolved' }, expired: { phase: 'expired' },

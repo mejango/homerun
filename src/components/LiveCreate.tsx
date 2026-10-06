@@ -326,7 +326,7 @@ export function FundDeploy({ values, onLockChange, importedRecord, onRecordUsed 
         <ul className="fund-launch-progress" aria-label="Deployment progress">{session.input.chainIds.map(id => {
           const phase = session.statuses[id].phase
           const needsWallet = signingChain === id
-          const label = ({ ready: running ? 'Queued' : 'Not started', signing: needsWallet ? 'Awaiting confirmation' : 'Resume to check', authorized: '✓ Signed', pending: session.statuses[id].safe ? 'Awaiting Safe execution' : 'Deploying…', confirmed: '✓ Created', reverted: 'Retry needed', unresolved: session.relayr?.abandonable ? 'May have run' : 'Checking…', expired: 'New signature needed' })[phase]
+          const label = ({ ready: running ? 'Queued' : 'Not started', signing: needsWallet ? 'Awaiting confirmation' : 'Resume to check', authorized: '✓ Signed', pending: session.statuses[id].safe ? 'Awaiting Safe execution' : 'Deploying…', confirmed: '✓ Created', reverted: 'Retry needed', unresolved: session.relayr?.abandonable === true ? 'May have run' : 'Checking…', expired: 'New signature needed' })[phase]
           return <li key={id} data-action={needsWallet || undefined}><span>{displayChainName(id)}</span><span className="fund-launch-badge" data-state={needsWallet ? 'action' : phase}>{label}</span></li>
         })}</ul>
         {progress && signingChain === undefined && <p role="status">{progress}</p>}
