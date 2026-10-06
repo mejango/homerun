@@ -1,8 +1,8 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { dependencies, packages, verifyDependencies, workspace } from '../script/deploy.mjs'
+import { isEntrypoint } from './entrypoint.mjs'
 
 // Builds the workspace remappings.txt expects on a machine that has only this repository: every sibling protocol
 // checkout at the revision script/deploy.mjs pins, and the npm packages the contracts compile against through
@@ -66,8 +66,7 @@ function prepareWorkspace() {
   console.log(`Workspace ready in ${root}.`)
 }
 
-// Started through a symlink, argv[1] is the link and import.meta.url the real path, so compare the real paths.
-if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntrypoint(import.meta.url)) {
   try {
     prepareWorkspace()
   } catch (error) {
