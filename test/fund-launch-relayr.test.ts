@@ -58,7 +58,8 @@ const BUNDLE = '00000000-0000-0000-0000-000000000001'
 const TESTNETS = [11155111, 11155420, 84532, 421614]
 const MAY_HAVE_RUN = 'This launch\'s earlier signature may already have run. Check the project, then cancel creation to start over.'
 const CHANGED = 'The launch changed since this review. Cancel creation to start over.'
-const UNCHECKED = 'Couldn\'t check the launch. Try again.'
+const UNCHECKED = 'Couldn\'t check the launch. Try again, or cancel creation.'
+const UNCHECKED_PAID = 'Couldn\'t check the launch. Try again, or cancel creation; the payment already made is not refunded.'
 let storage: Map<string, string>
 let quote: RelayrQuote
 let entries: RelayrEntry[]
@@ -977,19 +978,34 @@ describe('relayed launch execution and recovery', () => {
       expect(m.pay).not.toHaveBeenCalled()
     })
 
-    it('holds a published launch whose recheck cannot reach the chain, and decides nothing', async () => {
+    it('holds a published launch whose recheck cannot reach the chain: it is not signed again, and may be cancelled', async () => {
       await publishedUnpaid()
       pastDeadlines()
       clients.get(10)!.estimateGas.mockRejectedValue(new HttpRequestError({ url: 'https://rpc.example', body: {}, details: 'fetch failed' }))
       await expect(run()).rejects.toThrow(UNCHECKED)
-      expect(canCancelLaunch(loadLaunchSession()!)).toBe(false)
-      expect(loadLaunchSession()?.relayr?.abandonable).toBeUndefined()
-      expect(loadLaunchSession()?.relayr?.superseded).toBeUndefined()
-      expect(m.forward).toHaveBeenCalledTimes(2)
-      // The node answers again, so the launch can be signed again or cancelled.
-      clients.get(10)!.estimateGas.mockResolvedValue(2_000_000n)
-      await expect(run()).rejects.toThrow('expired unused')
+      // Every request is dead and unused, so cancelling cannot lose a request that can run.
       expect(canCancelLaunch(loadLaunchSession()!)).toBe(true)
+      expect(loadLaunchSession()?.relayr?.superseded).toBeUndefined()
+      await expect(run()).rejects.toThrow(UNCHECKED)
+      expect(m.forward).toHaveBeenCalledTimes(2)
+      expect(m.quote).toHaveBeenCalledTimes(1)
+      expect(m.pay).not.toHaveBeenCalled()
+      // The node answers again, so the launch is signed again at its saved nonces.
+      clients.get(10)!.estimateGas.mockResolvedValue(2_000_000n)
+      await run()
+      expect(m.forward.mock.calls.slice(2).map(([call, _account, nonce]) => [call.chainId, nonce])).toEqual([[1, 0n], [10, 0n]])
+      expect(m.pay).toHaveBeenCalledTimes(1)
+    })
+
+    it('says a payment already made is not refunded when it holds a paid launch whose recheck cannot reach the chain', async () => {
+      await paidUnproven()
+      pastDeadlines()
+      clients.get(1)!.getBlock.mockResolvedValue({ number: 123n, hash: BLOCK, timestamp: BigInt(NOW + 3601) })
+      clients.get(10)!.estimateGas.mockRejectedValue(new HttpRequestError({ url: 'https://rpc.example', body: {}, details: 'fetch failed' }))
+      await expect(run()).rejects.toThrow(UNCHECKED_PAID)
+      expect(canCancelLaunch(loadLaunchSession()!)).toBe(true)
+      expect(m.pay).toHaveBeenCalledTimes(1)
+      expect(m.forward).toHaveBeenCalledTimes(2)
     })
 
     it('refreshes a published launch at the same nonces while its requests can still run', async () => {

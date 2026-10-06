@@ -77,8 +77,10 @@ class LaunchSignaturesNeedRefresh extends Error {}
 const LAUNCH_MAY_HAVE_RUN = 'This launch\'s earlier signature may already have run. Check the project, then cancel creation to start over.'
 /** The line a launch shows once every request it published is dead, none ran, and the launch's recheck refuses its calls. */
 const LAUNCH_CHANGED = 'The launch changed since this review. Cancel creation to start over.'
-/** The line a launch shows while the node cannot answer its recheck, which decides nothing. */
-const LAUNCH_UNCHECKED = 'Couldn\'t check the launch. Try again.'
+/** The line a launch shows while the node cannot answer its recheck, which decides nothing about signing it again. */
+const LAUNCH_UNCHECKED = 'Couldn\'t check the launch. Try again, or cancel creation.'
+/** The same line once a payment was made, which cancelling does not refund. */
+const LAUNCH_UNCHECKED_PAID = 'Couldn\'t check the launch. Try again, or cancel creation; the payment already made is not refunded.'
 
 type SignedLaunch = {
   chainId: number
@@ -329,7 +331,11 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     const requireGoOn = (target: LaunchRelayrJournal, outcome: RelayrSessionOutcome): Extract<RelayrSessionOutcome, { kind: 'refresh' | 're-sign' | 'discard' }> => {
       if (outcome.kind === 'hold') throw new Error(relayrHeldMessage(outcome.until))
       if (outcome.kind === 'reorg-hold') throw new Error(relayrHeldMessage(0))
-      if (outcome.kind === 'unchecked') throw new Error(LAUNCH_UNCHECKED, { cause: outcome.error })
+      if (outcome.kind === 'unchecked') {
+        // The recheck runs only once every request is dead and unused, so none can run: the launch is not signed again
+        // until the node answers, but it may be cancelled meanwhile.
+        return abandon(target, target.payments?.length || target.paymentHash ? LAUNCH_UNCHECKED_PAID : LAUNCH_UNCHECKED, outcome.error)
+      }
       if (outcome.kind === 'discard' && outcome.reason !== 'expired') {
         return abandon(target, outcome.reason === 'ran' ? LAUNCH_MAY_HAVE_RUN : LAUNCH_CHANGED, outcome.error)
       }
