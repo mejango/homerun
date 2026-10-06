@@ -10,7 +10,7 @@ import { requireFreePort, runCommand, runGroups, runSuite, startServer, stopAll,
 //
 //   node scripts/run-browser-suites.mjs [dev] [intent] [center]
 //
-// dev     test:browser, test:create and test:a11y share one development server (npm run dev).
+// dev     test:browser, test:create, test:a11y and test:shop share one development server (npm run dev).
 // intent  test:intent starts its own servers.
 // center  test:center needs a production build with the Center wallet enabled, served from its standalone output on
 //         127.0.0.1. The ports and the build's pins are in test/support/browser-suites.mjs.
@@ -50,7 +50,7 @@ const groups = {
     try {
       await waitForServer(base, server, 300)
       await warmRoutes(base, ['/founderhaus', '/create', '/project?id=warm'])
-      for (const script of ['test:browser', 'test:create', 'test:a11y']) await npmRun(suite, script, { BASE_URL: base })
+      for (const script of ['test:browser', 'test:create', 'test:a11y', 'test:shop']) await npmRun(suite, script, { BASE_URL: base })
     } finally {
       await server.stop()
     }

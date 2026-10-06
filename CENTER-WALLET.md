@@ -67,7 +67,7 @@ and real funding are not part of this checkpoint.
 Use Node >=24.1/npm >=11. `npm run check` covers lint, indexer schema, model and
 component tests, production build and contracts. In an isolated checkout, resolve
 Foundry remappings to the existing protocol libraries. Browser commands
-`test:browser`, `test:create` and `test:a11y` use `BASE_URL` and the installed
+`test:browser`, `test:create`, `test:a11y` and `test:shop` use `BASE_URL` and the installed
 `PLAYWRIGHT_MODULE` against the built local app.
 
 `test:center` exercises a build with the Center wallet enabled: issuer

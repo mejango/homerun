@@ -95,12 +95,13 @@ npm run check
 | `npm run test:browser` | Native project/demo behavior, lifecycle calculations, dialogs, local previews and mobile layouts |
 | `npm run test:create` | Native Create flow, draft persistence, review and responsive layouts |
 | `npm run test:a11y` | Automated accessibility checks across the rendered flows |
+| `npm run test:shop` | The demo FUND shop at 1440, 390 and 320 px: validate, upload, review, save, reload, edit, remove and reset, with axe and an overflow check on the editor, review and inventory |
 | `npm run test:intent` | Create, publish, sponsored deployment and a first payment against a modeled Center; it starts its own servers |
 | `npm run test:center` | The Center wallet sign-in flow against an enabled production build; see [CENTER-WALLET.md](CENTER-WALLET.md) |
-| `npm run test:suites` | The five browser suites above, each with the servers it needs; `node scripts/run-browser-suites.mjs dev` runs one group (`dev`, `intent` or `center`) |
+| `npm run test:suites` | The six browser suites above, each with the servers it needs; `node scripts/run-browser-suites.mjs dev` runs one group (`dev`, `intent` or `center`) |
 | `npm run audit:prod` | `npm audit` of the production dependencies, failing on high or critical advisories |
 
-GitHub Actions runs `.github/workflows/ci.yml` on every pull request and on main: lint, the indexer registry check, the unit and component tests, the production build and typecheck; the five browser suites; `forge fmt --check`; the Forge tests, deployment tests and contract sizes against the pinned protocol checkouts; a smoke test of the Dockerfile image, which must serve the built revision at `/api/healthz`; and the production dependency audit.
+GitHub Actions runs `.github/workflows/ci.yml` on every pull request and on main: lint, the indexer registry check, the unit and component tests, the production build and typecheck; the six browser suites; `forge fmt --check`; the Forge tests, deployment tests and contract sizes against the pinned protocol checkouts; a smoke test of the Dockerfile image, which must serve the built revision at `/api/healthz`; and the production dependency audit.
 
 Start the app before the individual browser checks, or let `npm run test:suites` start it. `BASE_URL`, `PLAYWRIGHT_MODULE`, `CHROME_PATH` and `BROWSER_SCREENSHOT_DIR` override their defaults. The individual suites use the existing workspace Playwright installation and macOS Chrome by default; `npm run test:suites` uses the Playwright installed here and its Chromium (`npx playwright install chromium`). Foundry uses Solidity 0.8.28 and sibling workspace dependencies listed in [remappings.txt](remappings.txt). Automated accessibility checks are limited evidence, not a certification.
 

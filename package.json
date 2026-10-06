@@ -17,6 +17,7 @@
     "test:center": "node test/center-browser.mjs",
     "test:create": "node test/create-browser.mjs",
     "test:intent": "node test/intent-browser.mjs",
+    "test:shop": "node test/shop-browser.mjs",
     "test:a11y": "node test/accessibility.mjs",
     "test:suites": "node scripts/run-browser-suites.mjs",
     "test:contracts": "node scripts/test-contracts.mjs",

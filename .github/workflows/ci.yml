@@ -72,8 +72,8 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
-      # test:browser, test:create and test:a11y share a development server, test:intent starts its
-      # own servers and test:center needs a build with the Center wallet enabled. Every suite runs
+      # test:browser, test:create, test:a11y and test:shop share a development server, test:intent
+      # starts its own servers and test:center needs a build with the Center wallet enabled. Every suite runs
       # even when an earlier one fails, and one that runs past 10 minutes is stopped and fails. The
       # step's own limit keeps the diagnostics upload inside the job's.
       - name: Run the browser suites

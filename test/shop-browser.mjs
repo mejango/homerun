@@ -1,10 +1,29 @@
+/** The demo FUND shop in a real browser at 1440, 390 and 320 px: validate, upload, advanced options, review, save,
+ * restore after a reload, edit, remove and reset, with axe (WCAG 2 A/AA) and a horizontal-overflow check on the editor,
+ * the review and the saved inventory. Start npm run dev, then npm run test:shop. Overrides: BASE_URL, PLAYWRIGHT_MODULE,
+ * AXE_MODULE, CHROME_PATH, BROWSER_SCREENSHOT_DIR.
+ */
 import assert from 'node:assert/strict'
-import { chromium, expect } from '@playwright/test'
-import AxeBuilder from '@axe-core/playwright'
+import { existsSync } from 'node:fs'
+import { mkdir } from 'node:fs/promises'
+import { join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { expect } from '@playwright/test'
+import { devPort } from './support/browser-suites.mjs'
 
-const base = process.env.BASE_URL || 'http://localhost:3014'
-const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true })
+const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ? pathToFileURL(process.env.PLAYWRIGHT_MODULE).href : '@playwright/test')
+const { default: AxeBuilder } = await import(process.env.AXE_MODULE ? pathToFileURL(process.env.AXE_MODULE).href : '@axe-core/playwright')
+const systemChrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+const executablePath = process.env.CHROME_PATH || (existsSync(systemChrome) ? systemChrome : undefined)
+const demoURL = new URL('/founderhaus', process.env.BASE_URL || `http://localhost:${devPort()}/`).href
+const photo = fileURLToPath(new URL('../web/assets/founder-haus/exterior.jpg', import.meta.url))
+const browser = await chromium.launch({ ...(executablePath ? { executablePath } : {}), headless: true })
 const errors = []
+async function screenshot(page, name) {
+  if (!process.env.BROWSER_SCREENSHOT_DIR) return
+  await mkdir(process.env.BROWSER_SCREENSHOT_DIR, { recursive: true })
+  await page.screenshot({ path: join(process.env.BROWSER_SCREENSHOT_DIR, name) })
+}
 const wallet = '0x1111111111111111111111111111111111111111'
 try {
   for (const width of [1440, 390, 320]) {
@@ -20,7 +39,7 @@ try {
       const result = await new AxeBuilder({ page }).exclude('nextjs-portal').withTags(['wcag2a', 'wcag2aa']).analyze()
       assert.deepEqual(result.violations.map(v => ({ id: v.id, targets: v.nodes.map(n => n.target) })), [], label)
     }
-    await page.goto(`${base}/founderhaus#shop`, { waitUntil: 'domcontentloaded' })
+    await page.goto(`${demoURL}#shop`, { waitUntil: 'domcontentloaded' })
     await shop.getByRole('button', { name: 'Add your first item', exact: true }).click()
     await expect(dialog.getByLabel('Shop currency', { exact: true })).toHaveCount(0)
     await dialog.getByRole('button', { name: 'Review items', exact: true }).click()
@@ -30,7 +49,7 @@ try {
     await dialog.getByLabel('Price (USD)', { exact: true }).fill('25')
     await dialog.getByLabel('Quantity', { exact: true }).fill('12')
     await dialog.getByLabel('Description (optional)', { exact: true }).fill('A day of coworking and time by the pool.')
-    await dialog.getByLabel('Upload media for item 1', { exact: true }).setInputFiles('web/assets/founder-haus/exterior.jpg')
+    await dialog.getByLabel('Upload media for item 1', { exact: true }).setInputFiles(photo)
     await expect(dialog.locator('img.ds-media-preview')).toHaveAttribute('src', /^data:image\/jpeg;base64,/)
     await dialog.getByRole('button', { name: 'More options', exact: true }).click()
     await dialog.getByLabel('Category', { exact: true }).fill('Experiences')
@@ -45,7 +64,7 @@ try {
     await expect(dialog).toContainText('1 of every 5')
     await expect(dialog).toContainText(wallet)
     await accessible(`Review ${width}`)
-    await page.screenshot({ path: `/tmp/homerun-shop-review-${width}.png` })
+    await screenshot(page, `homerun-shop-review-${width}.png`)
     await dialog.getByRole('button', { name: 'Add item to demo shop', exact: true }).click()
     await expect(dialog).toHaveCount(0)
     await expect(shop.getByRole('button', { name: 'Preview Rooftop day pass', exact: true })).toBeVisible()
@@ -54,7 +73,7 @@ try {
     await expect(shop.getByRole('button', { name: 'Preview Rooftop day pass', exact: true })).toBeVisible()
     await expect(shop.locator('img')).toHaveAttribute('src', /^data:image\/jpeg;base64,/)
     await accessible(`Saved inventory ${width}`)
-    await page.screenshot({ path: `/tmp/homerun-shop-inventory-${width}.png` })
+    await screenshot(page, `homerun-shop-inventory-${width}.png`)
     await shop.getByRole('button', { name: 'Edit Rooftop day pass', exact: true }).click()
     await dialog.getByLabel('Price (USD)', { exact: true }).fill('30')
     await dialog.getByRole('button', { name: 'Review items', exact: true }).click()
@@ -75,7 +94,7 @@ try {
     await dialog.getByRole('button', { name: 'Review items', exact: true }).click()
     await dialog.getByRole('button', { name: 'Add item to demo shop', exact: true }).click()
     // Reset must clear persisted inventory even when Shop has not mounted this visit.
-    await page.goto(`${base}/founderhaus`, { waitUntil: 'domcontentloaded' })
+    await page.goto(demoURL, { waitUntil: 'domcontentloaded' })
     await expect(page.locator('.simulator')).toHaveAttribute('data-ready', 'true')
     await page.getByRole('button', { name: 'Reset example', exact: false }).click()
     await page.getByRole('tablist', { name: 'Project sections', exact: true }).getByRole('tab', { name: 'Shop', exact: true }).click()
