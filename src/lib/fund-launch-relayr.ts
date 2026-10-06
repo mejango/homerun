@@ -83,6 +83,16 @@ function launchData(request: FundTransaction): Hex {
   return encodeFunctionData({ abi: request.abi as Abi, functionName: request.functionName, args: request.args }).toLowerCase() as Hex
 }
 
+/**
+ * The gas the launch's call needs from `account`. Relayr supplies each destination's creation fee, so only the signer's
+ * native balance is overridden: no destination ETH balance or token approval is needed, and no contract storage or code
+ * is overridden, so the real launch rules still execute.
+ */
+function estimateLaunch(client: ReturnType<typeof publicClient>, account: Address, request: FundTransaction, creationFee: bigint): Promise<bigint> {
+  return client.estimateGas({ account, to: request.address, data: launchData(request), value: request.value,
+    stateOverride: [{ address: account, balance: creationFee + 100n * 10n ** 18n }] })
+}
+
 export function canRelayrLaunch(session: LaunchSession): boolean {
   return session.transport === 'relayr' && (session.input.chainIds.length > 1 || !!session.input.multisigs?.length) &&
     session.input.chainIds.length <= 4 && relayrSupportsChains(session.input.chainIds)
@@ -478,11 +488,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress, 
         throw new Error('An earlier launch authorization may have executed. Check its original destination before signing again.')
       }
       const data = launchData(request)
-      // Relayr supplies each destination's creation fee. Override ONLY the ordinary signer's
-      // native balance for this launch estimate; no destination ETH balance or token approval
-      // is needed. No contract storage/code is overridden, so the real launch rules still execute.
-      const estimate = await client.estimateGas({ account, to: request.address, data, value: request.value,
-        stateOverride: [{ address: account, balance: creationFee + 100n * 10n ** 18n }] })
+      const estimate = await estimateLaunch(client, account, request, creationFee)
       const prepared = await prepareForwardedTx({ chainId: chainId as JBChainId, target: request.address,
         data, value: request.value, gas: gasWithHeadroom(estimate + (current.input.multisigs?.length ? 200_000n : 0n)), abi: request.abi,
         functionName: request.functionName, args: request.args, label: `Launch on ${chainName(chainId)}` }, account, nonce)
