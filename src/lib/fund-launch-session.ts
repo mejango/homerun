@@ -15,6 +15,12 @@ export type LaunchStatus = {
   projectId?: string
 }
 const INTENT_ID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i
+const ADDRESS = /^0x[\da-f]{40}$/i
+const DECIMAL = /^\d+$/
+
+/** The phases a saved Relayr journal may be in. */
+export const LAUNCH_JOURNAL_PHASES: readonly LaunchRelayrJournal['phase'][] =
+  ['signing', 'quoting', 'quoted', 'payment-signing', 'submitted', 'executing', 'payment-reverted']
 
 export type FundLaunchSession = {
   version: 1
@@ -27,6 +33,39 @@ export type FundLaunchSession = {
   input: FundLaunchInput
   statuses: Record<number, LaunchStatus>
 }
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
+
+/** A signature as the launch classifies it: its chain, nonce and deadline, and the call it signed. */
+function validSignature(item: unknown, chainIds: readonly number[]): boolean {
+  if (!isRecord(item)) return false
+  const { chainId, entry, nonce, deadline, unposted } = item
+  return typeof chainId === 'number' && chainIds.includes(chainId)
+    && Number.isSafeInteger(deadline) && (deadline as number) >= 1
+    && typeof nonce === 'string' && DECIMAL.test(nonce)
+    && (unposted === undefined || unposted === true)
+    && isRecord(entry) && entry.chain === chainId
+    && typeof entry.target === 'string' && ADDRESS.test(entry.target)
+    && typeof entry.data === 'string' && /^0x(?:[\da-f]{2})*$/i.test(entry.data)
+    && typeof entry.value === 'string' && DECIMAL.test(entry.value)
+}
+
+/**
+ * The fields of a saved Relayr journal that decide whether its launch is cancelled, signed again or classified. A
+ * record that reads as anything else never frees the launch's forwarder nonces (jbm's `launch-session.ts` check).
+ */
+function validJournal(journal: unknown, chainIds: readonly number[]): boolean {
+  if (!isRecord(journal)) return false
+  const { account, phase, signed, superseded, records, published, abandonable, retryNonces } = journal
+  return typeof account === 'string' && ADDRESS.test(account)
+    && LAUNCH_JOURNAL_PHASES.includes(phase as LaunchRelayrJournal['phase'])
+    && Array.isArray(signed) && Array.isArray(records) && (superseded === undefined || Array.isArray(superseded))
+    && (phase === 'signing' || published === true)
+    && (published === undefined || published === true) && (abandonable === undefined || abandonable === true)
+    && [...signed, ...(superseded ?? [])].every(item => validSignature(item, chainIds))
+    && (retryNonces === undefined || (isRecord(retryNonces) && Object.entries(retryNonces)
+      .every(([chainId, nonce]) => chainIds.includes(Number(chainId)) && typeof nonce === 'string' && DECIMAL.test(nonce))))
+}
+
 export function encodeLaunchSession(session: FundLaunchSession): string {
   return JSON.stringify({ ...session, input: { ...session.input, creationFees: Object.fromEntries(Object.entries(session.input.creationFees).map(([id, fee]) => [id, fee.toString()])) } })
 }
@@ -64,6 +103,7 @@ export function decodeLaunchSession(raw: string): FundLaunchSession {
   }
   if (value.transport !== undefined && !['direct', 'relayr', 'intent'].includes(value.transport)) throw new Error('Invalid launch transport.')
   if (value.relayr && value.transport !== 'relayr') throw new Error('Relayed authorizations cannot use direct deployment.')
+  if (value.relayr !== undefined && !validJournal(value.relayr, input.chainIds)) throw new Error('The saved Relayr launch is invalid. Keep its original transaction records before continuing.')
   if (value.intentId !== undefined && (value.transport !== 'intent' || typeof value.intentId !== 'string' || !INTENT_ID.test(value.intentId))) throw new Error('Invalid published project reference.')
   if (value.transport === 'intent' && (value.relayr || !Object.values(value.statuses).every(status => status.phase === 'ready'))) throw new Error('A published project has no wallet transactions to resume.')
   return value
@@ -83,11 +123,12 @@ const transitions: Record<LaunchStatus['phase'], readonly LaunchStatus['phase'][
   ready: ['ready', 'signing'],
   authorized: ['authorized', 'signing', 'confirmed', 'reverted', 'expired', 'unresolved'],
   unresolved: ['unresolved', 'signing', 'confirmed', 'reverted', 'expired'],
-  expired: ['expired', 'signing'],
+  // Until a chain is confirmed, what its request is found to have done can change as the finalized chain moves on.
+  expired: ['expired', 'signing', 'unresolved', 'reverted'],
   signing: ['signing', 'pending', 'confirmed', 'reverted', 'authorized', 'unresolved', 'expired'],
   pending: ['pending', 'confirmed', 'reverted'],
   confirmed: ['confirmed'],
-  reverted: ['reverted', 'signing'],
+  reverted: ['reverted', 'signing', 'unresolved', 'expired'],
 }
 
 function assertTransition(previous: LaunchStatus, next: LaunchStatus, cancelled = false): void {
@@ -171,6 +212,8 @@ export function discardUnsignedLaunch(salt: Hex): boolean {
 
 export function canCancelLaunch(session: FundLaunchSession): boolean {
   if (session.transport === 'intent') return !session.intentId
+  // Every request the launch published was found dead at a canonical finalized block (ruling R117), so none can run again.
+  if (session.relayr?.abandonable === true) return true
   const phases = session.transport === 'relayr' ? ['ready', 'signing', 'authorized'] : ['ready']
   return Object.values(session.statuses).every(status => phases.includes(status.phase) && !status.hash && !status.executionHash)
     && (!session.relayr || (['signing', 'quoting'].includes(session.relayr.phase)
@@ -178,15 +221,19 @@ export function canCancelLaunch(session: FundLaunchSession): boolean {
       && !session.relayr.superseded?.length && !session.relayr.records.length))
 }
 
-/** Discard only unpublished work, while excluding writers in every browser tab. */
-export async function cancelUnsubmittedLaunch(salt: Hex): Promise<void> {
+/**
+ * Discard only unpublished work, or a launch whose published requests are proven dead now (ruling R117),
+ * while excluding writers in every browser tab. A published launch with no proof is never cancelled.
+ */
+export async function cancelUnsubmittedLaunch(salt: Hex, requestsDead?: (session: FundLaunchSession) => Promise<boolean>): Promise<void> {
   if (!navigator.locks) throw new Error('This browser cannot coordinate cancellation across tabs.')
   await navigator.locks.request('homerun:fund-launch', { ifAvailable: true }, async relayLock => {
     if (!relayLock) throw new Error('Finish or close the active wallet request before cancelling.')
-    await navigator.locks.request(`homerun:fund-launch:${salt}`, { ifAvailable: true }, directLock => {
+    await navigator.locks.request(`homerun:fund-launch:${salt}`, { ifAvailable: true }, async directLock => {
       if (!directLock) throw new Error('Finish or close the active wallet request before cancelling.')
       const session = requireLaunch(salt)
       if (!canCancelLaunch(session)) throw new Error('This launch may already be submitted. Resume it to check its execution before starting another.')
+      if (session.relayr?.published && !(await requestsDead?.(session))) throw new Error('A request of this launch can still run. Resume it to check it before cancelling.')
       localStorage.setItem(`${FUND_LAUNCH_KEY}:cancelled:${salt}`, encodeLaunchSession(session))
       localStorage.removeItem(FUND_LAUNCH_KEY)
     })

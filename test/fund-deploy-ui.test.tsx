@@ -9,7 +9,7 @@ import { buildFundLaunch } from '../src/lib/fund-contracts'
 import { FUND_LAUNCH_KEY, decodeLaunchSession, saveLaunch, updateLaunchStatus, type FundLaunchSession } from '../src/lib/fund-launch-session'
 import { safeExecutionLog } from './support/safe-logs'
 
-const runtime = vi.hoisted(() => ({ txError: '' as string, safe: false, send: vi.fn(), readContract: vi.fn(), getBlock: vi.fn(), getTransaction: vi.fn(), getTransactionReceipt: vi.fn(), publish: vi.fn(), checkDeployment: vi.fn(), relayr: vi.fn() }))
+const runtime = vi.hoisted(() => ({ txError: '' as string, safe: false, send: vi.fn(), readContract: vi.fn(), getBlock: vi.fn(), getTransaction: vi.fn(), getTransactionReceipt: vi.fn(), publish: vi.fn(), checkDeployment: vi.fn(), relayr: vi.fn(), requestsDead: vi.fn() }))
 const navigate = vi.hoisted(() => ({ replace: vi.fn() }))
 vi.mock('next/navigation', () => ({ useRouter: () => navigate }))
 const owner = '0x1111111111111111111111111111111111111111' as const
@@ -23,7 +23,7 @@ vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => runtime.safe, u
 vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({ phase: 'idle', busy: false, error: runtime.txError, send: runtime.send, reset: vi.fn() }) }))
 vi.mock('@/lib/publish-fund-project-metadata', () => ({ publishFundProjectMetadata: runtime.publish }))
 vi.mock('@/lib/fund-launch-verification', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/fund-launch-verification')>(), checkLaunchDeployment: runtime.checkDeployment }))
-vi.mock('@/lib/fund-launch-relayr', () => ({ runRelayrLaunch: runtime.relayr }))
+vi.mock('@/lib/fund-launch-relayr', () => ({ runRelayrLaunch: runtime.relayr, launchRequestsDead: runtime.requestsDead }))
 import { FundDeploy } from '../src/components/LiveCreate'
 import CreateSuccess from '../src/components/CreateSuccess'
 
@@ -94,23 +94,43 @@ describe('Create submission recovery', () => {
     expect(host.textContent).toContain('Create with a transaction')
   })
 
-  it('ends a relayed launch when the create page is left', async () => {
-    localStorage.removeItem(FUND_LAUNCH_KEY)
-    saveLaunch({ version: 1, name: 'Test asset', transport: 'relayr', input: { owner, sender: owner, chainIds: [1, 10], projectUri: 'ipfs://bafkreimetadata', tokenName: 'House FUND', ticker: 'HOUSE', salt, mustStartAtOrAfter: 1000, creationFees: { 1: 0n, 10: 0n } }, statuses: { 1: { phase: 'ready' }, 10: { phase: 'ready' } } })
-    let signal: AbortSignal | undefined
-    runtime.relayr.mockImplementation(({ signal: given }: { signal?: AbortSignal }) => {
-      signal = given
-      return new Promise(() => {})
-    })
-    await act(async () => root.render(<FundDeploy values={{} as CreateValues} />))
-    const resume = [...host.querySelectorAll('button')].find(button => button.textContent === 'Continue creation')!
-    await act(async () => resume.click())
-    expect(runtime.relayr).toHaveBeenCalledOnce()
-    expect(signal?.aborted).toBe(false)
+  describe('a relayed launch whose published requests were found dead', () => {
+    const settled = () => saveLaunch({ version: 1, name: 'Test asset', transport: 'relayr', input: { owner, sender: owner, chainIds: [1, 10], projectUri: 'ipfs://bafkreimetadata', tokenName: 'House FUND', ticker: 'HOUSE', salt, mustStartAtOrAfter: 1000, creationFees: { 1: 0n, 10: 0n } },
+      statuses: { 1: { phase: 'authorized' }, 10: { phase: 'unresolved', error: 'The launch may already have run.' } },
+      relayr: { account: owner, phase: 'executing', paymentChainId: 8453, signed: [], records: [], published: true, abandonable: true } })
+    const cancel = () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Cancel creation and edit details')
 
-    await act(async () => root.unmount())
-    expect(signal?.aborted).toBe(true)
-    root = createRoot(host)
+    it('says a chain may have run, and offers cancelling', async () => {
+      localStorage.removeItem(FUND_LAUNCH_KEY)
+      settled()
+      await act(async () => root.render(<FundDeploy values={{} as CreateValues} />))
+      expect(host.querySelector('.fund-launch-progress')?.textContent).toContain('May have run')
+      expect(cancel()).toBeDefined()
+    })
+
+    it('removes it only once its requests are proven dead again', async () => {
+      localStorage.removeItem(FUND_LAUNCH_KEY)
+      settled()
+      await act(async () => root.render(<FundDeploy values={{} as CreateValues} />))
+      runtime.requestsDead.mockResolvedValue(false)
+      await act(async () => cancel()!.click())
+      expect(runtime.requestsDead).toHaveBeenCalledWith(expect.objectContaining({ input: expect.objectContaining({ salt }) }))
+      expect(host.querySelector('[role="alert"]')?.textContent).toContain('can still run')
+      expect(localStorage.getItem(FUND_LAUNCH_KEY)).not.toBeNull()
+      runtime.requestsDead.mockResolvedValue(true)
+      await act(async () => cancel()!.click())
+      expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()
+      expect(host.textContent).toContain('Preview your project')
+    })
+
+    it('shows no cancel while its requests are not found dead, and calls its chain checking', async () => {
+      localStorage.removeItem(FUND_LAUNCH_KEY)
+      const live = settled()
+      saveLaunch({ ...live, relayr: { ...live.relayr!, abandonable: undefined } })
+      await act(async () => root.render(<FundDeploy values={{} as CreateValues} />))
+      expect(host.querySelector('.fund-launch-progress')?.textContent).toContain('Checking…')
+      expect(cancel()).toBeUndefined()
+    })
   })
 
   it('cancelling review leaves the saved launch ready without claiming a wallet submission', async () => {

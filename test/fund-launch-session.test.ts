@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fixtures/homerun-deployer')).withHomerunDeployer(await importOriginal()))
 
 import { zeroAddress, zeroHash, type Hex } from 'viem'
-import { FUND_LAUNCH_KEY, archiveLaunch, canCancelLaunch, decodeLaunchSession, discardUnsignedLaunch, encodeLaunchSession, refreshLaunchCreationFee, saveLaunch, sameSender, updateLaunchStatus, type FundLaunchSession } from '../src/lib/fund-launch-session'
+import { FUND_LAUNCH_KEY, archiveLaunch, canCancelLaunch, cancelUnsubmittedLaunch, decodeLaunchSession, discardUnsignedLaunch, encodeLaunchSession, refreshLaunchCreationFee, saveLaunch, sameSender, updateLaunchStatus, type FundLaunchSession } from '../src/lib/fund-launch-session'
 
 const owner = '0x1111111111111111111111111111111111111111' as const
 const salt = `0x${'12'.repeat(32)}` as Hex
@@ -128,4 +128,156 @@ describe('durable FUND deployment journal', () => {
     expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()
     expect(JSON.parse(localStorage.getItem(`${FUND_LAUNCH_KEY}:history`)!)).toHaveLength(1)
   })
+})
+
+describe('cancelling a relayed launch', () => {
+  const stubLocks = () => vi.stubGlobal('navigator', { locks: { request: async (_name: string, _options: unknown, fn: (lock: object) => Promise<void>) => fn({}) } })
+  const published = (relayr: Partial<NonNullable<FundLaunchSession['relayr']>> = {}): FundLaunchSession => ({
+    ...session(), transport: 'relayr', statuses: { 8453: { phase: 'authorized' }, 10: { phase: 'authorized' } },
+    relayr: { account: owner, phase: 'quoted', signed: [], records: [], published: true, ...relayr },
+  })
+
+  it('offers cancelling a published launch only once its requests were found dead', () => {
+    expect(canCancelLaunch(published())).toBe(false)
+    expect(canCancelLaunch(published({ abandonable: true }))).toBe(true)
+    // A chain already created stays created; the launch's record keeps its project.
+    const partial = published({ abandonable: true })
+    partial.statuses = { 8453: { phase: 'confirmed', hash, projectId: '12' }, 10: { phase: 'expired' } }
+    expect(canCancelLaunch(partial)).toBe(true)
+  })
+
+  it('removes a published launch only when its requests are proven dead now, keeping its record', async () => {
+    stubLocks()
+    const saved = saveLaunch(published({ abandonable: true }))
+    await expect(cancelUnsubmittedLaunch(saved.input.salt)).rejects.toThrow(/can still run/)
+    await expect(cancelUnsubmittedLaunch(saved.input.salt, async () => false)).rejects.toThrow(/can still run/)
+    expect(localStorage.getItem(FUND_LAUNCH_KEY)).not.toBeNull()
+    await cancelUnsubmittedLaunch(saved.input.salt, async launch => launch.relayr?.abandonable === true)
+    expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()
+    expect(JSON.parse(localStorage.getItem(`${FUND_LAUNCH_KEY}:cancelled:${saved.input.salt}`)!).relayr.abandonable).toBe(true)
+  })
+
+  it('refuses a published launch that was not found dead, however the proof answers', async () => {
+    stubLocks()
+    const saved = saveLaunch(published())
+    await expect(cancelUnsubmittedLaunch(saved.input.salt, async () => true)).rejects.toThrow(/may already be submitted/)
+    expect(localStorage.getItem(FUND_LAUNCH_KEY)).not.toBeNull()
+  })
+
+  it('cancels a launch whose signatures were refreshed before anything was published, with no proof to ask for', async () => {
+    stubLocks()
+    const proof = vi.fn(async () => false)
+    const saved = saveLaunch({ ...session(), transport: 'relayr', statuses: { 8453: { phase: 'authorized' }, 10: { phase: 'ready' } },
+      relayr: { account: owner, phase: 'signing', signed: [], records: [], retryNonces: { 8453: '0' } } })
+    expect(canCancelLaunch(saved)).toBe(true)
+    await cancelUnsubmittedLaunch(saved.input.salt, proof)
+    expect(proof).not.toHaveBeenCalled()
+    expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()
+  })
+
+  it('asks for no proof of a launch that never published a signature', async () => {
+    stubLocks()
+    const proof = vi.fn(async () => false)
+    const saved = saveLaunch({ ...session(), transport: 'relayr', statuses: { 8453: { phase: 'signing' }, 10: { phase: 'ready' } }, relayr: { account: owner, phase: 'signing', signed: [], records: [] } })
+    await cancelUnsubmittedLaunch(saved.input.salt, proof)
+    expect(proof).not.toHaveBeenCalled()
+    expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()
+  })
+})
+
+describe('reading a saved Relayr journal', () => {
+  type Journal = Record<string, any>
+  const call = (chain: number) => ({ chain, target: owner, data: '0x1234', value: '0' })
+  const signed = (chainId: number) => ({ chainId, entry: call(chainId), nonce: '0', deadline: 1_900_003_600 })
+  const journal = (): Journal => ({ account: owner, phase: 'quoted', signed: [signed(8453), signed(10)], superseded: [{ ...signed(10), unposted: true }],
+    retryNonces: { 8453: '0', 10: '0' }, records: [], published: true, abandonable: true })
+  const decoded = (relayr: unknown) => decodeLaunchSession(JSON.stringify({ ...JSON.parse(encodeLaunchSession(session())), transport: 'relayr',
+    statuses: { 8453: { phase: 'authorized' }, 10: { phase: 'authorized' } }, relayr }))
+
+  it('keeps a journal that rotated its signatures and marked those it never posted', () => {
+    expect(decoded(journal()).relayr).toEqual(journal())
+    expect(decoded({ account: owner, phase: 'signing', signed: [], records: [] }).relayr?.phase).toBe('signing')
+  })
+
+  it.each<[string, (value: Journal) => void]>([
+    ['no account', value => { delete value.account }],
+    ['an account that is not an address', value => { value.account = '0x12' }],
+    ['an unknown phase', value => { value.phase = 'done' }],
+    ['signatures that are not a list', value => { value.signed = {} }],
+    ['signatures that are an empty string', value => { value.signed = '' }],
+    ['superseded signatures that are not a list', value => { value.superseded = {} }],
+    ['superseded signatures that are an empty string', value => { value.superseded = '' }],
+    ['records that are not a list', value => { value.records = {} }],
+    ['a quote asked for and no published mark', value => { delete value.published }],
+    ['a published mark other than true', value => { value.published = 'yes' }],
+    ['a journal still signing with a published mark of false', value => { value.phase = 'signing'; value.published = false }],
+    ['abandonable set to false', value => { value.abandonable = false }],
+    ['abandonable set to a string', value => { value.abandonable = 'true' }],
+    ['a signature of a chain outside the launch', value => { value.signed[0] = signed(1) }],
+    ['a deadline that is not a positive integer', value => { value.signed[0].deadline = 0 }],
+    ['a nonce that is not decimal', value => { value.signed[0].nonce = '0x1' }],
+    ['a signature without its call', value => { delete value.signed[0].entry }],
+    ['a call on another chain than its signature', value => { value.signed[0].entry.chain = 10 }],
+    ['a call to something that is not an address', value => { value.signed[0].entry.target = 'forwarder' }],
+    ['call data that is not hex', value => { value.signed[0].entry.data = '0x123' }],
+    ['a call value that is not decimal', value => { value.signed[0].entry.value = '0x1' }],
+    ['a superseded signature that cannot be read', value => { value.superseded[0].nonce = 1 }],
+    ['an unposted mark other than true', value => { value.superseded[0].unposted = 'yes' }],
+    ['saved nonces that are not a map', value => { value.retryNonces = [] }],
+    ['a saved nonce of a chain outside the launch', value => { value.retryNonces = { 1: '0' } }],
+    ['a saved nonce that is not decimal', value => { value.retryNonces = { 8453: 0 } }],
+  ])('refuses a journal with %s', (_name, change) => {
+    const value = journal()
+    change(value)
+    expect(() => decoded(value)).toThrow()
+  })
+
+  it('refuses a journal that is not an object', () => {
+    for (const value of [null, 'journal', 7]) expect(() => decoded(value)).toThrow()
+  })
+
+  it('refuses to save a journal it would refuse to read, so no record can be written that frees a launch wrongly', () => {
+    const unpublished = { ...session(), transport: 'relayr' as const, statuses: { 8453: { phase: 'authorized' as const }, 10: { phase: 'authorized' as const } },
+      relayr: { ...journal(), published: undefined, abandonable: undefined } as unknown as FundLaunchSession['relayr'] }
+    expect(() => saveLaunch(unpublished)).toThrow()
+    expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()
+  })
+})
+
+describe('what a relayed launch chain may read as the finalized chain moves on', () => {
+  const statusOf = (phase: string, hash: Hex = '0x' + 'ab'.repeat(32) as Hex) => ({
+    ready: { phase: 'ready' }, authorized: { phase: 'authorized' }, unresolved: { phase: 'unresolved' }, expired: { phase: 'expired' },
+    reverted: { phase: 'reverted', hash }, confirmed: { phase: 'confirmed', hash, projectId: '12' },
+  } as Record<string, FundLaunchSession['statuses'][number]>)[phase]
+  const relayed = (phase: string): FundLaunchSession => ({
+    ...session(), transport: 'relayr', statuses: { 8453: statusOf(phase), 10: { phase: 'authorized' } },
+  })
+  /** Saves a launch whose Base chain reads `from`, then moves it to `to`. */
+  const move = (from: string, to: string) => {
+    const saved = saveLaunch(relayed(from))
+    return () => updateLaunchStatus(saved.input.salt, 8453, statusOf(to))
+  }
+
+  it.each([
+    ['authorized', 'unresolved'], ['authorized', 'expired'], ['authorized', 'reverted'],
+    ['unresolved', 'expired'], ['unresolved', 'reverted'], ['unresolved', 'confirmed'],
+    // A request found unused can be found run, or reverted, once the node answers; a revert can be found expired or run.
+    ['expired', 'unresolved'], ['expired', 'reverted'],
+    ['reverted', 'unresolved'], ['reverted', 'expired'],
+  ])('lets a chain read %s be read %s', (from, to) => {
+    expect(move(from, to)).not.toThrow()
+    expect(saved(to)).toBe(true)
+  })
+
+  it.each([
+    ['confirmed', 'unresolved'], ['confirmed', 'expired'], ['confirmed', 'reverted'], ['confirmed', 'authorized'],
+    ['expired', 'confirmed'], ['expired', 'authorized'], ['reverted', 'confirmed'], ['reverted', 'authorized'],
+    ['unresolved', 'authorized'],
+  ])('never lets a chain read %s be read %s', (from, to) => {
+    expect(move(from, to)).toThrow(/changed elsewhere/)
+  })
+
+  function saved(phase: string): boolean {
+    return JSON.parse(localStorage.getItem(FUND_LAUNCH_KEY)!).statuses[8453].phase === phase
+  }
 })

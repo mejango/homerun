@@ -15,7 +15,7 @@ import { FUND_LAUNCH_KEY, canCancelLaunch, cancelUnsubmittedLaunch, discardUnsig
 import { checkLaunchDeployment, fundLaunchFailed, verifyFundLaunch, verifyFailedFundLaunch } from '@/lib/fund-launch-verification'
 import { publishFundProjectMetadata } from '@/lib/publish-fund-project-metadata'
 import { resolveCreateMultisigs, checkCreateMultisigs, verifyCreatedMultisigs, multisigDeploymentRequest, multisigReview } from '@/lib/create-multisig'
-import { runRelayrLaunch } from '@/lib/fund-launch-relayr'
+import { launchRequestsDead, runRelayrLaunch } from '@/lib/fund-launch-relayr'
 import { displayChainName } from '@/lib/chainDisplay'
 import { SUPPORTED_CHAINS } from '@/lib/chains'
 import { plannedNetworks } from '../../web/create-networks.mjs'
@@ -175,11 +175,6 @@ export function FundDeploy({ values, onLockChange, importedRecord, onRecordUsed 
   const [progress, setProgress] = useState('')
   const [runId, setRunId] = useState(0)
   const busyRef = useRef(false)
-  // Leaving this page aborts the relayed run's signal, which ends only the wait for a
-  // Safe to execute its payment; runRelayrLaunch refuses Safe wallets, so that wait is
-  // not reached today.
-  const relayed = useRef<AbortController | null>(null)
-  useEffect(() => () => relayed.current?.abort(), [])
   useEffect(() => {
     try { const saved = localStorage.getItem(FUND_LAUNCH_KEY); if (saved) setSession(decodeLaunchSession(saved)) }
     catch (cause) { setError(message(cause)) }
@@ -222,9 +217,7 @@ export function FundDeploy({ values, onLockChange, importedRecord, onRecordUsed 
         next = persist({ ...next, transport: 'relayr' })
       }
       if (next.transport === 'relayr') {
-        const controller = new AbortController()
-        relayed.current = controller
-        await runRelayrLaunch({ session: next, account: next.input.sender, onStatus: () => setSession(loadLaunchSession()), onProgress: setProgress, signal: controller.signal })
+        await runRelayrLaunch({ session: next, account: next.input.sender, onStatus: () => setSession(loadLaunchSession()), onProgress: setProgress })
         setProgress('Your project is created on every selected chain.')
       } else {
         setProgress('Confirm the deployment in your wallet.')
@@ -333,13 +326,13 @@ export function FundDeploy({ values, onLockChange, importedRecord, onRecordUsed 
         <ul className="fund-launch-progress" aria-label="Deployment progress">{session.input.chainIds.map(id => {
           const phase = session.statuses[id].phase
           const needsWallet = signingChain === id
-          const label = ({ ready: running ? 'Queued' : 'Not started', signing: needsWallet ? 'Awaiting confirmation' : 'Resume to check', authorized: '✓ Signed', pending: session.statuses[id].safe ? 'Awaiting Safe execution' : 'Deploying…', confirmed: '✓ Created', reverted: 'Retry needed', unresolved: 'Checking…', expired: 'New signature needed' })[phase]
+          const label = ({ ready: running ? 'Queued' : 'Not started', signing: needsWallet ? 'Awaiting confirmation' : 'Resume to check', authorized: '✓ Signed', pending: session.statuses[id].safe ? 'Awaiting Safe execution' : 'Deploying…', confirmed: '✓ Created', reverted: 'Retry needed', unresolved: session.relayr?.abandonable === true ? 'May have run' : 'Checking…', expired: 'New signature needed' })[phase]
           return <li key={id} data-action={needsWallet || undefined}><span>{displayChainName(id)}</span><span className="fund-launch-badge" data-state={needsWallet ? 'action' : phase}>{label}</span></li>
         })}</ul>
         {progress && signingChain === undefined && <p role="status">{progress}</p>}
         {!complete && <button type="button" className="create-primary" disabled={running || preparing || !address} onClick={() => void run(session)}>{running ? 'Creating your project…' : 'Continue creation'}</button>}
         {!complete && canCancelLaunch(session) && <button type="button" className="quiet-button" disabled={running || preparing} onClick={() => {
-          void cancelUnsubmittedLaunch(session.input.salt).then(() => { setSession(null); setError(''); setProgress(''); onLockChange?.(null) }).catch(cause => setError(message(cause)))
+          void cancelUnsubmittedLaunch(session.input.salt, launchRequestsDead).then(() => { setSession(null); setError(''); setProgress(''); onLockChange?.(null) }).catch(cause => setError(message(cause)))
         }}>Cancel creation and edit details</button>}
         {complete && <a className="create-primary" href={projectPath(session.input.chainIds[0], session.statuses[session.input.chainIds[0]].projectId!)}>Open project ↗</a>}
       </>}
