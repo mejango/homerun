@@ -55,6 +55,7 @@ const HASH = `0x${'aa'.repeat(32)}` as Hex
 const BLOCK = `0x${'bb'.repeat(32)}` as Hex
 const NOW = 1_900_000_000
 const BUNDLE = '00000000-0000-0000-0000-000000000001'
+const OTHER_BUNDLE = '00000000-0000-0000-0000-000000000002'
 const TESTNETS = [11155111, 11155420, 84532, 421614]
 const MAY_HAVE_RUN = 'This launch\'s earlier signature may already have run. Check the project, then cancel creation to start over.'
 const CHANGED = 'The launch changed since this review. Cancel creation to start over.'
@@ -72,6 +73,11 @@ function paymentFor(chain: number, deadline = NOW + 600): RelayrPayment {
   return { chain, amount: '200', target: RELAYR_PAYMENT_ADDRESS, token: RELAYR_NATIVE_TOKEN,
     payment_deadline: deadline,
     calldata: `${RELAYR_PAYMENT_SELECTOR}${BUNDLE.replaceAll('-', '').padEnd(64, '0')}${deadline.toString(16).padStart(64, '0')}` as Hex }
+}
+
+/** The calldata that pays Relayr for `bundle` until `deadline`. */
+function calldataFor(bundle: string, deadline = NOW + 600): Hex {
+  return `${RELAYR_PAYMENT_SELECTOR}${bundle.replaceAll('-', '').padEnd(64, '0')}${deadline.toString(16).padStart(64, '0')}` as Hex
 }
 
 /** The payment relayrPay reports sent for `payment`, under `hash`. */
@@ -1570,6 +1576,46 @@ describe('paying a reverted launch quote again', () => {
       expect(m.pay.mock.calls[1][0]).toMatchObject({ sent: [] })
       expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'confirmed' }, 10: { phase: 'confirmed' } })
     })
+
+    /** The quote stays unreleased: the launch holds until its requests expire, and nothing is quoted or paid again. */
+    async function stillHeld() {
+      await expect(run()).rejects.toMatchObject({ message: relayrHeldMessage(NOW + 3600), cause: expect.objectContaining({ message: WAITING }) })
+      expect(loadLaunchSession()?.relayr).toMatchObject({ phase: 'payment-reverted' })
+      expect(m.quote).toHaveBeenCalledTimes(1)
+      expect(m.pay).toHaveBeenCalledTimes(1)
+    }
+
+    it('does not release the quote while a saved payment belongs to another bundle, though that payment is proven reverted', async () => {
+      await expired()
+      const foreign = { ...sentFor(paymentFor(8453), HASH), calldata: calldataFor(OTHER_BUNDLE), bundleUuid: OTHER_BUNDLE }
+      clients.get(8453)!.getTransaction.mockImplementation(async ({ hash }) => ({ hash, chainId: 8453, from: ACCOUNT, to: RELAYR_PAYMENT_ADDRESS,
+        input: foreign.calldata, value: 200n, blockHash: BLOCK, blockNumber: 123n } as never))
+      const saved = loadLaunchSession()!
+      saved.relayr!.payments = [foreign]
+      saveLaunchSession(saved)
+      await stillHeld()
+    })
+
+    it.each([
+      ['an object', { 0: paymentFor(8453), length: 1 }],
+      ['a string', 'abc'],
+    ])('does not release the quote when its payment options are %s, not a list', async (_label, options) => {
+      await expired()
+      const saved = loadLaunchSession()!
+      saved.relayr!.quote!.payment_info = options as never
+      saveLaunchSession(saved)
+      await stillHeld()
+    })
+
+    it('never reads Relayr for a bundle ID that is not a Relayr ID, and does not release its quote', async () => {
+      await expired()
+      const saved = loadLaunchSession()!
+      saved.relayr!.quote!.bundle_uuid = 'not-a-uuid'
+      saveLaunchSession(saved)
+      vi.mocked(fetch).mockClear()
+      await stillHeld()
+      expect(fetch).not.toHaveBeenCalled()
+    })
   })
 
   it('pays again with exactly the option its latest payment used, not the first the quote offers', async () => {
@@ -1632,6 +1678,70 @@ describe('paying a reverted launch quote again', () => {
     saveLaunchSession(saved)
     await expect(run()).rejects.toThrow('saved Relayr launch is invalid')
     expect(m.pay).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['earlier', NOW + 599],
+    ['later', NOW + 601],
+  ])('refuses a saved launch whose payment deadline is %s than the one its calldata pays until, before checking anything', async (_label, deadline) => {
+    m.pay.mockImplementationOnce(reverting)
+    await expect(run()).rejects.toThrow(/reverted onchain/)
+    const saved = loadLaunchSession()!
+    saved.relayr!.payments = [{ ...saved.relayr!.payments![0], deadline: String(deadline) }]
+    saveLaunchSession(saved)
+    await expect(run()).rejects.toThrow('saved Relayr launch is invalid')
+    expect(m.pay).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled()
+  })
+
+  describe('a quote that is still payable, read strictly by the SDK', () => {
+    const UNRELEASED = /^This Relayr quote expired after its payment reverted/
+
+    /** A launch whose payment reverted, with its saved quote and payments changed. */
+    async function reverted(change: (relayr: NonNullable<LaunchSession['relayr']>) => void) {
+      m.pay.mockImplementationOnce(reverting)
+      await expect(run()).rejects.toThrow(/reverted onchain/)
+      const saved = loadLaunchSession()!
+      change(saved.relayr!)
+      saveLaunchSession(saved)
+    }
+    const heldOpen = () => ({ message: relayrHeldMessage(NOW + 3600), cause: expect.objectContaining({ message: expect.stringMatching(UNRELEASED) }) })
+
+    it.each([
+      ['padded', '200 '],
+      ['signed', '+200'],
+      ['padded on the left', ' 200'],
+    ])('never pays again with an option whose amount is %s, not a number', async (_label, amount) => {
+      await reverted(relayr => { relayr.quote!.payment_info = [{ ...paymentFor(8453), amount }, paymentFor(1)] })
+      await expect(run()).rejects.toThrow('This Relayr quote cannot be paid again from its saved record')
+      expect(m.pay).toHaveBeenCalledTimes(1)
+      expect(m.funding).toHaveBeenCalledTimes(1)
+      expect(loadLaunchSession()?.relayr).toMatchObject({ phase: 'payment-reverted', paymentChainId: 8453 })
+    })
+
+    it('never pays again with a later twin of an option whose amount is not a number', async () => {
+      await reverted(relayr => { relayr.quote!.payment_info = [{ ...paymentFor(8453), amount: '200 ' }, paymentFor(8453), paymentFor(1)] })
+      await expect(run()).rejects.toThrow('This Relayr quote cannot be paid again from its saved record')
+      expect(m.pay).toHaveBeenCalledTimes(1)
+    })
+
+    it.each([
+      ['an object', { 0: paymentFor(8453), length: 1 }],
+      ['a string', '200'],
+    ])('never pays again from payment options that are %s, not a list', async (_label, options) => {
+      await reverted(relayr => { relayr.quote!.payment_info = options as never })
+      await expect(run()).rejects.toThrow('This Relayr quote cannot be paid again from its saved record')
+      expect(m.pay).toHaveBeenCalledTimes(1)
+    })
+
+    it('holds the quote, though it is open, while a saved payment belongs to another bundle', async () => {
+      await reverted(relayr => { relayr.payments = [{ ...relayr.payments![0], bundleUuid: OTHER_BUNDLE }] })
+      relayrReports()
+      await expect(run()).rejects.toMatchObject(heldOpen())
+      expect(m.pay).toHaveBeenCalledTimes(1)
+      expect(m.quote).toHaveBeenCalledTimes(1)
+      expect(loadLaunchSession()?.relayr).toMatchObject({ phase: 'payment-reverted' })
+    })
   })
 })
 
