@@ -87,6 +87,8 @@ type SignedLaunch = {
   entry: RelayrEntry
   nonce: string
   deadline: number
+  /** Set when the launch replaced this signature before asking Relayr for a quote, so nothing of it was ever posted. */
+  unposted?: true
 }
 
 /** Exact signatures and quote bindings survive refreshes, including the wallet's no-hash send window. */
@@ -151,11 +153,21 @@ function requestOf(signed: SignedLaunch, plans: LaunchSession['input']['multisig
 }
 
 /**
- * What the launch has published to Relayr: the requests it quoted, and every one it replaced. A request signed and
- * not yet quoted has left this browser's record only.
+ * What the launch may have published to Relayr: the requests it quoted, and every one it replaced except those the
+ * journal proves were never posted. A request signed and not yet quoted has left this browser's record only.
  */
 function publishedSigned(journal: LaunchRelayrJournal): SignedLaunch[] {
-  return [...(journal.phase === 'signing' ? [] : journal.signed), ...(journal.superseded ?? [])]
+  return [...(journal.phase === 'signing' ? [] : journal.signed), ...(journal.superseded ?? []).filter(item => item.unposted !== true)]
+}
+
+/**
+ * The superseded list once `previous`'s signatures join it. `requestQuote` leaves the `signing` phase and saves before
+ * it posts anything, so a journal still signing never posted its signatures; any other phase may have, even when its
+ * response was lost.
+ */
+function supersede(previous: LaunchRelayrJournal): SignedLaunch[] {
+  return [...(previous.superseded ?? []),
+    ...previous.signed.map(item => previous.phase === 'signing' ? { ...item, unposted: true as const } : item)]
 }
 
 /**
@@ -403,7 +415,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       journal = { account, phase: 'signing', signed: [], records: [],
         published: true, abandonable: true,
         retryNonces: { ...previous.retryNonces, ...Object.fromEntries(previous.signed.map(item => [item.chainId, item.nonce])) },
-        superseded: [...(previous.superseded ?? []), ...previous.signed] }
+        superseded: supersede(previous) }
       current.relayr = journal
       persist()
     }
@@ -517,8 +529,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         account, phase: 'signing', signed: [], records: [],
         published: true,
         ...(next.kind === 'refresh' ? {} : { abandonable: true }),
-        superseded: [...(original.superseded ?? []), ...original.signed]
-          .filter(item => current.statuses[item.chainId]?.phase !== 'confirmed'),
+        superseded: supersede(original).filter(item => current.statuses[item.chainId]?.phase !== 'confirmed'),
         retryNonces: Object.fromEntries(original.signed.filter(item => current.statuses[item.chainId]?.phase !== 'confirmed')
           .map(item => [item.chainId, item.nonce])),
       }
@@ -685,7 +696,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
           retryNonces[signed.chainId] = signed.nonce
         }
         current.relayr = { account, phase: 'signing', signed: [], records: [],
-          retryNonces, ...(journal.published ? { published: true, superseded: [...(journal.superseded ?? []), ...journal.signed] } : {}) }
+          retryNonces, ...(journal.published ? { published: true, superseded: supersede(journal) } : {}) }
         persist()
       }
       throw error

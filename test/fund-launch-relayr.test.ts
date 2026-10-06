@@ -1171,6 +1171,96 @@ describe('relayed launch execution and recovery', () => {
       expect(clients.get(1)!.getTransaction).not.toHaveBeenCalled()
     })
 
+    describe('signatures the launch holds that were never posted', () => {
+      /** The wallet declines to sign `chainId`, as a user closing its prompt does. */
+      const declining = (chainId: number) => {
+        const prepare = m.forward.getMockImplementation()!
+        m.forward.mockImplementation(async (call, account, nonce) => {
+          const prepared = await prepare(call, account, nonce)
+          return call.chainId === chainId
+            ? { ...prepared, sign: async () => { throw Object.assign(new Error('User rejected the request.'), { code: 4001 }) } }
+            : prepared
+        })
+      }
+      const DECLINED = 'User rejected the request.'
+
+      it('cancels a launch whose old requests are all dead after the wallet declined its new signatures twice', async () => {
+        await publishedUnpaid()
+        pastDeadlines()
+        await expect(run()).rejects.toThrow('expired unused')
+        // Continue signs Ethereum again and the wallet declines Optimism; then again. Nothing is posted.
+        declining(10)
+        await expect(run()).rejects.toThrow(DECLINED)
+        expect(await launchRequestsDead(loadLaunchSession()!)).toBe(true)
+        await expect(run()).rejects.toThrow(DECLINED)
+        const declined = loadLaunchSession()!
+        expect(declined.relayr?.superseded).toHaveLength(3)
+        expect(declined.relayr?.superseded?.filter(item => item.unposted)).toHaveLength(1)
+        expect(canCancelLaunch(declined)).toBe(true)
+        expect(await launchRequestsDead(declined)).toBe(true)
+        expect(m.quote).toHaveBeenCalledTimes(1)
+        await cancelUnsubmittedLaunch(declined.input.salt, launchRequestsDead)
+        expect(loadLaunchSession()).toBeNull()
+      })
+
+      it('counts a signature saved before the mark existed as never posted once its journal had not asked for a quote', async () => {
+        await publishedUnpaid()
+        pastDeadlines()
+        await expect(run()).rejects.toThrow('expired unused')
+        declining(10)
+        await expect(run()).rejects.toThrow(DECLINED)
+        // The journal as an earlier version saved it: no mark on the signature it holds.
+        const saved = loadLaunchSession()!
+        for (const item of saved.relayr!.signed) delete (item as { unposted?: true }).unposted
+        saveLaunchSession(saved)
+        await expect(run()).rejects.toThrow(DECLINED)
+        expect(await launchRequestsDead(loadLaunchSession()!)).toBe(true)
+      })
+
+      it('keeps requests a quote request may have posted live, whether or not its response came back', async () => {
+        await publishedUnpaid()
+        pastDeadlines()
+        await expect(run()).rejects.toThrow('expired unused')
+        // The quote request for the new signatures goes out and its response is lost, so Relayr may hold them.
+        m.quote.mockRejectedValueOnce(new Error('network down'))
+        await expect(run()).rejects.toThrow('network down')
+        expect(loadLaunchSession()?.relayr?.phase).toBe('quoting')
+        // The creation fee changes, so the launch signs again at the same nonces; the lost request is still live.
+        m.fee.mockResolvedValue(18n)
+        await expect(run()).rejects.toThrow('creation fee changed')
+        const refreshed = loadLaunchSession()!
+        expect(refreshed.relayr).toMatchObject({ phase: 'signing', signed: [], retryNonces: { 1: '0', 10: '0' } })
+        expect(refreshed.relayr?.superseded).toHaveLength(4)
+        expect(refreshed.relayr?.superseded?.some(item => item.unposted)).toBe(false)
+        expect(await launchRequestsDead(refreshed)).toBe(false)
+        // A record that claims otherwise frees nothing.
+        refreshed.relayr!.abandonable = true
+        saveLaunchSession(refreshed)
+        await expect(cancelUnsubmittedLaunch(refreshed.input.salt, launchRequestsDead)).rejects.toThrow('can still run')
+      })
+
+      it('cancels a launch whose new signatures were replaced before any quote was requested for them', async () => {
+        await publishedUnpaid()
+        pastDeadlines()
+        await expect(run()).rejects.toThrow('expired unused')
+        // Continue signs both chains again, and the creation fee changes before their quote is requested. The fee is read
+        // twice for the recheck and twice to sign, then differs when the signatures are checked.
+        m.fee.mockResolvedValueOnce(17n).mockResolvedValueOnce(17n).mockResolvedValueOnce(17n).mockResolvedValueOnce(17n).mockResolvedValue(18n)
+        await expect(run()).rejects.toThrow('creation fee changed')
+        expect(m.quote).toHaveBeenCalledTimes(1)
+        const replaced = loadLaunchSession()!
+        expect(replaced.relayr).toMatchObject({ phase: 'signing', signed: [] })
+        expect(replaced.relayr?.superseded).toHaveLength(4)
+        expect(replaced.relayr?.superseded?.filter(item => item.unposted)).toHaveLength(2)
+        expect(await launchRequestsDead(replaced)).toBe(true)
+        // Every request it posted is dead, so the next Continue offers cancelling, as it did before.
+        await expect(run()).rejects.toThrow('expired unused')
+        expect(canCancelLaunch(loadLaunchSession()!)).toBe(true)
+        await cancelUnsubmittedLaunch(replaced.input.salt, launchRequestsDead)
+        expect(loadLaunchSession()).toBeNull()
+      })
+    })
+
     describe('cancelling a published launch', () => {
       it('releases a launch settled as ran, and keeps its record', async () => {
         await paidUnproven()
