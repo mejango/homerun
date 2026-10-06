@@ -173,3 +173,41 @@ describe('cancelling a relayed launch', () => {
     expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()
   })
 })
+
+describe('what a relayed launch chain may read as the finalized chain moves on', () => {
+  const statusOf = (phase: string, hash: Hex = '0x' + 'ab'.repeat(32) as Hex) => ({
+    ready: { phase: 'ready' }, authorized: { phase: 'authorized' }, unresolved: { phase: 'unresolved' }, expired: { phase: 'expired' },
+    reverted: { phase: 'reverted', hash }, confirmed: { phase: 'confirmed', hash, projectId: '12' },
+  } as Record<string, FundLaunchSession['statuses'][number]>)[phase]
+  const relayed = (phase: string): FundLaunchSession => ({
+    ...session(), transport: 'relayr', statuses: { 8453: statusOf(phase), 10: { phase: 'authorized' } },
+  })
+  /** Saves a launch whose Base chain reads `from`, then moves it to `to`. */
+  const move = (from: string, to: string) => {
+    const saved = saveLaunch(relayed(from))
+    return () => updateLaunchStatus(saved.input.salt, 8453, statusOf(to))
+  }
+
+  it.each([
+    ['authorized', 'unresolved'], ['authorized', 'expired'], ['authorized', 'reverted'],
+    ['unresolved', 'expired'], ['unresolved', 'reverted'], ['unresolved', 'confirmed'],
+    // A request found unused can be found run, or reverted, once the node answers; a revert can be found expired or run.
+    ['expired', 'unresolved'], ['expired', 'reverted'],
+    ['reverted', 'unresolved'], ['reverted', 'expired'],
+  ])('lets a chain read %s be read %s', (from, to) => {
+    expect(move(from, to)).not.toThrow()
+    expect(saved(to)).toBe(true)
+  })
+
+  it.each([
+    ['confirmed', 'unresolved'], ['confirmed', 'expired'], ['confirmed', 'reverted'], ['confirmed', 'authorized'],
+    ['expired', 'confirmed'], ['expired', 'authorized'], ['reverted', 'confirmed'], ['reverted', 'authorized'],
+    ['unresolved', 'authorized'],
+  ])('never lets a chain read %s be read %s', (from, to) => {
+    expect(move(from, to)).toThrow(/changed elsewhere/)
+  })
+
+  function saved(phase: string): boolean {
+    return JSON.parse(localStorage.getItem(FUND_LAUNCH_KEY)!).statuses[8453].phase === phase
+  }
+})

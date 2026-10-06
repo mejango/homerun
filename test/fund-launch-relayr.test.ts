@@ -1058,6 +1058,105 @@ describe('relayed launch execution and recovery', () => {
       expect(m.forward).toHaveBeenCalledTimes(2)
     })
 
+    describe('the guards its sign-again paths rest on', () => {
+      /**
+       * The forwarder's latest nonce has moved, which a run of the old request would do, and the finalized block does
+       * not show it yet: the old request still reads live and unused there.
+       */
+      const latestNonceMoved = () => {
+        for (const client of clients.values()) client.readContract.mockImplementation(async ({ functionName, blockNumber }) =>
+          functionName === 'nonces' ? (blockNumber === undefined ? 1n : 0n) : true)
+      }
+      const EARLIER = /earlier launch authorization may have executed/
+
+      it.each([
+        ['a creation fee that changed while the old requests can still run', async () => {
+          await publishedUnpaid()
+          m.fee.mockResolvedValue(18n)
+          await expect(run()).rejects.toThrow('creation fee changed')
+          expect(loadLaunchSession()?.relayr).toMatchObject({ phase: 'signing', signed: [], retryNonces: { 1: '0', 10: '0' } })
+          return 0
+        }],
+        ['every request that expired unused', async () => {
+          await publishedUnpaid()
+          pastDeadlines()
+          await expect(run()).rejects.toThrow('expired unused')
+          return 0
+        }],
+        ['a paid bundle whose requests expired unused', async () => {
+          await paidUnproven()
+          pastDeadlines()
+          return 1
+        }],
+      ])('never signs at a later nonce than the one it saved, after %s', async (_name, setup) => {
+        /** How many payments were sent before the old requests are found. */
+        const payments = await setup()
+        latestNonceMoved()
+        await expect(run()).rejects.toThrow(EARLIER)
+        expect(m.forward).toHaveBeenCalledTimes(2)
+        expect(m.pay).toHaveBeenCalledTimes(payments)
+        expect(m.quote).toHaveBeenCalledTimes(1)
+      })
+
+      it('no longer offers cancelling a launch that was signed again and quoted again, and goes on to pay it', async () => {
+        await publishedUnpaid()
+        pastDeadlines()
+        await expect(run()).rejects.toThrow('expired unused')
+        m.funding.mockRejectedValueOnce(new Error('Funding selection cancelled'))
+        await expect(run()).rejects.toThrow('cancelled')
+        expect(loadLaunchSession()?.relayr?.abandonable).not.toBe(true)
+        expect(canCancelLaunch(loadLaunchSession()!)).toBe(false)
+        await run()
+        // The new signatures stay: a quote requested for them is paid, not signed over again.
+        expect(m.forward).toHaveBeenCalledTimes(4)
+        expect(m.quote).toHaveBeenCalledTimes(2)
+        expect(m.pay).toHaveBeenCalledTimes(1)
+      })
+
+      it('signs again only the chain whose launch reverted when the other chain was created and its nonce moved', async () => {
+        const pay = m.pay.getMockImplementation()!
+        m.pay.mockImplementationOnce(async (...args: unknown[]) => {
+          // Ethereum's launch ran, which moved its forwarder nonce; Optimism's reverted.
+          clients.get(1)!.readContract.mockImplementation(async ({ functionName }) => functionName === 'nonces' ? 1n : true)
+          return pay(...args)
+        })
+        failed.add(10)
+        await expect(run()).rejects.toThrow('unfinished')
+        expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'confirmed' }, 10: { phase: 'reverted' } })
+        expect(loadLaunchSession()?.relayr).toMatchObject({ phase: 'signing', signed: [], retryNonces: { 10: '0' } })
+      })
+
+      it.each([
+        ['refuses its calls', (client: ReturnType<typeof makeClient>) => client.estimateGas.mockRejectedValue(new Error('launch prerequisites changed'))],
+        ['cannot be answered', (client: ReturnType<typeof makeClient>) => client.estimateGas.mockRejectedValue(new HttpRequestError({ url: 'https://rpc.example', body: {}, details: 'fetch failed' }))],
+      ])('leaves a payment the wallet may have sent alone while the launch\'s recheck %s, until the payment\'s own deadline has passed', async (_name, failRecheck) => {
+        m.pay.mockImplementation(async ({ reverify: verify, onSending: sending }) => {
+          await verify(); sending(); throw new Error('no hash returned')
+        })
+        await expect(run()).rejects.toThrow('no hash returned')
+        m.poll.mockImplementation(async () => { throw new Error('provider unavailable') })
+        // The destinations' requests expired unused, but the payment chain's finalized block is before its deadline.
+        for (const chainId of [1, 10]) clients.get(chainId)!.getBlock.mockResolvedValue({ number: 123n, hash: BLOCK, timestamp: BigInt(NOW + 3601) })
+        failRecheck(clients.get(10)!)
+        await expect(run()).rejects.toThrow('may have sent')
+        expect(canCancelLaunch(loadLaunchSession()!)).toBe(false)
+        expect(loadLaunchSession()?.relayr?.phase).toBe('payment-signing')
+        expect(m.forward).toHaveBeenCalledTimes(2)
+        expect(m.pay).toHaveBeenCalledTimes(1)
+      })
+
+      it('reads a chain that was expired as unresolved when the node then cannot answer', async () => {
+        await paidUnproven()
+        pastDeadlines()
+        clients.get(10)!.estimateGas.mockRejectedValue(new HttpRequestError({ url: 'https://rpc.example', body: {}, details: 'fetch failed' }))
+        await expect(run()).rejects.toThrow(UNCHECKED_PAID)
+        expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'expired' }, 10: { phase: 'expired' } })
+        for (const client of clients.values()) client.getBlock.mockRejectedValue(new Error('node unavailable'))
+        await expect(run()).rejects.toThrow('still unresolved')
+        expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'unresolved' }, 10: { phase: 'unresolved' } })
+      })
+    })
+
     describe('cancelling a published launch', () => {
       it('releases a launch settled as ran, and keeps its record', async () => {
         await paidUnproven()
