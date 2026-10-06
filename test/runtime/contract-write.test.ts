@@ -32,6 +32,10 @@ describe('Homerun reviewed writes', () => {
     expect(write.write).not.toHaveBeenCalled()
   })
 
+  it('says how to send while viewing as another account, in two plain sentences', () => {
+    expect(VIEW_AS_WRITE_BLOCKED).toBe("You're viewing the site as another account. Exit View as to transact.")
+  })
+
   it('says View as first when another account is connected too', async () => {
     setViewAs(ALICE)
     const write = options()
