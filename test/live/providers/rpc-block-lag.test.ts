@@ -1,15 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { base } from 'viem/chains'
 import { createPublicClient, erc20Abi } from 'viem'
-import { jbCenterRpcTransport, retryWhileBehindHead } from '@/lib/jbcenter-rpc'
+import { jbCenterRpcTransport } from '@/lib/jbcenter-rpc'
 
 /** JB Center load balances reads across RPC nodes. A read pinned to a block one
  * node has already imported can land on a sibling that has not, and the sibling
- * answers JSON-RPC -32001 — which viem renders as "Requested resource not
- * found." and, before this retry, killed a payment between its approval and its
- * swap. */
-const blockAhead = () =>
-  Object.assign(new Error('RPC request failed'), { code: -32001 })
+ * answers JSON-RPC -32001, which viem renders as "Requested resource not
+ * found." The SDK's provider asks again, and its tests cover how; these cases
+ * check that the transport this site reads through waits it out, and carries
+ * the read's signal to Center. */
 
 const envelope = (id: unknown, body: Record<string, unknown>) =>
   new Response(JSON.stringify({ jsonrpc: '2.0', id, ...body }), {
@@ -22,41 +21,6 @@ afterEach(() => {
 })
 
 describe('RPC block lag', () => {
-  it('retries a read pinned to a block the answering node has not imported yet', async () => {
-    const request = vi
-      .fn()
-      .mockRejectedValueOnce(blockAhead())
-      .mockRejectedValueOnce(blockAhead())
-      .mockResolvedValue('0x2a')
-
-    await expect(
-      retryWhileBehindHead({ request }, [0, 0, 0]).request({
-        method: 'eth_call',
-      }),
-    ).resolves.toBe('0x2a')
-    expect(request).toHaveBeenCalledTimes(3)
-  })
-
-  it('rethrows once the lag retries are spent', async () => {
-    const request = vi.fn().mockRejectedValue(blockAhead())
-
-    await expect(
-      retryWhileBehindHead({ request }, [0, 0]).request({ method: 'eth_call' }),
-    ).rejects.toMatchObject({ code: -32001 })
-    expect(request).toHaveBeenCalledTimes(3)
-  })
-
-  it('never retries a revert or any other RPC error', async () => {
-    const request = vi
-      .fn()
-      .mockRejectedValue(Object.assign(new Error('reverted'), { code: 3 }))
-
-    await expect(
-      retryWhileBehindHead({ request }, [0, 0]).request({ method: 'eth_call' }),
-    ).rejects.toMatchObject({ code: 3 })
-    expect(request).toHaveBeenCalledOnce()
-  })
-
   it('carries a pinned read through a lagging backend on the wired transport', async () => {
     let calls = 0
     const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
@@ -112,5 +76,33 @@ describe('RPC block lag', () => {
 
     expect(asked).toEqual([0, 250, 750, 1_750, 3_750, 5_750])
     expect(await balance).toMatchObject({ code: -32001 })
+  })
+
+  it("sends the read's signal to Center, so a read that is dropped stops its request", async () => {
+    const fetchMock = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
+        }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const client = createPublicClient({
+      chain: base,
+      transport: jbCenterRpcTransport(base.id),
+    })
+    const page = new AbortController()
+
+    const balance = client
+      .request(
+        { method: 'eth_getBalance', params: [`0x${'d'.repeat(40)}`, 'latest'] },
+        { signal: page.signal },
+      )
+      .catch((error: unknown) => error)
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce())
+    const left = new Error('left the page')
+    page.abort(left)
+
+    expect(await balance).toBe(left)
+    expect(fetchMock).toHaveBeenCalledOnce()
   })
 })
