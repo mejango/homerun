@@ -882,6 +882,27 @@ describe('relayed launch execution and recovery', () => {
       expect(m.pay).toHaveBeenCalledTimes(1)
     })
 
+    it('classifies a launch that bundles its Safes with its project call by the forwarder request inside the batch', async () => {
+      storage.clear()
+      const value = session([1])
+      const policy = { owners: [ACCOUNT, TARGET], threshold: 2, saltNonce: value.input.salt, proxyCreationCode: '0x6000' as Hex }
+      const plan: CreateMultisig = { ...policy, role: 'owner', address: predictMultisig(policy) }
+      value.input = { ...value.input, owner: plan.address, operator: plan.address, multisigs: [plan] }
+      saveLaunchSession(value)
+      clients.get(1)!.call.mockResolvedValue({ data: encodeFunctionResult({ abi: CREATE_BATCH_ABI, functionName: 'aggregate3Value',
+        result: [{ success: true, returnData: toHex(BigInt(plan.address), { size: 32 }) }, { success: true, returnData: '0x' }] }) })
+      m.funding.mockRejectedValueOnce(new Error('Funding selection cancelled'))
+      await expect(run(value)).rejects.toThrow('cancelled')
+      expect(entries[0].target).toBe(MULTICALL3)
+      // The batch's forwarder request moved its nonce and its deadline passed: the batch itself names neither.
+      finalizedAt(NOW + 3601)
+      noncesAre(1n)
+      await expect(run()).rejects.toThrow(MAY_HAVE_RUN)
+      expect(canCancelLaunch(loadLaunchSession()!)).toBe(true)
+      expect(await launchRequestsDead(loadLaunchSession()!)).toBe(true)
+      expect(m.pay).not.toHaveBeenCalled()
+    })
+
     it('holds a paid launch while the node cannot answer which of its requests ran', async () => {
       await paidUnproven()
       for (const client of clients.values()) client.getBlock.mockRejectedValue(new Error('node unavailable'))
