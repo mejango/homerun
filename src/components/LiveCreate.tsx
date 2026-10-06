@@ -175,11 +175,6 @@ export function FundDeploy({ values, onLockChange, importedRecord, onRecordUsed 
   const [progress, setProgress] = useState('')
   const [runId, setRunId] = useState(0)
   const busyRef = useRef(false)
-  // Leaving this page aborts the relayed run's signal, which ends only the wait for a
-  // Safe to execute its payment; runRelayrLaunch refuses Safe wallets, so that wait is
-  // not reached today.
-  const relayed = useRef<AbortController | null>(null)
-  useEffect(() => () => relayed.current?.abort(), [])
   useEffect(() => {
     try { const saved = localStorage.getItem(FUND_LAUNCH_KEY); if (saved) setSession(decodeLaunchSession(saved)) }
     catch (cause) { setError(message(cause)) }
@@ -222,9 +217,7 @@ export function FundDeploy({ values, onLockChange, importedRecord, onRecordUsed 
         next = persist({ ...next, transport: 'relayr' })
       }
       if (next.transport === 'relayr') {
-        const controller = new AbortController()
-        relayed.current = controller
-        await runRelayrLaunch({ session: next, account: next.input.sender, onStatus: () => setSession(loadLaunchSession()), onProgress: setProgress, signal: controller.signal })
+        await runRelayrLaunch({ session: next, account: next.input.sender, onStatus: () => setSession(loadLaunchSession()), onProgress: setProgress })
         setProgress('Your project is created on every selected chain.')
       } else {
         setProgress('Confirm the deployment in your wallet.')

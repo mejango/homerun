@@ -133,25 +133,6 @@ describe('Create submission recovery', () => {
     })
   })
 
-  it('ends a relayed launch when the create page is left', async () => {
-    localStorage.removeItem(FUND_LAUNCH_KEY)
-    saveLaunch({ version: 1, name: 'Test asset', transport: 'relayr', input: { owner, sender: owner, chainIds: [1, 10], projectUri: 'ipfs://bafkreimetadata', tokenName: 'House FUND', ticker: 'HOUSE', salt, mustStartAtOrAfter: 1000, creationFees: { 1: 0n, 10: 0n } }, statuses: { 1: { phase: 'ready' }, 10: { phase: 'ready' } } })
-    let signal: AbortSignal | undefined
-    runtime.relayr.mockImplementation(({ signal: given }: { signal?: AbortSignal }) => {
-      signal = given
-      return new Promise(() => {})
-    })
-    await act(async () => root.render(<FundDeploy values={{} as CreateValues} />))
-    const resume = [...host.querySelectorAll('button')].find(button => button.textContent === 'Continue creation')!
-    await act(async () => resume.click())
-    expect(runtime.relayr).toHaveBeenCalledOnce()
-    expect(signal?.aborted).toBe(false)
-
-    await act(async () => root.unmount())
-    expect(signal?.aborted).toBe(true)
-    root = createRoot(host)
-  })
-
   it('cancelling review leaves the saved launch ready without claiming a wallet submission', async () => {
     runtime.send.mockImplementation(async () => { expect(saved().statuses[8453].phase).toBe('ready'); return null })
     await launch()

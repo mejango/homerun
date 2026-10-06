@@ -24,26 +24,28 @@ import { wagmiConfig } from '@/providers/Providers'
 import { buildFundLaunch, type FundTransaction } from '@/lib/fund-contracts'
 import { verifyFundLaunch } from '@/lib/fund-launch-verification'
 import { loadLaunchSession, saveLaunch as saveLaunchSession, type LaunchStatus as LaunchChainStatus, type FundLaunchSession as LaunchSession } from '@/lib/fund-launch-session'
-import { gasWithHeadroom } from '@bananapus/nana-sdk-core/review'
+import { gasWithHeadroom, isDefiniteWalletRejection } from '@bananapus/nana-sdk-core/review'
 import {
+  TRUSTED_FORWARDER_ABI,
   relayrDeadlinePassed,
+  relayrPaymentChains,
+  relayrPaymentDetails,
+  relayrPaymentOptions,
   relayrRequestStates,
   relayrRequestsDead,
   relayrRequestsVerdict,
   relayrSessionOutcome,
   relayrSignedRequests,
+  relayrSupportsChains,
   type RelayrSessionOutcome,
 } from '@bananapus/nana-sdk-core/review/relayr'
 import {
   prepareForwardedTx,
-  TRUSTED_FORWARDER_ABI,
   relayrChainClient,
   relayrDestinationHash,
   relayrDestinationRecords,
   relayrHeldMessage,
   relayrPay,
-  relayrPaymentDetails,
-  relayrPaymentOptions,
   relayrPaymentLabel,
   relayrPoll,
   relayrPostBundle,
@@ -51,12 +53,12 @@ import {
   type RelayrQuote,
   type RelayrTransactionRecord,
 } from '@/lib/relayr'
+import { relayrSentPaymentsSnapshot, type RelayrSentPayment } from '@/lib/relayr-payments'
 import { isSafeConnection } from '@/lib/safe-connector'
 import { assertNoViewAs } from '@/lib/viewAs'
 import { publicClient } from '@/lib/wallet-core'
 import { displayChainName as chainName } from '@/lib/chainDisplay'
 import { withForwarderAuthorizationLock } from '@/lib/forwarder-authorization'
-import { relayrPaymentChains, relayrSupportsChains } from '@/lib/relayr-chains'
 import { requireFundingChainSelection, requireTransactionReview } from '@/lib/transaction-review'
 
 const activeLaunches = new Set<string>()
@@ -87,6 +89,8 @@ export type LaunchRelayrJournal = {
   retryNonces?: Record<number, string>
   quote?: RelayrQuote
   paymentHash?: Hex
+  /** Every payment sent for the quote, as relayrPaymentDetails authenticated it, under the hash it was mined. */
+  payments?: RelayrSentPayment[]
   paymentDeadline?: string
   records: RelayrTransactionRecord[]
   published?: true
@@ -167,30 +171,15 @@ export async function launchRequestsDead(session: LaunchSession): Promise<boolea
   return relayrRequestsDead(relayrChainClient, requests)
 }
 
-function walletRejected(error: unknown): boolean {
-  let current = error
-  for (let depth = 0; depth < 8 && current && typeof current === 'object'; depth++) {
-    const item = current as { code?: unknown; name?: unknown; cause?: unknown }
-    if (item.code === 4001 || item.name === 'UserRejectedRequestError') return true
-    current = item.cause
-  }
-  return false
-}
-
 /**
  * One authorization per destination, one reviewed payment on the user's selected chain.
  * The launch journal owns recovery: provider labels never establish creation or permit a new payment.
  */
-export async function runRelayrLaunch({ session, account, onStatus, onProgress, signal }: {
+export async function runRelayrLaunch({ session, account, onStatus, onProgress }: {
   session: LaunchSession
   account: Address
   onStatus: (chainId: number, status: LaunchChainStatus & { error?: string }) => void
   onProgress: (message: string) => void
-  /**
-   * The page's. When it aborts, the payment's wait for a Safe to execute it ends and the payment stays sent. This
-   * launch refuses Safe wallets, so that wait is not reached today.
-   */
-  signal?: AbortSignal
 }): Promise<void> {
   assertNoViewAs()
   // Signing moves the wallet to each destination, so the fee picker prefers the chain it started on.
@@ -255,7 +244,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress, 
         journal.signed.length > current.input.chainIds.length ||
         new Set(journal.signed.map(item => item.chainId)).size !== journal.signed.length ||
         journal.signed.some(item => !current.input.chainIds.includes(item.chainId)) ||
-        !['signing', 'quoting', 'quoted', 'payment-signing', 'submitted', 'executing'].includes(journal.phase))) {
+        !['signing', 'quoting', 'quoted', 'payment-signing', 'submitted', 'executing'].includes(journal.phase) ||
+        (journal.payments !== undefined && !relayrSentPaymentsSnapshot(journal.payments)))) {
       throw new Error('The saved Relayr launch is invalid. Keep its original transaction records before continuing.')
     }
     if (journal && ['payment-signing', 'submitted', 'executing'].includes(journal.phase)) {
@@ -679,8 +669,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress, 
     requireQuoteBindings()
     // The chooser has no time limit. An expired offer must never reach the
     // wallet; retry refreshes it and asks for another explicit funding choice.
-    const details = relayrPaymentDetails(payment, journal.quote!.bundle_uuid)
-    if (details.chainId !== paymentChainId || !relayrPaymentChains(destinations).includes(details.chainId)) {
+    const details = relayrPaymentDetails(payment, { bundleUuid: journal.quote!.bundle_uuid, destinationChainIds: destinations })
+    if (details.chainId !== paymentChainId) {
       throw new Error('The launch funding option changed. Review the quote again.')
     }
     journal.paymentChainId = paymentChainId
@@ -689,21 +679,23 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress, 
     persist()
     onProgress(`Approve one payment on ${chainName(paymentChainId)} to launch on every selected chain.`)
     try {
-      journal.paymentHash = await relayrPay(payment, account, journal.quote!.bundle_uuid, destinations, {
-        onSubmitted: hash => {
-          journal!.paymentHash = hash
-          journal!.phase = 'submitted'
-          persist()
-        },
+      ;({ hash: journal.paymentHash } = await relayrPay({
+        payment, account, bundleUuid: journal.quote!.bundle_uuid, destinationChainIds: destinations,
+        sent: journal.payments ?? [],
         reverify: verifySigned,
         onSending: () => {
           journal!.phase = 'payment-signing'
           persist() // reload during the wallet prompt cannot silently pay again
         },
-        signal,
-      })
+        onSent: payments => {
+          journal!.payments = payments
+          journal!.paymentHash = payments[payments.length - 1].hash
+          journal!.phase = 'submitted'
+          persist()
+        },
+      }))
     } catch (error) {
-      if (journal.phase === 'payment-signing' && !journal.paymentHash && walletRejected(error)) {
+      if (journal.phase === 'payment-signing' && !journal.paymentHash && isDefiniteWalletRejection(error)) {
         journal.phase = 'quoted'
         delete journal.paymentChainId
         delete journal.paymentDeadline

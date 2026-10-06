@@ -3,7 +3,8 @@ vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fix
 
 import { HttpRequestError, encodeFunctionResult, toHex, encodeFunctionData, type Address, type Hex } from 'viem'
 import { erc2771ForwarderAbi, JBCoreContracts, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
-import type { RelayrEntry, RelayrPayment, RelayrQuote, RelayrTransactionRecord } from '@/lib/relayr'
+import { RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_ADDRESS, RELAYR_PAYMENT_SELECTOR, type RelayrPayment } from '@bananapus/nana-sdk-core/review/relayr'
+import type { RelayrEntry, RelayrQuote, RelayrTransactionRecord } from '@/lib/relayr'
 
 const m = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111' as Address,
@@ -35,8 +36,6 @@ vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original<ty
 vi.mock('@/lib/fund-launch-verification', () => ({ verifyFundLaunch: m.projectId }))
 vi.mock('@/lib/relayr', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/relayr')>()),
-  TRUSTED_FORWARDER_ABI: [{ type: 'function', name: 'isTrustedForwarder', stateMutability: 'view',
-    inputs: [{ name: 'forwarder', type: 'address' }], outputs: [{ type: 'bool' }] }],
   prepareForwardedTx: m.forward, relayrPostBundle: m.quote, relayrPay: m.pay,
   relayrPoll: m.poll,
   readRelayrPendingSessionsForAuthorization: () => {
@@ -45,7 +44,7 @@ vi.mock('@/lib/relayr', async importOriginal => ({
   },
 }))
 
-import { relayrDestinationHash, relayrHeldMessage, relayrPaymentDetails, relayrPaymentLabel, RelayrPaymentSubmittedError, RELAYR_PAYMENT_ADDRESS, RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_SELECTOR } from '@/lib/relayr'
+import { relayrDestinationHash, relayrHeldMessage, relayrPaymentLabel } from '@/lib/relayr'
 import { predictMultisig, MULTICALL3, CREATE_BATCH_ABI, unbundleMultisigLaunch, type CreateMultisig } from '@/lib/create-multisig'
 import { canRelayrLaunch, launchRequestsDead, runRelayrLaunch } from '@/lib/fund-launch-relayr'
 import { FUND_LAUNCH_KEY, canCancelLaunch, cancelUnsubmittedLaunch, loadLaunchSession, saveLaunch as saveLaunchSession, type FundLaunchSession as LaunchSession } from '@/lib/fund-launch-session'
@@ -72,6 +71,12 @@ function paymentFor(chain: number, deadline = NOW + 600): RelayrPayment {
   return { chain, amount: '200', target: RELAYR_PAYMENT_ADDRESS, token: RELAYR_NATIVE_TOKEN,
     payment_deadline: deadline,
     calldata: `${RELAYR_PAYMENT_SELECTOR}${BUNDLE.replaceAll('-', '').padEnd(64, '0')}${deadline.toString(16).padStart(64, '0')}` as Hex }
+}
+
+/** The payment relayrPay reports sent for `payment`, under `hash`. */
+function sentFor(payment: RelayrPayment, hash: Hex) {
+  return { chainId: payment.chain, target: payment.target, calldata: payment.calldata, amount: payment.amount,
+    deadline: String(payment.payment_deadline), bundleUuid: BUNDLE, hash }
 }
 
 function hashFor(chainId: number): Hex { return `0x${chainId.toString(16).padStart(64, '0')}` }
@@ -160,13 +165,14 @@ beforeEach(() => {
     records = signed.map((entry, i) => recordFor(entry, i, { state: 'Confirmed', data: { hash: hashFor(entry.chain) } }))
     return quote
   })
-  m.pay.mockImplementation(async (_payment, _account, _uuid, destinationChainIds, { onSubmitted: submitted, reverify, onSending: sending }) => {
+  m.pay.mockImplementation(async ({ payment, destinationChainIds, reverify, onSending, onSent }) => {
     expect(destinationChainIds).toEqual(entries.map(entry => entry.chain))
     await reverify()
-    sending()
+    onSending()
     expect(loadLaunchSession()?.relayr?.phase).toBe('payment-signing')
-    submitted(HASH)
-    return HASH
+    const payments = [sentFor(payment, HASH)]
+    onSent(payments)
+    return { hash: HASH, payments }
   })
   m.poll.mockImplementation(async (_uuid, _count, update) => { update(records); return records })
   saveLaunchSession(session())
@@ -255,7 +261,7 @@ describe('relayed launch execution and recovery', () => {
     m.funding.mockResolvedValue(11155111)
     await run()
     expect(m.funding).toHaveBeenCalledExactlyOnceWith([{ chainId: 11155111, label: expect.stringContaining('Sepolia') }], undefined)
-    expect(m.pay.mock.calls[0][0].chain).toBe(11155111)
+    expect(m.pay.mock.calls[0][0].payment.chain).toBe(11155111)
     expect(loadLaunchSession()?.relayr?.paymentChainId).toBe(11155111)
   })
 
@@ -303,7 +309,7 @@ describe('relayed launch execution and recovery', () => {
     expect(m.quote).toHaveBeenCalledTimes(2)
     expect(m.quote.mock.calls[1][0]).toEqual(originalEntries)
     expect(m.funding.mock.calls[1][0]).toEqual([{ chainId: 10, label: expect.any(String) }])
-    expect(m.pay.mock.calls[0][0].chain).toBe(10)
+    expect(m.pay.mock.calls[0][0].payment.chain).toBe(10)
   })
 
   it('refreshes unusable funding offers before asking for a choice', async () => {
@@ -338,11 +344,11 @@ describe('relayed launch execution and recovery', () => {
     expect(m.quote).toHaveBeenCalledTimes(2)
     expect(m.forward).toHaveBeenCalledTimes(2)
     expect(m.funding).toHaveBeenCalledTimes(2)
-    expect(m.pay.mock.calls[0][0].chain).toBe(1)
+    expect(m.pay.mock.calls[0][0].payment.chain).toBe(1)
   })
 
   it.each([undefined, 11155111])('rejects a started mainnet journal with invalid saved funding chain %s without reopening the picker', async paymentChainId => {
-    m.pay.mockImplementationOnce(async (_p, _a, _u, _destinations, { reverify: verify, onSending: sending }) => {
+    m.pay.mockImplementationOnce(async ({ reverify: verify, onSending: sending }) => {
       await verify(); sending(); throw new Error('Wallet response lost')
     })
     await expect(run()).rejects.toThrow('Wallet response lost')
@@ -370,7 +376,7 @@ describe('relayed launch execution and recovery', () => {
     expect(m.forward).toHaveBeenCalledTimes(2)
     expect(m.forward.mock.calls.every(([call]) => call.gas === 4_000_000n && call.value === 17n)).toBe(true)
     expect(m.pay).toHaveBeenCalledTimes(1)
-    expect(m.pay.mock.calls[0][0].chain).toBe(8453)
+    expect(m.pay.mock.calls[0][0].payment.chain).toBe(8453)
     expect(clients.get(1)!.estimateGas.mock.calls[0][0]).toMatchObject({ account: ACCOUNT,
       stateOverride: [{ address: ACCOUNT, balance: 100n * 10n ** 18n + 17n }] })
     expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'confirmed', projectId: '101' }, 10: { phase: 'confirmed', projectId: '110' } })
@@ -393,7 +399,7 @@ describe('relayed launch execution and recovery', () => {
     expect(m.forward).toHaveBeenCalledTimes(4)
     expect(m.quote).toHaveBeenCalledTimes(1)
     expect(m.pay).toHaveBeenCalledTimes(1)
-    expect(m.pay.mock.calls[0][0].chain).toBe(84532)
+    expect(m.pay.mock.calls[0][0].payment.chain).toBe(84532)
     for (const chain of TESTNETS) {
       expect(loadLaunchSession()?.statuses[chain]).toMatchObject({ phase: 'confirmed', projectId: String(chain + 100) })
       expect(entries.find(entry => entry.chain === chain)?.target).toBe(jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][chain as JBChainId])
@@ -415,7 +421,7 @@ describe('relayed launch execution and recovery', () => {
     expect(m.forward).toHaveBeenCalledTimes(4)
     expect(m.quote).toHaveBeenCalledTimes(1)
     expect(m.pay).toHaveBeenCalledTimes(1)
-    expect(m.pay.mock.calls[0][0].chain).toBe(11155111)
+    expect(m.pay.mock.calls[0][0].payment.chain).toBe(11155111)
   })
 
   it('does not reuse the old preselected funding chain; an unpaid quote requires a new explicit choice', async () => {
@@ -426,7 +432,7 @@ describe('relayed launch execution and recovery', () => {
     await run()
     expect(m.forward).toHaveBeenCalledTimes(2)
     expect(m.quote).toHaveBeenCalledTimes(1)
-    expect(m.pay.mock.calls[0][0].chain).toBe(1)
+    expect(m.pay.mock.calls[0][0].payment.chain).toBe(1)
     expect(m.funding).toHaveBeenCalledTimes(2)
   })
 
@@ -731,7 +737,7 @@ describe('relayed launch execution and recovery', () => {
     saveLaunchSession(session(chains, funding))
     offeredPaymentChains = [funding, alternative]
     m.funding.mockResolvedValue(funding)
-    m.pay.mockImplementation(async (_p, _a, _u, _destinationChainIds, { reverify: verify, onSending: sending }) => {
+    m.pay.mockImplementation(async ({ reverify: verify, onSending: sending }) => {
       await verify(); sending(); throw new Error('wallet disconnected after broadcasting')
     })
     await expect(run()).rejects.toThrow('wallet disconnected')
@@ -745,26 +751,8 @@ describe('relayed launch execution and recovery', () => {
     expect(loadLaunchSession()?.relayr?.paymentChainId).toBe(funding)
   })
 
-  it("hands the launch's signal to its payment, and a payment whose Safe wait it ends stays sent and is never paid again", async () => {
-    const page = new AbortController()
-    let handed: AbortSignal | undefined
-    m.pay.mockImplementationOnce(async (_p, _a, _u, _destinationChainIds, { onSubmitted: submitted, reverify: verify, onSending: sending, signal }) => {
-      handed = signal
-      await verify(); sending(); submitted(HASH)
-      page.abort()
-      throw new RelayrPaymentSubmittedError(HASH, 8453)
-    })
-    await expect(runRelayrLaunch({ session: loadLaunchSession()!, account: m.account, onStatus: vi.fn(), onProgress: vi.fn(), signal: page.signal }))
-      .rejects.toThrow('Do not pay again')
-    expect(handed).toBe(page.signal)
-    expect(loadLaunchSession()?.relayr).toMatchObject({ phase: 'submitted', paymentHash: HASH })
-    await run()
-    expect(m.pay).toHaveBeenCalledTimes(1)
-    expect(m.funding).toHaveBeenCalledTimes(1)
-  })
-
   it('allows retrying a positively rejected funding prompt', async () => {
-    m.pay.mockImplementationOnce(async (_p, _a, _u, _destinationChainIds, { reverify: verify, onSending: sending }) => {
+    m.pay.mockImplementationOnce(async ({ reverify: verify, onSending: sending }) => {
       await verify(); sending(); throw Object.assign(new Error('Rejected'), { code: 4001 })
     })
     await expect(run()).rejects.toThrow('Rejected')
@@ -986,7 +974,7 @@ describe('relayed launch execution and recovery', () => {
     })
 
     it('retains an ambiguous payment, and permits cancelling only after both canonical deadlines pass', async () => {
-      m.pay.mockImplementation(async (_p, _a, _u, _destinations, { reverify: verify, onSending: sending }) => {
+      m.pay.mockImplementation(async ({ reverify: verify, onSending: sending }) => {
         await verify(); sending(); throw new Error('no hash returned')
       })
       await expect(run()).rejects.toThrow('no hash returned')
@@ -1055,18 +1043,7 @@ describe('relayed launch execution and recovery', () => {
 })
 
 
-describe('Relayr quote authentication', () => {
-  it('accepts the exact bundle payment and rejects altered quote fields', () => {
-    const payment = paymentFor(1)
-    expect(relayrPaymentDetails(payment, BUNDLE, NOW).chainId).toBe(1)
-    for (const change of [
-      { target: TARGET }, { token: TARGET }, { chain: 99999 }, { amount: '-1' },
-      { calldata: '0xdeadbeef' as Hex }, { payment_deadline: NOW + 5 },
-    ]) expect(() => relayrPaymentDetails({ ...payment, ...change }, BUNDLE, NOW)).toThrow()
-    expect(() => relayrPaymentDetails(payment, '00000000-0000-0000-0000-000000000002', NOW)).toThrow(/bundle/)
-    expect(() => relayrPaymentDetails(payment, BUNDLE, NOW + 601)).toThrow()
-  })
-
+describe('Relayr funding choices', () => {
   it('words a funding option as its chain and quoted fee', () => {
     expect(relayrPaymentLabel({ ...paymentFor(8453), amount: '123456789012345' })).toBe('Base (~0.000123 ETH)')
     expect(relayrPaymentLabel({ ...paymentFor(1), amount: '1000000000000000' })).toBe('Ethereum (0.001 ETH)')

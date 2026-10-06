@@ -7,10 +7,25 @@ import {
   jbContractAddress,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
+import { isDefiniteWalletRejection } from '@bananapus/nana-sdk-core/review'
+import {
+  FORWARD_REQUEST_TYPES,
+  RELAYR_API,
+  RELAYR_FORWARDER_DEADLINE_SECONDS,
+  RELAYR_PAYMENT_GAS,
+  RelayrProofError,
+  relayrPaymentDetails,
+  relayrSupportsChains,
+  requireRelayrPaymentRetry,
+  requireRelayrPaymentRuntime,
+  simulateRelayrPayment,
+  verifyRelayrPayment,
+  type RelayrPayment,
+} from '@bananapus/nana-sdk-core/review/relayr'
 import {
   encodeFunctionData,
   isAddress,
-  isAddressEqual,
+  isHash,
   keccak256,
   stringToHex,
   type Abi,
@@ -22,40 +37,22 @@ import { wagmiConfig } from '@/providers/Providers'
 import { SUPPORTED_CHAINS } from '@/lib/chains'
 import { fundingChainLabel, requireTransactionReview, type TransactionReviewRequest } from '@/lib/transaction-review'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { relayrSupportsChain, relayrSupportsChains, relayrPaymentChains } from '@/lib/relayr-chains'
 import {
-  isSafeConnection,
-  SAFE_NONCE_GUIDANCE,
-  waitForSafeExecutionHash,
-} from '@/lib/safe-connector'
+  MAX_RELAYR_SENT_PAYMENTS,
+  RELAYR_UUID_RE,
+  sentRelayrPayment,
+  type RelayrSentPayment,
+} from '@/lib/relayr-payments'
+import { isSafeConnection } from '@/lib/safe-connector'
 import {
   connectedWallet as connectedWalletCore,
   publicClient,
 } from '@/lib/wallet-core'
 
-const RELAYR_API = 'https://api.relayr.ba5ed.com'
 const RELAYR_QUOTE_TIMEOUT_MS = 45_000
 const RELAYR_STATUS_REQUEST_TIMEOUT_MS = 15_000
 /** Consecutive 404s that prove the uuid was never Relayr's, not a blip. */
 const RELAYR_NOT_FOUND_ATTEMPTS = 3
-
-/**
- * Relayr's immutable prepaid-native payment endpoint. A quote is untrusted
- * HTTP input, so accepting an arbitrary target and calldata here would turn
- * the quote service into a wallet transaction oracle.
- */
-export const RELAYR_PAYMENT_ADDRESS =
-  '0x1c05f7841379d4393574c0ffa17908ec40ffd97d' as Address
-export const RELAYR_PAYMENT_SELECTOR = '0x103903a7'
-export const RELAYR_PAYMENT_CODE_HASH =
-  '0x6006b5acadb4cd60aa5c00cb844c34563e182dff83d4f4ff4fde226f7df16fa6' as Hex
-export const RELAYR_NATIVE_TOKEN =
-  '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' as Address
-export const TRUSTED_FORWARDER_ABI = [{ type: 'function', name: 'isTrustedForwarder', stateMutability: 'view',
-  inputs: [{ name: 'forwarder', type: 'address' }], outputs: [{ type: 'bool' }] }] as const
-const RELAYR_PAYMENT_GAS = 150_000n
-const RELAYR_PAYMENT_CODE_MAX_BYTES = 2_048
-const RELAYR_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u
 
 export type RelayrEntry = {
   chain: number
@@ -88,24 +85,6 @@ export function relayrCallsScope(calls: RelayrCall[]): string {
   ])
 
   return `authority:${keccak256(stringToHex(JSON.stringify(stableCalls)))}`
-}
-
-export type RelayrPayment = {
-  chain: number
-  amount: string
-  calldata: Hex
-  target: Address
-  token?: Address
-  payment_deadline?: number | string
-}
-
-export type RelayrPaymentDetails = {
-  chainId: JBChainId
-  target: Address
-  amount: bigint
-  calldata: Hex
-  bundleUuid: string
-  deadline: bigint
 }
 
 type RelayrTransactionStatus = {
@@ -188,11 +167,6 @@ export class RelayrPaymentSendingError extends Error {
   }
 }
 
-class RelayrPaymentRevertedError extends Error {
-  readonly name = 'RelayrPaymentRevertedError'
-  constructor() { super('Relayr payment reverted onchain.') }
-}
-
 /**
  * The client the SDK's session rules read a chain's finalized block through
  * (relayrRequestStates, relayrRequestsDead and relayrDeadlinePassed). None
@@ -214,17 +188,6 @@ export function relayrHeldMessage(until: number, nowMs = Date.now()): string {
   return until * 1_000 > nowMs
     ? `This launch's earlier signature can still run until ${new Date(until * 1_000).toLocaleString()}. Try again after that.`
     : "This launch's earlier signature may still run. Try again in a few minutes."
-}
-
-/** Only an explicit wallet rejection proves that this send did not happen. */
-export function relayrErrorIsDefiniteNoSubmission(error: unknown): boolean {
-  let current = error
-  for (let depth = 0; depth < 8 && current && typeof current === 'object'; depth++) {
-    const item = current as { code?: unknown; name?: unknown; cause?: unknown }
-    if (item.code === 4001 || item.name === 'UserRejectedRequestError') return true
-    current = item.cause
-  }
-  return false
 }
 
 export function relayrStateIsSuccess(state?: string): boolean {
@@ -256,14 +219,6 @@ export function relayrProgress(
   }
 }
 
-/**
- * How long a signed ERC-2771 ForwardRequest stays valid. The forwarder rejects the request
- * after this, and pending sessions persist in localStorage indefinitely — so a bundle resumed
- * days later fails at the forwarder with the payment already made. {@link relayrSessionExpired}
- * lets the resume UI say so instead of offering a retry that cannot succeed.
- */
-const FORWARDER_DEADLINE_SECONDS = 47 * 60 * 60
-
 class RelayrHttpTimeoutError extends Error {
   readonly name = 'RelayrHttpTimeoutError'
 }
@@ -285,18 +240,6 @@ async function relayrFetch(
     throw error
   }
 }
-
-const FORWARD_REQUEST_TYPES = {
-  ForwardRequest: [
-    { name: 'from', type: 'address' },
-    { name: 'to', type: 'address' },
-    { name: 'value', type: 'uint256' },
-    { name: 'gas', type: 'uint256' },
-    { name: 'nonce', type: 'uint256' },
-    { name: 'deadline', type: 'uint48' },
-    { name: 'data', type: 'bytes' },
-  ],
-} as const
 
 function connectedWallet(chainId: JBChainId) {
   return connectedWalletCore(chainId, {
@@ -346,7 +289,7 @@ export async function prepareForwardedTx(
     value,
     gas: call.gas ?? 500_000n,
     nonce,
-    deadline: Math.floor(Date.now() / 1000) + FORWARDER_DEADLINE_SECONDS,
+    deadline: Math.floor(Date.now() / 1000) + RELAYR_FORWARDER_DEADLINE_SECONDS,
     data: call.data,
   }
   const typedDomain = {
@@ -623,245 +566,124 @@ export async function relayrPostBundle(
   }
 }
 
-function relayrDeadlineSeconds(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) {
-    return value
-  }
-  if (typeof value === 'string' && /^\d+$/.test(value)) {
-    const numeric = Number(value)
-    if (Number.isSafeInteger(numeric) && numeric >= 0) return numeric
-  }
-  const milliseconds = typeof value === 'string' ? Date.parse(value) : Number.NaN
-  if (!Number.isFinite(milliseconds) || milliseconds < 0) return null
-  return Math.floor(milliseconds / 1_000)
-}
-
-/** Authenticate every field in Relayr's payment quote against its bundle. */
-export function relayrPaymentDetails(
-  payment: RelayrPayment,
-  expectedBundleUuid: string,
-  nowSeconds = Math.floor(Date.now() / 1_000),
-): RelayrPaymentDetails {
-  const chainId = Number(payment?.chain) as JBChainId
-  if (
-    !Number.isSafeInteger(chainId) ||
-    !relayrSupportsChain(chainId) ||
-    !SUPPORTED_CHAINS.some(chain => chain.id === chainId)
-  ) {
-    throw new Error('Relayr returned an unsupported payment chain.')
-  }
-  if (
-    !payment ||
-    !isAddress(payment.target) ||
-    !isAddressEqual(payment.target, RELAYR_PAYMENT_ADDRESS)
-  ) {
-    throw new Error('Relayr returned an unrecognized payment contract.')
-  }
-  if (
-    !payment.token ||
-    !isAddress(payment.token) ||
-    !isAddressEqual(payment.token, RELAYR_NATIVE_TOKEN)
-  ) {
-    throw new Error('Relayr returned an unsupported payment token.')
-  }
-
-  let amount: bigint
-  try {
-    amount = BigInt(payment.amount)
-  } catch {
-    throw new Error('Relayr returned an invalid payment amount.')
-  }
-  if (amount < 0n) throw new Error('Relayr returned an invalid payment amount.')
-
-  const bundleUuid = String(expectedBundleUuid ?? '').toLowerCase()
-  if (!RELAYR_UUID_RE.test(bundleUuid)) {
-    throw new Error('Relayr returned an invalid bundle ID.')
-  }
-
-  const calldata = String(payment.calldata ?? '').toLowerCase()
-  // selector + ABI word(bytes16, right-padded) + ABI word(uint40)
-  if (!/^0x[0-9a-f]{136}$/.test(calldata)) {
-    throw new Error('Relayr returned invalid payment calldata.')
-  }
-  if (calldata.slice(0, 10) !== RELAYR_PAYMENT_SELECTOR) {
-    throw new Error('Relayr returned an unrecognized payment function.')
-  }
-  const compactUuid = bundleUuid.replaceAll('-', '')
-  if (calldata.slice(10, 74) !== `${compactUuid}${'0'.repeat(32)}`) {
-    throw new Error('Relayr payment calldata does not match this bundle.')
-  }
-
-  let deadline: bigint
-  try {
-    deadline = BigInt(`0x${calldata.slice(74, 138)}`)
-  } catch {
-    throw new Error('Relayr returned invalid payment calldata.')
-  }
-  if (deadline > 0xffffffffffn) {
-    throw new Error('Relayr returned an invalid payment deadline.')
-  }
-  const quotedDeadline = relayrDeadlineSeconds(payment.payment_deadline)
-  if (quotedDeadline === null || BigInt(quotedDeadline) !== deadline) {
-    throw new Error('Relayr payment calldata does not match the quote deadline.')
-  }
-  if (deadline <= BigInt(nowSeconds + 15)) {
-    throw new Error('This Relayr quote expired. Review the action again for a new quote.')
-  }
-
-  return {
-    chainId,
-    target: RELAYR_PAYMENT_ADDRESS,
-    amount,
-    calldata: calldata as Hex,
-    bundleUuid,
-    deadline,
-  }
-}
-
-async function requireRelayrPaymentRuntime(
-  client: ReturnType<typeof publicClient>,
-): Promise<void> {
-  const code = await client.request({
-    method: 'eth_getCode',
-    params: [RELAYR_PAYMENT_ADDRESS, 'latest'],
-  })
-  if (
-    typeof code !== 'string' ||
-    !/^0x(?:[0-9a-fA-F]{2})+$/.test(code) ||
-    (code.length - 2) / 2 > RELAYR_PAYMENT_CODE_MAX_BYTES
-  ) {
-    throw new Error('Could not authenticate the Relayr payment contract.')
-  }
-  if (keccak256(code) !== RELAYR_PAYMENT_CODE_HASH) {
-    throw new Error('Relayr payment contract code is not recognized.')
-  }
-}
-
-async function simulateRelayrPayment(
-  client: ReturnType<typeof publicClient>,
-  account: Address,
-  details: RelayrPaymentDetails,
-): Promise<void> {
-  const result = await client.request({
-    method: 'eth_call',
-    params: [
-      {
-        from: account,
-        to: details.target,
-        value: `0x${details.amount.toString(16)}`,
-        data: details.calldata,
-        gas: `0x${RELAYR_PAYMENT_GAS.toString(16)}`,
-      },
-      'latest',
-    ],
-  })
-  if (result !== '0x') {
-    throw new Error('Relayr payment simulation returned an unexpected result.')
-  }
-}
-
 export function relayrPaymentLabel(payment: RelayrPayment): string {
   const chain = SUPPORTED_CHAINS.find(item => item.id === Number(payment.chain))
   return fundingChainLabel(chain?.name ?? `Chain ${payment.chain}`, BigInt(payment.amount))
 }
 
-/** Invalid provider options never reach the funding picker or amount sorter. */
-export function relayrPaymentOptions(quote: RelayrQuote, destinationChainIds: readonly number[]): RelayrPayment[] {
-  const allowed = relayrPaymentChains([...new Set(destinationChainIds)])
-  const options = quote.payment_info.filter(payment => {
-    try { return allowed.includes(relayrPaymentDetails(payment, quote.bundle_uuid).chainId) } catch { return false }
-  })
-  const chains = new Set<number>()
-  return options.filter(payment => {
-    if (chains.has(payment.chain)) return false
-    chains.add(payment.chain)
-    return true
-  })
+/**
+ * Clear a quote that was paid before for one more payment, with the SDK's
+ * retry rule for each payment sent: every one of them canonically reverted,
+ * the quote is still open, and Relayr reports the bundle unpaid with every
+ * call pending.
+ */
+async function requireRelayrRetry(sent: readonly RelayrSentPayment[], account: Address, bundleUuid: string): Promise<void> {
+  if (sent.some(payment => payment.bundleUuid !== bundleUuid)) {
+    throw new Error('A saved Relayr payment belongs to another bundle. Do not pay again; check the original bundle.')
+  }
+  const byPayment = new Map<string, { payment: RelayrSentPayment; hashes: Hex[] }>()
+  for (const payment of sent) {
+    const key = `${payment.chainId}:${payment.calldata.toLowerCase()}:${payment.amount}`
+    const group = byPayment.get(key) ?? { payment, hashes: [] }
+    group.hashes.push(payment.hash)
+    byPayment.set(key, group)
+  }
+  for (const { payment, hashes } of byPayment.values()) {
+    await requireRelayrPaymentRetry(publicClient(payment.chainId as JBChainId), { hashes, from: account, payment })
+  }
 }
 
-export async function relayrPay(
-  payment: RelayrPayment,
-  expectedAccount: Address,
-  expectedBundleUuid: string,
-  destinationChainIds: readonly number[],
-  {
-    onSubmitted,
-    reverify,
-    onSending,
-    signal,
-  }: {
-    /** Called with the payment's hash as soon as the wallet returns it. */
-    onSubmitted?: (hash: Hex) => void
-    /** Checks the action again before the payment is sent. */
-    reverify?: () => Promise<void>
-    /** Called right before the wallet is asked to send. */
-    onSending?: () => void
-    /** The flow's: when it aborts, the wait for a Safe to execute the payment ends. */
-    signal?: AbortSignal
-  } = {},
-): Promise<Hex> {
+/**
+ * Review, simulate and send one payment for a quote from the account it was
+ * reviewed for, then prove it from the chain with the SDK. The option is read
+ * through relayrPaymentDetails before the review, after it and right before
+ * sending, and must not change in between. A quote that was paid before is
+ * paid again only when the SDK's retry rule clears every payment `sent` for
+ * it, right before the wallet opens. Resolves with the hash the payment was
+ * mined under and every payment sent for the quote.
+ */
+export async function relayrPay({
+  payment,
+  account: expectedAccount,
+  bundleUuid,
+  destinationChainIds,
+  sent = [],
+  reverify,
+  onSending,
+  onSent,
+}: {
+  /** One of the quote's payment options, as Relayr returned it. */
+  payment: RelayrPayment
+  /** The account the payment was reviewed for. */
+  account: Address
+  bundleUuid: string
+  destinationChainIds: readonly number[]
+  /** Every payment this session already sent for the quote, each under the hash it was mined. */
+  sent?: readonly RelayrSentPayment[]
+  /** Re-prove the bundle's calls before the review, after it and right before sending. */
+  reverify?: () => Promise<void>
+  /** Save the payment attempt before the wallet opens. */
+  onSending?: () => void
+  /** Save every payment sent for the quote, again when this one is mined under another hash. */
+  onSent?: (payments: RelayrSentPayment[]) => void
+}): Promise<{ hash: Hex; payments: RelayrSentPayment[] }> {
   assertNoViewAs()
-  const fundingChains = relayrPaymentChains([...new Set(destinationChainIds)])
-  const readBoundPayment = () => {
-    const current = relayrPaymentDetails(payment, expectedBundleUuid)
-    if (!fundingChains.includes(current.chainId)) {
-      throw new Error('Choose a supported Relayr funding chain in the same network family as these destinations.')
+  // A Safe pays through its own execution, which no proof can read as this payment.
+  if (isSafeConnection(wagmiConfig)) {
+    throw new Error('Pay for relayed transactions from an ordinary wallet. Nothing was sent.')
+  }
+  if (sent.length >= MAX_RELAYR_SENT_PAYMENTS) {
+    throw new Error('This Relayr quote was paid too many times to pay again. Keep it pending; do not pay again.')
+  }
+  const reviewed = relayrPaymentDetails(payment, { bundleUuid, destinationChainIds })
+  const readReviewed = () => {
+    const current = relayrPaymentDetails(payment, { bundleUuid, destinationChainIds })
+    if (current.chainId !== reviewed.chainId || current.amount !== reviewed.amount || current.calldata !== reviewed.calldata) {
+      throw new Error('The Relayr payment changed. Review the original funding choice again.')
     }
     return current
   }
-  let details = readBoundPayment()
-  const reviewed = details
   await reverify?.()
-  const chainId = details.chainId
+  const chainId = reviewed.chainId as JBChainId
   const client = publicClient(chainId)
   await requireRelayrPaymentRuntime(client)
 
-  const viaSafe = isSafeConnection(wagmiConfig)
   await requireTransactionReview({
     title: 'Review Relayr payment',
     description:
-      'This payment funds the Relayr bundle. Review its exact chain, destination, native value, and calldata before opening your wallet.' +
-      (viaSafe ? ` ${SAFE_NONCE_GUIDANCE}` : ''),
-    confirmLabel: viaSafe
-      ? 'Agree & continue to Safe'
-      : 'Agree & pay Relayr',
+      'This payment funds the Relayr bundle. Review its exact chain, destination, native value, and calldata before opening your wallet.',
+    confirmLabel: 'Agree & pay Relayr',
     calls: [
       {
         chainId,
         from: expectedAccount,
-        to: details.target,
-        value: details.amount,
-        // A Safe app signs the sent gas as safeTxGas; 0 makes a failed payment revert.
-        ...(viaSafe ? { safeTxGas: 0n } : { gas: RELAYR_PAYMENT_GAS }),
-        data: details.calldata,
+        to: reviewed.target,
+        value: reviewed.amount,
+        gas: RELAYR_PAYMENT_GAS,
+        data: reviewed.calldata,
         label: 'Pay for relayed transactions',
         contractName: 'Relayr prepaid payment',
       },
     ],
   })
 
-  details = readBoundPayment()
-  if (details.chainId !== reviewed.chainId || details.amount !== reviewed.amount || details.calldata !== reviewed.calldata) {
-    throw new Error('The Relayr payment changed. Review the original funding choice again.')
-  }
+  readReviewed()
   await reverify?.()
   const { wallet, account } = await connectedWallet(chainId)
   if (account.toLowerCase() !== expectedAccount.toLowerCase()) {
     throw new Error('Connected account changed. Review the Relayr payment again.')
   }
   await requireRelayrPaymentRuntime(client)
-  await simulateRelayrPayment(client, account, details)
+  await simulateRelayrPayment(client, { from: account, payment: reviewed })
   const live = getAccount(wagmiConfig).address
   if (!live || live.toLowerCase() !== expectedAccount.toLowerCase()) {
     throw new Error('Connected account changed. Review the Relayr payment again.')
   }
   // Review and wallet preparation are open-ended. Re-authenticate the exact
   // quote immediately before the fixed-gas write.
-  details = readBoundPayment()
-  if (details.chainId !== reviewed.chainId || details.amount !== reviewed.amount || details.calldata !== reviewed.calldata) {
-    throw new Error('The Relayr payment changed. Review the original funding choice again.')
-  }
+  const details = readReviewed()
   await reverify?.()
+  if (sent.length) await requireRelayrRetry(sent, account, details.bundleUuid)
   onSending?.()
   let hash: Hex
   try {
@@ -870,33 +692,46 @@ export async function relayrPay(
       to: details.target,
       value: details.amount,
       data: details.calldata,
-      gas: viaSafe ? 0n : RELAYR_PAYMENT_GAS,
+      gas: RELAYR_PAYMENT_GAS,
     })
   } catch (error) {
-    if (relayrErrorIsDefiniteNoSubmission(error)) throw error
+    if (isDefiniteWalletRejection(error)) throw error
     throw new RelayrPaymentSendingError()
   }
-  const submittedHash = hash
+  // Once the wallet returns a hash, a storage, receipt or proof failure is an
+  // uncertain submitted outcome, never permission to quote and pay again.
+  let payments = [...sent, sentRelayrPayment(details, hash)]
   try {
-    onSubmitted?.(submittedHash)
-    if (isSafeConnection(wagmiConfig)) {
-      hash = await waitForSafeExecutionHash(chainId, submittedHash, { signal })
-    }
+    onSent?.(payments)
   } catch {
-    // Once the wallet returns a hash, callback/storage or Safe execution-hash
-    // tracking failures, a wait the flow's signal ended included, are
-    // uncertain submitted outcomes, never permission to quote and pay this
-    // bundle again.
-    throw new RelayrPaymentSubmittedError(submittedHash, chainId)
+    throw new RelayrPaymentSubmittedError(hash, chainId)
   }
-  let receipt
+  let receipt: TransactionReceipt
   try {
     receipt = await client.waitForTransactionReceipt({ hash })
   } catch {
     throw new RelayrPaymentSubmittedError(hash, chainId)
   }
-  if (receipt.status !== 'success') throw new RelayrPaymentRevertedError()
-  return hash
+  // A wallet that sped the payment up mined it under another hash; that
+  // transaction is the payment to prove and to remember.
+  const mined = receipt.transactionHash
+  if (typeof mined !== 'string' || !isHash(mined)) throw new RelayrPaymentSubmittedError(hash, chainId)
+  if (mined.toLowerCase() !== hash.toLowerCase()) {
+    payments = [...sent, sentRelayrPayment(details, mined)]
+    try {
+      onSent?.(payments)
+    } catch {
+      throw new RelayrPaymentSubmittedError(mined, chainId)
+    }
+  }
+  try {
+    await verifyRelayrPayment(client, { hash: mined, from: account, payment: details })
+  } catch (error) {
+    // A proof error is final: the payment reverted, or the mined transaction is another one.
+    if (error instanceof RelayrProofError) throw error
+    throw new RelayrPaymentSubmittedError(mined, chainId)
+  }
+  return { hash: mined, payments }
 }
 
 type RelayrBundleRead = { paymentReceived: unknown; records: RelayrTransactionRecord[] }
