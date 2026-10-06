@@ -81,10 +81,15 @@ describe('reserved INCOME receipt confirmation', () => {
     const f = fixture()
     await expect(verifyIncomeReservedReceipt(f.rpc, f.reviewed, ACCOUNT, f.receipt)).resolves.toEqual({ tokenCount: 1000n })
   })
-  it('refuses a distribution of another amount than the reviewed pending reserves', async () => {
-    // Payments added reserves after the review.
+  it('confirms a distribution of more than the reviewed reserves, by the count it distributed', async () => {
+    // Payments added reserves after the review, and the call distributed them all.
     const f = fixture(1234n)
-    await expect(verifyIncomeReservedReceipt(f.rpc, f.reviewed, ACCOUNT, f.receipt)).rejects.toThrow('1,234 tokens were distributed, not the reviewed 1,000')
+    await expect(verifyIncomeReservedReceipt(f.rpc, f.reviewed, ACCOUNT, f.receipt)).resolves.toEqual({ tokenCount: 1234n })
+  })
+  it('refuses a distribution of fewer tokens than were reviewed', async () => {
+    // Another distribution ran first, or the review was stale.
+    const f = fixture(999n)
+    await expect(verifyIncomeReservedReceipt(f.rpc, f.reviewed, ACCOUNT, f.receipt)).rejects.toThrow('999 tokens were distributed, fewer than the reviewed 1,000')
   })
   it.each([
     ['a reward hook', () => log('SplitHookReverted', { projectId: 7n, hook: HOOK, reason: '0x', caller: ACCOUNT })],
@@ -111,6 +116,12 @@ describe('reserved INCOME receipt confirmation', () => {
       const f = fixture(1000n, splits)
       f.receipt.logs.push(burn(200n))
       await expect(verifyIncomeReservedReceipt(f.rpc, f.reviewed, ACCOUNT, f.receipt)).resolves.toEqual({ tokenCount: 1000n })
+    })
+    it('accepts a burn of the share of a larger distribution', async () => {
+      const splits = snapshot().splits.map((split, index) => index === 1 ? { ...split, beneficiary: DEAD, hook: zeroAddress } : split)
+      const f = fixture(1234n, splits)
+      f.receipt.logs.push(burn(246n))
+      await expect(verifyIncomeReservedReceipt(f.rpc, f.reviewed, ACCOUNT, f.receipt)).resolves.toEqual({ tokenCount: 1234n })
     })
     it('refuses a burn of tokens a hook did not take', async () => {
       const f = fixture()

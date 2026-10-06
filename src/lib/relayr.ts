@@ -761,9 +761,21 @@ export async function relayrPay(
   expectedAccount: Address,
   expectedBundleUuid: string,
   destinationChainIds: readonly number[],
-  onSubmitted?: (hash: Hex) => void,
-  reverify?: () => Promise<void>,
-  onSending?: () => void,
+  {
+    onSubmitted,
+    reverify,
+    onSending,
+    signal,
+  }: {
+    /** Called with the payment's hash as soon as the wallet returns it. */
+    onSubmitted?: (hash: Hex) => void
+    /** Checks the action again before the payment is sent. */
+    reverify?: () => Promise<void>
+    /** Called right before the wallet is asked to send. */
+    onSending?: () => void
+    /** The flow's: when it aborts, the wait for a Safe to execute the payment ends. */
+    signal?: AbortSignal
+  } = {},
 ): Promise<Hex> {
   assertNoViewAs()
   const fundingChains = relayrPaymentChains([...new Set(destinationChainIds)])
@@ -845,12 +857,13 @@ export async function relayrPay(
   try {
     onSubmitted?.(submittedHash)
     if (isSafeConnection(wagmiConfig)) {
-      hash = await waitForSafeExecutionHash(chainId, submittedHash)
+      hash = await waitForSafeExecutionHash(chainId, submittedHash, { signal })
     }
   } catch {
     // Once the wallet returns a hash, callback/storage or Safe execution-hash
-    // tracking failures are uncertain submitted outcomes, never permission to
-    // quote and pay this bundle again.
+    // tracking failures, a wait the flow's signal ended included, are
+    // uncertain submitted outcomes, never permission to quote and pay this
+    // bundle again.
     throw new RelayrPaymentSubmittedError(submittedHash, chainId)
   }
   let receipt

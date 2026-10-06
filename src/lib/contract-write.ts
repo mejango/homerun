@@ -6,7 +6,8 @@ export const REVIEWED_ACCOUNT_CHANGED = 'The connected account changed. Review a
 
 /**
  * A request is built for the account that reviewed it (its beneficiary,
- * holder or recipient), so no other connected account may send it.
+ * holder or recipient), so no other connected account may send it. The
+ * Permit2 signature checks it here; a reviewed write leaves it to the SDK.
  */
 export function assertReviewedAccountConnected(
   reviewed: Address,
@@ -18,20 +19,14 @@ export function assertReviewedAccountConnected(
 
 /**
  * The SDK's reviewed write, refused while the site is viewing as another
- * account, and before its review opens when the connected account is not
- * `expectedAccount`, the account the request was reviewed for. The SDK itself
- * checks that account only after the review.
+ * account. A request is built for the account that reviewed it (its
+ * beneficiary, holder or recipient), so the SDK refuses any other connected
+ * account than `expectedAccount` at each step up to signing, in these words
+ * unless a flow names its own.
  */
-export const submitReviewedContractWrite: typeof submitReviewed = options => {
-  const accountChangedError = options.accountChangedError ?? REVIEWED_ACCOUNT_CHANGED
-  return submitReviewed({
+export const submitReviewedContractWrite: typeof submitReviewed = options =>
+  submitReviewed({
     ...options,
-    accountChangedError,
-    guard: () => {
-      assertNoViewAs()
-      if (options.expectedAccount) {
-        assertReviewedAccountConnected(options.expectedAccount, options.currentAccount(), accountChangedError)
-      }
-    },
+    accountChangedError: options.accountChangedError ?? REVIEWED_ACCOUNT_CHANGED,
+    guard: assertNoViewAs,
   })
-}

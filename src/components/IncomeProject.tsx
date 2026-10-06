@@ -551,7 +551,7 @@ export function IncomeLoansList({ state, client }: { state: IncomeProjectState; 
     if (repayApproval.phase === 'error') repayApproval.reset()
     setRepaying(loanId)
   }
-  const loans = useQuery({ queryKey: ['loans', state.chainId, Number(state.projectId)], enabled: !!address, queryFn: () => getLoans(Number(state.projectId), state.chainId), staleTime: 30_000, retry: 1 })
+  const loans = useQuery({ queryKey: ['loans', state.chainId, Number(state.projectId)], enabled: !!address, queryFn: ({ signal }) => getLoans(Number(state.projectId), state.chainId, { signal }), staleTime: 30_000, retry: 1 })
   const mine = (loans.data?.items ?? []).filter(loan => !!address && loan.owner.toLowerCase() === address.toLowerCase() && loan.collateral !== '0')
   const tokenOf = (token: string) => state.accountingContexts.find(context => isAddressEqual(context.token, (token === zeroAddress ? NATIVE_TOKEN : token) as Address))
   const typedId = /^\d+$/.test(byId.trim()) ? BigInt(byId.trim()) : 0n

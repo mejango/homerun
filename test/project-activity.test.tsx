@@ -88,7 +88,7 @@ describe('indexed project activity', () => {
     mocks.project.mockRejectedValue(new Error('Project metadata unavailable'))
     mocks.exact.mockResolvedValue({ items: [event(1)], totalCount: 1 })
     await render()
-    expect(mocks.exact).toHaveBeenCalledWith(1, 7, 20, 0)
+    expect(mocks.exact).toHaveBeenCalledWith(1, 7, 20, 0, { signal: expect.any(AbortSignal) })
     expect(mocks.group).not.toHaveBeenCalled()
     expect(eventIds()).toEqual(['event-1'])
     expect(host.textContent).not.toContain('No activity indexed yet')
@@ -105,7 +105,7 @@ describe('indexed project activity', () => {
     await act(async () => lookup.resolve(project({ suckerGroupId: 'verified-linked-projects' })))
     await settle()
     await settle()
-    expect(mocks.group).toHaveBeenCalledWith('verified-linked-projects', 20, 1, 0)
+    expect(mocks.group).toHaveBeenCalledWith('verified-linked-projects', 20, 1, 0, { signal: expect.any(AbortSignal) })
     expect(eventIds()).toEqual(['event-2'])
   })
 
@@ -122,7 +122,7 @@ describe('indexed project activity', () => {
     await act(async () => lookup.resolve(project({ suckerGroupId: 'verified-linked-projects' })))
     await settle()
     await settle()
-    expect(mocks.group).toHaveBeenCalledWith('verified-linked-projects', 20, 1, 0)
+    expect(mocks.group).toHaveBeenCalledWith('verified-linked-projects', 20, 1, 0, { signal: expect.any(AbortSignal) })
     expect(eventIds()).toEqual(['event-3', 'event-2', 'event-1', 'event-0'])
     expect(host.textContent).toContain('Showing the last indexed events')
     expect(host.textContent).not.toContain('No activity indexed yet')
@@ -142,7 +142,7 @@ describe('indexed project activity', () => {
       : { items: [event(8), event(7)], totalCount: 4 }))
     await render()
     await click('Load more')
-    expect(mocks.exact).toHaveBeenLastCalledWith(1, 7, 20, 4)
+    expect(mocks.exact).toHaveBeenLastCalledWith(1, 7, 20, 4, { signal: expect.any(AbortSignal) })
     await act(async () => lookup.resolve(project({ suckerGroupId: 'verified-linked-projects' })))
     await settle()
     await settle()
@@ -151,7 +151,7 @@ describe('indexed project activity', () => {
     await settle()
     expect(eventIds()).toEqual(['event-10', 'event-9'])
     await click('Load more')
-    expect(mocks.group).toHaveBeenLastCalledWith('verified-linked-projects', 20, 1, 2)
+    expect(mocks.group).toHaveBeenLastCalledWith('verified-linked-projects', 20, 1, 2, { signal: expect.any(AbortSignal) })
     expect(eventIds()).toEqual(['event-10', 'event-9', 'event-8', 'event-7'])
   })
 
@@ -167,7 +167,7 @@ describe('indexed project activity', () => {
       mocks.project.mockResolvedValue({ suckerGroupId: 'unverified', ...mismatches[index] })
       mocks.exact.mockResolvedValue({ items: [event(id, { projectId: id })], totalCount: 1 })
       await render(id)
-      expect(mocks.exact).toHaveBeenCalledWith(1, id, 20, 0)
+      expect(mocks.exact).toHaveBeenCalledWith(1, id, 20, 0, { signal: expect.any(AbortSignal) })
       expect(eventIds()).toEqual([`event-${id}`])
     }
     expect(mocks.group).not.toHaveBeenCalled()
@@ -179,12 +179,12 @@ describe('indexed project activity', () => {
       : { items: [event(1), event(0)], totalCount: 4 }))
     await render()
     await click('Load more')
-    expect(mocks.exact).toHaveBeenLastCalledWith(1, 7, 20, 2)
+    expect(mocks.exact).toHaveBeenLastCalledWith(1, 7, 20, 2, { signal: expect.any(AbortSignal) })
     expect(eventIds()).toEqual(['event-3', 'event-2', 'event-1', 'event-0'])
     mocks.exact.mockResolvedValue({ items: [event(4), event(3)], totalCount: 5 })
     await act(async () => { await client.refetchQueries({ queryKey: ['project-activity'] }) })
     await settle()
-    expect(mocks.exact).toHaveBeenLastCalledWith(1, 7, 20, 0)
+    expect(mocks.exact).toHaveBeenLastCalledWith(1, 7, 20, 0, { signal: expect.any(AbortSignal) })
     expect(eventIds()).toEqual(['event-4', 'event-3', 'event-2', 'event-1', 'event-0'])
     expect([...host.querySelectorAll('button')].some(node => node.textContent === 'Load more')).toBe(false)
   })
@@ -201,6 +201,22 @@ describe('indexed project activity', () => {
     expect(host.textContent).toContain('Showing the last indexed events')
     expect(eventIds()).toEqual(['event-2', 'event-1'])
     expect(host.textContent).not.toContain('No activity indexed yet')
+  })
+
+  it('stops loading older activity when the page is left', async () => {
+    let older: AbortSignal | undefined
+    mocks.exact.mockImplementation((_chain: number, _project: number, _limit: number, offset: number, options?: { signal?: AbortSignal }) => {
+      if (offset === 0) return Promise.resolve({ items: [event(2), event(1)], totalCount: 4 })
+      older = options?.signal
+      return new Promise(() => {})
+    })
+    await render()
+    await click('Load more')
+    expect(older?.aborted).toBe(false)
+
+    await act(async () => root.unmount())
+    expect(older?.aborted).toBe(true)
+    root = createRoot(host)
   })
 
   it('discards an older-page response after the project identity changes', async () => {

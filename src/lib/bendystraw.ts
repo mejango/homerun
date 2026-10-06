@@ -64,6 +64,8 @@ export async function bendystraw<T>(
     network?: BendystrawNetwork
     /** `'no-store'` bypasses Next's fetch cache, which keeps a disk file for every distinct request. */
     policy?: BendystrawCachePolicy | 'no-store'
+    /** The caller's: when it aborts, the request under way stops and is not retried, and none is sent after. */
+    signal?: AbortSignal
   } = {},
 ): Promise<T> {
   const contract = compileBendystrawOperation(query)
@@ -78,6 +80,7 @@ export async function bendystraw<T>(
       contract,
       network,
       query,
+      signal: opts.signal,
       variables,
     })
   }
@@ -105,13 +108,15 @@ export async function bendystraw<T>(
     {
       fetch: (input, init) => fetch(input, { ...init, ...cacheOptions }),
       operationName: contract.operationName,
+      signal: opts.signal,
       validateData: (value): value is T => contract.validateData(value),
       validateVariables: contract.validateVariables,
     },
   )
 }
 
-export type IndexerOptions = { network?: BendystrawNetwork }
+/** `signal` is the caller's, and goes with every request the read makes. */
+export type IndexerOptions = { network?: BendystrawNetwork; signal?: AbortSignal }
 
 export type BsProject = {
   projectId: number
@@ -158,13 +163,14 @@ const PROJECTS_BY_FILTER_QUERY = `query ProjectsByFilter($where: projectFilter!,
 export async function getProject(
   chainId: number,
   projectId: number,
+  { signal }: { signal?: AbortSignal } = {},
 ): Promise<BsProject | null> {
   const data = await bendystraw<{ project: BsProject | null }>(
     `query($chainId: Float!, $projectId: Float!) {
       project(chainId: $chainId, projectId: $projectId, version: 6) { ${PROJECT_FIELDS} }
     }`,
     { chainId, projectId },
-    { policy: 'standard' },
+    { policy: 'standard', signal },
   )
   return data.project
 }
@@ -173,11 +179,12 @@ export async function getProject(
 export async function getSuckerGroupProjects(
   suckerGroupId: string,
   chainId?: number,
+  { signal }: { signal?: AbortSignal } = {},
 ): Promise<BsProject[]> {
   const data = await bendystraw<{ projects: { items: BsProject[] } }>(
     PROJECTS_BY_FILTER_QUERY,
     { where: { suckerGroupId, version: 6 }, limit: 100 },
-    { network: bendystrawNetworkHint(chainId), policy: 'stable' },
+    { network: bendystrawNetworkHint(chainId), policy: 'stable', signal },
   )
   return data.projects.items
 }
@@ -491,6 +498,7 @@ export async function getProjectActivity(
   limit = 20,
   chainId?: number,
   offset = 0,
+  { signal }: { signal?: AbortSignal } = {},
 ): Promise<{ items: BsActivityEvent[]; totalCount: number }> {
   const page = await getPagedItems<BsActivityEvent>(
     `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
@@ -540,6 +548,7 @@ export async function getProjectActivity(
       max: limit,
       startOffset: offset,
       policy: 'live',
+      signal,
     },
   )
   return page
@@ -550,6 +559,7 @@ export async function getProjectActivityByProject(
   projectId: number,
   limit = 20,
   offset = 0,
+  { signal }: { signal?: AbortSignal } = {},
 ): Promise<{ items: BsActivityEvent[]; totalCount: number }> {
   const page = await getPagedItems<BsActivityEvent>(
     `query($chainId: Int!, $projectId: Int!, $limit: Int!, $offset: Int!) {
@@ -600,6 +610,7 @@ export async function getProjectActivityByProject(
       max: limit,
       startOffset: offset,
       policy: 'live',
+      signal,
     },
   )
   return page
@@ -615,6 +626,7 @@ export async function getPagedItems<T>(
     startOffset = 0,
     network,
     policy = 'standard',
+    signal,
   }: {
     pageSize?: number
     max?: number
@@ -626,6 +638,7 @@ export async function getPagedItems<T>(
     startOffset?: number
     network?: BendystrawNetwork
     policy?: BendystrawCachePolicy
+    signal?: AbortSignal
   } = {},
 ): Promise<{ items: T[]; totalCount: number }> {
   const items: T[] = []
@@ -638,7 +651,7 @@ export async function getPagedItems<T>(
     >(
       query,
       { ...variables, limit: pageLimit, offset: startOffset + items.length },
-      { network, policy },
+      { network, policy, signal },
     )
     const root = data[field]
     if (!root || !Array.isArray(root.items) || !Number.isSafeInteger(root.totalCount) || root.totalCount < 0) {
@@ -1020,7 +1033,7 @@ type BsAccountRelatedEventRow = {
  */
 export async function getAccountActivity(
   address: string,
-  { limit = 25, offset = 0, network }: IndexerOptions & { limit?: number; offset?: number } = {},
+  { limit = 25, offset = 0, network, signal }: IndexerOptions & { limit?: number; offset?: number } = {},
 ): Promise<{ items: BsAccountActivityEvent[]; totalCount: number }> {
   if (!Number.isSafeInteger(limit) || limit < 1 || !Number.isSafeInteger(offset) || offset < 0) {
     throw new TypeError('Invalid account activity pagination')
@@ -1048,7 +1061,7 @@ export async function getAccountActivity(
     ].map(query => bendystraw<Record<string, { items: unknown[]; totalCount: number }>>(
       query,
       { address: addressLower, limit: pageLimit, offset: pageOffset },
-      { network, policy: 'standard' },
+      { network, policy: 'standard', signal },
     )))
     const data = Object.assign({}, ...responses) as Record<string, { items: unknown[]; totalCount: number }>
     for (const name of listNames) {

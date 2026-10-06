@@ -113,7 +113,7 @@ export function FundProject({ chainId, projectId, intentId, seed }: { chainId: J
   const indexed = useQuery({
     queryKey: ['indexed-project', chainId, Number(projectId)],
     enabled: Number.isSafeInteger(Number(projectId)),
-    queryFn: () => getProject(chainId, Number(projectId)),
+    queryFn: ({ signal }) => getProject(chainId, Number(projectId), { signal }),
     initialData: seed?.indexed ?? undefined,
     staleTime: 30_000,
     retry: 1,

@@ -87,7 +87,7 @@ function AccountActivity({ account, network }: { account: string; network: Netwo
     ...INDEX_QUERY,
     queryKey: ['account-view', 'activity', network, account],
     initialPageParam: 0,
-    queryFn: ({ pageParam }) => getAccountActivity(account, { network, limit: PAGE_SIZE, offset: pageParam }),
+    queryFn: ({ pageParam, signal }) => getAccountActivity(account, { network, limit: PAGE_SIZE, offset: pageParam, signal }),
     getNextPageParam: (last, pages) => {
       const loaded = pages.reduce((count, page) => count + page.items.length, 0)
       return last.items.length > 0 && loaded < last.totalCount ? loaded : undefined
@@ -125,14 +125,14 @@ function AccountStoreItems({ account, network }: { account: string; network: Net
   const holdings = useQuery({
     ...INDEX_QUERY,
     queryKey: ['account-view', 'store-items', network, account],
-    queryFn: () => getAccountNfts(account, { network }),
+    queryFn: ({ signal }) => getAccountNfts(account, { network, signal }),
   })
   const rows = (holdings.data?.items ?? []).filter(validProject)
   const refs = [...new Map(rows.map(row => [projectKey(row), { chainId: row.chainId, projectId: row.projectId, version: 6 }])).values()]
   const projects = useQuery({
     ...INDEX_QUERY,
     queryKey: ['account-view', 'store-projects', network, account, refs],
-    queryFn: () => getProjectsByRefs(refs, { network }),
+    queryFn: ({ signal }) => getProjectsByRefs(refs, { network, signal }),
     enabled: refs.length > 0,
   })
   const byRef = new Map((projects.data ?? []).filter(project => project.version === 6).map(project => [projectKey(project), project]))
@@ -172,14 +172,14 @@ function AccountDelegatedProjects({ account, network }: { account: string; netwo
   const grants = useQuery({
     ...INDEX_QUERY,
     queryKey: ['account-view', 'grants', network, account],
-    queryFn: () => getOperatorGrants(account, { network }),
+    queryFn: ({ signal }) => getOperatorGrants(account, { network, signal }),
   })
   const rows = (grants.data ?? []).filter(grant => grant.version === 6 && grant.operator.toLowerCase() === account && grant.permissions.length > 0)
   const refs = [...new Map(rows.filter(validProject).map(row => [projectKey(row), { chainId: row.chainId, projectId: row.projectId, version: 6 }])).values()]
   const projects = useQuery({
     ...INDEX_QUERY,
     queryKey: ['account-view', 'delegated-projects', network, account, refs],
-    queryFn: () => getProjectsByRefs(refs, { network }),
+    queryFn: ({ signal }) => getProjectsByRefs(refs, { network, signal }),
     enabled: refs.length > 0,
   })
   const byRef = new Map((projects.data ?? []).filter(project => project.version === 6).map(project => [projectKey(project), project]))

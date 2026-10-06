@@ -62,6 +62,7 @@ export async function getProjectParticipants(
   projectId: string | number | bigint,
   offset = 0,
   limit = PROJECT_PARTICIPANTS_PAGE_SIZE,
+  { signal }: { signal?: AbortSignal } = {},
 ): Promise<ProjectParticipantsPage> {
   const id = indexedParticipantProjectId(chainId, projectId)
   if (id === null || !Number.isSafeInteger(offset) || offset < 0 || offset > 2_147_483_647 || !Number.isSafeInteger(limit) || limit < 1 || limit > 250) {
@@ -71,7 +72,7 @@ export async function getProjectParticipants(
     where: { AND: [{ chainId }, { projectId: id }, { version: 6 }, { balance_gt: '0' }] },
     limit,
     offset,
-  }, { chainId, policy: 'live' })
+  }, { chainId, policy: 'live', signal })
   const page = data.participants
   if (!isRecord(page) || !Array.isArray(page.items) || !Number.isSafeInteger(page.totalCount) || Number(page.totalCount) < 0 || page.items.length > limit) {
     throw new Error('The holder index returned an incomplete page.')
@@ -116,12 +117,15 @@ const HOLDERS_PER_DEPLOYMENT = 1_000
  * inactive holders), then folded by address. `complete` is false when a deployment had
  * more holders than one read covers.
  */
-export async function getProjectHolders(refs: readonly (readonly [number, number])[]): Promise<{ holders: ProjectHolder[]; complete: boolean }> {
+export async function getProjectHolders(
+  refs: readonly (readonly [number, number])[],
+  { signal }: { signal?: AbortSignal } = {},
+): Promise<{ holders: ProjectHolder[]; complete: boolean }> {
   let complete = true
   const rows = (await Promise.all(refs.map(async ([chainId, projectId]) => {
     const collected: ProjectParticipant[] = []
     for (let offset: number | null = 0; offset !== null && collected.length < HOLDERS_PER_DEPLOYMENT;) {
-      const page: ProjectParticipantsPage = await getProjectParticipants(chainId, projectId, offset, HOLDER_PAGE)
+      const page: ProjectParticipantsPage = await getProjectParticipants(chainId, projectId, offset, HOLDER_PAGE, { signal })
       collected.push(...page.items)
       offset = page.nextOffset
       if (offset !== null && collected.length >= HOLDERS_PER_DEPLOYMENT) complete = false

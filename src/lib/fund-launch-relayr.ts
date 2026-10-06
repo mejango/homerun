@@ -121,11 +121,16 @@ function walletRejected(error: unknown): boolean {
  * One authorization per destination, one reviewed payment on the user's selected chain.
  * The launch journal owns recovery: provider labels never establish creation or permit a new payment.
  */
-export async function runRelayrLaunch({ session, account, onStatus, onProgress }: {
+export async function runRelayrLaunch({ session, account, onStatus, onProgress, signal }: {
   session: LaunchSession
   account: Address
   onStatus: (chainId: number, status: LaunchChainStatus & { error?: string }) => void
   onProgress: (message: string) => void
+  /**
+   * The page's. When it aborts, the payment's wait for a Safe to execute it ends and the payment stays sent. This
+   * launch refuses Safe wallets, so that wait is not reached today.
+   */
+  signal?: AbortSignal
 }): Promise<void> {
   assertNoViewAs()
   // Signing moves the wallet to each destination, so the fee picker prefers the chain it started on.
@@ -576,13 +581,18 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     persist()
     onProgress(`Approve one payment on ${chainName(paymentChainId)} to launch on every selected chain.`)
     try {
-      journal.paymentHash = await relayrPay(payment, account, journal.quote!.bundle_uuid, destinations, hash => {
-        journal!.paymentHash = hash
-        journal!.phase = 'submitted'
-        persist()
-      }, verifySigned, () => {
-        journal!.phase = 'payment-signing'
-        persist() // reload during the wallet prompt cannot silently pay again
+      journal.paymentHash = await relayrPay(payment, account, journal.quote!.bundle_uuid, destinations, {
+        onSubmitted: hash => {
+          journal!.paymentHash = hash
+          journal!.phase = 'submitted'
+          persist()
+        },
+        reverify: verifySigned,
+        onSending: () => {
+          journal!.phase = 'payment-signing'
+          persist() // reload during the wallet prompt cannot silently pay again
+        },
+        signal,
       })
     } catch (error) {
       if (journal.phase === 'payment-signing' && !journal.paymentHash && walletRejected(error)) {

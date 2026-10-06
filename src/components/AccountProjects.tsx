@@ -139,13 +139,13 @@ export function AccountProjectSections({ account, network, section = 'both' }: {
   const owned = useQuery({
     ...INDEX_QUERY,
     queryKey: ['account-projects', 'owned', network, account],
-    queryFn: () => getProjectsOwnedBy([account], { network }),
+    queryFn: ({ signal }) => getProjectsOwnedBy([account], { network, signal }),
     enabled: section !== 'holdings',
   })
   const holdings = useQuery({
     ...INDEX_QUERY,
     queryKey: ['account-projects', 'holdings', network, account],
-    queryFn: () => getAccountTokenHoldings(account, { network }),
+    queryFn: ({ signal }) => getAccountTokenHoldings(account, { network, signal }),
     enabled: section !== 'projects',
   })
   const intents = useQuery({
@@ -159,7 +159,7 @@ export function AccountProjectSections({ account, network, section = 'both' }: {
   const heldProjects = useQuery({
     ...INDEX_QUERY,
     queryKey: ['account-projects', 'holding-details', network, account, refs],
-    queryFn: () => getProjectsByRefs(refs, { network }),
+    queryFn: ({ signal }) => getProjectsByRefs(refs, { network, signal }),
     enabled: refs.length > 0,
   })
   // Index ownership is only discovery. Action permissions are read from contracts on the project page.
@@ -201,7 +201,7 @@ function ProjectSearch({ network }: { network: Network }) {
   const current = normalized === debouncedText
   const search = useQuery({
     queryKey: ['account-projects', 'search', network, debouncedText],
-    queryFn: () => searchProjects(debouncedText, PAGE_SIZE, { network }),
+    queryFn: ({ signal }) => searchProjects(debouncedText, PAGE_SIZE, { network, signal }),
     enabled: ready,
     staleTime: 30_000,
     retry: 1,

@@ -1,48 +1,7 @@
-import {
-  createJBCenterRpcProvider,
-  type JBCenterRpcProvider,
-} from '@bananapus/nana-sdk-core/jbcenter'
+import { createJBCenterRpcProvider } from '@bananapus/nana-sdk-core/jbcenter'
 import { createPublicClient, custom, http, type PublicClient, type Transport } from 'viem'
 import { SUPPORTED_CHAINS } from '@/lib/chains'
 import { jbCenterAppOrigin, jbCenterBaseUrl } from '@/lib/jbcenter-config'
-
-/** JB Center load balances reads across RPC nodes that import blocks at
- * slightly different times. A read pinned to a block one node has already
- * imported can land on a sibling that has not, and the sibling answers
- * JSON-RPC -32001 — which viem renders as "Requested resource not found."
- * Waiting out the lag is the only correct answer: falling back to `latest`
- * would read state older than the approval the pinned block exists to
- * observe. Base mines every two seconds, so this schedule covers a few
- * blocks of drift. */
-const BLOCK_LAG_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 2_000]
-
-function isBehindHead(error: unknown): boolean {
-  return (
-    !!error &&
-    typeof error === 'object' &&
-    (error as { code?: unknown }).code === -32001
-  )
-}
-
-/** Retries reads that a lagging node cannot answer yet. Every method JB Center
- * allows is a read, so a retry can only repeat work, never repeat an effect. */
-export function retryWhileBehindHead(
-  provider: JBCenterRpcProvider,
-  delaysMs: readonly number[] = BLOCK_LAG_RETRY_DELAYS_MS,
-): JBCenterRpcProvider {
-  return {
-    async request(request) {
-      for (let attempt = 0; ; attempt += 1) {
-        try {
-          return await provider.request(request)
-        } catch (error) {
-          if (attempt >= delaysMs.length || !isBehindHead(error)) throw error
-          await new Promise((resolve) => setTimeout(resolve, delaysMs[attempt]))
-        }
-      }
-    },
-  }
-}
 
 const FIXTURE_NETWORKS: Record<number, string> = {
   1: 'mainnet',
@@ -63,6 +22,13 @@ const serverFetch: typeof fetch = (input, init) => {
 
 const browserFetch: typeof fetch = (input, init) => window.fetch(input, init)
 
+/** Center's RPC for `chainId`. Center load balances reads across nodes that
+ * import blocks at slightly different times, so a read pinned to a block one
+ * node has imported can land on one that has not, which answers JSON-RPC
+ * -32001 ("Requested resource not found." in viem). The SDK's provider asks
+ * again after 250, 500, 1,000, 2,000 and 2,000 ms: reading `latest` instead
+ * would read state older than the block the read pins. The read's signal goes
+ * with every try, and a wait between tries ends the moment it aborts. */
 export function jbCenterRpcTransport(
   chainId: number,
   timeoutMs = 15_000,
@@ -75,13 +41,11 @@ export function jbCenterRpcTransport(
     return network ? http(`${origin}/rpc/${network}`) : http()
   }
   return custom(
-    retryWhileBehindHead(
-      createJBCenterRpcProvider(chainId, {
-        baseUrl: jbCenterBaseUrl(),
-        fetch: typeof window === 'undefined' ? serverFetch : browserFetch,
-        timeoutMs,
-      }),
-    ),
+    createJBCenterRpcProvider(chainId, {
+      baseUrl: jbCenterBaseUrl(),
+      fetch: typeof window === 'undefined' ? serverFetch : browserFetch,
+      timeoutMs,
+    }),
     { retryCount: 1 },
   )
 }

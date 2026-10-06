@@ -23,7 +23,7 @@ function useDeployments(chainId: number, projectId: number) {
   const home = useQuery({
     queryKey: ['indexed-project', chainId, projectId],
     meta: PERSIST,
-    queryFn: () => getProject(chainId, projectId),
+    queryFn: ({ signal }) => getProject(chainId, projectId, { signal }),
     staleTime: 30_000,
     retry: 1,
   })
@@ -32,7 +32,7 @@ function useDeployments(chainId: number, projectId: number) {
     queryKey: ['sucker-group-projects', row?.suckerGroupId],
     enabled: !!row?.suckerGroupId,
     meta: PERSIST,
-    queryFn: () => getSuckerGroupProjects(row!.suckerGroupId!, chainId),
+    queryFn: ({ signal }) => getSuckerGroupProjects(row!.suckerGroupId!, chainId, { signal }),
     staleTime: 300_000,
     retry: 1,
   })
@@ -52,7 +52,7 @@ function ParticipantsList({ chainId, projectId, tokenLabel }: { chainId: number;
     queryKey: ['project-participants', chainId, projectId, refsKey],
     enabled: settled,
     meta: PERSIST,
-    queryFn: () => getProjectHolders(refs),
+    queryFn: ({ signal }) => getProjectHolders(refs, { signal }),
     staleTime: 30_000,
     retry: 1,
   })
