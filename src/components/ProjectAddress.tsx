@@ -31,7 +31,7 @@ export function ProjectAddress({ chainId, projectId, intentId, seed, incomeFund 
     queryKey: ['indexed-project', chainId, Number(projectId)],
     meta: PERSIST,
     enabled: Number.isSafeInteger(Number(projectId)),
-    queryFn: () => getProject(chainId, Number(projectId)),
+    queryFn: ({ signal }) => getProject(chainId, Number(projectId), { signal }),
     initialData: seed?.indexed ?? undefined,
     staleTime: 30_000,
     retry: 1,

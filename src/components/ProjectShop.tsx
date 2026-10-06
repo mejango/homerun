@@ -91,7 +91,7 @@ function Customers({ chainId, projectId, shop }: { chainId: JBChainId; projectId
   const items = useInfiniteQuery({
     queryKey: ['shop-customers', chainId, projectId.toString(), shop.hook, scope, owner ?? null],
     initialPageParam: 0, enabled: scope === 'all' || !!owner,
-    queryFn: ({ pageParam }) => readShopCustomers({ chainId, projectId, hook: shop.hook, owner, offset: pageParam }),
+    queryFn: ({ pageParam, signal }) => readShopCustomers({ chainId, projectId, hook: shop.hook, owner, offset: pageParam, signal }),
     getNextPageParam: page => page.nextOffset ?? undefined, staleTime: 30_000, retry: 1,
   })
   const rows = items.data?.pages.flatMap(page => page.items) ?? []

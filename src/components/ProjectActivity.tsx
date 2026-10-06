@@ -131,14 +131,21 @@ function ActivityFeed({ chainId, projectId, suckerGroupId }: { chainId: number; 
   const scopeRef = useRef(scope)
   const appliedScope = useRef(scope)
   scopeRef.current = scope
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
-  const fetchPage = (offset = 0) => suckerGroupId
-    ? getProjectActivity(suckerGroupId, ACTIVITY_PAGE, chainId, offset)
-    : getProjectActivityByProject(chainId, projectId, ACTIVITY_PAGE, offset)
+  // Older pages load while the page is open; leaving it stops the one under way.
+  const leave = useRef<AbortController | null>(null)
+  useEffect(() => {
+    mounted.current = true
+    const controller = new AbortController()
+    leave.current = controller
+    return () => { mounted.current = false; controller.abort() }
+  }, [])
+  const fetchPage = (signal: AbortSignal | undefined, offset = 0) => suckerGroupId
+    ? getProjectActivity(suckerGroupId, ACTIVITY_PAGE, chainId, offset, { signal })
+    : getProjectActivityByProject(chainId, projectId, ACTIVITY_PAGE, offset, { signal })
   const newest = useQuery({
     queryKey: ['project-activity', chainId, projectId, suckerGroupId],
     meta: PERSIST,
-    queryFn: () => fetchPage(),
+    queryFn: ({ signal }) => fetchPage(signal),
     // As in Juicebox Money, activity loads with the page and after this visit's own
     // confirmed transactions (refreshIndexedProject), not on a timer.
     staleTime: 10_000,
@@ -170,7 +177,7 @@ function ActivityFeed({ chainId, projectId, suckerGroupId }: { chainId: number; 
     const requestScope = scope
     loadLock.current = true; setLoadingMore(true); setLoadMoreError(false)
     try {
-      const page = await fetchPage(events.length)
+      const page = await fetchPage(leave.current?.signal, events.length)
       if (!mounted.current || scopeRef.current !== requestScope) return
       setEvents(current => mergeActivityEvents(current, page.items))
       setTotal(page.totalCount)
@@ -197,7 +204,7 @@ function ProjectActivitySource({ chainId, projectId }: { chainId: number; projec
   const project = useQuery({
     queryKey: ['indexed-project', chainId, projectId],
     meta: PERSIST,
-    queryFn: () => getProject(chainId, projectId),
+    queryFn: ({ signal }) => getProject(chainId, projectId, { signal }),
     staleTime: 30_000,
     retry: 1,
   })

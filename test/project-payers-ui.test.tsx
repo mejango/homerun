@@ -36,6 +36,7 @@ describe('project payer controls', () => {
     mocks.address = undefined
     mocks.rows.mockResolvedValue([{ chainId: 1, projectId: 7, version: 6, address: PAYER, defaultBeneficiary: saved().settings.beneficiary, owner: saved().settings.owner, defaultAddToBalance: false, paymentsCount: 2, addToBalanceCount: 0, totalFacilitated: '100', totalFacilitatedUsd: '1000000000000000000' }])
     await render()
+    expect(mocks.rows).toHaveBeenCalledWith(1, 7n, { signal: expect.any(AbortSignal) })
     expect(host.textContent).toContain('FUND goes to the original payer')
     expect(host.textContent).toContain('$1.00 facilitated')
     expect(host.querySelector('a')?.href).toBe(`https://etherscan.io/address/${PAYER}`)

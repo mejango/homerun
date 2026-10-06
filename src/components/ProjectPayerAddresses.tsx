@@ -50,7 +50,7 @@ function ProjectPayerAddressContext({ chainId, projectId, tokenLabel = 'Project 
   const unresolved = !!attempt && (attempt.phase === 'signing' || attempt.phase === 'submitted')
   const proofIdentity = attempt ? payerAttemptIdentity(attempt) : null
   const busy = preparing || tx.busy || tx.phase === 'review'
-  const rows = useQuery({ queryKey: ['project-payers', chainId, String(projectId)], queryFn: () => getProjectPayerAddresses(chainId, projectId), staleTime: 30_000, refetchInterval: 30_000, retry: 1 })
+  const rows = useQuery({ queryKey: ['project-payers', chainId, String(projectId)], queryFn: ({ signal }) => getProjectPayerAddresses(chainId, projectId, { signal }), staleTime: 30_000, refetchInterval: 30_000, retry: 1 })
   const factory = useQuery({ queryKey: ['project-payer-factory', chainId, String(projectId)], enabled: !!client, queryFn: () => checkPayerFactory(client!, chainId, projectId), staleTime: 30_000, retry: 1 })
 
   useEffect(() => {

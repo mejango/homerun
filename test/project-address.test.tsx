@@ -26,6 +26,20 @@ describe('one address per project', () => {
     for (let i = 0; i < 5; i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
   }
 
+  it("stops the project's index read when the page is left", async () => {
+    let signal: AbortSignal | undefined
+    mocks.project.mockImplementation((_chainId: number, _projectId: number, options?: { signal?: AbortSignal }) => {
+      signal = options?.signal
+      return new Promise(() => {})
+    })
+    await render('70')
+    expect(signal?.aborted).toBe(false)
+
+    await act(async () => root.unmount())
+    expect(signal?.aborted).toBe(true)
+    root = createRoot(host)
+  })
+
   it('forwards an INCOME ID to the FUND it was launched from', async () => {
     mocks.project.mockResolvedValue(row(71, true))
     mocks.binding.mockResolvedValue(70n)

@@ -46,7 +46,7 @@ describe('holder account view', () => {
 
   it('includes credit-only holders, the balance breakdown, and exact explorer links without a wallet connection', async () => {
     await render()
-    expect(mocks.holders).toHaveBeenCalledWith([[8453, 7]])
+    expect(mocks.holders).toHaveBeenCalledWith([[8453, 7]], { signal: expect.any(AbortSignal) })
     expect(host.textContent).toContain('FUND holders')
     expect(host.textContent).toContain('Total FUND3Wallet tokens0Unclaimed credits3')
     expect(host.querySelector('a')?.href).toBe(`https://basescan.org/address/${FIRST}`)
@@ -59,8 +59,8 @@ describe('holder account view', () => {
     mocks.group.mockResolvedValue([indexRow({ chainId: 10, projectId: 9, suckerGroupId: 'group-1' }), indexRow({ suckerGroupId: 'group-1' })])
     mocks.holders.mockResolvedValue({ holders: [holder(FIRST, { chains: [10, 8453] })], complete: true })
     await render()
-    expect(mocks.group).toHaveBeenCalledWith('group-1', 8453)
-    expect(mocks.holders).toHaveBeenLastCalledWith([[10, 9], [8453, 7]])
+    expect(mocks.group).toHaveBeenCalledWith('group-1', 8453, { signal: expect.any(AbortSignal) })
+    expect(mocks.holders).toHaveBeenLastCalledWith([[10, 9], [8453, 7]], { signal: expect.any(AbortSignal) })
     expect(host.textContent).toContain('across 2 chains')
     expect(host.querySelector('[aria-label="Holds on Optimism, Base"]')).not.toBeNull()
     expect(host.querySelector('a')?.href).toBe(`https://optimistic.etherscan.io/address/${FIRST}`)
@@ -70,7 +70,7 @@ describe('holder account view', () => {
     mocks.project.mockResolvedValue(indexRow({ suckerGroupId: 'group-1' }))
     mocks.group.mockResolvedValue([indexRow({ projectId: 8, suckerGroupId: 'group-1' }), indexRow({ chainId: 10, projectId: 9, suckerGroupId: 'group-1' })])
     await render()
-    expect(mocks.holders).toHaveBeenLastCalledWith([[8453, 7]])
+    expect(mocks.holders).toHaveBeenLastCalledWith([[8453, 7]], { signal: expect.any(AbortSignal) })
   })
 
   it('pages the folded list and says when a deployment was only partly read', async () => {
@@ -106,7 +106,7 @@ describe('holder account view', () => {
   it('lists holders for this chain when the index has no row for the project', async () => {
     mocks.project.mockRejectedValue(new Error('Indexer unavailable'))
     await render()
-    expect(mocks.holders).toHaveBeenCalledWith([[8453, 7]])
+    expect(mocks.holders).toHaveBeenCalledWith([[8453, 7]], { signal: expect.any(AbortSignal) })
   })
 
   it('resets pagination and balance scope when switching from FUND to INCOME', async () => {
@@ -116,7 +116,7 @@ describe('holder account view', () => {
     mocks.project.mockResolvedValue(indexRow({ projectId: 8 }))
     mocks.holders.mockResolvedValue({ holders: [holder('0x2222222222222222222222222222222222222222')], complete: true })
     await render('8', 'INCOME')
-    expect(mocks.holders).toHaveBeenLastCalledWith([[8453, 8]])
+    expect(mocks.holders).toHaveBeenLastCalledWith([[8453, 8]], { signal: expect.any(AbortSignal) })
     expect(host.textContent).toContain('INCOME holders')
     expect(host.textContent).not.toContain('Total FUND')
     expect(host.querySelector('a')?.href).toContain('0x222222')
