@@ -761,11 +761,21 @@ export async function relayrPay(
   expectedAccount: Address,
   expectedBundleUuid: string,
   destinationChainIds: readonly number[],
-  onSubmitted?: (hash: Hex) => void,
-  reverify?: () => Promise<void>,
-  onSending?: () => void,
-  /** The flow's: when it aborts, the wait for a Safe to execute the payment ends. */
-  signal?: AbortSignal,
+  {
+    onSubmitted,
+    reverify,
+    onSending,
+    signal,
+  }: {
+    /** Called with the payment's hash as soon as the wallet returns it. */
+    onSubmitted?: (hash: Hex) => void
+    /** Checks the action again before the payment is sent. */
+    reverify?: () => Promise<void>
+    /** Called right before the wallet is asked to send. */
+    onSending?: () => void
+    /** The flow's: when it aborts, the wait for a Safe to execute the payment ends. */
+    signal?: AbortSignal
+  } = {},
 ): Promise<Hex> {
   assertNoViewAs()
   const fundingChains = relayrPaymentChains([...new Set(destinationChainIds)])

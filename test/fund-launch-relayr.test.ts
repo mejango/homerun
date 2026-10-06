@@ -157,7 +157,7 @@ beforeEach(() => {
     records = signed.map((entry, i) => recordFor(entry, i, { state: 'Confirmed', data: { hash: hashFor(entry.chain) } }))
     return quote
   })
-  m.pay.mockImplementation(async (_payment, _account, _uuid, destinationChainIds, submitted, reverify, sending) => {
+  m.pay.mockImplementation(async (_payment, _account, _uuid, destinationChainIds, { onSubmitted: submitted, reverify, onSending: sending }) => {
     expect(destinationChainIds).toEqual(entries.map(entry => entry.chain))
     await reverify()
     sending()
@@ -339,7 +339,7 @@ describe('relayed launch execution and recovery', () => {
   })
 
   it.each([undefined, 11155111])('rejects a started mainnet journal with invalid saved funding chain %s without reopening the picker', async paymentChainId => {
-    m.pay.mockImplementationOnce(async (_p, _a, _u, _destinations, _submitted, verify, sending) => {
+    m.pay.mockImplementationOnce(async (_p, _a, _u, _destinations, { reverify: verify, onSending: sending }) => {
       await verify(); sending(); throw new Error('Wallet response lost')
     })
     await expect(run()).rejects.toThrow('Wallet response lost')
@@ -725,7 +725,7 @@ describe('relayed launch execution and recovery', () => {
     saveLaunchSession(session(chains, funding))
     offeredPaymentChains = [funding, alternative]
     m.funding.mockResolvedValue(funding)
-    m.pay.mockImplementation(async (_p, _a, _u, _destinationChainIds, _submitted, verify, sending) => {
+    m.pay.mockImplementation(async (_p, _a, _u, _destinationChainIds, { reverify: verify, onSending: sending }) => {
       await verify(); sending(); throw new Error('wallet disconnected after broadcasting')
     })
     await expect(run()).rejects.toThrow('wallet disconnected')
@@ -742,7 +742,7 @@ describe('relayed launch execution and recovery', () => {
   it("hands the launch's signal to its payment, and a payment whose Safe wait it ends stays sent and is never paid again", async () => {
     const page = new AbortController()
     let handed: AbortSignal | undefined
-    m.pay.mockImplementationOnce(async (_p, _a, _u, _destinationChainIds, submitted, verify, sending, signal) => {
+    m.pay.mockImplementationOnce(async (_p, _a, _u, _destinationChainIds, { onSubmitted: submitted, reverify: verify, onSending: sending, signal }) => {
       handed = signal
       await verify(); sending(); submitted(HASH)
       page.abort()
@@ -758,7 +758,7 @@ describe('relayed launch execution and recovery', () => {
   })
 
   it('allows retrying a positively rejected funding prompt', async () => {
-    m.pay.mockImplementationOnce(async (_p, _a, _u, _destinationChainIds, _submitted, verify, sending) => {
+    m.pay.mockImplementationOnce(async (_p, _a, _u, _destinationChainIds, { reverify: verify, onSending: sending }) => {
       await verify(); sending(); throw Object.assign(new Error('Rejected'), { code: 4001 })
     })
     await expect(run()).rejects.toThrow('Rejected')

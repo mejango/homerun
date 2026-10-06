@@ -101,7 +101,7 @@ describe('Relayr payment review', () => {
   it('waits for the Safe to execute the payment with the signal of the flow that sent it', async () => {
     m.safe = true
     const flow = new AbortController()
-    await relayrPay(payment, m.account, BUNDLE, [1, 10], undefined, undefined, undefined, flow.signal)
+    await relayrPay(payment, m.account, BUNDLE, [1, 10], { signal: flow.signal })
     expect(m.waitSafe).toHaveBeenCalledWith(8453, HASH, { signal: flow.signal })
   })
 
@@ -113,7 +113,7 @@ describe('Relayr payment review', () => {
       }))
     const flow = new AbortController()
     const submitted = vi.fn()
-    const paying = relayrPay(payment, m.account, BUNDLE, [1, 10], submitted, undefined, undefined, flow.signal)
+    const paying = relayrPay(payment, m.account, BUNDLE, [1, 10], { onSubmitted: submitted, signal: flow.signal })
       .catch((error: unknown) => error)
     await vi.waitFor(() => expect(m.waitSafe).toHaveBeenCalledOnce())
     flow.abort()

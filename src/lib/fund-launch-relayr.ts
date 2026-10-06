@@ -581,14 +581,19 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress, 
     persist()
     onProgress(`Approve one payment on ${chainName(paymentChainId)} to launch on every selected chain.`)
     try {
-      journal.paymentHash = await relayrPay(payment, account, journal.quote!.bundle_uuid, destinations, hash => {
-        journal!.paymentHash = hash
-        journal!.phase = 'submitted'
-        persist()
-      }, verifySigned, () => {
-        journal!.phase = 'payment-signing'
-        persist() // reload during the wallet prompt cannot silently pay again
-      }, signal)
+      journal.paymentHash = await relayrPay(payment, account, journal.quote!.bundle_uuid, destinations, {
+        onSubmitted: hash => {
+          journal!.paymentHash = hash
+          journal!.phase = 'submitted'
+          persist()
+        },
+        reverify: verifySigned,
+        onSending: () => {
+          journal!.phase = 'payment-signing'
+          persist() // reload during the wallet prompt cannot silently pay again
+        },
+        signal,
+      })
     } catch (error) {
       if (journal.phase === 'payment-signing' && !journal.paymentHash && walletRejected(error)) {
         journal.phase = 'quoted'
