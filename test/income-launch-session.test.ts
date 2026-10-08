@@ -4,7 +4,7 @@ import { encodeAbiParameters, encodeEventTopics, encodeFunctionData, parseAbi, z
 import { homerunDeployerAbi, INITIAL_INCOME_SUPPLY } from '../src/lib/income-contracts'
 import type { FundTransaction } from '../src/lib/fund-contracts'
 import {
-  beginIncomeLaunchSubmission, clearIncomeLaunchPending, exportIncomeLaunchPending, importIncomeLaunchPending,
+  adoptIncomeLaunchProposal, beginIncomeLaunchSubmission, clearIncomeLaunchPending, exportIncomeLaunchPending, importIncomeLaunchPending,
   incomeLaunchSessionKey, readIncomeLaunchPending, recordIncomeLaunchHash, verifyIncomeLaunchExecution,
   withIncomeLaunchLock, type IncomeLaunchPending, type IncomeLaunchStorage,
 } from '../src/lib/income-launch-session'
@@ -331,5 +331,26 @@ describe('INCOME cross-tab review and submission lock', () => {
     await expect(withIncomeLaunchLock(key, async () => { begin(storage); throw new Error('Wallet disconnected') })).rejects.toThrow(/Wallet disconnected/)
     await expect(withIncomeLaunchLock(key, async () => begin(storage))).rejects.toThrow(/already be pending/)
     expect(readIncomeLaunchPending(storage, key)?.phase).toBe('unknown')
+  })
+})
+
+
+describe('existing INCOME Safe proposal adoption', () => {
+  it('uses the original embedded snapshot and exact proposal hash for historical recovery', async () => {
+    const storage = memory()
+    const record = adoptIncomeLaunchProposal(storage, key, request, 9n, HOLDER, { proposalHash: HASH, call: { to: request.address, data: encodeFunctionData(request), value: request.value } })
+    expect(readIncomeLaunchPending(storage, key)).toEqual(record)
+    expect(record).toMatchObject({ phase: 'pending', safe: true, hash: HASH, afterBlock: '90' })
+    await expect(verifyIncomeLaunchExecution(clientFor(record, { block: 91n }), record, EXECUTION_HASH)).resolves.toBe('confirmed')
+    await expect(verifyIncomeLaunchExecution(clientFor(record, { block: 90n }), record, EXECUTION_HASH)).rejects.toThrow('new confirmed')
+    await expect(verifyIncomeLaunchExecution(clientFor(record, { block: 91n, proposal: BLOCK_HASH }), record, EXECUTION_HASH)).rejects.toThrow('proposal hash')
+  })
+  it('refuses changed calls before persisting or replacing pending records', () => {
+    const storage = memory(), proposal = { proposalHash: HASH, call: { to: request.address, data: encodeFunctionData(request), value: request.value } }
+    expect(() => adoptIncomeLaunchProposal(storage, key, request, 9n, HOLDER, { ...proposal, call: { ...proposal.call, value: 1n } })).toThrow('does not match')
+    expect(readIncomeLaunchPending(storage, key)).toBeNull()
+    const record = adoptIncomeLaunchProposal(storage, key, request, 9n, HOLDER, proposal)
+    expect(() => adoptIncomeLaunchProposal(storage, key, request, 9n, HOLDER, proposal)).toThrow('already be pending')
+    expect(readIncomeLaunchPending(storage, key)).toEqual(record)
   })
 })

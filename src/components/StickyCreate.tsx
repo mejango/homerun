@@ -22,6 +22,7 @@ import {
   type StickyPending,
 } from "@/lib/sticky-session";
 import {
+  adoptStickyCreationProposal,
   beginStickyCreationSubmission,
   clearStickyCreationPending,
   prepareStickyCreate,
@@ -353,6 +354,16 @@ export function StickyCreate({
               throw new Error(
                 "The FUND snapshot, factory or creation fee changed. Prepare a fresh review.",
               );
+          },
+          onExistingProposal: async (proposal) => {
+            if (captured !== liveIdentity.current)
+              throw new Error("The creation context changed before recovering its proposal.");
+            if (!navigator.locks)
+              throw new Error("Use a browser with Web Locks support to coordinate creation across tabs.");
+            await navigator.locks.request(`homerun-sticky-create:${scope}`, () => {
+              saved = adoptStickyCreationProposal(localStorage, reviewed, address, proposal);
+              changed();
+            });
           },
           beforeWrite: async () => {
             if (liveUnavailable.current)

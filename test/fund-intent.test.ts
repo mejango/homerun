@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { prepareIntentEnvelope } from './support/intent-prepare.mjs'
 import { expect, test, vi } from 'vitest'
 vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fixtures/homerun-deployer')).withHomerunDeployer(await importOriginal()))
 
@@ -169,12 +170,9 @@ test('a relay cost reads as one short amount of ETH', () => {
 })
 
 test('publishing signs Center’s prepared message and sends the envelope with the publisher', async () => {
-  const contentHash = `0x${'ab'.repeat(32)}` as Hex
-  // Center's own signing message, word for word (docs/rest/PROJECT_INTENTS.md):
-  // publishSignedIntent refuses to sign anything else.
-  const message = `Juice Central project intent\nVersion: 1\nContent hash: ${contentHash}`
+  const { contentHash, message } = prepareIntentEnvelope(buildFundIntent(input, 'Neighborhood Workshop'))
   const signature = `0x${'cd'.repeat(65)}` as Hex
-  const prepareIntent = vi.fn(async (envelope: unknown) => ({ contentHash, message, envelope }))
+  const prepareIntent = vi.fn(async (envelope: unknown) => prepareIntentEnvelope(envelope))
   const publishIntent = vi.fn(async (body: Record<string, unknown>) => ({
     id: '3f0f2f4c-0f3f-4f2f-8f1f-0f2f3f4f5f6f', status: 'undeployed', contentHash,
     envelope: (body as { format: string }), publisher: owner, signature,

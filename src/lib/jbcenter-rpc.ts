@@ -1,4 +1,4 @@
-import { createJBCenterRpcProvider } from '@bananapus/nana-sdk-core/jbcenter'
+import { createJBCenterRpcProvider, createPacedJBCenterLimiter } from '@bananapus/nana-sdk-core/jbcenter'
 import { createPublicClient, custom, http, type PublicClient, type Transport } from 'viem'
 import { SUPPORTED_CHAINS } from '@/lib/chains'
 import { jbCenterAppOrigin, jbCenterBaseUrl } from '@/lib/jbcenter-config'
@@ -20,6 +20,7 @@ const serverFetch: typeof fetch = (input, init) => {
   return fetch(input, { ...init, headers })
 }
 
+const browserLimiter = createPacedJBCenterLimiter()
 const browserFetch: typeof fetch = (input, init) => window.fetch(input, init)
 
 /** Center's RPC for `chainId`. Center load balances reads across nodes that
@@ -44,6 +45,7 @@ export function jbCenterRpcTransport(
     createJBCenterRpcProvider(chainId, {
       baseUrl: jbCenterBaseUrl(),
       fetch: typeof window === 'undefined' ? serverFetch : browserFetch,
+      ...(typeof window === 'undefined' ? {} : { limiter: browserLimiter }),
       timeoutMs,
     }),
     { retryCount: 1 },

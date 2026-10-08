@@ -84,8 +84,9 @@ export function ProjectOwnershipEditor({ chainId, projectId, client, unavailable
       onConfirm={() => void submit()}
       busy={preparing || (tx.busy && !tx.pending)}
       complete={tx.phase === 'success'}
+      settled={tx.phase === 'submitted'}
       error={error}
-      onClose={() => { if (tx.phase === 'success') { setRecipient(''); setConfirmed(false) } setReviewing(false) }}
+      onClose={() => { if (tx.phase === 'success') { setRecipient(''); setConfirmed(false) } setReviewing(false); tx.dismiss() }}
     >
       <p className="text-sm text-smoke-600">{isRevnet ? 'The selected wallet gets this revnet’s Operator permissions; the connected wallet’s are cleared.' : 'The new owner controls this project on this chain. Existing permissions granted by the previous owner stop applying.'}</p>
       <ProjectAdminTransactionStatus tx={tx} />

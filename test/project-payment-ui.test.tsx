@@ -11,7 +11,7 @@ import type { ProjectPayQuote, ProjectPayTokenOption } from '@/lib/project-pay-q
 import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
 
 type Action = 'payment' | 'approval' | 'router'
-type Handle = { phase: string; busy: boolean; isSafe: boolean; error: null; hash: Hex | null; safeProposalHash: Hex | null; receipt: null; send: ReturnType<typeof vi.fn>; reset: ReturnType<typeof vi.fn> }
+type Handle = { notice: string | null; dismiss: ReturnType<typeof vi.fn>; phase: string; busy: boolean; isSafe: boolean; error: null; hash: Hex | null; safeProposalHash: Hex | null; receipt: null; send: ReturnType<typeof vi.fn>; reset: ReturnType<typeof vi.fn> }
 const runtime = vi.hoisted(() => ({
   address: '0x1111111111111111111111111111111111111111' as Address | undefined,
   nextHook: 0, mounts: 0, unmounts: 0,
@@ -92,7 +92,7 @@ describe('shared payment execution', () => {
       throw new Error(`Unexpected contract read: ${functionName}`)
     })
     runtime.handles = (['payment', 'approval', 'router'] as const).map(action => ({
-      phase: 'idle', busy: false, isSafe: false, error: null, hash: null, safeProposalHash: null, receipt: null, reset: vi.fn(),
+      notice: null, dismiss: vi.fn(), phase: 'idle', busy: false, isSafe: false, error: null, hash: null, safeProposalHash: null, receipt: null, reset: vi.fn(),
       send: vi.fn(async (request: TxRequest, options: TxSendOptions = {}) => {
         await runtime.review?.(action, request)
         // Model the mandatory shared transaction review's last write gate.
@@ -254,6 +254,27 @@ describe('shared payment execution', () => {
     expect(runtime.sign).not.toHaveBeenCalled()
     expect(runtime.waitForTransactionReceipt).not.toHaveBeenCalled()
     expect(host.textContent).toContain('Execute it there')
+  })
+
+  it.each(['approval', 'router'] as const)('shows the %s proposal notice and Done without completing or paying', async action => {
+    erc20(); runtime.quote.mockResolvedValue(swapQuote(TOKEN)); runtime.allowance = action === 'approval' ? 0n : 10n ** 9n
+    runtime.handles.forEach(handle => { handle.isSafe = true })
+    await ready(); await submit()
+    const handle = runtime.handles[action === 'approval' ? 1 : 2]
+    handle.phase = 'submitted'
+    handle.notice = 'The Safe result could not be proven. Check Safe before taking another action.'
+    await render()
+    const dialog = host.querySelector('[data-tx-confirm]')!
+    expect(dialog.textContent).toContain(handle.notice)
+    expect(dialog.textContent).not.toContain('Contribution confirmed')
+    const done = [...dialog.querySelectorAll<HTMLButtonElement>('button')].find(item => item.textContent === 'Done')!
+    expect(done.disabled).toBe(false)
+    expect(dialog.querySelector('li[data-state="complete"]')).toBeNull()
+    expect(runtime.writes.map(item => item.action)).toEqual([action])
+    await act(async () => done.click())
+    expect(handle.dismiss).toHaveBeenCalledOnce()
+    expect(host.querySelector('[data-tx-confirm]')).toBeNull()
+    expect(runtime.writes.map(item => item.action)).toEqual([action])
   })
 
   it.each(['account', 'amount', 'rules'] as const)('rechecks a changed %s after review and before the wallet write', async change => {

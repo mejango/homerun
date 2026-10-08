@@ -24,7 +24,7 @@ vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.accou
 vi.mock('@/hooks/useProjectAdminTx', () => ({
   useProjectAdminTx: ({ chainId, onConfirmed }: { chainId: number; onConfirmed: () => void | Promise<unknown> }) => {
     runtime.onConfirmed = onConfirmed
-    return { ...runtime.tx, chainId, send: runtime.send, recover: runtime.recover, reset: () => {} }
+    return { ...runtime.tx, chainId, send: runtime.send, recover: runtime.recover, dismiss: () => {}, reset: () => {} }
   },
 }))
 vi.mock('@/lib/viewAs', () => ({ assertNoViewAs: runtime.viewAs }))

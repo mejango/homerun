@@ -51,7 +51,7 @@ export function IncomeReservedTokens({ state, client }: { state: IncomeProjectSt
   }, [cache, state.chainId, state.projectId, tx.phase, tx.receipt])
 
   async function submit() {
-    if (!address || preparing || tx.busy || tx.phase === 'review') return
+    if (!address || preparing || tx.busy || (tx.phase === 'review' || tx.phase === 'submitted')) return
     setPreparing(true); setError(null)
     try {
       const snapshot = await readIncomeReservedTokens(client, { chainId: state.chainId, projectId: state.projectId })
@@ -59,16 +59,18 @@ export function IncomeReservedTokens({ state, client }: { state: IncomeProjectSt
       if (snapshot.pending <= 0n) throw new Error('There is no reserved INCOME to distribute.')
       const recipients = snapshot.splits.map(split => `${formatUnits(splitAmount(snapshot, split.percent), 18)} INCOME (${split.percent / 10_000_000}% of reserves) to ${recipient(split)}`).join('; ')
       const leftover = snapshot.pending - snapshot.splits.reduce((sum, split) => sum + splitAmount(snapshot, split.percent), 0n)
+      const rememberIntent = () => { setIntent({ snapshot, account: address }) }
       await tx.send({ ...buildSendIncomeReservedTokensTx(state.chainId, state.projectId), label: `Distribute pending reserved INCOME (currently ${formatUnits(snapshot.pending, 18)})` }, {
         reviewedAccount: address,
         reviewNotice: `${recipients}${leftover > 0n ? `${recipients ? '; ' : ''}${formatUnits(leftover, 18)} INCOME remainder to project owner ${snapshot.owner}` : ''}. This permissionless call spends only gas and distributes all reserves using the recipients active when it executes. A smaller amount or another ruleset can’t be confirmed here. Distributor funding does not immediately make holder rewards collectible. A failed hook can burn its unconsumed tokens.`,
         reverify: async () => { assertSameIncomeReservedTokens(snapshot, await readIncomeReservedTokens(client, { chainId: state.chainId, projectId: state.projectId })) },
-        beforeWrite: () => { setIntent({ snapshot, account: address }) },
+        beforeWrite: rememberIntent,
+        onExistingProposal: rememberIntent,
       })
     } catch (reason) { setError(message(reason)) } finally { setPreparing(false) }
   }
   const snapshot = query.data
-  const busy = preparing || tx.busy || tx.phase === 'review'
+  const busy = preparing || tx.busy || (tx.phase === 'review' || tx.phase === 'submitted')
   const leftover = snapshot ? snapshot.pending - snapshot.splits.reduce((sum, split) => sum + splitAmount(snapshot, split.percent), 0n) : 0n
   return <section className="demo-section" aria-label="Distribute reserved INCOME">
     <h2>Distribute reserved INCOME</h2>
@@ -86,7 +88,7 @@ export function IncomeReservedTokens({ state, client }: { state: IncomeProjectSt
     <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={!address || busy || query.isError || !snapshot || snapshot.pending <= 0n} onClick={() => void submit()}>{preparing ? 'Preparing…' : txPhaseLabel(tx.phase, { idle: 'Review distribution', pending: 'Confirming onchain…' })}</button>
     {error && <p className="mt-4 text-sm text-red-800" role="alert">{error}</p>}
     <div className="mt-4 break-words text-sm" role="status" aria-live="polite">
-      {tx.safeProposalHash ? <p>Proposed to Safe. Execution and onchain confirmation are still required.</p> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? verified.data ? <p>Distribution confirmed: {formatUnits(verified.data.tokenCount, 18)} INCOME processed.</p> : verified.isError ? <p role="alert">The transaction was mined, but its distribution could not be verified. {message(verified.error)} <button type="button" className="underline" onClick={() => void verified.refetch()}>Retry verification</button></p> : <p>Transaction mined. Verifying the distribution…</p> : null}
+      {tx.phase === 'submitted' ? <p>{tx.notice}</p> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? verified.data ? <p>Distribution confirmed: {formatUnits(verified.data.tokenCount, 18)} INCOME processed.</p> : verified.isError ? <p role="alert">The transaction was mined, but its distribution could not be verified. {message(verified.error)} <button type="button" className="underline" onClick={() => void verified.refetch()}>Retry verification</button></p> : <p>Transaction mined. Verifying the distribution…</p> : null}
       {tx.error && <p className="text-red-800">{tx.error}</p>}
       {tx.hash && !tx.safeProposalHash && <a className="underline" href={explorerTxUrl(state.chainId, tx.hash) ?? undefined} target="_blank" rel="noreferrer">View transaction</a>}
     </div>

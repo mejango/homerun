@@ -19,7 +19,7 @@ const runtime = vi.hoisted(() => ({
   details: {} as Record<string, FundProjectMetadata>,
   discoveredFund: null as bigint | null, discoveryError: false,
   payQuote: { beneficiaryTokenCount: 0n, reservedTokenCount: 0n },
-  mounted: 0, unmounted: 0, busy: false, phase: 'idle',
+  mounted: 0, unmounted: 0, busy: false, phase: 'idle', notice: null as string | null,
   reserved: undefined as IncomeReservedSnapshot | undefined, reservedError: false,
   reservedReceipt: undefined as { tokenCount: bigint } | undefined, reservedReceiptError: null as Error | null,
   receipt: null as TransactionReceipt | null, safeProposalHash: null as Hex | null,
@@ -42,7 +42,7 @@ vi.mock('@/hooks/useSafeTx', () => ({
   txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,
   useSafeTx: () => {
     useEffect(() => { runtime.mounted += 1; return () => { runtime.unmounted += 1 } }, [])
-    return { phase: runtime.phase, busy: runtime.busy, error: null, hash: runtime.busy ? `0x${'a'.repeat(64)}` : null, safeProposalHash: runtime.safeProposalHash, receipt: runtime.receipt, send: runtime.send, reset: vi.fn() }
+    return { phase: runtime.phase, notice: runtime.notice, busy: runtime.busy, error: null, hash: runtime.busy ? `0x${'a'.repeat(64)}` : null, safeProposalHash: runtime.safeProposalHash, receipt: runtime.receipt, send: runtime.send, reset: vi.fn(), dismiss: vi.fn() }
   },
 }))
 vi.mock('@/components/IncomeBridgeActions', () => ({ IncomeBridgeActions: () => <span>INCOME bridge</span> }))
@@ -52,7 +52,7 @@ vi.mock('@/lib/income-reserved', async importOriginal => ({ ...await importOrigi
 vi.mock('@/lib/project-pay-quote', () => ({ prepareProjectPayQuote: async () => ({ kind: 'pay', terminal: '0x3333333333333333333333333333333333333333', preview: runtime.payQuote, minimumTokenCount: runtime.payQuote.beneficiaryTokenCount * 99n / 100n, reservedTokenCount: runtime.payQuote.reservedTokenCount, blockNumber: 100n }), readProjectPayTokenOptions: vi.fn() }))
 vi.mock('@tanstack/react-query', () => ({
   keepPreviousData: (value: unknown) => value,
-  useQueryClient: () => ({ invalidateQueries: runtime.invalidateQueries }),
+  useQueryClient: () => ({ cancelQueries: vi.fn().mockResolvedValue(undefined), invalidateQueries: runtime.invalidateQueries }),
   useQuery: (options: { queryKey: unknown[]; enabled?: boolean }) => {
     runtime.queries(options)
     const { queryKey } = options
@@ -93,7 +93,7 @@ describe('INCOME transaction surfaces', () => {
     HTMLElement.prototype.scrollIntoView ??= () => {}
     Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) })
     window.history.replaceState(null, '', '/')
-    runtime.mounted = 0; runtime.unmounted = 0; runtime.busy = false; runtime.phase = 'idle'
+    runtime.mounted = 0; runtime.unmounted = 0; runtime.busy = false; runtime.phase = 'idle'; runtime.notice = null
     runtime.discoveredFund = null; runtime.discoveryError = false; runtime.fund = undefined; runtime.details = {}
     runtime.operator = undefined; runtime.operatorError = false; runtime.confirmedBlock = 0n; runtime.fundConfirmedBlock = 0n
     runtime.address = '0x1111111111111111111111111111111111111111'
@@ -519,7 +519,7 @@ describe('INCOME transaction surfaces', () => {
 
   it('never presents a Safe proposal as confirmed reserved delivery', async () => {
     pendingReserved()
-    runtime.phase = 'pending'; runtime.safeProposalHash = `0x${'b'.repeat(64)}`
+    runtime.phase = 'submitted'; runtime.notice = 'Proposed to Safe. Execution and onchain confirmation are still required.'; runtime.safeProposalHash = `0x${'b'.repeat(64)}`
     await render()
     const reserved = section('Distribute reserved INCOME')
     expect(reserved.textContent).toContain('Execution and onchain confirmation are still required')

@@ -8,7 +8,7 @@ import type { ProjectAdminSendOptions } from '../src/hooks/useProjectAdminTx'
 
 const runtime = vi.hoisted(() => ({ address: undefined as Address | undefined, snapshot: undefined as ProjectSplitsSnapshot | undefined, queryError: false, read: vi.fn(), send: vi.fn(), invalidate: vi.fn(), busy: false, pending: false, phase: 'idle', ready: true, confirmed: undefined as undefined | (() => Promise<void>) }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address }) }))
-vi.mock('@/hooks/useProjectAdminTx', () => ({ useProjectAdminTx: ({ onConfirmed }: { onConfirmed: () => Promise<void> }) => { runtime.confirmed = onConfirmed; return { send: runtime.send, busy: runtime.busy, pending: runtime.pending, phase: runtime.phase, ready: runtime.ready, reset: () => {} } } }))
+vi.mock('@/hooks/useProjectAdminTx', () => ({ useProjectAdminTx: ({ onConfirmed }: { onConfirmed: () => Promise<void> }) => { runtime.confirmed = onConfirmed; return { send: runtime.send, busy: runtime.busy, pending: runtime.pending, phase: runtime.phase, ready: runtime.ready, dismiss: () => {}, reset: () => {} } } }))
 vi.mock('@/components/ProjectAdminTransactionStatus', () => ({ ProjectAdminTransactionStatus: () => <div>{runtime.pending ? 'Saved project update pending' : ''}</div> }))
 vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => ({ invalidateQueries: runtime.invalidate }), useQuery: () => ({ data: runtime.snapshot, isError: runtime.queryError, isPending: false, error: new Error('RPC unavailable'), refetch: vi.fn() }) }))
 vi.mock('@/lib/project-splits-edit', async original => ({ ...await original<typeof import('../src/lib/project-splits-edit')>(), readProjectSplitsSnapshot: runtime.read }))

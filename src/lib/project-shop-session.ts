@@ -2,7 +2,7 @@
 import { encodeFunctionData, zeroHash, type Hex, type PublicClient } from 'viem'
 import { FUND_CHAIN_IDS } from './fund-contracts'
 import { parseProjectShopWrite, projectShopWriteRequest, serializeProjectShopWrite, type PreparedProjectShopWrite } from './project-shop-write'
-import { verifyStickyExecution, type StickyPending } from './sticky-session'
+import { assertSafeProposalCall, verifyStickyExecution, type ExistingSafeProposal, type StickyPending } from './sticky-session'
 
 export type ShopWriteStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 export type ShopWriteSubmission = { afterBlock: string; safe: boolean; startedAt: number; hash?: Hex }
@@ -147,6 +147,18 @@ export function beginShopWriteSubmission(storage: ShopWriteStorage, key: string,
   return persist(storage, key, { ...current, pending: { safe: options.safe, afterBlock: options.afterBlock.toString(), startedAt: Date.now() } })
 }
 
+/** Adopt the exact next call after proving the immutable plan's historical prerequisites. */
+export async function adoptShopWriteProposal(client: PublicClient, storage: ShopWriteStorage, key: string, session: ShopWriteSession, proposal: ExistingSafeProposal): Promise<ShopWriteSession> {
+  const current = matchingCurrent(storage, key, session)
+  if (current.pending) throw new Error('A shop transaction may already be pending. Verify its execution before submitting another.')
+  const index = shopWriteRequestIndex(current)
+  if (index === null) throw new Error('This shop update has already completed.')
+  assertSafeProposalCall(projectShopWriteRequest(current.plan, index), proposal)
+  const prerequisiteBlock = await verifyShopWriteProgress(client, current)
+  matchingCurrent(storage, key, current)
+  const afterBlock = prerequisiteBlock > current.plan.snapshot.blockNumber ? prerequisiteBlock : current.plan.snapshot.blockNumber
+  return persist(storage, key, { ...current, pending: { safe: true, afterBlock: afterBlock.toString(), startedAt: Date.now(), hash: proposal.proposalHash } })
+}
 export function recordShopWriteHash(storage: ShopWriteStorage, key: string, session: ShopWriteSession, transactionHash: Hex): ShopWriteSession {
   if (!hash(transactionHash)) throw new Error('Invalid shop transaction or Safe proposal hash.')
   const current = matchingCurrent(storage, key, session)

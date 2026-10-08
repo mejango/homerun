@@ -3,7 +3,7 @@ import { decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodeFunct
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({ bendystraw: vi.fn() }))
 vi.mock('../src/lib/bendystraw', () => ({ bendystraw: mocks.bendystraw }))
-import { buildPayerTransaction, checkPayerFactory, decodePayerAttempt, getProjectPayerAddresses, payerAttemptIdentity, verifyPayerReceipt, type PayerAttempt, type ProjectPayerRow } from '../src/lib/project-payers'
+import { adoptPayerProposal, buildPayerTransaction, checkPayerFactory, decodePayerAttempt, getProjectPayerAddresses, payerAttemptIdentity, verifyPayerReceipt, type PayerAttempt, type ProjectPayerRow } from '../src/lib/project-payers'
 import { safeExecutionLog } from './support/safe-logs'
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111' as Address
@@ -201,5 +201,22 @@ describe('indexed payer address listing', () => {
     mocks.bendystraw.mockResolvedValue({ projectPayers: { totalCount: 2, items: [row] } })
     await expect(getProjectPayerAddresses(1, 7n)).rejects.toThrow('incomplete')
     await expect(getProjectPayerAddresses(1, BigInt(Number.MAX_SAFE_INTEGER) + 1n)).rejects.toThrow('project ID')
+  })
+})
+
+
+describe('existing payer Safe proposal adoption', () => {
+  it('creates historical recovery facts while retaining exact proposal proof', async () => {
+    const f = fixture(); safe(f)
+    const record = adoptPayerProposal({ ...attempt(), phase: 'signing', hash: undefined, afterBlock: '200' }, { proposalHash: PROPOSAL, call: { to: f.request.address, data: encodeFunctionData(f.request) } })
+    expect(record).toMatchObject({ phase: 'submitted', safe: true, afterBlock: '0', hash: PROPOSAL })
+    expect(record.settings).toEqual(attempt().settings)
+    await expect(verifyPayerReceipt(f.rpc, record, f.receipt)).resolves.toEqual({ status: 'confirmed', payer: PAYER })
+    await expect(verifyPayerReceipt(f.rpc, { ...record, hash: OTHER_PROPOSAL }, f.receipt)).rejects.toThrow()
+  })
+  it('refuses replacing pending recovery or changing the factory call', () => {
+    const f = fixture(), proposal = { proposalHash: PROPOSAL, call: { to: f.request.address, data: encodeFunctionData(f.request) } }
+    expect(() => adoptPayerProposal(attempt(), proposal)).toThrow('already recorded')
+    expect(() => adoptPayerProposal({ ...attempt(), phase: 'signing', hash: undefined }, { ...proposal, call: { ...proposal.call, to: ACCOUNT } })).toThrow('does not match')
   })
 })

@@ -13,6 +13,12 @@ function blockedNetworkConstructor(transport: string) {
 beforeEach(() => {
   // Match the reference Vitest config's clearMocks policy for shared spies.
   vi.clearAllMocks()
+  // Node 26 exposes native storage; browser tests use the document storage.
+  const browser = (globalThis as unknown as { jsdom?: { window: Window } }).jsdom?.window
+  if (browser) {
+    vi.stubGlobal('localStorage', browser.localStorage)
+    vi.stubGlobal('sessionStorage', browser.sessionStorage)
+  }
   // React 19 requires test environments to opt into act() semantics
   // explicitly. Every renderer mutation in the component suites is wrapped
   // in act(), so advertise that contract and fail loudly if a future test is

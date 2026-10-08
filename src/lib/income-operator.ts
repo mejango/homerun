@@ -1,10 +1,10 @@
 import { jbControllerAbi, jbSplitsAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { buildSetSplitGroupsTx, RESERVED_TOKEN_SPLIT_GROUP_ID, v6Address } from '@bananapus/nana-sdk-core/v6'
-import { decodeEventLog, decodeFunctionData, encodeFunctionData, getAddress, isAddress, isAddressEqual, zeroAddress, type Address, type ContractFunctionReturnType, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
+import { decodeEventLog, encodeFunctionData, getAddress, isAddress, isAddressEqual, zeroAddress, type Address, type ContractFunctionReturnType, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import { readIncomeProjectState } from './income-state'
 import { isOperatorWallet, OPERATOR_BURN_ADDRESS } from './project-operator-profile'
 import { sameProjectSplits } from './project-splits-edit'
-import { requireSafeExecutionSuccess, SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
+import { requireSafeExecutionSuccess, safeExecutionRunsCalls } from '@bananapus/nana-sdk-core/safe-service'
 
 type Splits = ContractFunctionReturnType<typeof jbSplitsAbi, 'view', 'splitsOf'>
 export type IncomeOperatorStage = { rulesetId: bigint; start: bigint; isCurrent: boolean; splits: Splits; operatorIndex: number | null }
@@ -80,10 +80,7 @@ export async function verifyIncomeOperatorReceipt(client: PublicClient, snapshot
   if (block.hash?.toLowerCase() !== receipt.blockHash.toLowerCase() || transaction.hash.toLowerCase() !== receipt.transactionHash.toLowerCase() || transaction.blockNumber !== receipt.blockNumber || transaction.blockHash?.toLowerCase() !== receipt.blockHash.toLowerCase()) throw new Error('The INCOME Operator receipt is no longer a matching canonical execution.')
   const data = encodeFunctionData(request)
   if (transaction.to && isAddressEqual(transaction.to, account)) {
-    const decoded = decodeFunctionData({ abi: SAFE_EXEC_ABI, data: transaction.input })
-    if (decoded.functionName !== 'execTransaction') throw new Error('The Safe executed a different INCOME Operator change.')
-    const [to, value, innerData, operation] = decoded.args
-    if (!isAddressEqual(to, request.address) || value !== 0n || innerData.toLowerCase() !== data.toLowerCase() || operation !== 0) throw new Error('The Safe executed a different INCOME Operator change.')
+    if (!safeExecutionRunsCalls(transaction, account, [{ to: request.address, data, value: 0n }], false)) throw new Error('The Safe executed a different INCOME Operator change.')
     // This transaction is the Safe's one execTransaction, so the receipt must hold its one ExecutionSuccess.
     requireSafeExecutionSuccess(receipt, account, receipt.transactionHash)
   } else if (!transaction.to || !isAddressEqual(transaction.to, request.address) || !isAddressEqual(transaction.from, account) || transaction.value !== 0n || transaction.input.toLowerCase() !== data.toLowerCase()) throw new Error('The mined transaction differs from the reviewed INCOME Operator change.')

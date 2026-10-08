@@ -1,5 +1,7 @@
 'use client'
 
+import { assertSafeProposalCall } from '@/lib/sticky-session'
+
 import { NATIVE_TOKEN, jbControllerAbi, jbTokensAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import { getAccount, getPublicClient } from '@wagmi/core'
@@ -332,12 +334,13 @@ function LinkedRulesetStep({ plan, index, completed, onConfirmed, onCancel, onSu
   }, [onConfirmed, plan.action, state.chainId, state.rulesetSnapshot.controller, state.projectId, tx.phase, tx.receipt])
 
   useEffect(() => {
-    if (!tx.hash) return
+    const hash = tx.safeProposalHash ?? tx.hash
+    if (!hash) return
     const kind = tx.safeProposalHash ? 'safe-proposal' : 'transaction'
-    const key = `${kind}:${tx.hash}`
+    const key = `${kind}:${hash}`
     if (recordedHash.current === key) return
     recordedHash.current = key
-    onSubmitted(state.chainId, { kind, hash: tx.hash })
+    onSubmitted(state.chainId, { kind, hash })
   }, [onSubmitted, state.chainId, tx.hash, tx.safeProposalHash])
 
   async function reverify() {
@@ -370,6 +373,10 @@ function LinkedRulesetStep({ plan, index, completed, onConfirmed, onCancel, onSu
         reviewedAccount: plan.account,
         reviewNotice: [`This is transaction ${index + 1} of ${plan.requests.length}. Every chain must confirm before ${new Date(plan.startsAt * 1000).toLocaleString()}. Changes are separate transactions and are not atomic.`, rulesetNotice(plan.action)].filter(Boolean).join('\n\n'),
         reverify,
+        onExistingProposal: proposal => {
+          assertSafeProposalCall(request, proposal)
+          onSubmitted(state.chainId, { kind: 'safe-proposal', hash: proposal.proposalHash })
+        },
         beforeWrite: () => onBeforeWrite(state.chainId),
         onWriteRejected: () => onWriteRejected(state.chainId),
         // Nothing reached the wallet here either, so the unknown-submission marker goes.
@@ -391,7 +398,7 @@ function LinkedRulesetStep({ plan, index, completed, onConfirmed, onCancel, onSu
 function Status({ tx, chainId }: { tx: Tx; chainId: number }) {
   const explorer = tx.hash && !tx.safeProposalHash ? explorerTxUrl(chainId, tx.hash) : null
   return <div role="status" aria-live="polite" className="break-words text-sm">
-    {tx.safeProposalHash ? <p>Proposed to Safe. It takes effect only once the Safe executes onchain.</p>
+    {tx.phase === 'submitted' ? <p>{tx.notice}</p>
       : tx.phase === 'success' ? <p>Transaction confirmed onchain. Refreshing the project’s contract state.</p>
         : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p>
           : tx.phase === 'review' ? <p>Review the exact transaction before continuing.</p> : null}
@@ -907,9 +914,10 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
         onConfirm={() => void spec.run()}
         busy={running && !tx.safeProposalHash && !approval.safeProposalHash}
         complete={tx.phase === 'success'}
-        status={tx.safeProposalHash || approval.safeProposalHash ? 'Proposed to Safe. It still needs execution and onchain confirmation; you can close this while it waits.' : tx.phase === 'pending' || approval.phase === 'pending' ? 'Submitted. Waiting for onchain confirmation…' : approvalBlock !== undefined && review === 'return' && tx.phase !== 'success' ? 'Token approval confirmed. Confirm the return to continue.' : null}
+        settled={tx.phase === 'submitted' || approval.phase === 'submitted'}
+        status={tx.notice ?? approval.notice ?? (tx.phase === 'pending' || approval.phase === 'pending' ? 'Submitted. Waiting for onchain confirmation…' : approvalBlock !== undefined && review === 'return' && tx.phase !== 'success' ? 'Token approval confirmed. Confirm the return to continue.' : null)}
         error={error ?? tx.error ?? approval.error}
-        onClose={() => setReview(null)}
+        onClose={() => { setReview(null); if (tx.phase === 'submitted') tx.dismiss(); if (approval.phase === 'submitted') approval.dismiss() }}
       >
         {spec.notice && <p className="text-sm text-smoke-600">{spec.notice}</p>}
       </TxConfirmDialog>

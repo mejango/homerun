@@ -14,6 +14,7 @@ import { readIncomeFundBinding } from '@/lib/income-fund-binding'
 import { projectPath } from '@/lib/urn'
 import type { ProjectSeed } from '@/lib/project-seed'
 import { PERSIST } from '@/lib/query-persist'
+import { useHydrated } from '@/hooks/useHydrated'
 
 /**
  * One address per Homerun project: its FUND's. An INCOME project's own address
@@ -25,6 +26,7 @@ export function ProjectAddress({ chainId, projectId, intentId, seed, incomeFund 
   /** The server's answer for a revnet: null when it has no Homerun FUND; undefined when unknown. */
   incomeFund?: string | null
 }) {
+  const hydrated = useHydrated()
   const router = useRouter()
   const client = usePublicClient({ chainId }) as PublicClient | undefined
   const indexed = useQuery({
@@ -36,23 +38,25 @@ export function ProjectAddress({ chainId, projectId, intentId, seed, incomeFund 
     staleTime: 30_000,
     retry: 1,
   })
-  const row = indexed.data
+  const row = hydrated ? indexed.data : seed?.indexed
   const income = row?.version === 6 && row.chainId === chainId && String(row.projectId) === projectId && row.isRevnet === true
+  const seededFundId = incomeFund === undefined ? undefined : incomeFund === null ? null : BigInt(incomeFund)
   const fund = useQuery({
     queryKey: ['income-fund-binding', chainId, projectId],
     enabled: income && !!client,
     queryFn: () => readIncomeFundBinding(client!, { chainId, incomeProjectId: BigInt(projectId) }),
-    initialData: incomeFund === undefined ? undefined : incomeFund === null ? null : BigInt(incomeFund),
+    initialData: seededFundId,
     // Fixed at launch: a found binding never needs reading again.
     staleTime: Infinity,
     meta: PERSIST,
     retry: 1,
   })
+  const fundId = hydrated ? fund.data : seededFundId
   useEffect(() => {
-    if (fund.data) router.replace(`${projectPath(chainId, fund.data)}${window.location.hash}`)
-  }, [fund.data, chainId, router])
+    if (fundId) router.replace(`${projectPath(chainId, fundId)}${window.location.hash}`)
+  }, [fundId, chainId, router])
   if (!income) return <FundProject chainId={chainId} projectId={projectId} intentId={intentId} seed={seed} />
   // An INCOME with no Homerun FUND behind it has only this address.
-  if (fund.data === null || fund.isError) return <IncomeProject chainId={chainId} projectId={BigInt(projectId)} />
+  if (fundId === null || hydrated && fund.isError) return <IncomeProject chainId={chainId} projectId={BigInt(projectId)} />
   return <ProjectPageShell><p className="mx-auto max-w-[1220px] px-5 py-10 text-sm text-[var(--muted)]" role="status">Opening this project…</p></ProjectPageShell>
 }

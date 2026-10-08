@@ -7,9 +7,9 @@ import { usePublicClient } from 'wagmi'
 import { useSafeTx, type TxPhase, type TxRequest } from './useSafeTx'
 import { useWallet } from './useWallet'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { waitForSafeExecutionHash } from '@/lib/safe-connector'
+import { waitForSafeExecutionHash, SAFE_PROPOSAL_AWAITING } from '@/lib/safe-connector'
 import {
-  beginProjectAdminSubmission, confirmProjectAdminExecution, projectAdminSessionKey,
+  adoptProjectAdminProposal, beginProjectAdminSubmission, confirmProjectAdminExecution, projectAdminSessionKey,
   readProjectAdminPending, recordProjectAdminHash, rejectProjectAdminSubmission,
   withProjectAdminLock, type ProjectAdminPending,
 } from '@/lib/project-admin-session'
@@ -57,11 +57,13 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
   useEffect(() => { onConfirmedRef.current = onConfirmed }, [onConfirmed])
 
   const invalidate = useCallback(async () => {
-    await cache.invalidateQueries({ predicate: query => {
+    const filters = { predicate: (query: { queryKey: readonly unknown[] }) => {
       const prefix = query.queryKey[0]
       if (prefix === 'project-admin-confirmed-block') return false
       return typeof prefix === 'string' && (INVALIDATE_PREFIXES.includes(prefix) || prefix.startsWith('project-admin-'))
-    } })
+    } }
+    await cache.cancelQueries(filters)
+    await cache.invalidateQueries(filters)
   }, [cache])
   const refresh = useCallback(() => {
     try { setRecord(readProjectAdminPending(localStorage, key)); setStorageError(null) }
@@ -179,6 +181,11 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
             submittedId.current = submitting.id
             changed()
           },
+          onExistingProposal: proposal => {
+            submitting = adoptProjectAdminProposal(localStorage, key, { request: captured, projectId, account: options.reviewedAccount }, proposal)
+            submittedId.current = submitting.id
+            changed()
+          },
           onBeforeWriteAborted: () => reject('before-write-aborted'),
           onWriteRejected: () => reject('wallet-rejected'),
         })
@@ -211,10 +218,18 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
     if (inFlight.current || record) return
     resetTx(); setResolution(null); setStatus(null); setError(null)
   }, [record, resetTx])
-  const phase: TxPhase = pending ? (working && tx.phase !== 'idle' ? tx.phase : 'pending') : resolution?.status === 'confirmed' ? 'success' : resolution?.status === 'reverted' ? 'error' : tx.phase
+  const phase: TxPhase = pending
+    ? working && ['review', 'simulating', 'signing'].includes(tx.phase) ? tx.phase : record.safe && record.hash ? 'submitted' : 'pending'
+    : resolution?.status === 'confirmed' ? 'success' : resolution?.status === 'reverted' ? 'error' : tx.phase
+  // Dismiss only presentation. The durable project lock survives until its
+  // exact canonical execution is verified by this product's recovery owner.
+  const dismiss = () => { tx.dismiss(); reset() }
+  const notice = phase === 'submitted' ? tx.notice ?? status ?? SAFE_PROPOSAL_AWAITING : null
   return {
-    send, recover, reset, ready: ready && !storageError, busy: working || pending || tx.busy || tx.phase === 'review', pending,
-    phase, error: storageError ?? error ?? tx.error, status, hash: record?.safe ? null : record?.hash ?? resolution?.hash ?? null,
+    send, recover, reset, dismiss, ready: ready && !storageError,
+    busy: working || (pending && phase !== 'submitted') || tx.busy || tx.phase === 'review', pending,
+    phase, settled: phase === 'submitted' || phase === 'success', notice,
+    error: storageError ?? error ?? tx.error, status, hash: record?.safe ? null : record?.hash ?? resolution?.hash ?? null,
     safe: record?.safe ?? tx.isSafe, chainId, pendingLabel: record?.label ?? null,
     /** Recovery is read-only and may be used even while a transaction is pending. */
     recovering: working,

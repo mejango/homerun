@@ -10,11 +10,27 @@ import type { JBChainId } from '@bananapus/nana-sdk-core'
 import type { Address, PublicClient } from 'viem'
 import { wagmiConfig } from '@/providers/Providers'
 import { chainName } from '@/lib/urn'
+import { assertReviewedAccountConnected } from '@/lib/contract-write'
+import { assertNoViewAs } from '@/lib/viewAs'
+import { isSafeConnection } from '@/lib/safe-connector'
 
 /**
- * Shared wagmi plumbing for the transaction boundaries (relayr, safe). This
- * module must not import those files — it sits below both.
+ * Shared wagmi identity plumbing for transaction and signature boundaries.
+ * Product journals and execution policy remain in their owning adapters.
  */
+
+/** The live wallet must still be the one whose exact request was reviewed. */
+export function assertReviewedWallet({ account, connectorUid, chainId, safe, allowCenter = false }: {
+  account: Address; connectorUid: string | undefined; chainId?: number; safe: boolean; allowCenter?: boolean
+}, message = 'Wallet connection changed. Review the transaction again.'): void {
+  assertNoViewAs()
+  const current = getAccount(wagmiConfig)
+  assertReviewedAccountConnected(account, current.address, message)
+  if ((chainId !== undefined && current.chainId !== chainId) || current.connector?.uid !== connectorUid ||
+      isSafeConnection(wagmiConfig) !== safe || (!allowCenter && current.connector?.id === 'juicebox-center')) {
+    throw new Error(message)
+  }
+}
 
 export function publicClient(chainId: JBChainId): PublicClient {
   const client = getPublicClient(wagmiConfig, { chainId })
@@ -41,6 +57,7 @@ export async function connectedWallet(
   },
 ) {
   const before = getAccount(wagmiConfig)
+  const safe = isSafeConnection(wagmiConfig)
   if (!before.address) throw new Error('Connect a wallet first.')
   if (before.chainId !== chainId) {
     await switchChain(wagmiConfig, { chainId }).catch(error => {
@@ -60,5 +77,6 @@ export async function connectedWallet(
   ) {
     throw new Error(changedError)
   }
+  assertReviewedWallet({ account: expected ?? (requireUnchanged ? before.address : account), connectorUid: before.connector?.uid, chainId, safe }, changedError)
   return { wallet, account }
 }

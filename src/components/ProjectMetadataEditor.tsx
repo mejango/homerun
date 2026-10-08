@@ -115,13 +115,15 @@ function ProjectMetadataEditorContent({ chainId, projectId, client, unavailable 
   }
   const photo = (key: MetadataImageKey, title: string) => editing && <MetadataImageInput key={key} id={`${id}-${key}-image`} label={title} existing={editing.document.images[key]} value={images[key]} disabled={busy} onChange={value => { setImages(current => ({ ...current, [key]: value })); setError(null) }} />
 
+  function closeReview() { setReview(false); if (tx.phase === 'success') { setEditing(null); setImages({}) } tx.dismiss() }
+
   return <div className="grid gap-3">
     {active?.canEdit && <button type="button" className="btn-secondary min-h-11 px-4 py-2 justify-self-start" disabled={!details.data || unavailable || !tx.ready || busy} onClick={open}>{label}</button>}
     {active?.canEdit && details.isPending && <p className="text-xs text-[var(--muted)]" role="status">Loading the published details for editing…</p>}
     {active?.canEdit && details.isError && <p className="text-sm" role="alert">{message(details.error)} <button type="button" className="quiet-button" onClick={() => void details.refetch()}>Retry details</button></p>}
     {address && snapshot.isError && <p className="text-sm" role="alert">{message(snapshot.error)} <button type="button" className="quiet-button" onClick={() => void snapshot.refetch()}>Retry permissions</button></p>}
     <ProjectAdminTransactionStatus tx={tx} />
-    {editing && <ModalShell title={label} subtitle={`Project #${projectId} on ${displayChainName(chainId)}`} onClose={() => { setEditing(null); setError(null) }} maxWidth="max-w-3xl" footer={<div className="flex flex-wrap justify-end gap-3">
+    {editing && <ModalShell title={label} subtitle={`Project #${projectId} on ${displayChainName(chainId)}`} onClose={review ? closeReview : () => { setEditing(null); setError(null) }} maxWidth="max-w-3xl" footer={<div className="flex flex-wrap justify-end gap-3">
       <button type="button" className="btn-secondary min-h-11 px-4 py-2" onClick={() => setEditing(null)}>Cancel</button><button type="submit" className="btn-primary min-h-11 px-4 py-2" form={`${id}-form`} disabled={busy}>{tx.pending ? 'Waiting for confirmation…' : 'Review changes'}</button>
     </div>}>
       <div className="demo-shop-editor grid gap-6">
@@ -141,8 +143,9 @@ function ProjectMetadataEditorContent({ chainId, projectId, client, unavailable 
           onConfirm={() => void publish()}
           busy={preparing || (tx.busy && !tx.pending) || tx.phase === 'review'}
           complete={tx.phase === 'success'}
+          settled={tx.phase === 'submitted'}
           error={error}
-          onClose={() => { setReview(false); if (tx.phase === 'success') { setEditing(null); setImages({}) } }}
+          onClose={closeReview}
         >
           <dl className="grid gap-3 text-sm">
             {fieldKeys.filter(key => editing.draft[key] !== editing.document.draft[key]).map(key => <div key={key}><dt className="text-smoke-600">{metadataFieldLabel(key)}</dt><dd className="whitespace-pre-line break-words">{editing.document.draft[key] || 'Not specified'} → {editing.draft[key] || 'Not specified'}</dd></div>)}

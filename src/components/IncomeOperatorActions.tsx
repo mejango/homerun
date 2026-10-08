@@ -50,7 +50,7 @@ export function IncomeOperatorActions({ state, client }: { state: IncomeProjectS
   const locked = nextStage && snapshot ? BigInt(nextStage.splits[nextStage.operatorIndex!].lockedUntil) > snapshot.blockTimestamp : false
   const accountMatches = !!address && !!snapshot?.account && isAddressEqual(address, snapshot.account)
   const verifyingReceipt = tx.phase === 'success' && !!intent && !verified.data
-  const busy = preparing || tx.busy || tx.phase === 'review' || verifyingReceipt
+  const busy = preparing || tx.busy || (tx.phase === 'review' || tx.phase === 'submitted') || verifyingReceipt
 
   async function submit() {
     if (!address || !nextStage || busy) return
@@ -64,6 +64,7 @@ export function IncomeOperatorActions({ state, client }: { state: IncomeProjectS
       const previous = stage.splits[stage.operatorIndex!].beneficiary
       const target = request.args[2][0].splits[stage.operatorIndex!].beneficiary
       const otherStages = fresh.stages.filter(item => item.rulesetId !== stage.rulesetId && item.operatorIndex !== null && !isAddressEqual(item.splits[item.operatorIndex].beneficiary, target)).length
+      const rememberIntent = () => { setIntent({ snapshot: fresh, rulesetId: stage.rulesetId, recipient: target, account: address }) }
       await tx.send({ ...request, label: `Change ${stage.isCurrent ? 'current' : 'upcoming'} INCOME stage Operator` }, {
         reviewedAccount: address,
         reviewNotice: `On ${displayChainName(state.chainId)}, stage ${stage.rulesetId} will pay its Operator INCOME split to ${target} instead of ${previous}. Split percentages and all other recipients stay as currently configured. Owner authority stays with the current Owner. ${stage.isCurrent ? 'This also changes where pending reserved INCOME is distributed after execution.' : `This stage starts ${new Date(Number(stage.start) * 1_000).toLocaleString()}.`} ${otherStages ? `${otherStages} other stage${otherStages === 1 ? '' : 's'} still require${otherStages === 1 ? 's' : ''} a separate reviewed transaction to use the same Operator.` : 'This is the last remaining stage for this Operator on this chain.'}`,
@@ -72,7 +73,8 @@ export function IncomeOperatorActions({ state, client }: { state: IncomeProjectS
           assertSameIncomeOperatorSnapshot(fresh, latest)
           buildIncomeOperatorTx(latest, stage.rulesetId, target)
         },
-        beforeWrite: () => { setIntent({ snapshot: fresh, rulesetId: stage.rulesetId, recipient: target, account: address }) },
+        beforeWrite: rememberIntent,
+        onExistingProposal: rememberIntent,
       })
     } catch (reason) { setError(message(reason)) } finally { setPreparing(false) }
   }
@@ -92,7 +94,7 @@ export function IncomeOperatorActions({ state, client }: { state: IncomeProjectS
     <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={!address || !snapshot?.isOwner || !accountMatches || !validRecipient || !nextStage || locked || busy || query.isError} onClick={() => void submit()}>{preparing ? 'Preparing…' : txPhaseLabel(tx.phase, { idle: `Review ${nextStage?.isCurrent ? 'current' : 'upcoming'} stage change`, pending: 'Confirming onchain…' })}</button>
     {error && <p className="mt-4 text-sm text-red-800" role="alert">{error}</p>}
     <div className="mt-4 break-words text-sm" role="status" aria-live="polite">
-      {tx.safeProposalHash ? <p>Proposed to Safe. The Operator has not changed yet; execution and onchain confirmation are still required.</p> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? verified.data ? <p>Operator change confirmed for stage {verified.data.rulesetId.toString()}. Check the remaining stages above.</p> : verified.isError ? <p role="alert">The transaction was mined, but the Operator change could not be verified. {message(verified.error)} <button type="button" className="underline" onClick={() => void verified.refetch()}>Retry verification</button></p> : <p>Transaction mined. Verifying the Operator change…</p> : null}
+      {tx.phase === 'submitted' ? <p>{tx.notice}</p> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? verified.data ? <p>Operator change confirmed for stage {verified.data.rulesetId.toString()}. Check the remaining stages above.</p> : verified.isError ? <p role="alert">The transaction was mined, but the Operator change could not be verified. {message(verified.error)} <button type="button" className="underline" onClick={() => void verified.refetch()}>Retry verification</button></p> : <p>Transaction mined. Verifying the Operator change…</p> : null}
       {tx.error && <p className="text-red-800">{tx.error}</p>}
       {tx.hash && !tx.safeProposalHash && <a className="underline" href={explorerTxUrl(state.chainId, tx.hash) ?? undefined} target="_blank" rel="noreferrer">View transaction</a>}
     </div>

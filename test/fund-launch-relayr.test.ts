@@ -3,7 +3,7 @@ vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fix
 
 import { HttpRequestError, encodeFunctionResult, toHex, encodeFunctionData, type Address, type Hex } from 'viem'
 import { erc2771ForwarderAbi, JBCoreContracts, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
-import { RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_ADDRESS, RELAYR_PAYMENT_SELECTOR, RelayrPaymentRevertedError, relayrDestinationHash, type RelayrPayment } from '@bananapus/nana-sdk-core/review/relayr'
+import { RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_ADDRESS, RELAYR_PAYMENT_SELECTOR, RelayrPaymentNotSentError, RelayrPaymentRevertedError, relayrDestinationHash, type RelayrPayment } from '@bananapus/nana-sdk-core/review/relayr'
 import type { RelayrEntry, RelayrQuote, RelayrTransactionRecord } from '@/lib/relayr'
 
 const m = vi.hoisted(() => ({
@@ -509,8 +509,8 @@ describe('relayed launch execution and recovery', () => {
 
     it('replaces the other chain\'s hash that was saved while it stayed unresolved', async () => {
       const saved = await savedPaidAndUnresolved()
-      saved.statuses[1] = { phase: 'unresolved', hash: hashFor(10), error: 'Relayr destination transaction does not match the signed launch.' }
-      saved.statuses[10] = { phase: 'unresolved', hash: hashFor(1), error: 'Relayr destination transaction does not match the signed launch.' }
+      saved.statuses[1] = { phase: 'unresolved', hash: hashFor(10), error: 'destination transaction does not match the signed launch.' }
+      saved.statuses[10] = { phase: 'unresolved', hash: hashFor(1), error: 'destination transaction does not match the signed launch.' }
       saveLaunchSession(saved)
       await run(saved)
       expect(loadLaunchSession()?.statuses).toMatchObject(confirmed)
@@ -568,7 +568,7 @@ describe('relayed launch execution and recovery', () => {
       listing(list => list.map(record => record.request?.chain === 10 ? { ...record, status: { state: 'Pending' } } : record))
       await expect(run()).rejects.toThrow('unfinished')
       expect(loadLaunchSession()?.statuses[1]).toMatchObject({ phase: 'confirmed', projectId: '101' })
-      expect(loadLaunchSession()?.statuses[10]).toMatchObject({ phase: 'unresolved', error: 'Waiting for the original Relayr destination transaction.' })
+      expect(loadLaunchSession()?.statuses[10]).toMatchObject({ phase: 'unresolved', error: 'Waiting for the original destination transaction.' })
     })
   })
 
@@ -778,9 +778,12 @@ describe('relayed launch execution and recovery', () => {
     expect(loadLaunchSession()?.relayr?.paymentChainId).toBe(funding)
   })
 
-  it('allows retrying a positively rejected funding prompt', async () => {
+  it.each([
+    ['a positively rejected funding prompt', () => Object.assign(new Error('Rejected'), { code: 4001 })],
+    ['a final authority refusal before the wallet is called', () => new RelayrPaymentNotSentError(new Error('Rejected'))],
+  ])('allows retrying after %s', async (_label, refusal) => {
     m.pay.mockImplementationOnce(async ({ reverify: verify, onSending: sending }) => {
-      await verify(); sending(); throw Object.assign(new Error('Rejected'), { code: 4001 })
+      await verify(); await sending(); throw refusal()
     })
     await expect(run()).rejects.toThrow('Rejected')
     expect(loadLaunchSession()?.relayr?.phase).toBe('quoted')
@@ -1269,7 +1272,7 @@ describe('relayed launch execution and recovery', () => {
 
     describe('a saved payment the funding chain shows to be another transaction', () => {
       const UNMATCHED = 'The saved payment couldn\'t be matched to this launch and isn\'t refunded. Cancel creation to start over.'
-      const REFUSED = 'does not match the reviewed Relayr payment'
+      const REFUSED = /does not match the reviewed (?:Relayr )?payment/
       /** The hash the launch saved for its payment is mined on the funding chain as a call to another contract. */
       const anotherTransaction = () => {
         const funding = clients.get(8453)!
@@ -1629,11 +1632,14 @@ describe('paying a reverted launch quote again', () => {
     expect(m.funding).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps a declined retry on the retry rule, never back to a fresh choice', async () => {
+  it.each([
+    ['wallet rejection', () => Object.assign(new Error('Rejected'), { code: 4001 })],
+    ['final authority refusal', () => new RelayrPaymentNotSentError(new Error('Rejected'))],
+  ])('keeps a retry refused by %s on the retry rule, never back to a fresh choice', async (_label, refusal) => {
     m.pay.mockImplementationOnce(reverting)
     await expect(run()).rejects.toThrow(/reverted onchain/)
     m.pay.mockImplementationOnce(async ({ reverify, onSending }: Pay) => {
-      await reverify(); onSending(); throw Object.assign(new Error('Rejected'), { code: 4001 })
+      await reverify(); await onSending(); throw refusal()
     })
     await expect(run()).rejects.toThrow('Rejected')
     expect(loadLaunchSession()?.relayr).toMatchObject({ phase: 'payment-reverted', paymentChainId: 8453,
@@ -1676,7 +1682,7 @@ describe('paying a reverted launch quote again', () => {
     const saved = loadLaunchSession()!
     saved.relayr!.payments = [{ ...saved.relayr!.payments![0], hash: '0x1234' as Hex }]
     saveLaunchSession(saved)
-    await expect(run()).rejects.toThrow('saved Relayr launch is invalid')
+    await expect(run()).rejects.toThrow('saved launch is invalid')
     expect(m.pay).toHaveBeenCalledTimes(1)
   })
 
@@ -1689,7 +1695,7 @@ describe('paying a reverted launch quote again', () => {
     const saved = loadLaunchSession()!
     saved.relayr!.payments = [{ ...saved.relayr!.payments![0], deadline: String(deadline) }]
     saveLaunchSession(saved)
-    await expect(run()).rejects.toThrow('saved Relayr launch is invalid')
+    await expect(run()).rejects.toThrow('saved launch is invalid')
     expect(m.pay).toHaveBeenCalledTimes(1)
     expect(vi.mocked(fetch)).not.toHaveBeenCalled()
   })

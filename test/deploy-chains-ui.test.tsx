@@ -1,3 +1,4 @@
+import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '../src/lib/viewAs'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -20,7 +21,7 @@ const runtime = vi.hoisted(() => ({
   review: vi.fn(), send: vi.fn(), switchChain: vi.fn(), receipt: vi.fn(), gasPrice: vi.fn(),
   readContract: vi.fn(), getCode: vi.fn(),
   address: '0x1111111111111111111111111111111111111111' as string | undefined, openSignIn: vi.fn(),
-  safe: false,
+  safe: false, connector: { id: 'injected', uid: 'original' }, chainId: 1, getWalletClient: vi.fn(),
 }))
 vi.mock('@/lib/jbcenter-client', () => ({ jbCenterClient: {
   getIntent: runtime.getIntent, requestDeploy: runtime.requestDeploy,
@@ -35,9 +36,9 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address, openSignIn: runtime.openSignIn }) }))
 vi.mock('@wagmi/core', () => ({
-  getAccount: () => ({ address: runtime.address }),
+  getAccount: () => ({ address: runtime.address, connector: runtime.connector, chainId: runtime.chainId }),
   getPublicClient: () => ({ getGasPrice: runtime.gasPrice, readContract: runtime.readContract, getCode: runtime.getCode }),
-  sendTransaction: runtime.send,
+  getWalletClient: runtime.getWalletClient,
   switchChain: runtime.switchChain,
   waitForTransactionReceipt: runtime.receipt,
 }))
@@ -125,13 +126,18 @@ describe('choosing the chains a published project is deployed on', () => {
   let client: QueryClient
   beforeEach(() => {
     localStorage.clear()
+    clearViewAs()
+    runtime.safe = false
+    runtime.connector = { id: 'injected', uid: 'original' }
+    runtime.chainId = 1
+    runtime.getWalletClient.mockReset().mockImplementation(async (_config: unknown, { chainId }: { chainId: number }) => ({ chain: { id: chainId }, sendTransaction: (request: unknown) => runtime.send({}, request) }))
     runtime.address = wallet
     runtime.requestDeploy.mockReset().mockResolvedValue({ deploys: [] })
     runtime.requestRelay.mockReset().mockImplementation(async (_id: string, chainId: number) => relayRequest(chainId))
     runtime.recordDeployment.mockReset().mockResolvedValue(deployment(1, '9'))
     runtime.review.mockReset().mockResolvedValue(undefined)
     runtime.send.mockReset().mockResolvedValue(relayHash)
-    runtime.switchChain.mockReset().mockResolvedValue(undefined)
+    runtime.switchChain.mockReset().mockImplementation(async (_config: unknown, { chainId }: { chainId: number }) => { runtime.chainId = chainId })
     runtime.receipt.mockReset().mockResolvedValue(launchReceipt(1, 9n))
     runtime.gasPrice.mockReset().mockResolvedValue(2_000_000_000n)
     runtime.readContract.mockReset().mockResolvedValue(0n)
@@ -195,7 +201,7 @@ describe('choosing the chains a published project is deployed on', () => {
     expect(runtime.review.mock.calls[0][0].kind).toBe('transaction')
     expect(runtime.review.mock.calls[0][0].calls[0].functionName).toBe('execute')
     expect(runtime.switchChain).toHaveBeenCalledWith({}, { chainId: 1 })
-    expect(runtime.send).toHaveBeenCalledWith({}, expect.objectContaining({ chainId: 1, to: relayRequest(1).to, value: 0n }))
+    expect(runtime.send).toHaveBeenCalledWith({}, expect.objectContaining({ chain: expect.objectContaining({ id: 1 }), chainId: 1, account: wallet, to: relayRequest(1).to, value: 0n }))
     expect(runtime.recordDeployment.mock.calls[0].slice(0, 2)).toEqual([intentId, { chainId: 1, projectId: '9', transactionHash: relayHash }])
     expect(runtime.requestDeploy).toHaveBeenCalledWith(intentId, expect.objectContaining({ chainIds: [8453] }))
   })
@@ -300,6 +306,39 @@ describe('choosing the chains a published project is deployed on', () => {
     expect(runtime.send).not.toHaveBeenCalled()
     expect(alert()).toBe('Review closed. Nothing was sent.')
   })
+
+  for (const boundary of ['review', 'wallet acquisition', 'setup receipt'] as const) {
+    it.each(['account', 'disconnect', 'connector', 'chain', 'view-as', 'Safe', 'Center'] as const)(`refuses %s drift during ${boundary} before the next send`, async change => {
+      let release!: () => void
+      const waiting = new Promise<void>(resolve => { release = resolve })
+      if (boundary === 'review') runtime.review.mockImplementationOnce(() => waiting)
+      if (boundary === 'wallet acquisition') runtime.getWalletClient.mockImplementationOnce(async () => {
+        await waiting
+        return { chain: { id: 1 }, sendTransaction: (request: unknown) => runtime.send({}, request) }
+      })
+      if (boundary === 'setup receipt') {
+        runtime.requestRelay.mockImplementation(async () => safeRelayRequest(1))
+        runtime.receipt.mockImplementationOnce(async () => { await waiting; return { status: 'success' } })
+      }
+      await render(boundary === 'setup receipt' ? safeIntent([1]) : intent([1]))
+      await act(async () => { rowFor(1)!.click() })
+      await act(async () => { button('Deploy selected')!.click() })
+      await settle()
+      expect(boundary === 'review' ? runtime.review : boundary === 'wallet acquisition' ? runtime.getWalletClient : runtime.receipt).toHaveBeenCalledOnce()
+      if (change === 'account') runtime.address = '0x2222222222222222222222222222222222222222'
+      if (change === 'disconnect') runtime.address = undefined
+      if (change === 'connector') runtime.connector = { id: 'injected', uid: 'replacement' }
+      if (change === 'chain') runtime.chainId = 10
+      if (change === 'view-as') setViewAs(wallet)
+      if (change === 'Safe') runtime.safe = true
+      if (change === 'Center') runtime.connector = { id: 'juicebox-center', uid: 'original' }
+      await act(async () => { release() })
+      await settle()
+      expect(runtime.send).toHaveBeenCalledTimes(boundary === 'setup receipt' ? 1 : 0)
+      expect(runtime.recordDeployment).not.toHaveBeenCalled()
+      expect(alert()).toContain(change === 'view-as' ? VIEW_AS_WRITE_BLOCKED : change === 'Safe' ? 'Deploying from a Safe' : 'Wallet connection changed')
+    })
+  }
 
   it('refuses a Safe before switching chains or reviewing anything', async () => {
     runtime.safe = true

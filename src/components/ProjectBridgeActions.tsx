@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  decodeFunctionData,
   formatUnits,
   isAddress,
   isAddressEqual,
@@ -41,6 +42,7 @@ import {
 } from "@/lib/project-bridge";
 import { verifyFundBridgeReceipt } from "@/lib/fund-bridge-receipts";
 import { readableError } from "@/lib/readable-error";
+import { SAFE_PROPOSAL_UNCONFIRMED } from "@bananapus/nana-sdk-core/safe-service";
 
 const clientFor = jbCenterPublicClient;
 function message(error: unknown) {
@@ -138,6 +140,14 @@ function useBridgeTransaction(chainId: JBChainId) {
     try {
       await tx.send(request, {
         ...options,
+        onExistingProposal: async (proposal) => {
+          const decoded = decodeFunctionData({ abi: request.abi, data: proposal.call.data });
+          if (decoded.functionName !== request.functionName) throw new Error("The saved Safe bridge call changed.");
+          await options.onExistingProposal?.(proposal);
+          setActive({ request: { ...request, address: proposal.call.to, args: decoded.args ?? [], value: proposal.call.value }, account: options.reviewedAccount, safe: true });
+          attemptedWrite = true;
+          setUnknownSubmission(true);
+        },
         beforeWrite: () => {
           attemptedWrite = true;
           setUnknownSubmission(true);
@@ -156,22 +166,27 @@ function useBridgeTransaction(chainId: JBChainId) {
       if (!attemptedWrite) admitted.current = false;
     }
   }
-  // A receipt the engine judged failed (a revert, or a Safe execution whose call
-  // failed) proves no effect; success still needs exact action proof.
+  // Only a terminal failure judged by the engine releases this attempt. An
+  // outer Safe revert can leave its proposal executable and stays submitted.
   useEffect(() => {
-    if (tx.receipt && (tx.receipt.status === "reverted" || tx.phase === "error")) {
+    if (tx.receipt && tx.phase === "error" && !(active?.safe && tx.receipt.status === "reverted")) {
       setUnknownSubmission(false);
       admitted.current = false;
     }
-  }, [tx.receipt, tx.phase]);
+  }, [active?.safe, tx.receipt, tx.phase]);
+  const safeOuterRevert = !!active?.safe && tx.receipt?.status === "reverted";
   return {
     ...tx,
+    phase: safeOuterRevert ? "submitted" as const : tx.phase,
+    notice: safeOuterRevert ? SAFE_PROPOSAL_UNCONFIRMED : tx.notice,
+    error: safeOuterRevert ? null : tx.error,
+    settled: safeOuterRevert || tx.settled,
     send,
     verified,
     checking,
     verificationError,
     retryVerification: () => setVerificationAttempt((value) => value + 1),
-    locked: tx.busy || tx.phase === "review" || checking || unknownSubmission,
+    locked: tx.busy || tx.phase === "review" || checking || unknownSubmission || safeOuterRevert,
   };
 }
 type BridgeTx = ReturnType<typeof useBridgeTransaction>;
@@ -189,8 +204,8 @@ function BridgeStatus({ tx, chainId }: { tx: BridgeTx; chainId: number }) {
         <p>{notices[tx.verified]}</p>
       ) : tx.checking ? (
         <p>Verifying the exact confirmed bridge action…</p>
-      ) : tx.safeProposalHash ? (
-        <p>Proposed to Safe. Waiting for execution.</p>
+      ) : tx.phase === "submitted" ? (
+        <p>{tx.notice}</p>
       ) : tx.phase === "pending" ? (
         <p>
           Submitted. Waiting for confirmation on {displayChainName(chainId)}.
@@ -755,8 +770,9 @@ function BridgePreparation<State extends BridgeProjectState>({
         }
         actionDisabled={!quote.data || count <= 0n}
         onConfirm={() => void submit()}
-        busy={busy && !approval.safeProposalHash && !tx.safeProposalHash}
+        busy={busy && approval.phase !== "submitted" && tx.phase !== "submitted"}
         complete={tx.verified === "prepared"}
+        settled={tx.phase === "submitted" || approval.phase === "submitted"}
         error={error}
         onClose={() => setReview(null)}
       >

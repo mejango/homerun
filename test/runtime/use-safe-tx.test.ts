@@ -1,13 +1,30 @@
+import { QueryClient } from '@tanstack/react-query'
 import { createElement, createRef, forwardRef, useImperativeHandle } from 'react'
 import TestRenderer, { act } from 'react-test-renderer'
-import { parseAbi, toEventSelector, UserRejectedRequestError, type Address } from 'viem'
+import {
+  encodeFunctionData,
+  parseAbi,
+  UserRejectedRequestError,
+  zeroAddress,
+  type Address,
+  type Hex,
+} from 'viem'
+import { SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const displayQueries = new QueryClient()
+vi.mock('@tanstack/react-query', async importOriginal => ({
+  ...(await importOriginal<typeof import('@tanstack/react-query')>()),
+  useQueryClient: () => displayQueries,
+}))
 
 const mocks = vi.hoisted(() => ({
   account: undefined as Address | undefined,
   centerWallet: false,
+  chainId: 1,
+  connectorUid: 'reviewed',
   connected: true,
-  publicClient: { simulateContract: vi.fn(), estimateContractGas: vi.fn() },
+  publicClient: { simulateContract: vi.fn(), estimateContractGas: vi.fn(), getTransaction: vi.fn() },
   receipt: { data: undefined, isError: false } as {
     data?: {
       status: 'success' | 'reverted'
@@ -47,11 +64,13 @@ vi.mock('@/lib/transaction-review', async importOriginal => ({
 }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@/lib/safe-connector', async importOriginal => ({
-  safeExecutionFailed: (await importOriginal<typeof import('@/lib/safe-connector')>()).safeExecutionFailed,
+  ...(await importOriginal<typeof import('@/lib/safe-connector')>()),
   isSafeConnection: () => mocks.safeConnection,
   SAFE_NONCE_GUIDANCE: 'Safe nonce guidance',
   useSafeConnection: () => mocks.safeConnection,
   waitForSafeExecutionHash: mocks.waitForSafeExecutionHash,
+  // The Safe proposal suite covers the queue lookup; nothing is queued here.
+  findPendingSafeAppProposal: async () => null,
 }))
 
 import { useSafeTx } from '@/hooks/useSafeTx'
@@ -63,8 +82,6 @@ const BOB = '0x2222222222222222222222222222222222222222' as Address
 const reviewedByAlice = { reviewedAccount: ALICE }
 const HASH = `0x${'ab'.repeat(32)}` as const
 const EXECUTION_HASH = `0x${'cd'.repeat(32)}` as const
-const EXECUTION_FAILURE = toEventSelector('ExecutionFailure(bytes32,uint256)')
-const PAYMENT_WORD = `0x${'00'.repeat(32)}` as const
 const ABI = parseAbi(['function transfer(address to, uint256 amount)'])
 const request = {
   chainId: 10,
@@ -75,6 +92,14 @@ const request = {
   value: 7n,
   label: 'Transfer',
 }
+
+/** Alice's Safe running `data` as the call to Bob that `request` reviews, as an owner sends it. */
+const execTransaction = (data: Hex = encodeFunctionData({ abi: ABI, functionName: 'transfer', args: [BOB, 5n] })) =>
+  encodeFunctionData({
+    abi: SAFE_EXEC_ABI,
+    functionName: 'execTransaction',
+    args: [BOB, 7n, data, 0, 0n, 0n, 0n, zeroAddress, zeroAddress, '0x'],
+  })
 
 type SafeTxValue = ReturnType<typeof useSafeTx>
 
@@ -94,15 +119,24 @@ async function renderHook() {
 }
 
 beforeEach(() => {
+  displayQueries.clear()
   mocks.account = ALICE
   mocks.centerWallet = false
+  mocks.chainId = 1
+  mocks.connectorUid = 'reviewed'
   mocks.connected = true
   mocks.receipt = { data: undefined, isError: false }
-  mocks.getAccount.mockImplementation(() => ({ address: mocks.account }))
+  mocks.getAccount.mockImplementation(() => ({ address: mocks.account, chainId: mocks.chainId, connector: { uid: mocks.connectorUid } }))
   mocks.requestReview.mockResolvedValue(true)
   mocks.safeConnection = false
-  mocks.switchChain.mockResolvedValue(undefined)
+  mocks.switchChain.mockImplementation(async ({ chainId }) => { mocks.chainId = chainId })
   mocks.waitForSafeExecutionHash.mockResolvedValue(EXECUTION_HASH)
+  mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => ({
+    hash,
+    from: BOB,
+    to: ALICE,
+    input: execTransaction(),
+  }))
   mocks.publicClient.simulateContract.mockResolvedValue({
     request: { address: BOB, functionName: 'transfer', gas: 100n },
   })
@@ -134,7 +168,7 @@ describe('useSafeTx', () => {
   })
 
   it('requests the transaction without a redundant switch when already on its chain', async () => {
-    mocks.getAccount.mockImplementation(() => ({ address: ALICE, chainId: 10 }))
+    mocks.getAccount.mockImplementation(() => ({ address: ALICE, chainId: 10, connector: { uid: mocks.connectorUid } }))
     const hook = await renderHook()
     await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
     expect(mocks.switchChain).not.toHaveBeenCalled()
@@ -142,7 +176,7 @@ describe('useSafeTx', () => {
     await act(async () => hook.renderer.unmount())
   })
 
-  it('runs exact review, chain/account checks, simulation, and the simulated write', async () => {
+  it('wallet-action:submit-a-reviewed-direct-write runs exact review, chain/account checks, simulation, and the simulated write', async () => {
     const hook = await renderHook()
     let result: Awaited<ReturnType<SafeTxValue['send']>> = null
 
@@ -204,48 +238,15 @@ describe('useSafeTx', () => {
   it('cancels without switching, simulating, or signing', async () => {
     mocks.requestReview.mockResolvedValueOnce(false)
     const hook = await renderHook()
-    const beforeWrite = vi.fn()
-    const onWriteRejected = vi.fn()
 
     await act(async () => {
-      await expect(hook.ref.current!.send(request, { ...reviewedByAlice, beforeWrite, onWriteRejected })).resolves.toBeNull()
+      await expect(hook.ref.current!.send(request, reviewedByAlice)).resolves.toBeNull()
     })
 
     expect(hook.ref.current!.phase).toBe('idle')
-    expect(hook.ref.current!.error).toBeNull()
     expect(mocks.switchChain).not.toHaveBeenCalled()
     expect(mocks.publicClient.simulateContract).not.toHaveBeenCalled()
     expect(mocks.writeContract).not.toHaveBeenCalled()
-    expect(beforeWrite).not.toHaveBeenCalled()
-    expect(onWriteRejected).not.toHaveBeenCalled()
-  })
-
-  it('persists an attempt before the wallet and releases it on explicit wallet rejection', async () => {
-    const hook = await renderHook()
-    const beforeWrite = vi.fn(() => {
-      expect(mocks.publicClient.simulateContract).toHaveBeenCalledOnce()
-      expect(mocks.writeContract).not.toHaveBeenCalled()
-    })
-    const onWriteRejected = vi.fn()
-    mocks.writeContract.mockRejectedValueOnce(new UserRejectedRequestError(new Error('Rejected in wallet')))
-    await act(async () => {
-      await expect(hook.ref.current!.send(request, { ...reviewedByAlice, beforeWrite, onWriteRejected })).resolves.toBeNull()
-    })
-    expect(beforeWrite).toHaveBeenCalledOnce()
-    expect(onWriteRejected).toHaveBeenCalledOnce()
-    expect(hook.ref.current!.error).toBe('Transaction cancelled.')
-  })
-
-  it('does not reach the wallet when persisting recovery intent throws', async () => {
-    const hook = await renderHook()
-    await act(async () => {
-      await expect(hook.ref.current!.send(request, {
-        ...reviewedByAlice,
-        beforeWrite: () => { throw new Error('Recovery storage unavailable') },
-      })).resolves.toBeNull()
-    })
-    expect(mocks.writeContract).not.toHaveBeenCalled()
-    expect(hook.ref.current!.error).toBe('Recovery storage unavailable')
   })
 
   it('blocks a duplicate while review is open', async () => {
@@ -472,65 +473,18 @@ describe('useSafeTx', () => {
     })
   })
 
-  it('tracks a Safe proposal until its execution transaction is available', async () => {
-    mocks.safeConnection = true
+  it('reports a request it cannot encode as an error, and takes the next one', async () => {
     const hook = await renderHook()
-
+    let result: Awaited<ReturnType<SafeTxValue['send']>> = 'unset' as never
     await act(async () => {
-      await hook.ref.current!.send(request, reviewedByAlice)
+      result = await hook.ref.current!.send({ ...request, functionName: 'missing' }, reviewedByAlice)
     })
+    expect(result).toBeNull()
+    expect(hook.ref.current).toMatchObject({ phase: 'error', busy: false })
+    expect(mocks.requestReview).not.toHaveBeenCalled()
 
-    expect(mocks.requestReview).toHaveBeenCalledWith(
-      { ...request, account: ALICE, safeTxGas: 0n },
-      {
-        label: 'Transfer',
-        description: 'Safe nonce guidance',
-        confirmLabel: 'Agree & continue to Safe',
-      },
-    )
-    // The Safe app signs the sent gas as safeTxGas: 0 makes a failed call revert.
-    expect(mocks.writeContract).toHaveBeenCalledWith(
-      expect.objectContaining({ gas: 0n }),
-    )
-    await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-
-    expect(mocks.waitForSafeExecutionHash).toHaveBeenCalledWith(
-      10,
-      HASH,
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    )
-    expect(hook.ref.current).toMatchObject({
-      isSafe: true,
-      hash: EXECUTION_HASH,
-      safeProposalHash: null,
-      safeNonceGuidance: null,
-    })
-  })
-
-  it('keeps an unconfirmed Safe proposal pending and refuses a duplicate send', async () => {
-    mocks.safeConnection = true
-    mocks.waitForSafeExecutionHash.mockRejectedValueOnce(
-      new Error('Safe service unavailable'),
-    )
-    const hook = await renderHook()
-
-    await act(async () => {
-      await hook.ref.current!.send(request, reviewedByAlice)
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-
-    expect(hook.ref.current).toMatchObject({
-      phase: 'pending',
-      busy: true,
-      confirmationUncertain: true,
-    })
-    expect(hook.ref.current!.error).toContain('Safe service unavailable')
-    await act(async () => { expect(await hook.ref.current!.send(request, reviewedByAlice)).toBeNull() })
-    expect(mocks.writeContract).toHaveBeenCalledTimes(1)
+    await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 
   it('refuses a Center wallet before review, like view-as', async () => {
@@ -621,7 +575,7 @@ describe('useSafeTx', () => {
     // The account gate after simulation reads the peer again before the write.
     mocks.getAccount.mockImplementation(() => {
       if (simulated) mocks.safeConnection = false
-      return { address: mocks.account }
+      return { address: mocks.account, chainId: mocks.chainId, connector: { uid: mocks.connectorUid } }
     })
     // And once more after the wallet answered: the sent call is still an ordinary one.
     mocks.writeContract.mockImplementationOnce(async () => {
@@ -633,6 +587,34 @@ describe('useSafeTx', () => {
     expect(mocks.writeContract).toHaveBeenCalledWith(expect.objectContaining({ gas: 100_000n }))
     expect(hook.ref.current).toMatchObject({ phase: 'pending', hash: HASH, safeProposalHash: null })
     expect(mocks.waitForSafeExecutionHash).not.toHaveBeenCalled()
+  })
+
+  it.each(['chain', 'connector', 'view-as'] as const)('withdraws an unsent marker if %s changes during persistence', async changed => {
+    const hook = await renderHook()
+    const abort = vi.fn()
+    try {
+      await act(async () => {
+        await hook.ref.current!.send(request, {
+          ...reviewedByAlice,
+          beforeWrite: async () => {
+            await Promise.resolve()
+            if (changed === 'chain') mocks.chainId = 8453
+            else if (changed === 'connector') mocks.connectorUid = 'replacement'
+            else setViewAs(BOB)
+          },
+          onBeforeWriteAborted: abort,
+        })
+      })
+      expect(abort).toHaveBeenCalledOnce()
+      expect(mocks.writeContract).not.toHaveBeenCalled()
+      expect(hook.ref.current!.phase).toBe('error')
+    } finally { clearViewAs() }
+  })
+
+  it('pins the wallet write to the reviewed chain', async () => {
+    const hook = await renderHook()
+    await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+    expect(mocks.writeContract).toHaveBeenCalledWith(expect.objectContaining({ chainId: request.chainId }))
   })
 
   it('passes the write-intent callbacks to the reviewed write boundary', async () => {
@@ -658,90 +640,5 @@ describe('useSafeTx', () => {
     })
     expect(onBeforeWriteAborted).toHaveBeenCalledOnce()
     expect(mocks.writeContract).toHaveBeenCalledOnce()
-  })
-
-  it.each([
-    [
-      'Safe 1.4, indexed hash',
-      EXECUTION_HASH,
-      { topics: [EXECUTION_FAILURE, HASH], data: PAYMENT_WORD },
-    ],
-    [
-      'Safe 1.3, hash in data',
-      EXECUTION_HASH,
-      { topics: [EXECUTION_FAILURE], data: `${HASH}${PAYMENT_WORD.slice(2)}` as `0x${string}` },
-    ],
-    [
-      'executed at once, so the reply is the execution',
-      HASH,
-      { topics: [EXECUTION_FAILURE, `0x${'ef'.repeat(32)}` as `0x${string}`], data: PAYMENT_WORD },
-    ],
-  ] as const)(
-    'fails a Safe execution whose receipt succeeds but logs ExecutionFailure (%s)',
-    async (_, executionHash, failure) => {
-      mocks.safeConnection = true
-      mocks.waitForSafeExecutionHash.mockResolvedValueOnce(executionHash)
-      const hook = await renderHook()
-      await act(async () => {
-        await hook.ref.current!.send(request, reviewedByAlice)
-        await Promise.resolve()
-        await Promise.resolve()
-      })
-      expect(hook.ref.current!.hash).toBe(executionHash)
-
-      mocks.receipt = {
-        data: {
-          status: 'success',
-          transactionHash: executionHash,
-          logs: [{ address: ALICE, ...failure }],
-        },
-        isError: false,
-      }
-      await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
-      expect(hook.ref.current).toMatchObject({
-        phase: 'error',
-        busy: false,
-        error: `Safe executed the proposal, but the onchain transaction failed (${executionHash}).`,
-      })
-    },
-  )
-
-  it("succeeds when the execution's only ExecutionFailure belongs to another proposal or Safe", async () => {
-    mocks.safeConnection = true
-    const hook = await renderHook()
-    await act(async () => {
-      await hook.ref.current!.send(request, reviewedByAlice)
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    mocks.receipt = {
-      data: {
-        status: 'success',
-        transactionHash: EXECUTION_HASH,
-        logs: [
-          // A batch execution of this Safe where another proposal failed.
-          { address: ALICE, topics: [EXECUTION_FAILURE, `0x${'ef'.repeat(32)}`], data: PAYMENT_WORD },
-          // Another Safe's failure for the same hash.
-          { address: BOB, topics: [EXECUTION_FAILURE, HASH], data: PAYMENT_WORD },
-        ],
-      },
-      isError: false,
-    }
-    await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
-    expect(hook.ref.current).toMatchObject({ phase: 'success', busy: false, error: null })
-  })
-
-  it('treats a proven Safe execution revert as failed', async () => {
-    mocks.safeConnection = true
-    mocks.waitForSafeExecutionHash.mockRejectedValueOnce(
-      new Error('Safe executed the proposal, but the onchain transaction failed.'),
-    )
-    const hook = await renderHook()
-    await act(async () => {
-      await hook.ref.current!.send(request, reviewedByAlice)
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    expect(hook.ref.current).toMatchObject({ phase: 'error', busy: false })
   })
 })

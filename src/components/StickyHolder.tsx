@@ -39,6 +39,7 @@ import {
   type StickyRewardState,
 } from "@/lib/sticky-state";
 import {
+  adoptStickyProposal,
   beginStickySubmission,
   clearStickyPending,
   readStickyPending,
@@ -117,11 +118,8 @@ function Status({ tx, chainId }: { tx: StickyTx; chainId: number }) {
     tx.hash && !tx.safeProposalHash ? explorerTxUrl(chainId, tx.hash) : null;
   return (
     <div role="status" aria-live="polite" className="mt-4 break-words text-sm">
-      {tx.safeProposalHash ? (
-        <p>
-          Proposed to Safe. This action still needs execution and onchain
-          confirmation.
-        </p>
+      {tx.phase === "submitted" ? (
+        <p>{tx.notice}</p>
       ) : tx.phase === "pending" ? (
         <p>Submitted. Waiting for onchain confirmation…</p>
       ) : tx.phase === "success" ? (
@@ -226,6 +224,15 @@ function useStickyTx(state: StickyProjectState) {
     const key = journal.key;
     const hash = await tx.send(request, {
       ...options,
+      onExistingProposal: async (proposal) => {
+        if (!navigator.locks)
+          throw new Error("Use a browser with Web Locks support to coordinate Sticky recovery across tabs.");
+        await navigator.locks.request(`sticky-submit:${key}`, async () => {
+          record = adoptStickyProposal(localStorage, key, request, state.stickyProjectId, address, request.label ?? "Sticky transaction", proposal);
+          changedJournal();
+          await options.onExistingProposal?.(proposal);
+        });
+      },
       beforeWrite: async () => {
         await options.beforeWrite?.();
         if ((await client.getChainId()) !== state.chainId)

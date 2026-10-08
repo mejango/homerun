@@ -274,11 +274,11 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         journal.signed.some(item => !current.input.chainIds.includes(item.chainId)) ||
         !LAUNCH_JOURNAL_PHASES.includes(journal.phase) ||
         (journal.payments !== undefined && !relayrSentPaymentsSnapshot(journal.payments)))) {
-      throw new Error('The saved Relayr launch is invalid. Keep its original transaction records before continuing.')
+      throw new Error('The saved launch is invalid. Keep its original transaction records before continuing.')
     }
     if (journal && ['payment-signing', 'submitted', 'executing', 'payment-reverted'].includes(journal.phase)) {
       if (journal.paymentChainId === undefined || !relayrPaymentChains(current.input.chainIds).includes(journal.paymentChainId)) {
-        throw new Error('The original Relayr payment requires its saved payment chain in the launch network environment.')
+        throw new Error('The original payment requires its saved payment chain in the launch network environment.')
       }
       current.paymentChainId = journal.paymentChainId
     } else {
@@ -506,7 +506,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
           waiting.set(signed.chainId, { hash: saved?.hash ?? candidates[0],
             error: failure instanceof Error ? failure.message : 'Destination confirmation is unavailable.' })
         } else {
-          waiting.set(signed.chainId, { error: destinations.refusal ?? 'Waiting for the original Relayr destination transaction.' })
+          waiting.set(signed.chainId, { error: destinations.refusal ?? 'Waiting for the original destination transaction.' })
         }
       }
       if (!reverted.size && !waiting.size) return true
@@ -590,7 +590,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         persist()
         throw new Error(journal.abandonable === true
           ? 'The launch authorizations and payment quote expired. You may abandon this launch, but the earlier payment may have been charged; check your wallet. No refund is implied.'
-          : 'Your wallet may have sent the Relayr payment without returning its hash. Check its activity before another payment.')
+          : 'Your wallet may have sent the payment without returning its hash. Check its activity before another payment.')
       }
       journal = current.relayr
     }
@@ -654,7 +654,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         client.readContract({ address: forwarder, abi: erc2771ForwarderAbi, functionName: 'nonces', args: [account] }),
       ])
       if ((code && code !== '0x' && !isEip7702DelegatedEoaRuntime(code)) || !forwarderCode || forwarderCode === '0x' || !trusted) {
-        throw new Error(`Cannot prepare ${chainName(chainId)}: ${code && code !== '0x' && !isEip7702DelegatedEoaRuntime(code) ? 'this contract wallet cannot sign Relayr requests' : !forwarderCode || forwarderCode === '0x' ? 'the Relayr forwarder is not deployed' : 'the project deployer does not trust the Relayr forwarder'}.`)
+        throw new Error(`Cannot prepare ${chainName(chainId)}: ${code && code !== '0x' && !isEip7702DelegatedEoaRuntime(code) ? 'this contract wallet cannot sign cross-chain requests' : !forwarderCode || forwarderCode === '0x' ? 'the trusted forwarder is not deployed' : 'the project deployer does not trust the trusted forwarder'}.`)
       }
       if (journal.retryNonces?.[chainId] !== undefined && nonce !== BigInt(journal.retryNonces[chainId])) {
         throw new Error('An earlier launch authorization may have executed. Check its original destination before signing again.')
@@ -669,7 +669,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     if (authorizations.length) {
       await requireTransactionReview({
         kind: 'authorization', title: 'Create your project',
-        description: ['Review the FUND launch across your selected chains. Sign once per chain, then choose one Relayr payment to cover creation.', multisigReview(current.input.multisigs)].filter(Boolean).join('\n\n'),
+        description: ['Review the FUND launch across your selected chains. Sign once per chain, then choose one payment to cover creation.', multisigReview(current.input.multisigs)].filter(Boolean).join('\n\n'),
         confirmLabel: 'Continue to wallet',
         calls: authorizations.flatMap(item => [
           ...multisigDeploymentCalls(current.input.multisigs ?? []).map(call => ({ chainId: item.chainId, to: call.target, data: call.callData, value: call.value,
@@ -752,7 +752,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         requireQuoteBindings()
         payments = relayrPaymentOptions(journal.quote!, destinations)
       }
-      if (!payments.length) throw new Error('Relayr returned no usable payment options for this launch. Retry to request a new quote; nothing was paid.')
+      if (!payments.length) throw new Error('The quote has no usable payment options for this launch. Retry to request a new quote; nothing was paid.')
       onProgress('Choose where to pay for the launch.')
       const selectedChainId = await requireFundingChainSelection(payments.map(option => ({ chainId: option.chain, label: relayrPaymentLabel(option) })), startChainId)
       payment = payments.find(option => option.chain === selectedChainId)

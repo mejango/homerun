@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Address } from 'viem'
+import { encodeFunctionData, type Address } from 'viem'
 const mocks = vi.hoisted(() => ({ address: '0x1111111111111111111111111111111111111111' as Address | undefined, factory: vi.fn(), rows: vi.fn(), verify: vi.fn(), send: vi.fn(), open: vi.fn(), reset: vi.fn(), safe: false, waitSafe: vi.fn(), getReceipt: vi.fn(), getBlockNumber: vi.fn() }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: mocks.address, openSignIn: mocks.open }) }))
 vi.mock('@/hooks/useSafeTx', () => ({ txPhaseLabel: (_: string, labels: { idle: string }) => labels.idle, useSafeTx: () => ({ phase: 'idle', busy: false, error: null, isSafe: mocks.safe, send: mocks.send, reset: mocks.reset }) }))
@@ -59,6 +59,19 @@ describe('project payer controls', () => {
     expect(host.textContent).toContain('Check your wallet before creating another')
     expect(button('Review payer creation').closest('fieldset')?.disabled).toBe(true)
     expect(mocks.send).not.toHaveBeenCalled()
+  })
+  it('adopts an existing Safe proposal without inventing a new wallet attempt', async () => {
+    mocks.safe = true
+    mocks.send.mockImplementation(async (request, options) => {
+      await options.onExistingProposal({ proposalHash: HASH, call: { to: request.address, data: encodeFunctionData(request), value: request.value ?? 0n } })
+      return HASH
+    })
+    await render(); await click('Review payer creation')
+    expect(mocks.getBlockNumber).not.toHaveBeenCalled()
+    expect(JSON.parse(localStorage.getItem(KEY)!)).toMatchObject({ phase: 'submitted', hash: HASH, afterBlock: '0', safe: true })
+    expect(host.textContent).toContain('Proposed to Safe. Execution and onchain confirmation are still required.')
+    expect(button('Review payer creation').closest('fieldset')?.disabled).toBe(true)
+    expect(mocks.verify).not.toHaveBeenCalled()
   })
   it('keeps a Safe proposal separate from execution and confirms only after receipt proof', async () => {
     mocks.safe = true; await render(); await click('Review payer creation')

@@ -41,7 +41,7 @@ function message(error: unknown) { return readableError(error, 'The payment coul
 function Status({ tx, chainId }: { tx: PaymentTx; chainId: number }) {
   const url = tx.hash && !tx.safeProposalHash ? explorerTxUrl(chainId, tx.hash) : null
   return <div role="status" aria-live="polite" className="mt-3 break-words text-sm">
-    {tx.safeProposalHash ? <p>Proposed to Safe. Execute the proposal in Safe before continuing.</p> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? <p>Confirmed onchain.</p> : null}
+    {tx.phase === 'submitted' ? <p>{tx.notice}</p> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? <p>Confirmed onchain.</p> : null}
     {tx.error && <p className="text-red-800">{tx.error}</p>}{url && <a className="underline" href={url} target="_blank" rel="noreferrer">View transaction</a>}
   </div>
 }
@@ -121,6 +121,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
   const zeroAllocation = reservedPercent === 10_000 && quote.data?.kind === 'pay' && minimum === 0n && quote.data.reservedTokenCount > 0n
   const quoted = !!quote.data && !quote.isError && !quote.isPlaceholderData && (minimum > 0n || zeroAllocation)
   const busy = preparing || [tx, approval, routerApproval].some(item => item.busy || item.phase === 'review')
+  const submitted = [tx, approval, routerApproval].find(item => item.phase === 'submitted')
   const tracking = busy || [tx, approval, routerApproval].some(item => !!item.safeProposalHash && item.phase !== 'success')
   // The wallet steps ahead, read before the first prompt as Juicebox Money's pay sequence does.
   // Unknown allowances count as needed; the sequence re-reads them before acting.
@@ -268,9 +269,10 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       onConfirm={() => { if (address) void submit(); else openSignIn() }}
       busy={prompting}
       complete={tx.phase === 'success'}
-      status={status ?? (tx.safeProposalHash ? 'Proposed to Safe. Execute it there; you can close this while it waits.' : tx.phase === 'pending' ? <>Submitted. Waiting for onchain confirmation{tx.hash && explorerTxUrl(chainId, tx.hash) ? <> (<a className="underline" href={explorerTxUrl(chainId, tx.hash)!} target="_blank" rel="noreferrer">view transaction</a>)</> : null}</> : null)}
+      settled={!!submitted}
+      status={submitted?.notice ?? status ?? (tx.phase === 'pending' ? <>Submitted. Waiting for onchain confirmation{tx.hash && explorerTxUrl(chainId, tx.hash) ? <> (<a className="underline" href={explorerTxUrl(chainId, tx.hash)!} target="_blank" rel="noreferrer">view transaction</a>)</> : null}</> : null)}
       error={error ?? tx.error ?? approval.error ?? routerApproval.error}
-      onClose={() => setOpen(false)}
+      onClose={() => { setOpen(false); for (const item of [tx, approval, routerApproval]) if (item.phase === 'submitted') item.dismiss(); setStatus(null) }}
     >
       <div className="text-sm text-smoke-600" aria-live="polite">
         {paused ? <p>This project has paused payments.</p> : zeroAllocation ? <p>This payment gives you no {tokenLabel}. All new tokens are allocated to the reserved recipients.</p> : quoted ? <p>{planSwap ? 'Best quoted rate through Uniswap. Buys existing tokens; no reserved tokens are issued.' : 'Through the project payment terminal, using its current rules and buyback hook.'} 1% maximum slippage.</p>

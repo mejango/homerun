@@ -5,7 +5,8 @@ WORKDIR /app
 FROM base AS build
 COPY package.json package-lock.json ./
 COPY vendor ./vendor
-RUN npm ci --ignore-scripts --no-audit --no-fund
+RUN npm install --global "$(node -p 'require("./package.json").packageManager')" --ignore-scripts --no-audit --no-fund \
+    && npm ci --ignore-scripts --no-audit --no-fund
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 # Next embeds public configuration into the browser bundle during this stage.

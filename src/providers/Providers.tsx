@@ -37,7 +37,8 @@ export function Providers({ children }: PropsWithChildren) {
   const [queryClient] = useState(() => new QueryClient({ defaultOptions: { queries: {
     staleTime: 30_000, gcTime: 10 * 60_000, retry: 1, refetchOnWindowFocus: false,
   } } }))
-  // Restore cached client data only after streamed server content has hydrated.
+  // Delay disk work until load; each persisted reader also preserves its own server render
+  // with useHydrated because streamed children can hydrate after this event.
   useEffect(() => {
     let teardown: (() => void) | undefined
     const restore = () => { teardown = installQueryPersistence(queryClient) }

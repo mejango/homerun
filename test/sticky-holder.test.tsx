@@ -2,7 +2,8 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { erc20Abi, type Address } from "viem";
+import { encodeFunctionData, erc20Abi, type Address } from "viem";
+import type { TxRequest, TxSendOptions } from "../src/hooks/useSafeTx";
 import { jbContractAddress, type JBChainId } from "@bananapus/nana-sdk-core";
 import { v6Address } from "@bananapus/nana-sdk-core/v6";
 import { StickyHolder } from "../src/components/StickyHolder";
@@ -146,6 +147,26 @@ afterEach(async () => {
   localStorage.clear();
 });
 describe("Sticky holder recovery and independent loading", () => {
+  it("adopts a queued credit claim into the holder journal without a new wallet attempt", async () => {
+    vi.mocked(readStickyProjectState).mockResolvedValue({ ...state, fundBalance: 0n, fundCreditBalance: 2n * 10n ** 18n });
+    const hash = `0x${"ab".repeat(32)}` as const;
+    const key = stickySessionKey(1, 9n, HOLDER);
+    Object.defineProperty(navigator, "locks", { configurable: true, value: { request: async (_name: string, callback: () => unknown) => callback() } });
+    mocks.send.mockImplementation(async (request: TxRequest, options: TxSendOptions) => {
+      await options.onExistingProposal?.({ proposalHash: hash, call: { to: request.address, data: encodeFunctionData(request), value: request.value ?? 0n } });
+      return hash;
+    });
+    try {
+      await mount();
+      await act(async () => [...element.querySelectorAll("button")].find(button => button.textContent === "Use available FUND")!.click());
+      await settle();
+      await act(async () => [...element.querySelectorAll("button")].find(button => button.textContent === "Review credit claim")!.click());
+      expect(readStickyPending(localStorage, key)).toMatchObject({ safe: true, hash, afterBlock: "0" });
+      expect(mocks.send).toHaveBeenCalledOnce();
+      expect(verifyStickyExecution).not.toHaveBeenCalled();
+      expect([...element.querySelectorAll("button")].find(button => button.textContent === "Use available FUND")?.disabled).toBe(true);
+    } finally { Reflect.deleteProperty(navigator, "locks"); }
+  });
   it("keeps an unknown wallet submission locked after remount", async () => {
     const key = stickySessionKey(1, 9n, HOLDER);
     beginStickySubmission(

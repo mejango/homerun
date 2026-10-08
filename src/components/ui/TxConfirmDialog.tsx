@@ -40,6 +40,7 @@ export function TxConfirmDialog({
   onConfirm,
   busy = false,
   complete = false,
+  settled = false,
   preparing = false,
   status,
   error,
@@ -60,6 +61,8 @@ export function TxConfirmDialog({
   onConfirm: () => void
   busy?: boolean
   complete?: boolean
+  /** The action is submitted to a Safe; Done dismisses it without marking its steps confirmed. */
+  settled?: boolean
   /** Rows and steps are still being read; `status` says what is happening. */
   preparing?: boolean
   status?: ReactNode
@@ -139,7 +142,7 @@ export function TxConfirmDialog({
           {error ? <p className="text-sm text-red-600">{error}</p> : null}
         </div>
         <footer className="flex justify-end gap-2 border-t border-smoke-200 bg-bone px-5 py-4">
-          {complete ? (
+          {complete || settled ? (
             <button
               type="button"
               className="btn-primary min-h-[44px] px-5 text-sm"

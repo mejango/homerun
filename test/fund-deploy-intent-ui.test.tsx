@@ -1,4 +1,5 @@
 import { act } from 'react'
+import { prepareIntentEnvelope } from './support/intent-prepare.mjs'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fixtures/homerun-deployer')).withHomerunDeployer(await importOriginal()))
@@ -10,10 +11,7 @@ import { FUND_LAUNCH_KEY, decodeLaunchSession, encodeLaunchSession } from '../sr
 
 const wallet = '0x1111111111111111111111111111111111111111'
 const intentId = '3f0f2f4c-0f3f-4f2f-8f1f-0f2f3f4f5f6f'
-const contentHash = `0x${'ab'.repeat(32)}` as Hex
 const signature = `0x${'cd'.repeat(65)}` as Hex
-// Center's own signing message, word for word (docs/rest/PROJECT_INTENTS.md).
-const publicationMessage = `Juice Central project intent\nVersion: 1\nContent hash: ${contentHash}`
 
 const runtime = vi.hoisted(() => ({
   wallet: '0x1111111111111111111111111111111111111111' as string | undefined, centerWallet: false, safe: false,
@@ -82,11 +80,9 @@ describe('creating a FUND without a transaction', () => {
     runtime.checkDeployment.mockReset().mockResolvedValue(undefined)
     runtime.review.mockReset().mockResolvedValue(undefined)
     runtime.signMessage.mockReset().mockResolvedValue(signature)
-    runtime.prepareIntent.mockReset().mockImplementation(async (envelope: unknown) => ({
-      contentHash, message: publicationMessage, envelope,
-    }))
+    runtime.prepareIntent.mockReset().mockImplementation(async (envelope: unknown) => prepareIntentEnvelope(envelope))
     runtime.publishIntent.mockReset().mockImplementation(async (body: Record<string, unknown>) => ({
-      id: intentId, status: 'undeployed', contentHash, envelope: body, publisher: wallet, signature,
+      id: intentId, status: 'undeployed', contentHash: prepareIntentEnvelope(Object.fromEntries(Object.entries(body).filter(([key]) => key !== 'publisher' && key !== 'signature'))).contentHash, envelope: body, publisher: wallet, signature,
       createdAt: new Date(0).toISOString(), deployments: [], deploys: [],
       name: 'Neighborhood Workshop', description: null, tagline: null, tags: [], logoUri: null, owner: wallet,
     }))

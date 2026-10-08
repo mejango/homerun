@@ -11,11 +11,11 @@ export function ProjectAdminTransactionStatus({ tx }: { tx: ProjectAdminTx }) {
   const id = useId()
   const explorer = tx.hash ? explorerTxUrl(tx.chainId, tx.hash) : null
   const validHash = /^0x[\da-f]{64}$/i.test(executionHash.trim())
-  if (!tx.error && !tx.status && !tx.pending && !tx.busy) return null
+  if (!tx.error && !tx.status && !tx.notice && !tx.pending && !tx.busy) return null
   return <div className="mt-4 space-y-3 text-sm" aria-live="polite">
-    {tx.pending && <p>{tx.pendingLabel ?? 'Project update'} is pending. {tx.safe ? 'Check Safe for signatures and execution.' : 'Wait for its execution before submitting another project update.'}</p>}
+    {tx.notice ? <p role="status">{tx.notice}</p> : tx.pending && <p>{tx.pendingLabel ?? 'Project update'} is pending. {tx.safe ? 'Check Safe for signatures and execution.' : 'Wait for its execution before submitting another project update.'}</p>}
     {!tx.pending && tx.busy && <p>{tx.phase === 'review' ? 'Review the project update…' : tx.phase === 'signing' ? 'Confirm in your wallet…' : 'Checking the project update…'}</p>}
-    {tx.status && <p role="status">{tx.status}</p>}
+    {tx.status && tx.status !== tx.notice && <p role="status">{tx.status}</p>}
     {tx.error && <p role="alert">{tx.error}</p>}
     {explorer && <a className="underline" href={explorer} target="_blank" rel="noopener noreferrer">View transaction</a>}
     {tx.pending && <details>

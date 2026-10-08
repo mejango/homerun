@@ -10,6 +10,8 @@ import {
   type PublicClient,
 } from "viem";
 import {
+  adoptStickyProposal,
+  assertSafeProposalCall,
   beginStickySubmission,
   clearStickyPending,
   readStickyPending,
@@ -278,5 +280,99 @@ describe("Sticky Safe execution events", () => {
     await expect(
       verify([safeExecutionLog(OTHER, PROPOSAL, { failed: true }), safeExecutionLog(HOLDER, PROPOSAL)]),
     ).resolves.toBe("confirmed");
+  });
+});
+
+describe("existing Safe proposal adoption", () => {
+  it("persists the known hash atomically and accepts historical execution only for that exact proposal", async () => {
+    const storage = memory();
+    const proposal = {
+      proposalHash: HASH,
+      call: { to: TARGET, data: encodeFunctionData(request), value: 0n },
+    };
+    const record = adoptStickyProposal(
+      storage,
+      key,
+      request,
+      9n,
+      HOLDER,
+      "Approve FUND",
+      proposal,
+    );
+    expect(readStickyPending(storage, key)).toEqual(record);
+    expect(record).toMatchObject({ safe: true, hash: HASH, afterBlock: "0" });
+    await expect(
+      verifyStickyExecution(clientFor(record, { old: true }), record, HASH),
+    ).resolves.toBe("confirmed");
+    await expect(
+      verifyStickyExecution(clientFor(record, { noEvent: true }), record, HASH),
+    ).rejects.toThrow("proposal hash");
+    expect(() =>
+      adoptStickyProposal(
+        storage,
+        key,
+        request,
+        9n,
+        HOLDER,
+        "Approve FUND",
+        proposal,
+      ),
+    ).toThrow("already be pending");
+  });
+  it("retains the original Permit2 expiration while rejecting any changed authorization", () => {
+    const abi = parseAbi([
+      "function approve(address token,address spender,uint160 amount,uint48 expiration)",
+    ]);
+    const renewed = { ...request, abi, args: [TARGET, OTHER, 100n, 2000] };
+    const original = { ...renewed, args: [TARGET, OTHER, 100n, 1000] };
+    const proposal = {
+      proposalHash: HASH,
+      call: { to: TARGET, data: encodeFunctionData(original) },
+    };
+    const record = adoptStickyProposal(
+      memory(),
+      key,
+      renewed,
+      9n,
+      HOLDER,
+      "Permit FUND",
+      proposal,
+    );
+    expect(record.data).toBe(encodeFunctionData(original));
+    expect(() => assertSafeProposalCall(renewed, proposal)).toThrow(
+      "does not match",
+    );
+    expect(() =>
+      adoptStickyProposal(
+        memory(),
+        key,
+        { ...renewed, args: [TARGET, OTHER, 101n, 2000] },
+        9n,
+        HOLDER,
+        "Permit FUND",
+        proposal,
+      ),
+    ).toThrow("does not match");
+  });
+  it("rejects missing or mismatched evidence before writing storage", () => {
+    const storage = memory(),
+      call = { to: TARGET, data: encodeFunctionData(request), value: 0n };
+    for (const proposal of [
+      { proposalHash: `0x${"00".repeat(32)}` as Hex, call },
+      { proposalHash: HASH, call: { ...call, to: OTHER } },
+      { proposalHash: HASH, call: { ...call, value: 1n } },
+    ])
+      expect(() =>
+        adoptStickyProposal(
+          storage,
+          key,
+          request,
+          9n,
+          HOLDER,
+          "Approve FUND",
+          proposal,
+        ),
+      ).toThrow();
+    expect(storage.getItem(key)).toBeNull();
   });
 });

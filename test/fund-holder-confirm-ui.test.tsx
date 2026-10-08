@@ -19,7 +19,7 @@ const runtime = vi.hoisted(() => ({
   fresh: undefined as unknown,
   /** The account each fresh read was for. */
   readFor: [] as Address[],
-  tx: { phase: 'idle', busy: false, isSafe: false, error: null as string | null, hash: null as Hex | null, safeProposalHash: null as Hex | null, receipt: null, send: vi.fn(), reset: vi.fn() },
+  tx: { notice: null as string | null, dismiss: vi.fn(), phase: 'idle', busy: false, isSafe: false, error: null as string | null, hash: null as Hex | null, safeProposalHash: null as Hex | null, receipt: null, send: vi.fn(), reset: vi.fn() },
   quote: vi.fn(), prepare: vi.fn(),
 }))
 vi.mock('wagmi', async importOriginal => ({ ...await importOriginal<typeof import('wagmi')>(), usePublicClient: () => ({}) }))
@@ -62,8 +62,8 @@ beforeEach(() => {
   runtime.address = WALLET
   runtime.fresh = state
   runtime.readFor = []
-  Object.assign(runtime.tx, { phase: 'idle', busy: false, error: null, hash: null, safeProposalHash: null })
-  runtime.tx.send.mockReset().mockResolvedValue(null); runtime.tx.reset.mockReset()
+  Object.assign(runtime.tx, { phase: 'idle', notice: null, busy: false, error: null, hash: null, safeProposalHash: null })
+  runtime.tx.send.mockReset().mockResolvedValue(null); runtime.tx.reset.mockReset(); runtime.tx.dismiss.mockReset()
   runtime.quote.mockReset().mockResolvedValue({ minimumReturn: 9_000_000n })
   runtime.prepare.mockReset().mockResolvedValue({ route: { minimumReturn: 8_900_000n }, transaction: cashOutRequest })
   cache = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -95,23 +95,26 @@ describe('FUND holder actions confirm like Juicebox Money', () => {
     await render(<CashOutPanel state={state} client={{} as never} contextIndex={0} />)
     expect(dialogText()).toContain('Cashed out')
     await click('Done')
-    expect(runtime.tx.reset).toHaveBeenCalledOnce()
+    expect(runtime.tx.dismiss).toHaveBeenCalledOnce()
     expect(document.querySelector('[data-tx-confirm]')).toBeNull()
     expect(host.querySelector('input')!.value).toBe('')
   })
 
-  it('lets a Safe signer close the dialog while the proposal awaits execution, and keeps tracking it', async () => {
+  it('ends a Safe review on Done without claiming the cash out is confirmed', async () => {
     await render(<CashOutPanel state={state} client={{} as never} contextIndex={0} />)
     await type('FUND to cash out', '10'); await settle()
     await click('Review cash-out'); await settle()
-    Object.assign(runtime.tx, { phase: 'pending', busy: true, safeProposalHash: `0x${'b'.repeat(64)}` })
+    Object.assign(runtime.tx, { phase: 'submitted', notice: 'Proposed to Safe. Other owners still need to sign.', busy: false, safeProposalHash: `0x${'b'.repeat(64)}` })
     await render(<CashOutPanel state={state} client={{} as never} contextIndex={0} />)
     expect(dialogText()).toContain('Proposed to Safe')
+    expect(button('Done')).toBeDefined()
+    expect(dialogText()).not.toContain('Cashed out')
+    expect(document.querySelector('[data-tx-confirm] li[data-state="complete"]')).toBeNull()
     const close = document.querySelector<HTMLButtonElement>('[data-tx-confirm] button[aria-label="Close"]')!
     expect(close.disabled).toBe(false)
     await act(async () => close.click())
     expect(document.querySelector('[data-tx-confirm]')).toBeNull()
-    expect(runtime.tx.reset).not.toHaveBeenCalled()
+    expect(runtime.tx.dismiss).toHaveBeenCalledOnce()
     expect(host.textContent).toContain('Proposed to Safe')
   })
 

@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodeFunctionData, parseAbi } from 'viem'
+import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import { createHomerunPayment } from '@/lib/center-payment'
 const account = '0x1111111111111111111111111111111111111111', terminal = '0x2222222222222222222222222222222222222222', token = '0x3333333333333333333333333333333333333333', hash = '0x' + 'ab'.repeat(32)
 function fixture() {
@@ -15,22 +16,54 @@ function fixture() {
       ownerProfile: { version: 'center-passkey-v1', signer: { kind: 'contract', address: token } }, owners: [token, terminal],
       evidence: { chainId: 8453, source: 'onchain', timestamp: String(Math.floor(Date.now() / 1000)) } } }
   const record = { id: 'operation-original', signing: { ownerProfile: 'center-passkey-v1' } }
-  let status: any = null
+  let status: { status: string; operationId?: string; approvalUrl?: string; expectedPayment?: unknown } | null = null
   const payments = { preparePayment: vi.fn(async input => { events.push('review'); return status = { status: 'reviewing', operationId: record.id,
     approvalUrl: config.issuer + '/wallet/payment?review=original', expectedPayment: input.expectedPayment } }),
     pendingPayment: () => status, submitPayment: vi.fn(async () => { events.push('send'); status = { ...status, status: 'pending' }; return status }),
-    refreshPayment: vi.fn(async () => status), clearPayment: vi.fn(() => { if (!['paid', 'cancelled', 'reverted', 'expired'].includes(status?.status)) throw Error('unresolved'); status = null }) }
+    refreshPayment: vi.fn(async () => status), clearPayment: vi.fn(() => { if (!['paid', 'cancelled', 'reverted', 'expired'].includes(status?.status ?? '')) throw Error('unresolved'); status = null }) }
   const connection = { address: account, chainId: 8453, accountId: 'eip155:8453:' + account, client: {
-    authorizeRead: async () => ({ claims: { accountId: 'eip155:8453:' + account, signer: token, grantId: 'grant-original' } }),
+    authorizeRead: vi.fn(async () => ({ claims: { accountId: 'eip155:8453:' + account, signer: token, grantId: 'grant-original' } })),
     smartAccounts: () => ({ bindings: async () => ({ items: [binding] }), binding: async () => binding,
       preparePlan: async () => { events.push('plan'); return structuredClone(plan) } }),
     request: async () => { events.push('operation'); return structuredClone(record) },
   } }
   const wallet = { restoreConnection: () => connection, payments: () => payments }
   const create = () => createHomerunPayment({ config, wallet, storage } as never)
-  return { data, storage, config, intent, plan, binding, wallet, payments, create, events, setStatus: (state: string) => { status = { ...status, status: state } } }
+  return { connection, data, storage, config, intent, plan, binding, wallet, payments, create, events, setStatus: (state: string) => { status = { ...status, status: state } } }
 }
 describe('Homerun original Center payment recovery', () => {
+  beforeEach(() => clearViewAs())
+  it.each(['prepare', 'submit'] as const)('rejects view-as activated during final %s authorization without losing recovery', async action => {
+    const f = fixture(), controller = f.create()
+    await controller.prepare(f.intent as never)
+    f.setStatus('approved')
+    f.payments.preparePayment.mockClear()
+    let release!: () => void
+    const waiting = new Promise<void>(resolve => { release = resolve })
+    let entered!: () => void
+    const authorizing = new Promise<void>(resolve => { entered = resolve })
+    const original = f.connection.client.authorizeRead.getMockImplementation()!
+    // Preparing an existing operation authorizes once on entry and once before its review.
+    if (action === 'prepare') f.connection.client.authorizeRead.mockImplementationOnce(original)
+    f.connection.client.authorizeRead.mockImplementationOnce(async () => { entered(); await waiting; return original() })
+    const result = action === 'prepare' ? controller.prepare(f.intent as never) : controller.submit()
+    await authorizing
+    setViewAs(account)
+    release()
+    await expect(result).rejects.toThrow(VIEW_AS_WRITE_BLOCKED)
+    expect(f.payments.preparePayment).not.toHaveBeenCalled()
+    expect(f.payments.submitPayment).not.toHaveBeenCalled()
+    expect(controller.pending()?.submitted).toBe(false)
+    await controller.refresh()
+    expect(f.payments.refreshPayment).toHaveBeenCalledOnce()
+    clearViewAs()
+    await controller.submit()
+    setViewAs(account)
+    await controller.submit()
+    expect(f.payments.submitPayment).toHaveBeenCalledOnce()
+    expect(f.payments.refreshPayment).toHaveBeenCalledTimes(2)
+  })
+
   it('does not archive an unresolved review and still closes it after a terminal result', async () => {
     const f = fixture(), controller = f.create(); await controller.prepare(f.intent as never)
     expect(() => controller.clear()).toThrow()

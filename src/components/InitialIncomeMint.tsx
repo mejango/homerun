@@ -32,7 +32,7 @@ export function InitialIncomeMint({ chainId, fundProjectId, incomeProjectId, man
     void cache.invalidateQueries({ queryKey: ['initial-income-allocation', chainId, fundProjectId.toString(), incomeProjectId.toString()] })
     void cache.invalidateQueries({ queryKey: ['income-project', chainId, incomeProjectId.toString()] })
   }, [cache, chainId, fundProjectId, incomeProjectId, tx.phase, tx.receipt])
-  const blocked = !client || !address || !state || query.isError || query.isPlaceholderData || state.pending === 0n || !state.started || preparing || tx.busy || tx.phase === 'review'
+  const blocked = !client || !address || !state || query.isError || query.isPlaceholderData || state.pending === 0n || !state.started || preparing || tx.busy || (tx.phase === 'review' || tx.phase === 'submitted')
   async function mint() {
     if (blocked || !client || !state || !address) return
     setPreparing(true); setError(null)
@@ -64,7 +64,7 @@ export function InitialIncomeMint({ chainId, fundProjectId, incomeProjectId, man
       <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={blocked} onClick={() => void mint()}>{preparing ? 'Preparing…' : txPhaseLabel(tx.phase, { idle: 'Mint initial INCOME to the FUND owner', pending: 'Minting…' })}</button>
     </>}
     <div className="mt-4 break-words text-sm" role="status" aria-live="polite">
-      {tx.safeProposalHash ? <p>Proposed to Safe. The allocation is not minted until the proposal executes.</p> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? <p>Initial INCOME minted to the FUND owner.</p> : null}
+      {tx.phase === 'submitted' ? <p>{tx.notice}</p> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? <p>Initial INCOME minted to the FUND owner.</p> : null}
       {link && <a href={link} target="_blank" rel="noreferrer" className="underline">View transaction</a>}
     </div>
     {(error || tx.error) && <p role="alert" className="mt-3 text-sm text-red-800">{error ?? tx.error}</p>}

@@ -2,7 +2,7 @@ import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { parseAbi, zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
+import { encodeFunctionData, parseAbi, zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
 import type { Project721Tier } from '@bananapus/nana-sdk-core/v6'
 import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
 import type { ProjectShopState } from '@/lib/project-shop'
@@ -14,7 +14,7 @@ const runtime = vi.hoisted(() => ({
   safe: false, receipt: 'pending' as 'pending' | 'confirmed' | 'reverted',
   send: vi.fn(), reset: vi.fn(), read: vi.fn(), prepare: vi.fn(), reverify: vi.fn(),
   inventory: vi.fn(), customers: vi.fn(), metadata: vi.fn(), waitSafe: vi.fn(), viewAs: vi.fn(),
-  readSession: vi.fn(), start: vi.fn(), begin: vi.fn(), record: vi.fn(), reject: vi.fn(),
+  readSession: vi.fn(), start: vi.fn(), begin: vi.fn(), adopt: vi.fn(), record: vi.fn(), reject: vi.fn(),
   confirm: vi.fn(), verify: vi.fn(), clear: vi.fn(), restore: vi.fn(), lock: vi.fn(),
   saved: new Map<string, ShopWriteSession>(), client: { getBlock: vi.fn() },
 }))
@@ -36,7 +36,7 @@ vi.mock('@/lib/project-shop-write', () => ({
 vi.mock('@/lib/project-shop-session', () => ({
   shopWriteSessionKey: (chainId: number, projectId: bigint) => `${chainId}:${projectId}`,
   readShopWriteSession: runtime.readSession, startShopWriteSession: runtime.start,
-  beginShopWriteSubmission: runtime.begin, recordShopWriteHash: runtime.record,
+  adoptShopWriteProposal: runtime.adopt, beginShopWriteSubmission: runtime.begin, recordShopWriteHash: runtime.record,
   rejectShopWriteSubmission: runtime.reject, confirmShopWriteExecution: runtime.confirm,
   verifyShopWriteProgress: runtime.verify, clearShopWriteSession: runtime.clear, withShopWriteLock: runtime.lock,
   restoreShopWritePermissions: runtime.restore,
@@ -122,6 +122,9 @@ beforeEach(() => {
   runtime.begin.mockReset().mockImplementation((_storage, key, captured, options) => store(key, {
     ...captured, pending: { afterBlock: options.afterBlock.toString(), safe: options.safe, startedAt: Date.now() },
   }))
+  runtime.adopt.mockReset().mockImplementation(async (_client, _storage, key, captured, proposal) => store(key, {
+    ...captured, pending: { afterBlock: captured.plan.snapshot.blockNumber.toString(), safe: true, startedAt: Date.now(), hash: proposal.proposalHash },
+  }))
   runtime.record.mockReset().mockImplementation((_storage, key, captured, hash) => store(key, { ...captured, pending: { ...captured.pending, hash } }))
   runtime.reject.mockReset().mockImplementation((_storage, key, captured) => { const { pending: _pending, ...next } = captured; return store(key, next) })
   runtime.confirm.mockReset().mockImplementation(async (_client: PublicClient, _storage: ShopWriteStorage, key: string, captured: ShopWriteSession, executionHash: Hex) => {
@@ -195,6 +198,21 @@ async function reviewNext() {
 }
 
 describe('live project shop management', () => {
+  it('adopts a queued proposal into recovery and keeps the next creation step locked', async () => {
+    await draft()
+    runtime.safe = true
+    runtime.send.mockImplementation(async (request: TxRequest, options: TxSendOptions) => {
+      await options.onExistingProposal?.({ proposalHash: HASH, call: { to: request.address, data: encodeFunctionData(request), value: request.value ?? 0n } })
+      return HASH
+    })
+    await reviewNext()
+    await settled(() => expect(runtime.saved.get(KEY)?.pending).toMatchObject({ safe: true, hash: HASH }))
+    expect(runtime.adopt).toHaveBeenCalledOnce()
+    expect(runtime.begin).not.toHaveBeenCalled()
+    expect(runtime.saved.get(KEY)?.completed).toEqual([])
+    expect(findButton('Review transaction')).toBeUndefined()
+    expect(runtime.send).toHaveBeenCalledOnce()
+  })
   it('reviews the first items, executes every exact creation step, and only finishes after restoration is confirmed', async () => {
     await draft()
     const prepared: PreparedProjectShopWrite = await runtime.prepare.mock.results[0].value

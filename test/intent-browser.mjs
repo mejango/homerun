@@ -2,6 +2,7 @@
  *  SDK against a modeled Juicebox Center and an injected test wallet. No chain, no Center
  *  service, no transaction and no real signature authority are involved. */
 import assert from 'node:assert/strict'
+import { prepareIntentEnvelope } from './support/intent-prepare.mjs'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
@@ -27,7 +28,6 @@ const account = privateKeyToAccount('0x59c6995e998f97a5a0044966f0945389dc9e86dae
 // It holds nothing and signs nothing here.
 const SECOND_SIGNER = '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC'
 const cid = 'bafkreiabcdefghijklmnopqrstuvwxyz234567'
-const contentHash = `0x${'ab'.repeat(32)}`
 const transactionHash = `0x${'ef'.repeat(32)}`
 const intentId = randomUUID()
 // Center's sponsor in this model. It signs nothing here; the forward request is a fixture.
@@ -93,7 +93,7 @@ const FUND_LAUNCHED_ABI = [{
 function intentRecord() {
   const chains = [...new Set([...queued, ...recorded])]
   return {
-    id: intentId, status: chains.length === 3 ? 'deployed' : 'undeployed', contentHash,
+    id: intentId, status: chains.length === 3 ? 'deployed' : 'undeployed', contentHash: prepareIntentEnvelope(stored.envelope).contentHash,
     envelope: stored.envelope, publisher: stored.publisher, signature: stored.signature,
     createdAt: timestamp,
     deployments: chains.map(chainId => ({
@@ -134,11 +134,7 @@ const center = createServer((request, response) => {
   }
   if (url.pathname === '/v1/intents/message') {
     // Center's own signing message, word for word: the SDK refuses to sign anything else.
-    return withBody(body => json(200, {
-      contentHash,
-      message: `Juice Central project intent\nVersion: 1\nContent hash: ${contentHash}`,
-      envelope: JSON.parse(body.toString()),
-    }))
+    return withBody(body => json(200, prepareIntentEnvelope(JSON.parse(body.toString()))))
   }
   if (url.pathname === '/v1/intents' && request.method === 'POST') {
     return withBody(body => {
