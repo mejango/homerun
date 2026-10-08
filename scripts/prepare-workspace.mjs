@@ -51,8 +51,9 @@ function prepareWorkspace() {
   // (nana-core-v6's with --omit=dev) and so does this, with the dev dependencies: the remappings reach revnet-core-v6's
   // @uniswap/v4-core, a devDependency. A plain install lets versions float with upstream publishes, so the versions
   // pinned in `packages` are installed again, exactly, afterwards. Scripts stay off: the contracts need the packages'
-  // files, not their install hooks.
-  const install = ['--ignore-scripts', '--no-audit', '--no-fund']
+  // files, not their install hooks. npm 12 blocks Git dependencies by default; these pinned protocol checkouts also
+  // use transitive Git packages, so permit fetching them only for these bootstrap commands.
+  const install = ['--allow-git=all', '--ignore-scripts', '--no-audit', '--no-fund']
   const declared = sibling => {
     const manifest = JSON.parse(readFileSync(resolve(root, sibling, 'package.json'), 'utf8'))
     return { ...manifest.dependencies, ...manifest.devDependencies }

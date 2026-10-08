@@ -81,3 +81,14 @@ The final preview 4 aggregate passed all **156 files and 2,912 tests** with `--m
 The root verified published SDK **2.25.0** matches preview 4 in all 762 payload files and tarball integrity (`sha512-DeJMW245XZq1QUs+0zzgE8E8ETah+s+D7QxJoh0KG5uTzyrQh3Jn3EWDRh69f/hi6mTOBCMR1txt8TWUf0RoMA==`). The manifest and lock now name the exact registry release. Final physical clean install, static/type/dependency gates, then the focused commit and PR are authorized; hosted CI will provide final production/browser/container/contract gates while the root coordinates other local builds. Root owns merge after required checks pass.
 
 Official `npm install` and a fresh physical `npm ci` passed. Final full lint, TypeScript, 17-document indexer registry, installed dependency graph and production audit passed (zero advisories). Logs: `/private/tmp/homerun-official-{install,ci,lint,types,indexer,dependencies,audit}.log`. The final SDK is the exact registry version `2.25.0`; no preview file dependency remains. Hosted production/browser/container/contract gates remain pending and are not represented as completed local checks.
+
+## Plan refinement
+
+- **Objective:** Restore the existing contract-test workspace bootstrap under pinned npm 12 without changing application install or contract behavior.
+- **System fit:** The bootstrap checks out protocol revisions and verifies dependency versions through the existing deployment owner. Its dependency fetch policy must permit those checkouts' transitive Git packages; runtime wallet and recovery authority are unaffected.
+- **Reuse and simplicity:** Add npm's command-scoped `--allow-git=all` only to the bootstrap installs and retain `--ignore-scripts`. Reuse the revision/package pins and verification already in script/deploy.mjs; do not relax global or frontend npm configuration.
+- **Evidence and unknowns:** PR 39 job 113137964933 failed with EALLOWGIT for @zksync/contracts at commit 446d391d34bdb48255d5f8fef8a8248925fc98b9. Installed npm 12 config defines allow-git none by default and root permits only direct package.json Git references, so transitive protocol dependencies need all.
+- **Verification:** Run existing prepare-workspace tests and scoped lint, then rerun required hosted CI on the follow-up commit. The failed job is the concrete regression; final contract/build/browser results remain pending.
+- **Resource budget:** One bootstrap flag and explanatory comment; no new application or contract source, no broad local dependency workspace, and hosted CI remains the final exact-head gate.
+
+The four existing workspace-bootstrap tests, scoped ESLint and diff checks pass after the npm 12 compatibility fix. On the first official-package PR revision, Test and build, Container smoke, Forge format and Production dependency audit passed; Forge setup hit the documented npm fetch policy before contract tests ran. All required checks must pass on the follow-up revision before merge.
