@@ -46,6 +46,9 @@ import {
   type StickyProjectState,
 } from "./sticky-state";
 import {
+  adoptStickyProposal,
+  assertSafeProposalCall,
+  type ExistingSafeProposal,
   beginStickySubmission,
   clearStickyPending,
   readStickyPending,
@@ -722,12 +725,13 @@ export function readStickyCreationPending(
     throw new Error("The saved Sticky creation belongs to a different FUND.");
   return pending;
 }
-export function beginStickyCreationSubmission(
+function persistStickyCreationSubmission(
   storage: StickyStorage,
   prepared: PreparedStickyCreate,
   holder: Address,
   safe: boolean,
   afterBlock: bigint,
+  proposal?: ExistingSafeProposal,
 ): StickyPending {
   const { chainId, projectId } = prepared.fund;
   if (
@@ -743,6 +747,17 @@ export function beginStickyCreationSubmission(
   if (storage.getItem(pointer) !== key)
     throw new Error("The browser could not save the Sticky creation lock.");
   try {
+    if (proposal)
+      return adoptStickyProposal(
+        storage,
+        key,
+        prepared.request,
+        projectId,
+        holder,
+        "Create the FUND Sticky project and SHARE token",
+        proposal,
+        afterBlock,
+      );
     return beginStickySubmission(
       storage,
       key,
@@ -758,6 +773,37 @@ export function beginStickyCreationSubmission(
       storage.removeItem(pointer);
     throw reason;
   }
+}
+export function beginStickyCreationSubmission(
+  storage: StickyStorage,
+  prepared: PreparedStickyCreate,
+  holder: Address,
+  safe: boolean,
+  afterBlock: bigint,
+): StickyPending {
+  return persistStickyCreationSubmission(
+    storage,
+    prepared,
+    holder,
+    safe,
+    afterBlock,
+  );
+}
+export function adoptStickyCreationProposal(
+  storage: StickyStorage,
+  prepared: PreparedStickyCreate,
+  holder: Address,
+  proposal: ExistingSafeProposal,
+): StickyPending {
+  assertSafeProposalCall(prepared.request, proposal);
+  return persistStickyCreationSubmission(
+    storage,
+    prepared,
+    holder,
+    true,
+    prepared.fund.blockNumber,
+    proposal,
+  );
 }
 export function clearStickyCreationPending(
   storage: StickyStorage,

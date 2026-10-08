@@ -1,6 +1,6 @@
 import { jbSuckerV6Abi, type JBClaim } from '@bananapus/nana-sdk-core/v6'
-import { requireSafeExecutionSuccess, SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
-import { decodeEventLog, decodeFunctionData, encodeFunctionData, erc20Abi, isAddressEqual, parseAbi, type Address, type PublicClient, type TransactionReceipt } from 'viem'
+import { requireSafeExecutionSuccess, safeExecutionRunsCalls } from '@bananapus/nana-sdk-core/safe-service'
+import { decodeEventLog, encodeFunctionData, erc20Abi, isAddressEqual, parseAbi, type Address, type PublicClient, type TransactionReceipt } from 'viem'
 import type { FundTransaction } from './fund-contracts'
 
 // IJBSucker.sol events omitted by the SDK's deliberately small write ABI.
@@ -23,12 +23,7 @@ export async function verifyFundBridgeReceipt(client: PublicClient, request: Fun
     if (!isAddressEqual(tx.from, account) || !tx.to || !isAddressEqual(tx.to, request.address) || tx.value !== (request.value ?? 0n) || tx.input.toLowerCase() !== data.toLowerCase()) throw new Error('The mined call does not match the reviewed bridge transaction.')
   } else {
     if (!tx.to || !isAddressEqual(tx.to, account)) throw new Error('The expected Safe did not execute this transaction.')
-    let decoded
-    try { decoded = decodeFunctionData({ abi: SAFE_EXEC_ABI, data: tx.input }) }
-    catch { throw new Error('This Safe execution format cannot be verified here. Check the execution in Safe.') }
-    if (decoded.functionName !== 'execTransaction') throw new Error('The Safe executed a different bridge payload.')
-    const [to, value, innerData, operation] = decoded.args
-    if (!isAddressEqual(to, request.address) || value !== (request.value ?? 0n) || innerData.toLowerCase() !== data.toLowerCase() || operation !== 0) throw new Error('The Safe executed a different bridge payload.')
+    if (!safeExecutionRunsCalls(tx, account, [{ to: request.address, data, value: request.value ?? 0n }], false)) throw new Error('The Safe executed a different bridge payload.')
     // This transaction is the Safe's one execTransaction, so the receipt must hold its one ExecutionSuccess.
     requireSafeExecutionSuccess(receipt, account, receipt.transactionHash)
   }

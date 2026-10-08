@@ -2,7 +2,8 @@ import './dialog-shim'
 import { act, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
-import { parseAbi, type Address } from 'viem'
+import { encodeFunctionData, parseAbi, type Address } from 'viem'
+import type { TxRequest, TxSendOptions } from '../src/hooks/useSafeTx'
 import type { FundBridgeRoute } from '../src/lib/fund-bridge'
 
 const runtime = vi.hoisted(() => ({
@@ -15,18 +16,19 @@ const runtime = vi.hoisted(() => ({
   enabled: [] as boolean[],
   cache: { invalidateQueries: vi.fn() },
   idle: false,
+  safe: false,
   quote: undefined as unknown,
   send: vi.fn(),
-  engine: null as null | { phase: string; receipt: { status: string; transactionHash: string; blockNumber: bigint } | null },
+  engine: null as null | { phase: string; notice?: string; receipt: { status: string; transactionHash: string; blockNumber: bigint } | null },
 }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address, isConnected: !!runtime.address }) }))
 vi.mock('@/hooks/useSafeTx', () => ({
   txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,
   useSafeTx: () => {
     useEffect(() => { runtime.mounted++; return () => { runtime.unmounted++ } }, [])
-    if (runtime.engine) return { ...runtime.engine, busy: false, error: null, hash: runtime.engine.receipt?.transactionHash ?? null, safeProposalHash: null, isSafe: false, send: runtime.send, reset: vi.fn() }
+    if (runtime.engine) return { ...runtime.engine, busy: false, error: null, hash: runtime.engine.receipt?.transactionHash ?? null, safeProposalHash: null, isSafe: runtime.safe, send: runtime.send, reset: vi.fn() }
     return runtime.idle
-      ? { phase: 'idle', busy: false, error: null, hash: null, safeProposalHash: null, receipt: null, isSafe: false, send: runtime.send, reset: vi.fn() }
+      ? { phase: 'idle', busy: false, error: null, hash: null, safeProposalHash: null, receipt: null, isSafe: runtime.safe, send: runtime.send, reset: vi.fn() }
       : { phase: 'pending', busy: true, error: null, hash: null, safeProposalHash: null, receipt: null, isSafe: false, send: vi.fn(), reset: vi.fn() }
   },
 }))
@@ -67,7 +69,7 @@ beforeEach(() => {
   runtime.address = '0x1111111111111111111111111111111111111111'
   runtime.route = makeRoute(); runtime.routeAvailable = true; runtime.routeError = false; runtime.historyError = false
   runtime.mounted = 0; runtime.unmounted = 0; runtime.enabled = []
-  runtime.idle = false; runtime.quote = undefined; runtime.engine = null; runtime.send.mockReset()
+  runtime.idle = false; runtime.safe = false; runtime.quote = undefined; runtime.engine = null; runtime.send.mockReset()
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
 afterEach(async () => { await act(async () => { root.unmount() }); host.remove() })
@@ -142,6 +144,31 @@ async function reviewApproval() {
 }
 const approve = () => [...host.querySelectorAll<HTMLButtonElement>('[data-tx-confirm] button')].find(button => button.textContent === 'Approve FUND')!
 
+it('closes an unproven Safe outer revert without counting its approval or releasing the bridge lock', async () => {
+  runtime.safe = true
+  await reviewApproval()
+  runtime.send.mockImplementation(async (_request: unknown, options: { beforeWrite: () => void }) => {
+    options.beforeWrite()
+    return `0x${'ab'.repeat(32)}`
+  })
+  await act(async () => approve().click())
+  runtime.engine = { phase: 'error', receipt: { status: 'reverted', transactionHash: `0x${'cd'.repeat(32)}`, blockNumber: 100n } }
+  await render()
+  const dialog = host.querySelector('[data-tx-confirm]')!
+  expect(dialog.textContent).toContain('Safe proposal submitted, but confirmation is unavailable.')
+  expect(dialog.querySelector('li[data-state="complete"]')).toBeNull()
+  expect(dialog.textContent).not.toContain('Move prepared')
+  const done = [...dialog.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Done')!
+  expect(done.disabled).toBe(false)
+  const mounted = runtime.mounted
+  await act(async () => done.click())
+  expect(host.querySelector('[data-tx-confirm]')).toBeNull()
+  expect(runtime.mounted).toBe(mounted)
+  expect(runtime.unmounted).toBe(0)
+  expect(runtime.send).toHaveBeenCalledOnce()
+  expect([...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Review move')?.disabled).toBe(true)
+})
+
 it('frees the move when its approval stops before the wallet', async () => {
   await reviewApproval()
   runtime.send.mockImplementation(async (_request: unknown, options: { beforeWrite: () => void; onBeforeWriteAborted: () => void }) => {
@@ -154,6 +181,18 @@ it('frees the move when its approval stops before the wallet', async () => {
   expect(runtime.send).toHaveBeenCalledOnce()
   expect(runtime.send.mock.calls[0][1].reviewedAccount).toBe(runtime.address)
   expect(approve().disabled).toBe(false)
+})
+
+it('keeps an adopted proposal locked when no new wallet attempt was made', async () => {
+  await reviewApproval()
+  runtime.send.mockImplementation(async (request: TxRequest, options: TxSendOptions) => {
+    await options.onExistingProposal?.({ proposalHash: `0x${'ab'.repeat(32)}`, call: { to: request.address, data: encodeFunctionData(request), value: request.value ?? 0n } })
+    return `0x${'ab'.repeat(32)}`
+  })
+  await act(async () => approve().click())
+  expect(approve().disabled).toBe(true)
+  await act(async () => approve().click())
+  expect(runtime.send).toHaveBeenCalledOnce()
 })
 
 it('frees the move once the engine reads its Safe execution as failed', async () => {

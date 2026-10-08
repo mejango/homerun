@@ -31,6 +31,8 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+      - name: Use pinned npm
+        run: npm install --global "$(node -p 'require("./package.json").packageManager')" --ignore-scripts --no-audit --no-fund
       - name: Install locked dependencies
         run: npm ci --no-audit --no-fund
       - name: Lint
@@ -68,6 +70,8 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+      - name: Use pinned npm
+        run: npm install --global "$(node -p 'require("./package.json").packageManager')" --ignore-scripts --no-audit --no-fund
       - name: Install locked dependencies
         run: npm ci --no-audit --no-fund
       - name: Install Chromium
@@ -129,6 +133,8 @@ jobs:
         uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
         with:
           version: v1.8.1
+      - name: Use pinned npm
+        run: npm install --global "$(node -p 'require("./package.json").packageManager')" --ignore-scripts --no-audit --no-fund
       - name: Install locked dependencies
         run: npm ci --no-audit --no-fund
       # The revisions and package versions come from script/deploy.mjs, the same pins the
@@ -203,5 +209,7 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
+      - name: Use pinned npm
+        run: npm install --global "$(node -p 'require("./package.json").packageManager')" --ignore-scripts --no-audit --no-fund
       - name: Reject high or critical production dependency advisories
         run: npm run audit:prod

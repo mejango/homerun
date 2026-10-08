@@ -2,7 +2,7 @@
 import { encodeFunctionData, isAddress, zeroAddress, zeroHash, type Address, type Hex, type PublicClient } from 'viem'
 import type { TxRequest } from '@/hooks/useSafeTx'
 import { displayChainSlug } from './chainDisplay'
-import { verifyStickyExecution, type StickyPending } from './sticky-session'
+import { assertSafeProposalCall, verifyStickyExecution, type ExistingSafeProposal, type StickyPending } from './sticky-session'
 
 export type ProjectAdminStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 export type ProjectAdminPending = StickyPending & { id: string }
@@ -73,9 +73,9 @@ function clear(storage: ProjectAdminStorage, key: string, record: ProjectAdminPe
 }
 
 /** Call only immediately before a reviewed, simulated write, while holding the project lock. */
-export function beginProjectAdminSubmission(storage: ProjectAdminStorage, key: string, options: {
+function persistProjectAdminSubmission(storage: ProjectAdminStorage, key: string, options: {
   request: TxRequest; projectId: bigint; account: Address; safe: boolean; afterBlock: bigint
-}): ProjectAdminPending {
+}, proposal?: ExistingSafeProposal): ProjectAdminPending {
   if (readProjectAdminPending(storage, key)) throw new Error('A project update may already be pending. Verify its execution before submitting another update.')
   if (typeof globalThis.crypto?.randomUUID !== 'function') throw new Error('Secure project update recovery is unavailable in this browser.')
   const { request, projectId, account, safe, afterBlock } = options
@@ -83,7 +83,20 @@ export function beginProjectAdminSubmission(storage: ProjectAdminStorage, key: s
     version: 1, id: globalThis.crypto.randomUUID(), chainId: request.chainId, projectId: projectId.toString(),
     holder: account, target: request.address, data: encodeFunctionData(request), value: (request.value ?? 0n).toString(),
     label: request.label ?? 'Update project', safe, submittedAt: Date.now(), afterBlock: afterBlock.toString(),
+    ...(proposal ? { target: proposal.call.to, data: proposal.call.data, value: (proposal.call.value ?? 0n).toString(), hash: proposal.proposalHash } : {}),
   })
+}
+export function beginProjectAdminSubmission(storage: ProjectAdminStorage, key: string, options: {
+  request: TxRequest; projectId: bigint; account: Address; safe: boolean; afterBlock: bigint
+}): ProjectAdminPending {
+  return persistProjectAdminSubmission(storage, key, options)
+}
+/** Raw records retain the original call; exact proposal-event proof permits a historical block bound. */
+export function adoptProjectAdminProposal(storage: ProjectAdminStorage, key: string, options: {
+  request: TxRequest; projectId: bigint; account: Address
+}, proposal: ExistingSafeProposal): ProjectAdminPending {
+  assertSafeProposalCall(options.request, proposal, true)
+  return persistProjectAdminSubmission(storage, key, { ...options, safe: true, afterBlock: 0n }, proposal)
 }
 export function recordProjectAdminHash(storage: ProjectAdminStorage, key: string, record: ProjectAdminPending, transactionHash: Hex): ProjectAdminPending {
   if (!hash(transactionHash)) throw new Error('Use a valid transaction or Safe proposal hash.')

@@ -3,7 +3,7 @@ import { MappableAsset, parseSuckerDeployerConfig, type JBChainId } from '@banan
 import { decodeFunctionData, encodeFunctionData, getAddress, isAddress, isAddressEqual, zeroAddress, zeroHash, type Address, type Hex, type PublicClient } from 'viem'
 import { FUND_CHAIN_IDS, type FundTransaction } from './fund-contracts'
 import { homerunDeployerAbi, INITIAL_INCOME_SUPPLY, registeredHomerunDeployer } from './income-contracts'
-import { verifyStickyExecution, type StickyPending, type StickyStorage } from './sticky-session'
+import { assertSafeProposalCall, verifyStickyExecution, type ExistingSafeProposal, type StickyPending, type StickyStorage } from './sticky-session'
 
 export type IncomeLaunchPending = StickyPending & {
   kind: 'income-launch'
@@ -124,7 +124,7 @@ function persist(storage: IncomeLaunchStorage, key: string, record: IncomeLaunch
 }
 
 /** Call from beforeWrite, while holding withIncomeLaunchLock across review and wallet submission. */
-export function beginIncomeLaunchSubmission(storage: IncomeLaunchStorage, key: string, request: FundTransaction, projectId: bigint, holder: Address, safe: boolean, afterBlock: bigint): IncomeLaunchPending {
+function persistIncomeLaunchSubmission(storage: IncomeLaunchStorage, key: string, request: FundTransaction, projectId: bigint, holder: Address, safe: boolean, afterBlock: bigint, proposal?: ExistingSafeProposal): IncomeLaunchPending {
   if (readIncomeLaunchPending(storage, key)) throw new Error('An INCOME launch may already be pending for this FUND. Verify its execution before submitting another.')
   if (typeof afterBlock !== 'bigint' || afterBlock < 0n || afterBlock >= UINT256_LIMIT || typeof request.value !== 'undefined' && typeof request.value !== 'bigint') throw invalid()
   if (typeof globalThis.crypto?.randomUUID !== 'function') throw new Error('Secure browser transaction recovery is unavailable. Use a supported secure browser before launching INCOME.')
@@ -133,8 +133,22 @@ export function beginIncomeLaunchSubmission(storage: IncomeLaunchStorage, key: s
     chainId: request.chainId, projectId: projectId.toString(), holder, target: request.address,
     data: encodeFunctionData({ abi: request.abi, functionName: request.functionName, args: request.args }),
     value: (request.value ?? 0n).toString(), label: 'Deploy INCOME', safe, submittedAt: Date.now(), afterBlock: afterBlock.toString(),
+    ...(proposal ? { phase: 'pending' as const, hash: proposal.proposalHash } : {}),
   }
   return persist(storage, key, record)
+}
+
+export function beginIncomeLaunchSubmission(storage: IncomeLaunchStorage, key: string, request: FundTransaction, projectId: bigint, holder: Address, safe: boolean, afterBlock: bigint): IncomeLaunchPending {
+  return persistIncomeLaunchSubmission(storage, key, request, projectId, holder, safe, afterBlock)
+}
+/** The original call's embedded local snapshot bounds historical receipt recovery. */
+export function adoptIncomeLaunchProposal(storage: IncomeLaunchStorage, key: string, request: FundTransaction, projectId: bigint, holder: Address, proposal: ExistingSafeProposal): IncomeLaunchPending {
+  assertSafeProposalCall(request, proposal)
+  const decoded = decodeFunctionData({ abi: homerunDeployerAbi, data: proposal.call.data })
+  if (decoded.functionName !== 'deployIncome') throw invalid()
+  const local = decoded.args[1].allocations.find(entry => entry.chainId === request.chainId)
+  if (!local) throw invalid()
+  return persistIncomeLaunchSubmission(storage, key, request, projectId, holder, true, local.snapshotBlockNumber, proposal)
 }
 
 function matchingCurrent(storage: IncomeLaunchStorage, key: string, record: IncomeLaunchPending): IncomeLaunchPending {

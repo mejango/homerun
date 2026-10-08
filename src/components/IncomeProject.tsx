@@ -65,7 +65,7 @@ function Field({ label, value, onChange, text = false }: { label: string; value:
 function Status({ tx, chainId }: { tx: IncomeTx; chainId: number }) {
   const link = tx.hash && !tx.safeProposalHash ? explorerTxUrl(chainId, tx.hash) : null
   return <div className="mt-4 break-words text-sm" role="status" aria-live="polite">
-    {tx.safeProposalHash ? <p>Proposed to Safe. The action still needs execution and onchain confirmation.</p> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? <p>Confirmed onchain.</p> : null}
+    {tx.phase === 'submitted' ? <p>{tx.notice}</p> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? <p>Confirmed onchain.</p> : null}
     {tx.error && <p className="text-red-800">{tx.error}</p>}{link && <a className="underline" href={link} target="_blank" rel="noreferrer">View transaction</a>}
   </div>
 }
@@ -449,9 +449,10 @@ export function IncomeBorrow({ state, client, context }: { state: IncomeProjectS
       onConfirm={() => void run()}
       busy={running && !tx.safeProposalHash && !grant.safeProposalHash}
       complete={tx.phase === 'success'}
-      status={grant.safeProposalHash && !confirmedGrant ? 'Permission proposed to Safe. Execute it there, then confirm again to borrow.' : tx.safeProposalHash ? 'Loan proposed to Safe. It still needs execution and onchain confirmation.' : tx.phase === 'pending' || grant.phase === 'pending' ? 'Submitted. Waiting for onchain confirmation…' : null}
+      settled={tx.phase === 'submitted' || grant.phase === 'submitted'}
+      status={tx.notice ?? grant.notice ?? (tx.phase === 'pending' || grant.phase === 'pending' ? 'Submitted. Waiting for onchain confirmation…' : null)}
       error={error ?? tx.error ?? grant.error}
-      onClose={() => setReviewing(false)}
+      onClose={() => { setReviewing(false); if (tx.phase === 'submitted') tx.dismiss(); if (grant.phase === 'submitted') grant.dismiss() }}
     >
       <p className="text-sm text-smoke-600">Your INCOME stays in a loan NFT until repaid. Unpaid loans can be liquidated after ten years.</p>
     </TxConfirmDialog>
@@ -528,9 +529,10 @@ function IncomeRepayDialog({ state, client, loanId, tx, approval, onClose }: { s
     onConfirm={() => void run()}
     busy={running && !tx.safeProposalHash && !approval.safeProposalHash}
     complete={tx.phase === 'success'}
-    status={loan.isPending ? 'Reading the loan…' : approval.safeProposalHash && !confirmedApproval ? 'Approval proposed to Safe. Execute it there, then confirm again to repay.' : tx.safeProposalHash ? 'Repayment proposed to Safe. It still needs execution and onchain confirmation.' : tx.phase === 'pending' || approval.phase === 'pending' ? 'Submitted. Waiting for onchain confirmation…' : null}
+    settled={tx.phase === 'submitted' || approval.phase === 'submitted'}
+    status={loan.isPending ? 'Reading the loan…' : tx.notice ?? approval.notice ?? (tx.phase === 'pending' || approval.phase === 'pending' ? 'Submitted. Waiting for onchain confirmation…' : null)}
     error={error ?? (loan.isError ? message(loan.error) : null) ?? tx.error ?? approval.error}
-    onClose={onClose}
+    onClose={() => { if (tx.phase === 'submitted') tx.dismiss(); if (approval.phase === 'submitted') approval.dismiss(); onClose() }}
   >
     <p className="text-sm text-smoke-600">The maximum includes principal, accrued fees and a small refundable buffer.</p>
   </TxConfirmDialog>

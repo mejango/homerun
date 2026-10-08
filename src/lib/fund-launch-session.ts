@@ -1,4 +1,5 @@
 import { type Address, type Hex } from 'viem'
+import { assertSafeProposalCall, type ExistingSafeProposal } from './sticky-session'
 import type { LaunchRelayrJournal } from './fund-launch-relayr'
 import { buildFundLaunch, type FundLaunchInput } from './fund-contracts'
 
@@ -103,7 +104,7 @@ export function decodeLaunchSession(raw: string): FundLaunchSession {
   }
   if (value.transport !== undefined && !['direct', 'relayr', 'intent'].includes(value.transport)) throw new Error('Invalid launch transport.')
   if (value.relayr && value.transport !== 'relayr') throw new Error('Relayed authorizations cannot use direct deployment.')
-  if (value.relayr !== undefined && !validJournal(value.relayr, input.chainIds)) throw new Error('The saved Relayr launch is invalid. Keep its original transaction records before continuing.')
+  if (value.relayr !== undefined && !validJournal(value.relayr, input.chainIds)) throw new Error('The saved launch is invalid. Keep its original transaction records before continuing.')
   if (value.intentId !== undefined && (value.transport !== 'intent' || typeof value.intentId !== 'string' || !INTENT_ID.test(value.intentId))) throw new Error('Invalid published project reference.')
   if (value.transport === 'intent' && (value.relayr || !Object.values(value.statuses).every(status => status.phase === 'ready'))) throw new Error('A published project has no wallet transactions to resume.')
   return value
@@ -138,23 +139,43 @@ function assertTransition(previous: LaunchStatus, next: LaunchStatus, cancelled 
   if (previous.phase === 'pending' && next.phase === 'pending' && (next.hash !== previous.hash || next.safe !== previous.safe)) throw new Error('Verify the pending transaction before submitting or recording another.')
 }
 
-export function saveLaunch(session: FundLaunchSession, options: { cancelledChainId?: number } = {}): FundLaunchSession {
+function persistLaunch(session: FundLaunchSession, options: { cancelledChainId?: number; adoption?: { chainId: number; previous: string } } = {}): FundLaunchSession {
   const validated = decodeLaunchSession(encodeLaunchSession(session))
   const existing = localStorage.getItem(FUND_LAUNCH_KEY)
+  if (options.adoption && !existing) throw new Error('The saved launch is missing. Restore its deployment record before adopting a proposal.')
   if (existing) {
     const previous = decodeLaunchSession(existing)
+    if (options.adoption && encodeLaunchSession(previous) !== options.adoption.previous) throw new Error('Launch progress changed elsewhere. Reload the saved record before adopting its proposal.')
     if (previous.input.salt !== validated.input.salt) throw new Error('Another FUND launch is already saved. Finish that launch before preparing another.')
     if ((previous.transport ?? 'direct') !== (validated.transport ?? 'direct') && !(validated.transport === 'relayr' && !previous.relayr && Object.values(previous.statuses).every(status => status.phase === 'ready'))) throw new Error('A submitted launch cannot change transport.')
     if (previous.intentId && previous.intentId !== validated.intentId) throw new Error('A published project cannot be replaced.')
     if (previous.relayr?.published && !validated.relayr) throw new Error('Published authorizations must be retained for recovery.')
     if (frozenInput(previous) !== frozenInput(validated)) throw new Error('A saved launch plan is immutable. Finish it before changing deployment parameters.')
     for (const chainId of previous.input.chainIds) {
-      assertTransition(previous.statuses[chainId], validated.statuses[chainId], options.cancelledChainId === chainId)
+      if (options.adoption?.chainId !== chainId) assertTransition(previous.statuses[chainId], validated.statuses[chainId], options.cancelledChainId === chainId)
       if (previous.input.creationFees[chainId] !== validated.input.creationFees[chainId] && !['ready', 'reverted'].includes(previous.statuses[chainId].phase) && !(validated.transport === 'relayr' && validated.relayr?.phase === 'signing')) throw new Error('A submitted or unresolved deployment fee cannot change.')
     }
   }
   localStorage.setItem(FUND_LAUNCH_KEY, encodeLaunchSession(validated))
+  if (options.adoption && localStorage.getItem(FUND_LAUNCH_KEY) !== encodeLaunchSession(validated)) throw new Error('The browser could not save the existing FUND proposal. Restore its recovery record before continuing.')
   return validated
+}
+
+export function saveLaunch(session: FundLaunchSession, options: { cancelledChainId?: number } = {}): FundLaunchSession {
+  return persistLaunch(session, { cancelledChainId: options.cancelledChainId })
+}
+/** Only an exact already-authorized call can advance a ready/reverted immutable plan directly to pending. */
+export function adoptFundLaunchProposal(salt: Hex, chainId: number, proposal: ExistingSafeProposal): FundLaunchSession {
+  const session = requireLaunch(salt)
+  const previous = session.statuses[chainId]
+  if ((session.transport ?? 'direct') !== 'direct' || !previous || !['ready', 'reverted'].includes(previous.phase))
+    throw new Error('Only an unsubmitted or reverted direct deployment can adopt an existing Safe proposal.')
+  const request = buildFundLaunch(session.input).requests.find(item => item.chainId === chainId)
+  if (!request) throw new Error('This chain is not part of the saved launch.')
+  assertSafeProposalCall(request, proposal)
+  const status: LaunchStatus = { phase: 'pending', safe: true, hash: proposal.proposalHash,
+    ...(previous.multisigSetup ? { multisigSetup: previous.multisigSetup } : {}) }
+  return persistLaunch({ ...session, statuses: { ...session.statuses, [chainId]: status } }, { adoption: { chainId, previous: encodeLaunchSession(session) } })
 }
 
 function requireLaunch(salt: Hex): FundLaunchSession {

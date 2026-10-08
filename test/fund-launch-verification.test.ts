@@ -203,10 +203,10 @@ describe('FUND launch confirmation', () => {
     reorg.spies.getBlock.mockResolvedValue({ hash, timestamp: 1100n })
     await expect(verifyFailedFundLaunch(reorg.client, reorg.request, reorg.input, reorg.receipt, false)).rejects.toThrow(/canonical chain/)
   })
-  it('requires matching Safe inner calldata for reverted executions without requiring success logs', async () => {
+  it('retains a Safe proposal after an outer revert and still rejects unrelated calldata', async () => {
     const f = fixture({ safe: true })
     f.receipt.status = 'reverted'; f.receipt.logs.length = 0
-    await expect(verifyFailedFundLaunch(f.client, f.request, f.input, f.receipt, true)).resolves.toBeUndefined()
+    await expect(verifyFailedFundLaunch(f.client, f.request, f.input, f.receipt, true)).rejects.toThrow('without resolving its proposal')
     f.tx.input = encodeFunctionData({ abi: safeAbi, functionName: 'execTransaction', args: [other, f.request.value!, encodeFunctionData(f.request), 0, 0n, 0n, 0n, zeroAddress, zeroAddress, '0x'] })
     await expect(verifyFailedFundLaunch(f.client, f.request, f.input, f.receipt, true)).rejects.toThrow(/different deployment payload/)
   })

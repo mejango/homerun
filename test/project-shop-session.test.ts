@@ -6,7 +6,7 @@ import { safeExecutionLog } from './support/safe-logs'
 import { initialFundRuleset } from '../src/lib/fund-contracts'
 import { parseProjectShopWrite, projectShopWriteRequest, type PreparedProjectShopWrite } from '../src/lib/project-shop-write'
 import {
-  beginShopWriteSubmission, clearShopWriteSession, confirmShopWriteExecution, readShopWriteSession,
+  adoptShopWriteProposal, beginShopWriteSubmission, clearShopWriteSession, confirmShopWriteExecution, readShopWriteSession,
   recordShopWriteHash, rejectShopWriteSubmission, restoreShopWritePermissions, shopWriteRequestIndex, shopWriteRequestIndices, shopWriteSessionKey, startShopWriteSession,
   verifyShopWriteProgress, withShopWriteLock, type ShopWriteSession,
 } from '../src/lib/project-shop-session'
@@ -315,4 +315,42 @@ describe('durable live shop updates', () => {
     await expect(first).resolves.toBe('submitted')
     await expect(withShopWriteLock(key, task)).resolves.toBe('submitted')
   })
+})
+
+
+describe('existing shop Safe proposal adoption', () => {
+  const proposalFor = (session: ShopWriteSession) => {
+    const request = projectShopWriteRequest(session.plan, shopWriteRequestIndex(session)!)
+    return { proposalHash: executionHash(9), call: { to: request.address, data: encodeFunctionData(request), value: request.value } }
+  }
+  it('retains the original snapshot and each proven prerequisite block', async () => {
+    const storage = memory(), ready = startShopWriteSession(storage, key, plan())
+    const first = await adoptShopWriteProposal(rpc(ready) as unknown as PublicClient, storage, key, ready, proposalFor(ready))
+    expect(first.pending).toMatchObject({ afterBlock: '100', safe: true, hash: executionHash(9) })
+    await expect(confirmShopWriteExecution(rpc(first, { 0: { old: true } }) as unknown as PublicClient, storage, key, first, executionHash(0))).rejects.toThrow('new confirmed')
+    const completed = (await confirmShopWriteExecution(rpc(first) as unknown as PublicClient, storage, key, first, executionHash(0))).session
+    const second = await adoptShopWriteProposal(rpc(completed) as unknown as PublicClient, storage, key, completed, proposalFor(completed))
+    expect(second.pending?.afterBlock).toBe('101')
+    expect(second.plan).toEqual(ready.plan)
+    await expect(confirmShopWriteExecution(rpc(second) as unknown as PublicClient, storage, key, second, executionHash(1))).resolves.toMatchObject({ status: 'confirmed' })
+  })
+  it('refuses mismatches or a reorged prerequisite without advancing the journal', async () => {
+    const { storage, session } = pending()
+    const completed = (await confirmShopWriteExecution(rpc(session) as unknown as PublicClient, storage, key, session, executionHash(0))).session
+    await expect(adoptShopWriteProposal(rpc(completed) as unknown as PublicClient, storage, key, completed, { ...proposalFor(completed), call: { ...proposalFor(completed).call, to: OTHER } })).rejects.toThrow('does not match')
+    await expect(adoptShopWriteProposal(rpc(completed, { 0: { reorg: true } }) as unknown as PublicClient, storage, key, completed, proposalFor(completed))).rejects.toThrow('block changed')
+    expect(readShopWriteSession(storage, key)).toEqual(completed)
+  })
+  it('does not overwrite another tab while checking historical prerequisites', async () => {
+    const { storage, session } = pending()
+    const completed = (await confirmShopWriteExecution(rpc(session) as unknown as PublicClient, storage, key, session, executionHash(0))).session
+    const client = rpc(completed), original = client.getTransactionReceipt
+    client.getTransactionReceipt = vi.fn(async (args: { hash: Hex }) => {
+      beginShopWriteSubmission(storage, key, completed, { safe: true, afterBlock: 101n })
+      return original(args)
+    })
+    await expect(adoptShopWriteProposal(client as unknown as PublicClient, storage, key, completed, proposalFor(completed))).rejects.toThrow('changed in another tab')
+    expect(readShopWriteSession(storage, key)?.pending?.hash).toBeUndefined()
+  })
+
 })

@@ -26,6 +26,7 @@ import { FundTokenTermsSection } from '@/components/FundTokenTerms'
 import { readIncomeLaunchBinding } from '@/lib/income-launch'
 import { money } from '@/lib/money'
 import { useWallet } from '@/hooks/useWallet'
+import { useHydrated } from '@/hooks/useHydrated'
 import { displayChainName } from '@/lib/chainDisplay'
 import { readFundAccountState, readFundProjectState, type FundProjectState } from '@/lib/fund-state'
 import { fetchFundProjectMetadata, type FundProjectMetadata } from '@/lib/fund-project-metadata'
@@ -59,6 +60,7 @@ function projectLogo(details: { logoUrl: string | null; coverUrl: string | null 
   return src ? <Image unoptimized src={src} width={112} height={112} alt={alt} /> : null
 }
 export function FundProject({ chainId, projectId, intentId, seed }: { chainId: JBChainId; projectId: string; intentId?: string; seed?: ProjectSeed }) {
+  const hydrated = useHydrated()
   const id = BigInt(projectId)
   const client = usePublicClient({ chainId }) as PublicClient | undefined
   const { address } = useWallet()
@@ -110,7 +112,7 @@ export function FundProject({ chainId, projectId, intentId, seed }: { chainId: J
   // The index answers in about a second, the verified contract read in several:
   // its row puts the project's name and pictures on screen first. Verified
   // state replaces the URI as soon as it lands; the index never gates a write.
-  const indexed = useQuery({
+  const restoredIndexed = useQuery({
     queryKey: ['indexed-project', chainId, Number(projectId)],
     enabled: Number.isSafeInteger(Number(projectId)),
     queryFn: ({ signal }) => getProject(chainId, Number(projectId), { signal }),
@@ -119,20 +121,26 @@ export function FundProject({ chainId, projectId, intentId, seed }: { chainId: J
     retry: 1,
     meta: PERSIST,
   })
+  const indexed = { ...restoredIndexed, data: hydrated ? restoredIndexed.data : seed?.indexed }
   const indexedRow = indexed.data?.version === 6 && indexed.data.chainId === chainId && String(indexed.data.projectId) === projectId ? indexed.data : null
   // The index's treasury balance, in the FUND's USDC accounting token, paints the header before the contract read confirms it.
   const indexedRaised = indexedRow && indexedRow.decimals !== null ? Number(formatUnits(BigInt(indexedRow.balance), indexedRow.decimals)) : undefined
   const metadataUri = displayState?.projectUri || (indexed.data?.version === 6 && indexed.data.chainId === chainId && String(indexed.data.projectId) === projectId ? indexed.data.metadataUri : null)
-  const details = useQuery({
+  const seededDetails = metadataUri && metadataUri === seed?.indexed?.metadataUri ? seed.details ?? undefined : undefined
+  const restoredDetails = useQuery({
     queryKey: ['fund-project-metadata', metadataUri],
     enabled: !!metadataUri,
     queryFn: () => fetchFundProjectMetadata(metadataUri!),
     // The server read these details for this URI; the verified URI refetches if it differs.
-    initialData: metadataUri && metadataUri === seed?.indexed?.metadataUri ? seed.details ?? undefined : undefined,
+    initialData: seededDetails,
     staleTime: 300_000,
     meta: PERSIST,
     retry: 1,
   })
+  const details = {
+    data: hydrated ? restoredDetails.data : seededDetails,
+    isError: hydrated && restoredDetails.isError,
+  }
   const [lastIncomeId, setLastIncomeId] = useState<bigint | undefined>()
   const incomeBinding = useQuery({ queryKey: ['income-binding', chainId, projectId], enabled: !!client, queryFn: () => readIncomeLaunchBinding(client!, chainId, id), staleTime: 300_000, retry: false })
   useEffect(() => { if (incomeBinding.data) setLastIncomeId(incomeBinding.data) }, [incomeBinding.data])

@@ -3,6 +3,7 @@ import type { CenterWalletConnection, CenterWalletExpectedPayment, CenterWalletP
   PreparedUserOperation, SmartWalletPlan, createCenterWalletClient } from '@bananapus/nana-sdk-connect/core'
 import type { HomerunCenterConfig } from '@/providers/wallet-config'
 import { centerReturnPath } from '@/providers/center-callback'
+import { assertNoViewAs } from '@/lib/viewAs'
 
 export interface HomerunPaymentIntent {
   projectId: string; token: Address; terminal: Address; amount: string; minimumReturnedTokens: string; returnPath: string
@@ -84,8 +85,9 @@ export function createHomerunPayment(options: { config: HomerunCenterConfig;
     const intent = checkedIntent(input), current = connection(), old = read(), principal = await identity(current, old.value ?? undefined)
     if (old.value && digest(old.value.intent) !== digest(intent)) fail('Finish or close the original payment before preparing another.')
     if (!old.value && payments.pendingPayment()) fail('The SDK has an existing payment. Recover it before preparing another.')
+    if (old.value?.submitted) return payments.refreshPayment()
+    assertNoViewAs()
     let saved = old.value ? { value: old.value, raw: old.raw! } : save({ version: 1, id: crypto.randomUUID(), config, intent, submitted: false, ...principal }, old.raw)
-    if (saved.value.submitted) return payments.refreshPayment()
     storage.setItem(returnKey, intent.returnPath)
     if (storage.getItem(returnKey) !== intent.returnPath) fail()
     if (!saved.value.plan) {
@@ -116,12 +118,14 @@ export function createHomerunPayment(options: { config: HomerunCenterConfig;
       saved = save({ ...saved.value, operation }, saved.raw)
     }
     await identity(current, saved.value)
+    assertNoViewAs()
     return payments.preparePayment({ plan: saved.value.plan!, operation: saved.value.operation!, expectedPayment: saved.value.expectedPayment! })
   }
   async function submit() {
     const saved = read(); if (!saved.value) fail()
     await identity(connection(), saved.value)
     if (saved.value.submitted) return payments.refreshPayment()
+    assertNoViewAs()
     if (payments.pendingPayment()?.status !== 'approved') fail('Approve this exact payment in Juicebox wallet before submitting.')
     save({ ...saved.value, submitted: true }, saved.raw)
     // An uncertain response always keeps this marker. The SDK records the original signed

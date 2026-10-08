@@ -90,6 +90,8 @@ export function ProjectSplitsEditor({ chainId, projectId, phase, client, unavail
     finally { submitting.current = false; setPreparing(false) }
   }
 
+  function closeReview() { setReviewing(false); if (tx.phase === 'success') setEditor(null); tx.dismiss() }
+
   return <section className="demo-section space-y-5" aria-label={`${phase.toUpperCase()} split recipients`}>
     <h2>Splits</h2>
     {query.isPending && <p role="status">Reading project recipients and permissions…</p>}
@@ -107,7 +109,7 @@ export function ProjectSplitsEditor({ chainId, projectId, phase, client, unavail
       <button type="button" className="btn-secondary min-h-11 px-5" disabled={!canEdit} onClick={() => { setError(null); setEditor({ snapshot, rulesetId: stage.rulesetId, group, drafts: projectSplitDrafts(group), allowHookChanges: false, allowBurn: false }) }}>Edit recipients</button>
     </>}
     <ProjectAdminTransactionStatus tx={tx} />
-    {editor && <ModalShell title={`Edit ${editor.group.label.toLowerCase()}`} subtitle={`${phase.toUpperCase()} · stage ${editor.rulesetId} · ${displayChainName(chainId)}`} maxWidth="max-w-3xl" onClose={() => setEditor(null)} footer={<div className="flex flex-wrap justify-end gap-3"><button type="button" className="btn-secondary min-h-11 px-5" onClick={() => setEditor(null)} disabled={holdOpen}>Close</button><button type="button" className="btn-primary min-h-11 px-5" onClick={() => { tx.reset(); setError(null); setReviewing(true) }} disabled={!canEdit || !!validation}>{tx.pending ? 'Awaiting confirmation…' : 'Review changes'}</button></div>}>
+    {editor && <ModalShell title={`Edit ${editor.group.label.toLowerCase()}`} subtitle={`${phase.toUpperCase()} · stage ${editor.rulesetId} · ${displayChainName(chainId)}`} maxWidth="max-w-3xl" onClose={reviewing ? closeReview : () => setEditor(null)} footer={<div className="flex flex-wrap justify-end gap-3"><button type="button" className="btn-secondary min-h-11 px-5" onClick={() => setEditor(null)} disabled={holdOpen}>Close</button><button type="button" className="btn-primary min-h-11 px-5" onClick={() => { tx.reset(); setError(null); setReviewing(true) }} disabled={!canEdit || !!validation}>{tx.pending ? 'Awaiting confirmation…' : 'Review changes'}</button></div>}>
       <TxConfirmDialog
         open={reviewing}
         eyebrow={`${phase.toUpperCase()} splits`}
@@ -124,8 +126,9 @@ export function ProjectSplitsEditor({ chainId, projectId, phase, client, unavail
         onConfirm={() => void submit()}
         busy={preparing || (tx.busy && !tx.pending)}
         complete={tx.phase === 'success'}
+        settled={tx.phase === 'submitted'}
         error={error ?? validation}
-        onClose={() => { setReviewing(false); if (tx.phase === 'success') setEditor(null) }}
+        onClose={closeReview}
       >
         {preview.length > 0 && <ul className="space-y-1 text-sm">{preview.map((split, index) => <li key={index} className="break-words">{formatSplitPercent(split.percent)}% to {recipient(split, editor.group.kind)}{BigInt(split.lockedUntil) > editor.snapshot.blockTimestamp ? `, locked until ${lockLabel(split.lockedUntil.toString())}` : ''}</li>)}</ul>}
         <ProjectAdminTransactionStatus tx={tx} />

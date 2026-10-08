@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { encodeAbiParameters, encodeEventTopics, encodeFunctionData, parseAbi, zeroAddress, zeroHash, type Hex, type PublicClient } from 'viem'
 import type { TxRequest } from '../src/hooks/useSafeTx'
 import {
-  beginProjectAdminSubmission, confirmProjectAdminExecution, projectAdminSessionKey, readProjectAdminPending,
+  adoptProjectAdminProposal, beginProjectAdminSubmission, confirmProjectAdminExecution, projectAdminSessionKey, readProjectAdminPending,
   recordProjectAdminHash, rejectProjectAdminSubmission, withProjectAdminLock, type ProjectAdminPending,
 } from '../src/lib/project-admin-session'
 import { safeExecutionLog } from './support/safe-logs'
@@ -278,5 +278,24 @@ describe('durable project administration submissions', () => {
     release()
     await expect(first).resolves.toBe('submitted')
     await expect(withProjectAdminLock(key, task)).resolves.toBe('submitted')
+  })
+})
+
+
+describe('existing administrative Safe proposal adoption', () => {
+  it('recovers historical execution while retaining exact proposal-event proof', async () => {
+    const storage = memory(), call = request()
+    const record = adoptProjectAdminProposal(storage, key, { request: call, projectId: 7n, account: OWNER }, { proposalHash: PROPOSAL_HASH, call: { to: call.address, data: encodeFunctionData(call), value: call.value } })
+    expect(readProjectAdminPending(storage, key)).toEqual(record)
+    expect(record).toMatchObject({ safe: true, hash: PROPOSAL_HASH, afterBlock: '0' })
+    await expect(confirmProjectAdminExecution(rpc(record, { old: true, proposalHash: OTHER_HASH }) as unknown as PublicClient, storage, key, record, EXECUTION_HASH)).rejects.toThrow('proposal hash')
+    expect(readProjectAdminPending(storage, key)).toEqual(record)
+    await expect(confirmProjectAdminExecution(rpc(record, { old: true }) as unknown as PublicClient, storage, key, record, EXECUTION_HASH)).resolves.toEqual({ status: 'confirmed', blockNumber: 100n })
+    expect(readProjectAdminPending(storage, key)).toBeNull()
+  })
+  it('refuses a different call without leaving a journal', () => {
+    const storage = memory(), call = request()
+    expect(() => adoptProjectAdminProposal(storage, key, { request: call, projectId: 7n, account: OWNER }, { proposalHash: PROPOSAL_HASH, call: { to: OTHER, data: encodeFunctionData(call), value: call.value } })).toThrow('does not match')
+    expect(readProjectAdminPending(storage, key)).toBeNull()
   })
 })

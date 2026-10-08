@@ -8,7 +8,7 @@ import { usePublicClient } from 'wagmi'
 import { useSafeTx, txPhaseLabel } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { displayChainName, explorerAddressUrl, explorerTxUrl } from '@/lib/chainDisplay'
-import { buildPayerTransaction, checkPayerFactory, decodePayerAttempt, getProjectPayerAddresses, payerAttemptIdentity, payerAttemptKey, verifyPayerReceipt, type PayerAttempt, type ProjectPayerRow } from '@/lib/project-payers'
+import { adoptPayerProposal, buildPayerTransaction, checkPayerFactory, decodePayerAttempt, getProjectPayerAddresses, payerAttemptIdentity, payerAttemptKey, verifyPayerReceipt, type PayerAttempt, type ProjectPayerRow } from '@/lib/project-payers'
 import { waitForSafeExecutionHash } from '@/lib/safe-connector'
 
 type Props = { chainId: JBChainId; projectId: bigint; tokenLabel?: string }
@@ -103,18 +103,22 @@ function ProjectPayerAddressContext({ chainId, projectId, tokenLabel = 'Project 
       const settings = { chainId, projectId: String(projectId), beneficiary: selectedBeneficiary, owner: selectedOwner, memo: memo.trim(), addToBalance }
       const request = buildPayerTransaction(settings)
       await checkPayerFactory(client, chainId, projectId)
-      const saved: PayerAttempt = { version: 1, id: crypto.randomUUID(), settings, account: wallet.address, safe: tx.isSafe, phase: 'signing', afterBlock: '0' }
+      let saved: PayerAttempt = { version: 1, id: crypto.randomUUID(), settings, account: wallet.address, safe: tx.isSafe, phase: 'signing', afterBlock: '0' }
+      const assertNoPending = () => {
+        const existing = localStorage.getItem(storageKey)
+        if (existing) {
+          const current = decodePayerAttempt(existing, chainId, projectId)
+          if (current.phase === 'signing' || current.phase === 'submitted') throw new Error('Another payer deployment is unresolved. Check its confirmation before creating another.')
+        }
+      }
       const hash = await tx.send({ ...request, label: `Create ${tokenLabel} payer address` }, {
         reviewedAccount: saved.account,
         reviewNotice: `Create a dedicated payer address for project #${projectId} on ${displayChainName(chainId)}. ${addToBalance ? 'ETH received adds to the project balance without minting tokens.' : `ETH received pays the project; ${tokenLabel} goes to ${isAddressEqual(selectedBeneficiary, zeroAddress) ? 'the original payer' : selectedBeneficiary}. Direct ETH transfers accept the current minting rate with no minimum token amount.`} ${editable ? `Admin ${selectedOwner} may change the routing and beneficiary later.` : 'Routing is immutable because the admin is the zero address.'} Sending other tokens directly does not forward them. This creates a payer contract and spends only gas; it does not deploy a FUND or INCOME project.`,
         reverify: async () => { await checkPayerFactory(client, chainId, projectId) },
+        onExistingProposal: proposal => { assertNoPending(); saved = adoptPayerProposal(saved, proposal); save(saved) },
         beforeWrite: async () => {
           saved.afterBlock = String(await client.getBlockNumber({ cacheTime: 0 }))
-          const existing = localStorage.getItem(storageKey)
-          if (existing) {
-            const current = decodePayerAttempt(existing, chainId, projectId)
-            if (current.phase === 'signing' || current.phase === 'submitted') throw new Error('Another payer deployment is unresolved. Check its confirmation before creating another.')
-          }
+          assertNoPending()
           save(saved)
         },
         onBeforeWriteAborted: () => save(null),

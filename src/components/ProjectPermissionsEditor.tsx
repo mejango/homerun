@@ -91,8 +91,9 @@ export function ProjectPermissionsEditor({ chainId, projectId, client, unavailab
       onConfirm={() => { if (review) void submit(review.state, review.selected, review.rootConfirmed) }}
       busy={preparing || (tx.busy && !tx.pending)}
       complete={tx.phase === 'success'}
+      settled={tx.phase === 'submitted'}
       error={error}
-      onClose={() => setReview(null)}
+      onClose={() => { setReview(null); tx.dismiss() }}
     >
       {review?.selected.includes(JBPermissionIdsV6.ROOT) && <p className="text-sm text-smoke-600">ROOT gives every Juicebox project permission and lets this wallet delegate non-ROOT powers. It does not transfer the project NFT.</p>}
       <ProjectAdminTransactionStatus tx={tx} />

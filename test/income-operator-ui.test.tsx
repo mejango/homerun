@@ -1,7 +1,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { zeroAddress, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
+import { encodeFunctionData, zeroAddress, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import type { IncomeOperatorSnapshot } from '../src/lib/income-operator'
 import type { IncomeProjectState } from '../src/lib/income-state'
@@ -9,14 +9,14 @@ import type { TxSendOptions } from '../src/hooks/useSafeTx'
 
 const runtime = vi.hoisted(() => ({
   address: undefined as Address | undefined, snapshot: undefined as IncomeOperatorSnapshot | undefined,
-  queryError: false, phase: 'idle', busy: false, safeProposalHash: null as Hex | null,
+  queryError: false, notice: null as string | null, phase: 'idle', busy: false, safeProposalHash: null as Hex | null,
   receipt: null as TransactionReceipt | null,
   verified: undefined as { rulesetId: bigint; recipient: Address } | undefined,
   verificationEnabled: false, read: vi.fn(), send: vi.fn(), invalidate: vi.fn(), setQueryData: vi.fn(),
 }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address }) }))
 vi.mock('@/hooks/useSafeTx', () => ({
-  useSafeTx: () => ({ phase: runtime.phase, busy: runtime.busy, receipt: runtime.receipt, safeProposalHash: runtime.safeProposalHash, hash: runtime.receipt?.transactionHash, error: null, send: runtime.send }),
+  useSafeTx: () => ({ phase: runtime.phase, notice: runtime.notice, busy: runtime.busy, receipt: runtime.receipt, safeProposalHash: runtime.safeProposalHash, hash: runtime.receipt?.transactionHash, error: null, send: runtime.send }),
   txPhaseLabel: (_: unknown, labels: { idle: string }) => labels.idle,
 }))
 vi.mock('@tanstack/react-query', () => ({
@@ -49,7 +49,7 @@ describe('Owner changes the INCOME Operator', () => {
   let root: Root, host: HTMLDivElement
   beforeEach(() => {
     runtime.address = OWNER; runtime.snapshot = snapshot(); runtime.queryError = false
-    runtime.phase = 'idle'; runtime.busy = false; runtime.safeProposalHash = null; runtime.receipt = null; runtime.verified = undefined
+    runtime.phase = 'idle'; runtime.notice = null; runtime.busy = false; runtime.safeProposalHash = null; runtime.receipt = null; runtime.verified = undefined
     runtime.read.mockReset(); runtime.read.mockImplementation(async () => runtime.snapshot)
     runtime.send.mockReset(); runtime.send.mockImplementation(async (_request, options: TxSendOptions) => { await options.reverify?.(_request); await options.beforeWrite?.() })
     runtime.invalidate.mockReset(); runtime.setQueryData.mockReset()
@@ -115,13 +115,24 @@ describe('Owner changes the INCOME Operator', () => {
   })
   it('keeps a Safe proposal pending without announcing an executed Operator change', async () => {
     await render(); await recipient(NEXT); await submit()
-    runtime.phase = 'pending'; runtime.busy = true; runtime.safeProposalHash = `0x${'cc'.repeat(32)}`
+    runtime.phase = 'submitted'; runtime.notice = 'Proposed to your Safe. Its other signers can approve it there.'; runtime.busy = false; runtime.safeProposalHash = `0x${'cc'.repeat(32)}`
     await render()
-    expect(host.textContent).toContain('The Operator has not changed yet')
+    expect(host.textContent).toContain(runtime.notice)
     expect(host.textContent).not.toContain('Operator change confirmed')
     expect(runtime.verificationEnabled).toBe(false)
     expect(runtime.invalidate).not.toHaveBeenCalled()
     expect(button().disabled).toBe(true)
+  })
+  it('retains the operator intent when a queued proposal skips the wallet attempt', async () => {
+    runtime.send.mockImplementation(async (request, options: TxSendOptions) => {
+      await options.onExistingProposal?.({ proposalHash: `0x${'dd'.repeat(32)}`, call: { to: request.address, data: encodeFunctionData(request), value: request.value ?? 0n } })
+    })
+    await render(); await recipient(NEXT); await submit()
+    runtime.phase = 'success'; runtime.receipt = { transactionHash: `0x${'bb'.repeat(32)}`, blockNumber: 101n } as TransactionReceipt
+    await render()
+    expect(runtime.verificationEnabled).toBe(true)
+    expect(host.textContent).not.toContain('Operator change confirmed')
+    expect(runtime.invalidate).not.toHaveBeenCalled()
   })
   it('waits for verified execution before refreshing the displayed Operator', async () => {
     await render(); await recipient(NEXT); await submit()

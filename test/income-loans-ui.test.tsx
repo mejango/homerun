@@ -15,7 +15,7 @@ const USDC = '0x7777777777777777777777777777777777777777' as Address
 const HASH = `0x${'a'.repeat(64)}` as Hex
 const UNIT = 10n ** 18n
 
-type Handle = { phase: string; busy: boolean; isSafe: boolean; error: null; hash: Hex | null; safeProposalHash: Hex | null; receipt: null; send: ReturnType<typeof vi.fn>; reset: ReturnType<typeof vi.fn> }
+type Handle = { notice: string | null; dismiss: ReturnType<typeof vi.fn>; phase: string; busy: boolean; isSafe: boolean; error: null; hash: Hex | null; safeProposalHash: Hex | null; receipt: null; send: ReturnType<typeof vi.fn>; reset: ReturnType<typeof vi.fn> }
 const runtime = vi.hoisted(() => ({
   handles: [] as Handle[], next: 0,
   permitted: false, loans: [] as unknown[], loan: undefined as unknown,
@@ -64,7 +64,7 @@ async function type(label: string, value: string) {
 beforeEach(() => {
   runtime.next = 0; runtime.permitted = false; runtime.loans = []; runtime.loan = undefined; runtime.sends = []
   runtime.handles = Array.from({ length: 4 }, () => ({
-    phase: 'idle', busy: false, isSafe: false, error: null, hash: null, safeProposalHash: null, receipt: null, reset: vi.fn(),
+    notice: null, dismiss: vi.fn(), phase: 'idle', busy: false, isSafe: false, error: null, hash: null, safeProposalHash: null, receipt: null, reset: vi.fn(),
     send: vi.fn(async (request: TxRequest, options: TxSendOptions = {}) => { await options.reverify?.(request); runtime.sends.push({ request, options }); return HASH }),
   }))
   cache = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -73,6 +73,26 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); cache.clear() })
 
 describe('INCOME loans like Juicebox Money', () => {
+  it('ends a submitted collateral permission on Done without opening a loan', async () => {
+    runtime.handles.forEach(handle => { handle.isSafe = true })
+    const render = () => act(async () => root.render(<QueryClientProvider client={cache}><IncomeBorrow state={state} client={client as never} context={context} /></QueryClientProvider>))
+    await render()
+    await type('INCOME collateral', '10'); await settle()
+    await act(async () => button('Review loan').click()); await settle()
+    await act(async () => button('Confirm & borrow').click()); await settle()
+    const permission = runtime.handles[1]
+    permission.phase = 'submitted'
+    permission.notice = 'Proposed to your Safe. Its other signers can approve it there.'
+    await render()
+    expect(host.querySelector('[data-tx-confirm]')!.textContent).toContain(permission.notice)
+    expect(runtime.sends.map(sent => sent.request.functionName)).toEqual(['setPermissionsFor'])
+    expect(host.querySelector('li[data-state="complete"]')).toBeNull()
+    expect(button('Done').disabled).toBe(false)
+    await act(async () => button('Done').click())
+    expect(permission.dismiss).toHaveBeenCalledOnce()
+    expect(host.querySelector('[data-tx-confirm]')).toBeNull()
+  })
+
   it('borrows with the chosen prepaid fee, granting the collateral permission first and continuing on its own', async () => {
     await act(async () => root.render(<QueryClientProvider client={cache}><IncomeBorrow state={state} client={client as never} context={context} /></QueryClientProvider>))
     await type('INCOME collateral', '10'); await settle()

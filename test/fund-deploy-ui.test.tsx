@@ -8,18 +8,21 @@ import type { CreateValues } from '../src/components/CreateFlow'
 import { buildFundLaunch } from '../src/lib/fund-contracts'
 import { FUND_LAUNCH_KEY, decodeLaunchSession, saveLaunch, updateLaunchStatus, type FundLaunchSession } from '../src/lib/fund-launch-session'
 import { safeExecutionLog } from './support/safe-logs'
+import type { TxRequest, TxSendOptions } from '../src/hooks/useSafeTx'
+import { multisigDeploymentRequest, predictMultisig, type CreateMultisig } from '../src/lib/create-multisig'
 
-const runtime = vi.hoisted(() => ({ txError: '' as string, safe: false, send: vi.fn(), readContract: vi.fn(), getBlock: vi.fn(), getTransaction: vi.fn(), getTransactionReceipt: vi.fn(), publish: vi.fn(), checkDeployment: vi.fn(), relayr: vi.fn(), requestsDead: vi.fn() }))
+const runtime = vi.hoisted(() => ({ txError: '' as string, safe: false, send: vi.fn(), readContract: vi.fn(), getBlock: vi.fn(), getTransaction: vi.fn(), getTransactionReceipt: vi.fn(), waitReceipt: vi.fn(), waitSafe: vi.fn(), checkMultisigs: vi.fn(), verifyMultisigs: vi.fn(), publish: vi.fn(), checkDeployment: vi.fn(), relayr: vi.fn(), requestsDead: vi.fn() }))
 const navigate = vi.hoisted(() => ({ replace: vi.fn() }))
 vi.mock('next/navigation', () => ({ useRouter: () => navigate }))
 const owner = '0x1111111111111111111111111111111111111111' as const
 const salt = `0x${'12'.repeat(32)}` as Hex
-vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: '0x1111111111111111111111111111111111111111' }), getPublicClient: () => ({ readContract: runtime.readContract, getBlock: runtime.getBlock, getTransaction: runtime.getTransaction, getTransactionReceipt: runtime.getTransactionReceipt, getChainId: async () => 8453 }) }))
+vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: '0x1111111111111111111111111111111111111111' }), getPublicClient: () => ({ readContract: runtime.readContract, getBlock: runtime.getBlock, getTransaction: runtime.getTransaction, getTransactionReceipt: runtime.getTransactionReceipt, waitForTransactionReceipt: runtime.waitReceipt, getChainId: async () => 8453 }) }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: '0x1111111111111111111111111111111111111111', isCenterWallet: true }) }))
 vi.mock('@/components/WalletButton', () => ({ WalletButton: () => <span>Wallet</span> }))
 vi.mock('@/components/CreateFlow', () => ({ default: () => null }))
-vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => runtime.safe, useSafeConnection: () => false, waitForSafeExecutionHash: vi.fn() }))
+vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => runtime.safe, useSafeConnection: () => false, waitForSafeExecutionHash: runtime.waitSafe }))
+vi.mock('@/lib/create-multisig', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/create-multisig')>(), checkCreateMultisigs: runtime.checkMultisigs, verifyCreatedMultisigs: runtime.verifyMultisigs }))
 vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({ phase: 'idle', busy: false, error: runtime.txError, send: runtime.send, reset: vi.fn() }) }))
 vi.mock('@/lib/publish-fund-project-metadata', () => ({ publishFundProjectMetadata: runtime.publish }))
 vi.mock('@/lib/fund-launch-verification', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/fund-launch-verification')>(), checkLaunchDeployment: runtime.checkDeployment }))
@@ -40,6 +43,7 @@ describe('Create submission recovery', () => {
     runtime.txError = ''
     runtime.safe = false
     runtime.send.mockReset()
+    runtime.waitSafe.mockReset(); runtime.waitReceipt.mockReset(); runtime.checkMultisigs.mockReset().mockResolvedValue(undefined); runtime.verifyMultisigs.mockReset().mockResolvedValue(true)
     runtime.readContract.mockResolvedValue(0n); runtime.getBlock.mockResolvedValue({ timestamp: 1000n }); runtime.publish.mockResolvedValue({ cid: 'bafkreimetadata' }); runtime.checkDeployment.mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: async (_name: string, _options: unknown, callback: (lock: object) => Promise<void>) => callback({}) } })
     saveLaunch({ version: 1, name: 'Test asset', input: { owner, sender: owner, chainIds: [8453], projectUri: 'ipfs://bafkreimetadata', tokenName: 'House FUND', ticker: 'HOUSE', salt, mustStartAtOrAfter: 0, creationFees: { 8453: 0n } }, statuses: { 8453: { phase: 'ready' } } })
@@ -138,6 +142,47 @@ describe('Create submission recovery', () => {
     await launch()
     expect(saved().statuses[8453].phase).toBe('ready')
     expect(host.textContent).not.toContain('Check your wallet history')
+  })
+  it('adopts an existing Safe launch directly into pending recovery without a new signing transition', async () => {
+    runtime.safe = true
+    const hash = `0x${'cd'.repeat(32)}` as Hex
+    runtime.send.mockImplementation(async (request: TxRequest, options: TxSendOptions) => {
+      expect(saved().statuses[8453].phase).toBe('ready')
+      await options.onExistingProposal?.({ proposalHash: hash, call: { to: request.address, data: encodeFunctionData(request), value: request.value ?? 0n } })
+      expect(saved().statuses[8453]).toMatchObject({ phase: 'pending', safe: true, hash })
+      return hash
+    })
+    await launch()
+    expect(saved().statuses[8453]).toMatchObject({ phase: 'pending', safe: true, hash })
+    expect(host.textContent).toContain('Safe proposal awaiting execution.')
+    expect(host.textContent).not.toContain('FUND deployment verified onchain.')
+    expect(runtime.send).toHaveBeenCalledOnce()
+  })
+
+  it.each(['outer revert', 'missing event', 'different executed call', 'proven failure'] as const)('preserves multisig recovery unless the exact Safe setup failed: %s', async kind => {
+    const proposal = `0x${'ec'.repeat(32)}` as Hex
+    const execution = kind === 'different executed call' ? proposal : `0x${'ed'.repeat(32)}` as Hex
+    const policy = { owners: [owner, '0x2222222222222222222222222222222222222222' as const], threshold: 2, saltNonce: salt, proxyCreationCode: '0x6000' as Hex }
+    const plan: CreateMultisig = { ...policy, role: 'operator', address: predictMultisig(policy) }
+    const current = saved()
+    localStorage.clear()
+    saveLaunch({ ...current, input: { ...current.input, operator: plan.address, multisigs: [plan] }, statuses: { 8453: { phase: 'ready', multisigSetup: { safe: true, hash: proposal } } } })
+    runtime.safe = true
+    runtime.waitSafe.mockResolvedValue(execution)
+    runtime.waitReceipt.mockResolvedValue({ status: kind === 'outer revert' ? 'reverted' : 'success', transactionHash: execution, logs: kind === 'missing event' ? [] : [safeExecutionLog(owner, proposal, { failed: true })] })
+    const request = multisigDeploymentRequest(8453, [plan])
+    runtime.getTransaction.mockResolvedValue({ to: owner, input: encodeFunctionData({ abi: parseAbi(['function execTransaction(address to,uint256 value,bytes data,uint8 operation,uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,address gasToken,address refundReceiver,bytes signatures) returns (bool success)']), functionName: 'execTransaction', args: [request.address, 1n, encodeFunctionData(request), 0, 0n, 0n, 0n, zeroAddress, zeroAddress, '0x'] }) })
+    await launch()
+    if (kind === 'proven failure') {
+      expect(saved().statuses[8453].multisigSetup).toBeUndefined()
+      expect(host.textContent).toContain('Multisig creation reverted')
+    } else {
+      expect(saved().statuses[8453].multisigSetup).toEqual({ safe: true, hash: proposal })
+      expect(host.textContent).toContain('The multisig setup is unresolved')
+    }
+    expect(runtime.send).not.toHaveBeenCalled()
+    expect(saved().statuses[8453].phase).toBe('ready')
+    expect(runtime.verifyMultisigs).not.toHaveBeenCalled()
   })
 
   it('records an unknown attempt before the wallet write and preserves it after transport failure', async () => {

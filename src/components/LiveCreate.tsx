@@ -5,26 +5,29 @@ import { useRouter } from 'next/navigation'
 import { getPublicClient, getAccount } from '@wagmi/core'
 import { jbProjectsAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
-import { toHex, type Hex, type PublicClient } from 'viem'
+import { encodeFunctionData, toHex, type Hex, type PublicClient } from 'viem'
 import { useWallet } from '@/hooks/useWallet'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { wagmiConfig } from '@/providers/Providers'
 import CreateFlow, { type CreateValues } from './CreateFlow'
 import { buildFundLaunch, type FundTransaction } from '@/lib/fund-contracts'
-import { FUND_LAUNCH_KEY, canCancelLaunch, cancelUnsubmittedLaunch, discardUnsignedLaunch, decodeLaunchSession, encodeLaunchSession, saveLaunch, updateLaunchStatus, refreshLaunchCreationFee, archiveLaunch, loadLaunchSession, sameSender, type FundLaunchSession, type LaunchStatus } from '@/lib/fund-launch-session'
+import { FUND_LAUNCH_KEY, adoptFundLaunchProposal, canCancelLaunch, cancelUnsubmittedLaunch, discardUnsignedLaunch, decodeLaunchSession, encodeLaunchSession, saveLaunch, updateLaunchStatus, refreshLaunchCreationFee, archiveLaunch, loadLaunchSession, sameSender, type FundLaunchSession, type LaunchStatus } from '@/lib/fund-launch-session'
 import { checkLaunchDeployment, fundLaunchFailed, verifyFundLaunch, verifyFailedFundLaunch } from '@/lib/fund-launch-verification'
 import { publishFundProjectMetadata } from '@/lib/publish-fund-project-metadata'
 import { resolveCreateMultisigs, checkCreateMultisigs, verifyCreatedMultisigs, multisigDeploymentRequest, multisigReview } from '@/lib/create-multisig'
+import { readableError } from '@/lib/readable-error'
+import { transactionMessage } from '@bananapus/nana-sdk-core/review'
 import { launchRequestsDead, runRelayrLaunch } from '@/lib/fund-launch-relayr'
 import { displayChainName } from '@/lib/chainDisplay'
 import { SUPPORTED_CHAINS } from '@/lib/chains'
 import { plannedNetworks } from '../../web/create-networks.mjs'
 import { isSafeConnection, useSafeConnection, waitForSafeExecutionHash } from '@/lib/safe-connector'
-import { safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
+import { readSafeAppExecution } from '@bananapus/nana-sdk-core/safe-service'
 import { intentPath } from '@bananapus/nana-sdk-core/jbcenter'
 import { projectPath } from '@/lib/urn'
+import { assertSafeProposalCall } from '@/lib/sticky-session'
 
-const message = (error: unknown) => error instanceof Error ? error.message : 'The request could not be completed.'
+const message = (error: unknown) => readableError(error, 'The request could not be completed.')
 function publicClient(chainId: number): PublicClient {
   const client = getPublicClient(wagmiConfig, { chainId: chainId as JBChainId })
   if (!client) throw new Error('No RPC client is configured for this chain.')
@@ -63,14 +66,19 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
     if (!plans.length) return
     const client = publicClient(request.chainId)
     await checkCreateMultisigs(client, plans)
-    if (await verifyCreatedMultisigs(client, plans, true)) return
     let setup = loadLaunchSession()?.statuses[request.chainId].multisigSetup
+    if (!setup && await verifyCreatedMultisigs(client, plans, true)) return
     if (setup && !setup.hash) throw new Error('The multisig setup stopped before its hash was saved. Recover the transaction in Deployment recovery before continuing.')
     if (!setup) {
       const hash = await setupTx.send({ ...multisigDeploymentRequest(request.chainId, plans), label: 'Create project multisigs' }, {
         reviewedAccount: session.input.sender,
         reviewNotice: multisigReview(plans),
         reverify: async () => { sameSender(getAccount(wagmiConfig).address, session.input.sender); await checkCreateMultisigs(client, plans) },
+        onExistingProposal: proposal => {
+          assertSafeProposalCall(multisigDeploymentRequest(request.chainId, plans), proposal)
+          setup = { safe: true, hash: proposal.proposalHash }
+          update({ ...status, multisigSetup: setup })
+        },
         beforeWrite: () => {
           // The setup records whether a Safe proposes it, so that must still be the connection.
           if (isSafeConnection(wagmiConfig) !== safe) throw new Error('Wallet connection changed. Review the transaction again.')
@@ -80,13 +88,18 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
         onBeforeWriteAborted: () => update({ ...status, multisigSetup: undefined }),
       })
       if (!hash) throw new Error('Multisig creation has not completed. Continue when ready.')
-      setup = { safe, hash }
+      setup = setup ?? { safe, hash }
       update({ ...status, multisigSetup: setup })
     }
     const hash = setup.safe ? await waitForSafeExecutionHash(request.chainId, setup.hash!, { pollingIntervalMs: 5000, signal: AbortSignal.timeout(60_000) }) : setup.hash!
     const receipt = await client.waitForTransactionReceipt({ hash, timeout: 60_000 })
-    // A Safe signed with a nonzero safeTxGas logs ExecutionFailure inside a successful receipt.
-    if (receipt.status !== 'success' || (setup.safe && safeExecutionResult(receipt, session.input.sender, setup.hash!).status === 'failed')) {
+    const setupRequest = multisigDeploymentRequest(request.chainId, plans)
+    const result = setup.safe
+      ? await readSafeAppExecution({ client, receipt, safe: session.input.sender, proposalHash: setup.hash!, calls: [{ to: setupRequest.address, data: encodeFunctionData(setupRequest), value: setupRequest.value ?? 0n }] })
+      : { status: receipt.status === 'success' ? 'success' : 'failed' }
+    if (result.status !== 'success' && result.status !== 'failed')
+      throw new Error('The multisig setup is unresolved. Keep its saved Safe proposal and check its execution before continuing.')
+    if (result.status === 'failed') {
       update({ ...status, multisigSetup: undefined })
       setupTx.reset()
       throw new Error('Multisig creation reverted. Continue to retry the setup.')
@@ -108,6 +121,11 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
           sameSender(getAccount(wagmiConfig).address, session.input.sender)
           await checkLaunchDeployment(publicClient(request.chainId), request)
           await verifyCreatedMultisigs(publicClient(request.chainId), session.input.multisigs ?? [])
+        },
+        onExistingProposal: proposal => {
+          const adopted = adoptFundLaunchProposal(session.input.salt, request.chainId, proposal)
+          update(adopted.statuses[request.chainId])
+          submissionAttempted = true
         },
         beforeWrite: () => {
           // The launch records whether a Safe proposes it, so that must still be the connection.
@@ -159,7 +177,7 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
     {status.phase === 'signing' && !tx.busy && <><p>This launch stopped before a transaction hash was saved. Check your wallet history before continuing.</p><label htmlFor={`recover-${request.chainId}`}>Submitted transaction hash (executed transaction)</label><input id={`recover-${request.chainId}`} value={recoveryHash} onChange={event => setRecoveryHash(event.target.value)} /><button type="button" disabled={!/^0x[\da-f]{64}$/i.test(recoveryHash) || verifying} onClick={() => { update({ phase: 'pending', hash: recoveryHash as Hex, executionHash: recoveryHash as Hex, safe: recoverySafe }); void verify(recoveryHash as Hex, recoverySafe, recoveryHash as Hex) }}>Verify this transaction</button><label><input type="checkbox" checked={recoverySafe} onChange={event => setRecoverySafe(event.target.checked)} /> This was executed by my Safe</label><button type="button" onClick={() => { tx.reset(); update({ phase: 'ready' }, 'signing') }}>I cancelled without submitting</button></>}
     {['ready', 'reverted'].includes(status.phase) && <button type="button" disabled={tx.busy || tx.phase === 'review'} onClick={() => void publicClient(request.chainId).readContract({ address: v6Address('JBProjects', request.chainId as JBChainId), abi: jbProjectsAbi, functionName: 'creationFee' }).then(refreshFee).catch(cause => setError(message(cause)))}>Refresh deployment fee</button>}
     {status.multisigSetup && !status.multisigSetup.hash && <div><label htmlFor={`recover-setup-${request.chainId}`}>Multisig setup transaction or Safe proposal hash</label><input id={`recover-setup-${request.chainId}`} value={recoveryHash} onChange={event => setRecoveryHash(event.target.value)} /><button type="button" disabled={!/^0x[\da-f]{64}$/i.test(recoveryHash)} onClick={() => update({ ...status, multisigSetup: { ...status.multisigSetup!, hash: recoveryHash as Hex } })}>Save setup hash</button><button type="button" onClick={() => { setupTx.reset(); update({ ...status, multisigSetup: undefined }) }}>I cancelled multisig setup without submitting</button></div>}
-    {(error || tx.error || setupTx.error) && <p role="alert">{error || tx.error || setupTx.error}</p>}
+    {(error || tx.error || setupTx.error) && <p role="alert">{transactionMessage(error || tx.error || setupTx.error || '')}</p>}
   </section>
 }
 
@@ -327,16 +345,16 @@ export function FundDeploy({ values, onLockChange, importedRecord, onRecordUsed 
           const phase = session.statuses[id].phase
           const needsWallet = signingChain === id
           const label = ({ ready: running ? 'Queued' : 'Not started', signing: needsWallet ? 'Awaiting confirmation' : 'Resume to check', authorized: '✓ Signed', pending: session.statuses[id].safe ? 'Awaiting Safe execution' : 'Deploying…', confirmed: '✓ Created', reverted: 'Retry needed', unresolved: session.relayr?.abandonable === true ? 'May have run' : 'Checking…', expired: 'New signature needed' })[phase]
-          return <li key={id} data-action={needsWallet || undefined}><span>{displayChainName(id)}</span><span className="fund-launch-badge" data-state={needsWallet ? 'action' : phase}>{label}</span></li>
+          return <li key={id} data-action={needsWallet || undefined}><span>{displayChainName(id)}</span><span className="fund-launch-badge" data-state={needsWallet ? 'action' : phase}>{label}</span>{session.statuses[id].error && <p role="status">{transactionMessage(session.statuses[id].error!)}</p>}</li>
         })}</ul>
-        {progress && signingChain === undefined && <p role="status">{progress}</p>}
+        {progress && signingChain === undefined && <p role="status">{transactionMessage(progress)}</p>}
         {!complete && <button type="button" className="create-primary" disabled={running || preparing || !address} onClick={() => void run(session)}>{running ? 'Creating your project…' : 'Continue creation'}</button>}
         {!complete && canCancelLaunch(session) && <button type="button" className="quiet-button" disabled={running || preparing} onClick={() => {
           void cancelUnsubmittedLaunch(session.input.salt, launchRequestsDead).then(() => { setSession(null); setError(''); setProgress(''); onLockChange?.(null) }).catch(cause => setError(message(cause)))
         }}>Cancel creation and edit details</button>}
         {complete && <a className="create-primary" href={projectPath(session.input.chainIds[0], session.statuses[session.input.chainIds[0]].projectId!)}>Open project ↗</a>}
       </>}
-    {(error || invalid) && <p role="alert">{error || invalid}</p>}
+    {(error || invalid) && <p role="alert">{transactionMessage(error || invalid)}</p>}
     {!session && error && <button type="button" onClick={() => setError('')}>Try again</button>}
     {session && <details className="fund-launch-recovery"><summary>Deployment recovery</summary>
         <><p>{session.name}. Owner <code>{session.input.owner}</code>. This saved launch retains its original settings.</p><button type="button" onClick={download}>Download deployment record</button>

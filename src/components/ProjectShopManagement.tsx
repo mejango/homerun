@@ -16,7 +16,7 @@ import {
   type ProjectShopWriteState,
 } from '@/lib/project-shop-write'
 import {
-  beginShopWriteSubmission, clearShopWriteSession, confirmShopWriteExecution, readShopWriteSession,
+  adoptShopWriteProposal, beginShopWriteSubmission, clearShopWriteSession, confirmShopWriteExecution, readShopWriteSession,
   recordShopWriteHash, rejectShopWriteSubmission, shopWriteSessionKey, startShopWriteSession,
   restoreShopWritePermissions, shopWriteRequestIndex, shopWriteRequestIndices,
   verifyShopWriteProgress, withShopWriteLock, type ShopWriteSession,
@@ -165,6 +165,7 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
             prerequisiteBlock = await verifyShopWriteProgress(client, captured)
             await reverifyProjectShopWrite(client, captured.plan, account, index, reviewed)
           },
+          onExistingProposal: async proposal => { submitting = await adoptShopWriteProposal(client, localStorage, key, captured, proposal); changed() },
           beforeWrite: async () => {
             const currentBlock = await client.getBlock({ blockTag: 'latest' })
             if (currentBlock.number === null) throw new Error('The latest block could not be read.')

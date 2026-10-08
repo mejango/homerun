@@ -2,7 +2,7 @@ import { erc2771ForwarderAbi, jbControllerAbi, jbProjectsAbi, jbDirectoryAbi, jb
 import { BASE_CURRENCY_USD, tokenCurrencyId, v6Address } from '@bananapus/nana-sdk-core/v6'
 import { decodeEventLog, decodeFunctionData, encodeFunctionData, erc20Abi, isAddressEqual, zeroAddress, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import { unbundleMultisigLaunch, verifyCreatedMultisigs } from './create-multisig'
-import { requireSafeExecutionSuccess, SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
+import { requireSafeExecutionSuccess, safeExecutionRunsCalls, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
 import type { RelayrEntry } from './relayr'
 import { buildFundLaunch, initialFundRuleset, type FundLaunchInput, type FundTransaction } from './fund-contracts'
 import { homerunAllowlistHookAbi, homerunDeployerAbi, registeredAllowlistHook } from './income-contracts'
@@ -48,12 +48,7 @@ async function verifyMinedCall(client: PublicClient, request: FundTransaction, i
     return
   }
   if (!tx.to || !isAddressEqual(tx.to, input.sender)) throw new Error('This transaction was not executed by the Safe that prepared the deployment.')
-  let decoded
-  try { decoded = decodeFunctionData({ abi: SAFE_EXEC_ABI, data: tx.input }) }
-  catch { throw new Error('This Safe execution format cannot be verified here. Keep the launch record and verify the execution in Safe.') }
-  if (decoded.functionName !== 'execTransaction') throw new Error('Unsupported Safe execution method.')
-  const [to, value, innerData, operation] = decoded.args
-  if (!isAddressEqual(to, request.address) || value !== (request.value ?? 0n) || innerData.toLowerCase() !== data.toLowerCase() || operation !== 0) throw new Error('The Safe executed a different deployment payload.')
+  if (!safeExecutionRunsCalls(tx, input.sender, [{ to: request.address, data, value: request.value ?? 0n }], false)) throw new Error('The Safe executed a different deployment payload.')
   if (!requireSafeSuccess) return
   // This transaction is the Safe's one execTransaction, so the receipt must hold its one ExecutionSuccess.
   requireSafeExecutionSuccess(receipt, input.sender, receipt.transactionHash)
@@ -76,10 +71,10 @@ export async function verifyFailedFundLaunch(client: PublicClient, request: Fund
   if (!expected || !isAddressEqual(expected.address, request.address) || expected.value !== request.value || encodeFunctionData(expected) !== encodeFunctionData(request)) throw new Error('This request does not match the saved FUND deployment plan.')
   const block = await client.getBlock({ blockNumber: receipt.blockNumber })
   if (block.hash?.toLowerCase() !== receipt.blockHash.toLowerCase()) throw new Error('The deployment receipt is no longer in the canonical chain. Check confirmation again.')
-  // An outer Safe revert rolls back the execution and its events, and a failed
-  // inner call logs ExecutionFailure; neither has ExecutionSuccess. The exact
-  // inner call still binds.
+  // Exact failed call proof still binds. An outer Safe revert consumes no
+  // proposal, so its durable record must remain pending for later execution.
   await verifyMinedCall(client, request, input, receipt, safe, false)
+  if (safe && receipt.status === 'reverted') throw new Error('The outer Safe transaction reverted without resolving its proposal. Keep this launch saved and check Safe for its eventual execution.')
 }
 
 /** A successful receipt alone does not establish that the intended project exists. */

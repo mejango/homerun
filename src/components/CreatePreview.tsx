@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
-import { getAccount, getPublicClient, signMessage } from '@wagmi/core'
+import { getAccount, getPublicClient, getWalletClient } from '@wagmi/core'
 import { jbProjectsAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import { isAddressEqual, toHex, type PublicClient } from 'viem'
@@ -17,6 +17,7 @@ import { jbCenterClient } from '@/lib/jbcenter-client'
 import { loadCreateValues } from '@/lib/create-preview'
 import { displayChainName } from '@/lib/chainDisplay'
 import { isSafeConnection } from '@/lib/safe-connector'
+import { assertReviewedWallet } from '@/lib/wallet-core'
 import { SAFE_CREATE_ABI, SAFE_SINGLETON, multisigCreationData, multisigInitializer, multisigReview, resolveCreateMultisigs } from '@/lib/create-multisig'
 import { buildFundLaunch } from '@/lib/fund-contracts'
 import { buildFundIntent, fundIntentEligibleChains, publishFundIntent, UNSUPPORTED_CHAINS_MESSAGE } from '@/lib/fund-intent'
@@ -109,6 +110,9 @@ export default function CreatePreview() {
       // Everything this publication needs is checked before a prepared plan is
       // let go, so a refused click leaves that plan where it was.
       if (!walletCanPublish()) throw new Error(WALLET_NEEDS_TRANSACTION_MESSAGE)
+      const connector = getAccount(wagmiConfig).connector
+      const authority = { account: sender, connectorUid: connector?.uid, safe: false }
+      assertReviewedWallet(authority)
       const chainIds = plannedNetworks(values).map((chain: { chainId: number }) => chain.chainId)
       if (!fundIntentEligibleChains(chainIds)) throw new Error(UNSUPPORTED_CHAINS_MESSAGE)
       // A saved plan keeps the transport it was saved with. Publish from a record
@@ -172,7 +176,12 @@ export default function CreatePreview() {
       sameSender(getAccount(wagmiConfig).address, sender)
       const published = await publishFundIntent({
         client: jbCenterClient, input, name: values.name, publisher: sender,
-        sign: publicationMessage => signMessage(wagmiConfig, { account: sender, message: publicationMessage }),
+        sign: async publicationMessage => {
+          assertReviewedWallet(authority)
+          const wallet = await getWalletClient(wagmiConfig, { account: authority.account, connector })
+          assertReviewedWallet(authority)
+          return wallet.signMessage({ account: authority.account, message: publicationMessage })
+        },
       })
       try {
         saveLaunch({ version: 1, name: values.name, input, transport: 'intent', intentId: published.id, statuses: Object.fromEntries(chainIds.map((id: number) => [id, { phase: 'ready' as const }])) })

@@ -1,8 +1,9 @@
 import { jbDirectoryAbi, jbProjectsAbi, NATIVE_TOKEN, type JBChainId } from '@bananapus/nana-sdk-core'
 import { buildDeployProjectPayerTx, JB_PROJECT_PAYER_DEPLOYER, jbProjectPayerDeployerAbi, v6Address } from '@bananapus/nana-sdk-core/v6'
-import { decodeEventLog, decodeFunctionData, encodeFunctionData, isAddress, isAddressEqual, parseAbi, zeroAddress, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
+import { decodeEventLog, encodeFunctionData, isAddress, isAddressEqual, parseAbi, zeroAddress, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
+import { assertSafeProposalCall, type ExistingSafeProposal } from './sticky-session'
 import { bendystraw } from './bendystraw'
-import { SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
+import { safeExecutionRunsCalls, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
 
 export type ProjectPayerRow = {
   chainId: number; projectId: number; version: number; address: Address
@@ -65,6 +66,16 @@ export function decodePayerAttempt(raw: string, chainId: JBChainId, projectId: b
   return attempt
 }
 
+/** Existing component persistence owns the write; this only creates exact known-proposal recovery facts. */
+export function adoptPayerProposal(attempt: PayerAttempt, proposal: ExistingSafeProposal): PayerAttempt {
+  const current = decodePayerAttempt(JSON.stringify(attempt), attempt.settings.chainId, BigInt(attempt.settings.projectId))
+  if (current.phase !== 'signing' || current.hash || current.executionHash || current.payer)
+    throw new Error('A payer deployment is already recorded. Verify it before adopting another proposal.')
+  assertSafeProposalCall(buildPayerTransaction(current.settings), proposal)
+  // There is no plan snapshot; an exact Safe proposal event, not an older identical call, resolves this attempt.
+  return { ...current, safe: true, afterBlock: '0', phase: 'submitted', hash: proposal.proposalHash }
+}
+
 /** Require the same canonical factory/directory as the reference apps before any wallet write. */
 export async function checkPayerFactory(client: PublicClient, chainId: JBChainId, projectId: bigint) {
   if (projectId <= 0n || await client.getChainId() !== chainId) throw new Error('The payer request has the wrong chain or project.')
@@ -92,10 +103,7 @@ export async function verifyPayerReceipt(client: PublicClient, attempt: PayerAtt
   const data = encodeFunctionData(request)
   if (attempt.safe) {
     if (!transaction.to || !isAddressEqual(transaction.to, account)) throw new Error('The payer transaction did not execute through the reviewed Safe.')
-    const decoded = decodeFunctionData({ abi: SAFE_EXEC_ABI, data: transaction.input })
-    if (decoded.functionName !== 'execTransaction') throw new Error('The Safe executed a different payer deployment call.')
-    const [target, value, innerData, operation] = decoded.args
-    if (!isAddressEqual(target, request.address) || value !== 0n || innerData.toLowerCase() !== data.toLowerCase() || operation !== 0) throw new Error('The Safe executed a different payer deployment call.')
+    if (!safeExecutionRunsCalls(transaction, account, [{ to: request.address, data, value: 0n }], false)) throw new Error('The Safe executed a different payer deployment call.')
     if (receipt.status === 'reverted') throw new Error('The Safe execution attempt reverted without consuming the proposal. The original proposal may still execute; keep it pending.')
     // The saved proposal hash names this execution's event. Without one, this
     // transaction is the Safe's one execTransaction, so its own hash does.

@@ -1,31 +1,32 @@
 import { act } from 'react'
+import { prepareIntentEnvelope } from './support/intent-prepare.mjs'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fixtures/homerun-deployer')).withHomerunDeployer(await importOriginal()))
 
 import type { Hex } from 'viem'
+import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '../src/lib/viewAs'
 import { CREATE_DEFAULTS, CREATE_DRAFT_KEY } from '../web/create-model.mjs'
 import { FULL_SETUP } from './fixtures/full-setup'
 import { FUND_LAUNCH_KEY, decodeLaunchSession, encodeLaunchSession } from '../src/lib/fund-launch-session'
 
 const wallet = '0x1111111111111111111111111111111111111111'
 const intentId = '3f0f2f4c-0f3f-4f2f-8f1f-0f2f3f4f5f6f'
-const contentHash = `0x${'ab'.repeat(32)}` as Hex
 const signature = `0x${'cd'.repeat(65)}` as Hex
-const publicationMessage = `Juice Central project intent\nVersion: 1\nContent hash: ${contentHash}`
 
 const runtime = vi.hoisted(() => ({
   address: '0x1111111111111111111111111111111111111111' as string | undefined, centerWallet: false, safe: false, openSignIn: vi.fn(),
   readContract: vi.fn(), getBlock: vi.fn(), getCode: vi.fn(), publish: vi.fn(), checkDeployment: vi.fn(),
+  connector: { id: 'injected', uid: 'original' }, chainId: 1, getWalletClient: vi.fn(),
   signMessage: vi.fn(), review: vi.fn(), prepareIntent: vi.fn(), publishIntent: vi.fn(),
 }))
 const navigate = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }))
 vi.mock('next/navigation', () => ({ useRouter: () => navigate }))
 vi.mock('next/image', () => ({ default: ({ alt, src }: { alt: string; src: string }) => <img alt={alt} src={src} /> }))
 vi.mock('@wagmi/core', () => ({
-  getAccount: () => ({ address: runtime.address }),
+  getAccount: () => ({ address: runtime.address, connector: runtime.centerWallet ? { ...runtime.connector, id: 'juicebox-center' } : runtime.connector, chainId: runtime.chainId }),
   getPublicClient: () => ({ readContract: runtime.readContract, getBlock: runtime.getBlock, getCode: runtime.getCode }),
-  signMessage: runtime.signMessage,
+  getWalletClient: runtime.getWalletClient,
 }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address, isCenterWallet: runtime.centerWallet, openSignIn: runtime.openSignIn }) }))
@@ -74,6 +75,10 @@ describe('the preview of a project that is not created yet', () => {
   let root: Root
   beforeEach(() => {
     localStorage.clear()
+    clearViewAs()
+    runtime.connector = { id: 'injected', uid: 'original' }
+    runtime.chainId = 1
+    runtime.getWalletClient.mockReset().mockResolvedValue({ signMessage: runtime.signMessage })
     vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
     HTMLElement.prototype.scrollIntoView = vi.fn()
     vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
@@ -89,9 +94,9 @@ describe('the preview of a project that is not created yet', () => {
     runtime.checkDeployment.mockReset().mockResolvedValue(undefined)
     runtime.review.mockReset().mockResolvedValue(undefined)
     runtime.signMessage.mockReset().mockResolvedValue(signature)
-    runtime.prepareIntent.mockReset().mockImplementation(async (envelope: unknown) => ({ contentHash, message: publicationMessage, envelope }))
+    runtime.prepareIntent.mockReset().mockImplementation(async (envelope: unknown) => prepareIntentEnvelope(envelope))
     runtime.publishIntent.mockReset().mockImplementation(async (body: Record<string, unknown>) => ({
-      id: intentId, status: 'undeployed', contentHash, envelope: body, publisher: wallet, signature,
+      id: intentId, status: 'undeployed', contentHash: prepareIntentEnvelope(Object.fromEntries(Object.entries(body).filter(([key]) => key !== 'publisher' && key !== 'signature'))).contentHash, envelope: body, publisher: wallet, signature,
       createdAt: new Date(0).toISOString(), deployments: [], deploys: [],
       name: 'Neighborhood Workshop', description: null, tagline: null, tags: [], logoUri: null, owner: wallet,
     }))
@@ -249,11 +254,43 @@ describe('the preview of a project that is not created yet', () => {
     expect(review.authorization.kind).toBe('message')
     expect(review.authorization.format).toBe('homerun.money/fund.v1')
     expect(review.authorization.chainIds).toEqual([8453])
-    expect(runtime.signMessage).toHaveBeenCalledWith({}, { account: wallet, message: publicationMessage })
+    expect(runtime.signMessage).toHaveBeenCalledWith({ account: wallet, message: prepareIntentEnvelope(runtime.prepareIntent.mock.calls[0][0]).message })
     const session = decodeLaunchSession(localStorage.getItem(FUND_LAUNCH_KEY)!)
     expect(session.transport).toBe('intent')
     expect(session.intentId).toBe(intentId)
     expect(navigate.push).toHaveBeenCalledWith(`/intent/${intentId}`)
+  })
+
+  for (const boundary of ['Center preparation', 'wallet acquisition'] as const) {
+    it.each(['account', 'disconnect', 'connector', 'view-as', 'Safe', 'Center'] as const)(`refuses %s drift during ${boundary} before signing the prepared publication`, async change => {
+      let release!: () => void
+      const waiting = new Promise<void>(resolve => { release = resolve })
+      if (boundary === 'Center preparation') runtime.prepareIntent.mockImplementationOnce(async (envelope: unknown) => { await waiting; return prepareIntentEnvelope(envelope) })
+      else runtime.getWalletClient.mockImplementationOnce(async () => { await waiting; return { signMessage: runtime.signMessage } })
+      await render()
+      await act(async () => { button('Make it real')!.click() })
+      expect(boundary === 'Center preparation' ? runtime.prepareIntent : runtime.getWalletClient).toHaveBeenCalledOnce()
+      if (change === 'account') runtime.address = '0x2222222222222222222222222222222222222222'
+      if (change === 'disconnect') runtime.address = undefined
+      if (change === 'connector') runtime.connector = { id: 'injected', uid: 'replacement' }
+      if (change === 'view-as') setViewAs(wallet)
+      if (change === 'Safe') runtime.safe = true
+      if (change === 'Center') runtime.centerWallet = true
+      await act(async () => { release() })
+      expect(runtime.signMessage).not.toHaveBeenCalled()
+      expect(runtime.publishIntent).not.toHaveBeenCalled()
+      expect(navigate.push).not.toHaveBeenCalled()
+      expect(alert()?.textContent).toContain(change === 'view-as' ? VIEW_AS_WRITE_BLOCKED : 'Wallet connection changed')
+      expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()
+    })
+  }
+
+  it('allows a chain change while preparing the chainless publication message', async () => {
+    runtime.getWalletClient.mockImplementationOnce(async () => { runtime.chainId = 8453; return { signMessage: runtime.signMessage } })
+    await render()
+    await act(async () => { button('Make it real')!.click() })
+    expect(runtime.signMessage).toHaveBeenCalledOnce()
+    expect(runtime.publishIntent).toHaveBeenCalledOnce()
   })
 
   it('reviews the Safe creation before the launch, and publishes both', async () => {

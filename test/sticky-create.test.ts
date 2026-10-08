@@ -37,6 +37,7 @@ import {
   type StickyStorage,
 } from "../src/lib/sticky-session";
 import {
+  adoptStickyCreationProposal,
   beginStickyCreationSubmission,
   clearStickyCreationPending,
   prepareStickyCreate,
@@ -1111,5 +1112,50 @@ describe("creation recovery and duplicate protection", () => {
     } finally {
       await act(async () => root.unmount());
     }
+  });
+});
+
+describe("existing Sticky creation proposal adoption", () => {
+  it("retains the prepared snapshot and FUND-wide lock with the exact proposal hash", async () => {
+    const { prepared } = await pendingFixture(),
+      storage = storageFixture();
+    const proposal = {
+      proposalHash: EXECUTION,
+      call: {
+        to: prepared.request.address,
+        data: encodeFunctionData(prepared.request),
+        value: prepared.request.value,
+      },
+    };
+    const record = adoptStickyCreationProposal(
+      storage,
+      prepared,
+      OWNER,
+      proposal,
+    );
+    expect(record).toMatchObject({
+      safe: true,
+      hash: EXECUTION,
+      afterBlock: prepared.fund.blockNumber.toString(),
+    });
+    expect(readStickyCreationPending(storage, 1, 7n, SHARE)).toEqual(record);
+    expect(() =>
+      adoptStickyCreationProposal(storage, prepared, SHARE, proposal),
+    ).toThrow("already has a saved");
+  });
+  it("rejects a different prepared call without creating a pointer or pending record", async () => {
+    const { prepared } = await pendingFixture(),
+      storage = storageFixture();
+    expect(() =>
+      adoptStickyCreationProposal(storage, prepared, OWNER, {
+        proposalHash: EXECUTION,
+        call: {
+          to: SHARE,
+          data: encodeFunctionData(prepared.request),
+          value: prepared.request.value,
+        },
+      }),
+    ).toThrow("does not match");
+    expect(readStickyCreationPending(storage, 1, 7n)).toBeNull();
   });
 });

@@ -13,6 +13,7 @@ import {
   indexedParticipantProjectId,
 } from '@/lib/project-participants'
 import { PERSIST } from '@/lib/query-persist'
+import { useHydrated } from '@/hooks/useHydrated'
 
 function TokenBalance({ value }: { value: bigint }) {
   return <span className="break-words tabular-nums" title={formatUnits(value, 18)}>{formatParticipantBalance(value.toString())}</span>
@@ -20,6 +21,7 @@ function TokenBalance({ value }: { value: bigint }) {
 
 /** The project's chains, as Juicebox Money resolves them: the index row's sucker group, checked against this route. */
 function useDeployments(chainId: number, projectId: number) {
+  const hydrated = useHydrated()
   const home = useQuery({
     queryKey: ['indexed-project', chainId, projectId],
     meta: PERSIST,
@@ -27,7 +29,7 @@ function useDeployments(chainId: number, projectId: number) {
     staleTime: 30_000,
     retry: 1,
   })
-  const row = home.data?.version === 6 && home.data.chainId === chainId && home.data.projectId === projectId ? home.data : null
+  const row = hydrated && home.data?.version === 6 && home.data.chainId === chainId && home.data.projectId === projectId ? home.data : null
   const group = useQuery({
     queryKey: ['sucker-group-projects', row?.suckerGroupId],
     enabled: !!row?.suckerGroupId,
@@ -37,15 +39,15 @@ function useDeployments(chainId: number, projectId: number) {
     retry: 1,
   })
   // An unindexed or ungrouped project, or a failed group read, still lists this chain's holders.
-  const settled = (!home.isPending || home.isError) && (!row?.suckerGroupId || !group.isPending || group.isError)
+  const settled = hydrated && (!home.isPending || home.isError) && (!row?.suckerGroupId || !group.isPending || group.isError)
   const deployments = row ? resolveProjectDeployments(row, group.data ?? []) : [{ chainId, projectId }]
-  return { settled, refs: deployments.map(item => [item.chainId, item.projectId] as const) }
+  return { hydrated, settled, refs: deployments.map(item => [item.chainId, item.projectId] as const) }
 }
 
 function ParticipantsList({ chainId, projectId, tokenLabel }: { chainId: number; projectId: number; tokenLabel: string }) {
   const heading = useId()
   const [page, setPage] = useState(0)
-  const { settled, refs } = useDeployments(chainId, projectId)
+  const { hydrated, settled, refs } = useDeployments(chainId, projectId)
   const refsKey = refs.map(([chain, id]) => `${chain}:${id}`).join(',')
   const query = useQuery({
     // Starts with this chain and project, so post-transaction refreshes (refreshIndexedProject) reach it.
@@ -56,7 +58,7 @@ function ParticipantsList({ chainId, projectId, tokenLabel }: { chainId: number;
     staleTime: 30_000,
     retry: 1,
   })
-  const holders = query.data?.holders
+  const holders = hydrated ? query.data?.holders : undefined
   const pageCount = Math.max(1, Math.ceil((holders?.length ?? 0) / PROJECT_PARTICIPANTS_PAGE_SIZE))
   const current = Math.min(page, pageCount - 1)
   const offset = current * PROJECT_PARTICIPANTS_PAGE_SIZE
@@ -66,7 +68,7 @@ function ParticipantsList({ chainId, projectId, tokenLabel }: { chainId: number;
   return <section aria-labelledby={heading} className="demo-section min-w-0">
     <h2 id={heading}>{tokenLabel} holders</h2>
     {(query.isPending || !settled) && !holders && <p role="status">Loading {tokenLabel} holders…</p>}
-    {query.isError && <p role="status">{holders ? 'Holder balances could not refresh. Showing the last list.' : 'Holder balances are temporarily unavailable.'}</p>}
+    {hydrated && query.isError && <p role="status">{holders ? 'Holder balances could not refresh. Showing the last list.' : 'Holder balances are temporarily unavailable.'}</p>}
     {holders && (holders.length === 0 ? <p>No one holds {tokenLabel} yet. Holders show up here after they pay.</p> : <>
       <p>Balances include wallet tokens and unclaimed credits{refs.length > 1 ? `, across ${refs.length} chains` : ''}.</p>
       <p role="status" className="my-3 text-sm">{count}{holders.length > PROJECT_PARTICIPANTS_PAGE_SIZE ? ` / Showing ${offset + 1}–${offset + visible.length}` : ''}</p>

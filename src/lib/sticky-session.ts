@@ -1,16 +1,18 @@
 /** Durable duplicate protection. Recovery state can block a write, but can never prove execution. */
 import {
-  decodeFunctionData,
   encodeFunctionData,
   isAddress,
   isAddressEqual,
+  zeroHash,
   type Address,
   type Hex,
   type PublicClient,
 } from "viem";
 import type { FundTransaction } from "./fund-contracts";
 import {
-  SAFE_EXEC_ABI,
+  heldCall,
+  type SafeAppCall,
+  safeExecutionRunsCalls,
   safeExecutionResult,
 } from "@bananapus/nana-sdk-core/safe-service";
 
@@ -30,6 +32,42 @@ export type StickyPending = {
 };
 export type StickyStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 const HASH = /^0x[\da-fA-F]{64}$/;
+export type ExistingSafeProposal = { proposalHash: Hex; call: SafeAppCall };
+/** Exact immutable plans remain exact; raw journals may retain a shared SDK-recognized earlier stamp. */
+export function assertSafeProposalCall(
+  request: FundTransaction,
+  proposal: ExistingSafeProposal,
+  allowEarlierStamp = false,
+): void {
+  if (
+    !HASH.test(proposal.proposalHash) ||
+    proposal.proposalHash.toLowerCase() === zeroHash
+  )
+    throw new Error("Use a valid existing Safe proposal hash.");
+  const expected = {
+    to: request.address,
+    data: encodeFunctionData(request),
+    value: request.value ?? 0n,
+  };
+  const actual = proposal.call;
+  if (
+    !isAddress(actual.to) ||
+    !/^0x(?:[\da-f]{2})+$/i.test(actual.data) ||
+    typeof (actual.value ?? 0n) !== "bigint" ||
+    (actual.value ?? 0n) < 0n
+  )
+    throw new Error("The existing Safe proposal call is invalid.");
+  const left = allowEarlierStamp ? heldCall(expected) : expected;
+  const right = allowEarlierStamp ? heldCall(actual) : actual;
+  if (
+    !isAddressEqual(left.to, right.to) ||
+    left.data.toLowerCase() !== right.data.toLowerCase() ||
+    (left.value ?? 0n) !== (right.value ?? 0n)
+  )
+    throw new Error(
+      "The existing Safe proposal does not match the saved action.",
+    );
+}
 export function stickySessionKey(
   chainId: number,
   projectId: bigint,
@@ -73,7 +111,7 @@ export function readStickyPending(
     );
   return value;
 }
-export function beginStickySubmission(
+function persistStickySubmission(
   storage: StickyStorage,
   key: string,
   request: FundTransaction,
@@ -82,6 +120,7 @@ export function beginStickySubmission(
   safe: boolean,
   label: string,
   afterBlock: bigint,
+  proposal?: ExistingSafeProposal,
 ): StickyPending {
   if (readStickyPending(storage, key))
     throw new Error(
@@ -105,6 +144,14 @@ export function beginStickySubmission(
     safe,
     submittedAt: Date.now(),
     afterBlock: afterBlock.toString(),
+    ...(proposal
+      ? {
+          target: proposal.call.to,
+          data: proposal.call.data,
+          value: (proposal.call.value ?? 0n).toString(),
+          hash: proposal.proposalHash,
+        }
+      : {}),
   };
   if (key !== stickySessionKey(record.chainId, projectId, holder))
     throw new Error("The Sticky recovery identity changed.");
@@ -114,6 +161,51 @@ export function beginStickySubmission(
       "The browser could not save Sticky transaction recovery data.",
     );
   return record;
+}
+export function beginStickySubmission(
+  storage: StickyStorage,
+  key: string,
+  request: FundTransaction,
+  projectId: bigint,
+  holder: Address,
+  safe: boolean,
+  label: string,
+  afterBlock: bigint,
+): StickyPending {
+  return persistStickySubmission(
+    storage,
+    key,
+    request,
+    projectId,
+    holder,
+    safe,
+    label,
+    afterBlock,
+  );
+}
+/** A known proposal hash binds historical execution; an unknown write must still use beginStickySubmission. */
+export function adoptStickyProposal(
+  storage: StickyStorage,
+  key: string,
+  request: FundTransaction,
+  projectId: bigint,
+  holder: Address,
+  label: string,
+  proposal: ExistingSafeProposal,
+  afterBlock = 0n,
+): StickyPending {
+  assertSafeProposalCall(request, proposal, true);
+  return persistStickySubmission(
+    storage,
+    key,
+    request,
+    projectId,
+    holder,
+    true,
+    label,
+    afterBlock,
+    proposal,
+  );
 }
 export function recordStickyHash(
   storage: StickyStorage,
@@ -178,20 +270,19 @@ export async function verifyStickyExecution(
   } else {
     if (!isAddressEqual(transaction.to, record.holder))
       throw new Error("The execution is not from the saved Safe.");
-    const decoded = decodeFunctionData({
-      abi: SAFE_EXEC_ABI,
-      data: transaction.input,
-    });
-    if (decoded.functionName !== "execTransaction")
-      throw new Error(
-        "The Safe execution does not match the saved single Sticky call.",
-      );
-    const [target, value, data, operation] = decoded.args;
     if (
-      !isAddressEqual(target, record.target) ||
-      value !== BigInt(record.value) ||
-      data.toLowerCase() !== record.data.toLowerCase() ||
-      operation !== 0
+      !safeExecutionRunsCalls(
+        transaction,
+        record.holder,
+        [
+          {
+            to: record.target,
+            data: record.data,
+            value: BigInt(record.value),
+          },
+        ],
+        false,
+      )
     )
       throw new Error(
         "The Safe execution does not match the saved single Sticky call.",

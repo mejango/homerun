@@ -1,9 +1,9 @@
 import { jbControllerAbi, jbSplitsAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { RESERVED_TOKEN_SPLIT_GROUP_ID, v6Address, verifyReservedDistributionReceipt } from '@bananapus/nana-sdk-core/v6'
-import { decodeFunctionData, encodeFunctionData, isAddressEqual, type Address, type ContractFunctionReturnType, type PublicClient, type TransactionReceipt } from 'viem'
+import { encodeFunctionData, isAddressEqual, type Address, type ContractFunctionReturnType, type PublicClient, type TransactionReceipt } from 'viem'
 import { readIncomeProjectState, type IncomeProjectState } from './income-state'
 import { sameProjectSplits } from './project-splits-edit'
-import { requireSafeExecutionSuccess, SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
+import { requireSafeExecutionSuccess, safeExecutionRunsCalls } from '@bananapus/nana-sdk-core/safe-service'
 
 type ReservedSplits = ContractFunctionReturnType<typeof jbSplitsAbi, 'view', 'splitsOf'>
 export type IncomeReservedSnapshot = {
@@ -45,10 +45,7 @@ export async function verifyIncomeReservedReceipt(client: PublicClient, reviewed
   if (block.hash?.toLowerCase() !== receipt.blockHash.toLowerCase() || transaction.hash.toLowerCase() !== receipt.transactionHash.toLowerCase() || transaction.blockNumber !== receipt.blockNumber || transaction.blockHash?.toLowerCase() !== receipt.blockHash.toLowerCase()) throw new Error('The reserved INCOME receipt is no longer a matching canonical execution.')
   const data = encodeFunctionData(request)
   if (transaction.to && isAddressEqual(transaction.to, account)) {
-    const decoded = decodeFunctionData({ abi: SAFE_EXEC_ABI, data: transaction.input })
-    if (decoded.functionName !== 'execTransaction') throw new Error('The Safe executed a different reserved INCOME call.')
-    const [to, value, innerData, operation] = decoded.args
-    if (!isAddressEqual(to, request.address) || value !== 0n || innerData.toLowerCase() !== data.toLowerCase() || operation !== 0) throw new Error('The Safe executed a different reserved INCOME call.')
+    if (!safeExecutionRunsCalls(transaction, account, [{ to: request.address, data, value: 0n }], false)) throw new Error('The Safe executed a different reserved INCOME call.')
     // This transaction is the Safe's one execTransaction, so the receipt must hold its one ExecutionSuccess.
     requireSafeExecutionSuccess(receipt, account, receipt.transactionHash)
   } else if (!transaction.to || !isAddressEqual(transaction.to, request.address) || !isAddressEqual(transaction.from, account) || transaction.value !== 0n || transaction.input.toLowerCase() !== data.toLowerCase()) throw new Error('The mined transaction differs from the reviewed reserved INCOME call.')

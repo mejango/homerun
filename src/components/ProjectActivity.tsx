@@ -1,6 +1,7 @@
 'use client'
 
 import { useQuery } from '@tanstack/react-query'
+import { mergeCrossChainActivityGroups } from '@bananapus/nana-sdk-core'
 import { useEffect, useId, useRef, useState } from 'react'
 import {
   getProject,
@@ -12,6 +13,7 @@ import { displayChainName, displayChainSlug, explorerTxUrl } from '@/lib/chainDi
 import { ChainIcon } from '@/components/ChainIcon'
 import { SkeletonLines } from '@/components/ui/Skeleton'
 import { PERSIST } from '@/lib/query-persist'
+import { useHydrated } from '@/hooks/useHydrated'
 
 const ACTIVITY_PAGE = 20
 
@@ -63,7 +65,6 @@ export function activityAge(seconds: number, now = Date.now() / 1_000): string {
 
 /** Events that say nothing chain-local, so one launch relayed to several chains reads as one row. */
 const STRUCTURAL = ['projectCreateEvent', 'rulesetQueuedEvent', 'deployErc20Event', 'projectTransferEvent', 'setUriEvent', 'operatorPermissionsSetEvent'] as const
-const CROSS_CHAIN_WINDOW = 6 * 3_600
 
 type ActivityRow = { events: BsActivityEvent[]; chains: { chainId: number; txHash: string }[] }
 
@@ -77,18 +78,17 @@ export function groupActivity(events: BsActivityEvent[]): ActivityRow[] {
     const key = `${event.chainId}:${event.projectId}:${event.txHash}`
     byTx.set(key, [...(byTx.get(key) ?? []), event])
   }
-  const rows: (ActivityRow & { signature: string | null })[] = []
-  for (const group of byTx.values()) {
+  return mergeCrossChainActivityGroups([...byTx.values()].map(group => {
     const lead = group[0]
     const structural = group.every(event => STRUCTURAL.some(key => event[key]))
-    const signature = structural ? `${lead.from}|${group.map(eventTitle).sort().join('|')}` : null
-    const host = signature && rows.find(row => row.signature === signature
-      && Math.abs(row.events[0].timestamp - lead.timestamp) <= CROSS_CHAIN_WINDOW
-      && !row.chains.some(chain => chain.chainId === lead.chainId))
-    if (host) host.chains.push({ chainId: lead.chainId, txHash: lead.txHash })
-    else rows.push({ events: group, chains: [{ chainId: lead.chainId, txHash: lead.txHash }], signature })
-  }
-  return rows.map(({ events, chains }) => ({ events, chains }))
+    return {
+      value: group,
+      signature: structural ? `${lead.from}|${group.map(eventTitle).sort().join('|')}` : `transaction:${lead.chainId}:${lead.projectId}:${lead.txHash}`,
+      chainId: lead.chainId,
+      txHash: lead.txHash,
+      timestamp: lead.timestamp,
+    }
+  })).map(({ value, chains }) => ({ events: value, chains }))
 }
 
 function EventRow({ row }: { row: ActivityRow }) {
@@ -120,6 +120,7 @@ function EventRow({ row }: { row: ActivityRow }) {
 }
 
 function ActivityFeed({ chainId, projectId, suckerGroupId }: { chainId: number; projectId: number; suckerGroupId: string | null }) {
+  const hydrated = useHydrated()
   const heading = useId()
   const [events, setEvents] = useState<BsActivityEvent[]>([])
   const [total, setTotal] = useState(0)
@@ -191,9 +192,9 @@ function ActivityFeed({ chainId, projectId, suckerGroupId }: { chainId: number; 
 
   return <section aria-labelledby={heading} className="demo-activity">
     <div className="demo-activity-heading"><h2 id={heading}>Activity</h2></div>
-    {newest.isPending && !events.length && <div role="status" className="mt-4"><span className="sr-only">Loading activity</span><SkeletonLines lines={4} /></div>}
-    {newest.isError && <p role="status" className="mt-3 text-sm text-smoke-500">{events.length ? 'Activity could not refresh. Showing the last indexed events.' : 'Activity is temporarily unavailable.'}</p>}
-    {!newest.isPending && !newest.isError && events.length === 0 && <p className="mt-3 text-sm text-smoke-500">No activity yet. New transactions can take a minute to appear.</p>}
+    {(!hydrated || newest.isPending) && !events.length && <div role="status" className="mt-4"><span className="sr-only">Loading activity</span><SkeletonLines lines={4} /></div>}
+    {hydrated && newest.isError && <p role="status" className="mt-3 text-sm text-smoke-500">{events.length ? 'Activity could not refresh. Showing the last indexed events.' : 'Activity is temporarily unavailable.'}</p>}
+    {hydrated && !newest.isPending && !newest.isError && events.length === 0 && <p className="mt-3 text-sm text-smoke-500">No activity yet. New transactions can take a minute to appear.</p>}
     {events.length > 0 && <ol className="min-w-0">{groupActivity(events).map(row => <EventRow key={row.events[0].id} row={row} />)}</ol>}
     {loadMoreError && <p role="status" className="mt-3 text-xs text-smoke-500">Could not load more activity.</p>}
     {events.length < total && <button type="button" className="mt-3 min-h-8 text-xs font-medium text-smoke-700 underline underline-offset-2 hover:text-ink disabled:opacity-60" disabled={loadingMore || !newest.data || appliedScope.current !== scope} onClick={() => void loadMore()}>{loadingMore ? 'Loading…' : 'Load more'}</button>}
@@ -201,6 +202,7 @@ function ActivityFeed({ chainId, projectId, suckerGroupId }: { chainId: number; 
 }
 
 function ProjectActivitySource({ chainId, projectId }: { chainId: number; projectId: number }) {
+  const hydrated = useHydrated()
   const project = useQuery({
     queryKey: ['indexed-project', chainId, projectId],
     meta: PERSIST,
@@ -208,7 +210,7 @@ function ProjectActivitySource({ chainId, projectId }: { chainId: number; projec
     staleTime: 30_000,
     retry: 1,
   })
-  const indexed = project.data
+  const indexed = hydrated ? project.data : undefined
   const group = indexed?.version === 6 && indexed.chainId === chainId && indexed.projectId === projectId
     ? indexed.suckerGroupId : null
   // Discovery is best-effort. Never wait for a group row before reading this project's history.

@@ -1,7 +1,8 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { encodeAbiParameters, encodeEventTopics, type Address, type Hex, type PublicClient } from 'viem'
+import { encodeAbiParameters, encodeEventTopics, encodeFunctionData, type Address, type Hex, type PublicClient } from 'viem'
+import type { TxRequest, TxSendOptions } from '../src/hooks/useSafeTx'
 import type { FundProjectState } from '../src/lib/fund-state'
 import type { FundGlobalManifest } from '../src/lib/fund-global-manifest'
 
@@ -286,6 +287,20 @@ describe('global INCOME launch flow', () => {
     restorePlan(); runtime.fetch.mockRejectedValue(new Error('IPFS unavailable')); await render()
     await upload(host.querySelector('input[type="file"]')!, serializeFundGlobalManifest(globalManifest()))
     for (const chainId of CHAIN_IDS) section(chainId); expect(runtime.history).not.toHaveBeenCalled()
+  })
+
+  it('adopts a queued Safe launch into durable recovery without a new submission', async () => {
+    runtime.safe = true
+    runtime.waitSafe.mockRejectedValue(new Error('Still awaiting signatures'))
+    runtime.send.mockImplementation(async (request: TxRequest, options: TxSendOptions) => {
+      await options.onExistingProposal?.({ proposalHash: hashFor(8453), call: { to: request.address, data: encodeFunctionData(request), value: request.value ?? 0n } })
+      return hashFor(8453)
+    })
+    await ready(); await click('Review Base deployment')
+    expect(pending()).toMatchObject({ safe: true, hash: hashFor(8453) })
+    expect(runtime.send).toHaveBeenCalledOnce()
+    expect(runtime.verify).not.toHaveBeenCalled()
+    expect(button('Review Base deployment').closest('fieldset')?.disabled).toBe(true)
   })
 
   it('never treats a Safe proposal as a confirmed local deployment', async () => {

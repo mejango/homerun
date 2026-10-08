@@ -14,9 +14,9 @@ const runtime = vi.hoisted(() => ({
 vi.mock('wagmi', () => ({ usePublicClient: () => runtime.client }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.account }) }))
 vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({
-  phase: runtime.phase, busy: false, error: null, isSafe: runtime.safe, send: runtime.send, reset: runtime.reset,
+  phase: runtime.phase, busy: false, error: null, isSafe: runtime.safe, send: runtime.send, reset: runtime.reset, dismiss: runtime.reset, notice: null,
 }) }))
-vi.mock('@/lib/safe-connector', () => ({ waitForSafeExecutionHash: runtime.waitSafe }))
+vi.mock('@/lib/safe-connector', () => ({ waitForSafeExecutionHash: runtime.waitSafe, SAFE_PROPOSAL_AWAITING: 'Proposed to your Safe. Its other signers can approve it there.' }))
 vi.mock('@/lib/viewAs', () => ({ assertNoViewAs: runtime.viewAs }))
 
 import { useProjectAdminTx } from '@/hooks/useProjectAdminTx'
@@ -237,14 +237,14 @@ describe('project administrative transaction recovery', () => {
     expect(panel('Permissions').textContent).toContain('Metadata is pending.')
   })
 
-  it('keeps Safe proposals pending despite a provider success phase and verifies the exact executed proposal', async () => {
+  it('keeps Safe proposals submitted despite a provider success phase and verifies the exact executed proposal', async () => {
     runtime.safe = true
     await render(); await click('Metadata')
     await settle(() => expect(runtime.waitSafe).toHaveBeenCalledWith(8453, PROPOSAL, expect.objectContaining({ signal: expect.any(AbortSignal) })))
     runtime.phase = 'success'
     await render()
-    expect(panel().querySelector('[data-phase]')?.textContent).toBe('pending')
-    expect(panel().textContent).toContain('Check Safe for signatures and execution.')
+    expect(panel().querySelector('[data-phase]')?.textContent).toBe('submitted')
+    expect(panel().textContent).toContain('Waiting for the saved project update to confirm.')
     expect(panel().querySelector(`a[href*="${PROPOSAL}"]`)).toBeNull()
     expect(runtime.client.getTransactionReceipt).not.toHaveBeenCalled()
 
@@ -307,4 +307,41 @@ describe('project administrative transaction recovery', () => {
     expect(button('Metadata').disabled).toBe(false)
     expect(panel().textContent).not.toContain('Metadata is pending.')
   })
+})
+
+ it('persists an existing Safe proposal without a new submission marker, including after reload', async () => {
+  runtime.safe = true
+  runtime.send.mockImplementation(async (reviewed: TxRequest, options: TxSendOptions) => {
+    await options.onExistingProposal?.({ proposalHash: PROPOSAL, call: { to: reviewed.address, data: encodeFunctionData(reviewed), value: reviewed.value } })
+    return PROPOSAL
+  })
+  await render()
+  await click('Metadata')
+  expect(runtime.reverify).not.toHaveBeenCalled()
+  const pending = readProjectAdminPending(localStorage, KEY)
+  expect(pending).toMatchObject({ safe: true, hash: PROPOSAL, target: TARGET, data: encodeFunctionData(request()), afterBlock: '0' })
+  expect(handles.get('Metadata')!.phase).toBe('submitted')
+  await act(async () => root.unmount())
+  root = createRoot(host)
+  await render(['Ownership'])
+  expect(readProjectAdminPending(localStorage, KEY)).toEqual(pending)
+  expect(handles.get('Ownership')!.phase).toBe('submitted')
+  await click('Ownership', 'Ownership')
+  expect(runtime.send).toHaveBeenCalledOnce()
+})
+
+ it('never exposes engine success while the durable product proof is still unresolved', async () => {
+  runtime.safe = true
+  let finish!: (hash: Hex) => void
+  runtime.send.mockImplementation(async (_reviewed: TxRequest, options: TxSendOptions) => {
+    runtime.phase = 'success'
+    await options.beforeWrite?.()
+    return new Promise<Hex>(resolve => { finish = resolve })
+  })
+  await render()
+  await click('Metadata')
+  expect(handles.get('Metadata')!.phase).toBe('pending')
+  expect(readProjectAdminPending(localStorage, KEY)).not.toBeNull()
+  await act(async () => finish(PROPOSAL))
+  expect(handles.get('Metadata')!.phase).toBe('submitted')
 })

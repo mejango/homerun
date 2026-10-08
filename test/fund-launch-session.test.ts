@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fixtures/homerun-deployer')).withHomerunDeployer(await importOriginal()))
 
-import { zeroAddress, zeroHash, type Hex } from 'viem'
-import { FUND_LAUNCH_KEY, archiveLaunch, canCancelLaunch, cancelUnsubmittedLaunch, decodeLaunchSession, discardUnsignedLaunch, encodeLaunchSession, refreshLaunchCreationFee, saveLaunch, sameSender, updateLaunchStatus, type FundLaunchSession } from '../src/lib/fund-launch-session'
+import { encodeFunctionData, zeroAddress, zeroHash, type Hex } from 'viem'
+import { buildFundLaunch } from '../src/lib/fund-contracts'
+import { adoptFundLaunchProposal, FUND_LAUNCH_KEY, archiveLaunch, canCancelLaunch, cancelUnsubmittedLaunch, decodeLaunchSession, discardUnsignedLaunch, encodeLaunchSession, refreshLaunchCreationFee, saveLaunch, sameSender, updateLaunchStatus, type FundLaunchSession } from '../src/lib/fund-launch-session'
 
 const owner = '0x1111111111111111111111111111111111111111' as const
 const salt = `0x${'12'.repeat(32)}` as Hex
@@ -280,4 +281,36 @@ describe('what a relayed launch chain may read as the finalized chain moves on',
   function saved(phase: string): boolean {
     return JSON.parse(localStorage.getItem(FUND_LAUNCH_KEY)!).statuses[8453].phase === phase
   }
+})
+
+
+describe('existing FUND Safe proposal adoption', () => {
+  const proposalFor = (saved: FundLaunchSession) => {
+    const request = buildFundLaunch(saved.input).requests.find(item => item.chainId === 8453)!
+    return { proposalHash: hash, call: { to: request.address, data: encodeFunctionData(request), value: request.value } }
+  }
+  it('adopts a ready exact immutable plan without a signing transition or changing another chain', () => {
+    const original = saveLaunch(session())
+    updateLaunchStatus(salt, 10, { phase: 'signing' })
+    expect(() => updateLaunchStatus(salt, 8453, { phase: 'pending', hash, safe: true })).toThrow('changed elsewhere')
+    const adopted = adoptFundLaunchProposal(salt, 8453, proposalFor(original))
+    expect(adopted.statuses[8453]).toEqual({ phase: 'pending', hash, safe: true })
+    expect(adopted.statuses[10].phase).toBe('signing')
+    expect(adopted.input).toEqual(original.input)
+    expect(decodeLaunchSession(localStorage.getItem(FUND_LAUNCH_KEY)!)).toEqual(adopted)
+    expect(() => adoptFundLaunchProposal(salt, 8453, proposalFor(original))).toThrow('Only an unsubmitted')
+  })
+  it('adopts after a proven reverted attempt but refuses a different plan, hash or transport', () => {
+    const original = saveLaunch(session()), proposal = proposalFor(original)
+    for (const changed of [{ ...proposal, proposalHash: zeroHash }, { ...proposal, call: { ...proposal.call, value: 0n } }])
+      expect(() => adoptFundLaunchProposal(salt, 8453, changed)).toThrow()
+    expect(decodeLaunchSession(localStorage.getItem(FUND_LAUNCH_KEY)!)).toEqual(original)
+    updateLaunchStatus(salt, 8453, { phase: 'signing' })
+    updateLaunchStatus(salt, 8453, { phase: 'pending', hash: otherHash })
+    updateLaunchStatus(salt, 8453, { phase: 'reverted', hash: otherHash })
+    expect(adoptFundLaunchProposal(salt, 8453, proposal).statuses[8453]).toEqual({ phase: 'pending', safe: true, hash })
+    localStorage.clear()
+    saveLaunch({ ...session(), transport: 'intent' })
+    expect(() => adoptFundLaunchProposal(salt, 8453, proposal)).toThrow('direct deployment')
+  })
 })

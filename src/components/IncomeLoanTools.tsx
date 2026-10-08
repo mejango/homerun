@@ -25,7 +25,7 @@ function Field({ label, value, onChange, address = false }: { label: string; val
 }
 function TransactionStatus({ tx, chainId }: { tx: ReturnType<typeof useSafeTx>; chainId: number }) {
   return <div className="mt-4 break-words text-sm" role="status" aria-live="polite">
-    {tx.safeProposalHash ? <p>Proposed to Safe. Execution and onchain confirmation are still required.</p> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? <p>Confirmed onchain. Loan balances are refreshing.</p> : null}
+    {tx.phase === 'submitted' ? <p>{tx.notice}</p> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? <p>Confirmed onchain. Loan balances are refreshing.</p> : null}
     {tx.error && <p className="text-red-800">{tx.error}</p>}
     {tx.hash && !tx.safeProposalHash && <a className="underline" href={explorerTxUrl(chainId, tx.hash) ?? undefined} target="_blank" rel="noreferrer">View transaction</a>}
   </div>
@@ -51,7 +51,7 @@ export function IncomeLoanTools({ state, client }: Props) {
   const collateral = parsedCollateral ?? 0n
   const additional = parsedAdditional ?? 0n
   const minimumBlock = prerequisite.phase === 'success' ? prerequisite.receipt?.blockNumber : undefined
-  const busy = preparing || tx.busy || prerequisite.busy || tx.phase === 'review' || prerequisite.phase === 'review'
+  const busy = preparing || tx.busy || prerequisite.busy || (tx.phase === 'review' || tx.phase === 'submitted') || (prerequisite.phase === 'review' || prerequisite.phase === 'submitted')
   const loan = useQuery({
     queryKey: ['income-loan-tools', state.chainId, state.projectId.toString(), loanId.toString(), address],
     enabled: !!address && loanId > 0n,

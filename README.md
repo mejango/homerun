@@ -53,7 +53,7 @@ The asset's appraised value is not spendable INCOME backing. Borrowing and cash-
 
 ## Run locally
 
-Use Node **24.1 or newer** and npm **11 or newer**. The Dockerfile uses Node 26.7.
+Use Node **26.7.x** (`.nvmrc`) and npm **12.0.1** (`packageManager`). CI and Docker install that same npm version.
 
 ```sh
 npm ci

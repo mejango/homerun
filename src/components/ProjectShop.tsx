@@ -8,6 +8,7 @@ import Image from 'next/image'
 import { usePublicClient } from 'wagmi'
 import type { PublicClient } from 'viem'
 import { useWallet } from '@/hooks/useWallet'
+import { useHydrated } from '@/hooks/useHydrated'
 import { ShopIcon } from '@/components/ShopItemEditor'
 import { explorerAddressUrl, explorerTokenUrl } from '@/lib/chainDisplay'
 import { readProjectShop, readShopCustomers, shopTierAvailability, shopTierName, shopTierPrice, type ProjectShopState } from '@/lib/project-shop'
@@ -21,14 +22,16 @@ export function ProjectShop({ chainId, projectId, tokenLabel = 'project' }: { ch
 }
 
 function ProjectShopContent({ chainId, projectId, tokenLabel }: { chainId: JBChainId; projectId: bigint; tokenLabel: string }) {
+  const hydrated = useHydrated()
   const client = usePublicClient({ chainId }) as PublicClient | undefined
   const [tab, setTab] = useState<'inventory' | 'customers'>('inventory')
   const id = useId()
-  const shop = useQuery({
+  const restoredShop = useQuery({
     queryKey: ['project-shop', chainId, projectId.toString()], enabled: !!client,
     meta: PERSIST,
     queryFn: () => readProjectShop(client!, { chainId, projectId }), staleTime: 30_000, retry: 1,
   })
+  const shop = hydrated ? restoredShop : { ...restoredShop, data: undefined, isPending: true, isError: false }
   function onKey(event: KeyboardEvent<HTMLButtonElement>, next: 'inventory' | 'customers') {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
     event.preventDefault()

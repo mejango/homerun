@@ -11,7 +11,9 @@ export function refreshIndexedProject(cache: QueryClient, chainId: number, proje
   const id = Number(projectId)
   const refresh = () => {
     for (const prefix of ['project-activity', 'project-participants', 'indexed-project']) {
-      void cache.invalidateQueries({ queryKey: [prefix, chainId, id] })
+      const filters = { queryKey: [prefix, chainId, id] }
+      // Discard initial reads started before confirmation before refreshing.
+      void cache.cancelQueries(filters).then(() => cache.invalidateQueries(filters))
     }
   }
   for (const delay of CATCH_UP_MS) {

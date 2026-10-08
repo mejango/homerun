@@ -35,7 +35,7 @@ type Tx = ReturnType<typeof useSafeTx>
 function TransactionStatus({ tx, chainId }: { tx: Tx; chainId: number }) {
   const explorer = tx.hash && !tx.safeProposalHash ? explorerTxUrl(chainId, tx.hash) : null
   return <div role="status" aria-live="polite" className="mt-4 text-sm break-words">
-    {tx.safeProposalHash ? <p>Proposed to Safe. Execution and onchain confirmation are still required.</p>
+    {tx.phase === 'submitted' ? <p>{tx.notice}</p>
       : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p>
         : tx.phase === 'success' ? <p>Confirmed onchain.</p>
           : tx.phase === 'review' ? <p>Review the exact transaction before continuing.</p> : null}
@@ -46,7 +46,7 @@ function TransactionStatus({ tx, chainId }: { tx: Tx; chainId: number }) {
 
 /** What the confirm dialog says while a submitted transaction settles, as in Juicebox Money's flows. */
 function confirmStatus(tx: Tx, chainId: number): ReactNode {
-  if (tx.safeProposalHash) return 'Proposed to Safe. It still needs execution and onchain confirmation; you can close this while it waits.'
+  if (tx.phase === 'submitted') return tx.notice
   if (tx.phase !== 'pending') return null
   const url = tx.hash ? explorerTxUrl(chainId, tx.hash) : null
   return <>Waiting for confirmation{url && <>{' '}(<a href={url} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">view transaction</a>)</>}</>
@@ -80,8 +80,7 @@ function useConfirmPlan<Plan>(tx: Tx) {
     close(onDone?: () => void) {
       const done = tx.phase === 'success'
       setReviewed(null); setPreparing(false); setError(null)
-      if (tx.safeProposalHash) return
-      tx.reset()
+      tx.dismiss()
       if (done) onDone?.()
     },
     /** The dialog cannot close mid-flight, except while a Safe proposal awaits its signers. */
@@ -211,6 +210,7 @@ export function CashOutPanel({ state, client, contextIndex }: { state: FundProje
       onConfirm={() => void send()}
       busy={confirm.busy}
       complete={tx.phase === 'success'}
+      settled={tx.phase === 'submitted'}
       status={confirm.preparing ? 'Getting a fresh cash-out quote…' : confirmStatus(tx, state.chainId)}
       error={confirm.error ?? tx.error}
       onClose={() => confirm.close(() => setAmount(''))}
@@ -268,6 +268,7 @@ export function HolderActions({ state, client }: { state: FundProjectState; clie
       onConfirm={() => void send()}
       busy={confirm.busy}
       complete={tx.phase === 'success'}
+      settled={tx.phase === 'submitted'}
       status={confirmStatus(tx, state.chainId)}
       error={confirm.error ?? tx.error}
       onClose={() => confirm.close(() => { setAmount(''); setRecipient('') })}
