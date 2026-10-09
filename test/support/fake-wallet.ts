@@ -1,8 +1,9 @@
 import { useSyncExternalStore } from 'react'
-import type { Address, Hex } from 'viem'
+import { encodeFunctionData, type Abi, type Address, type Hex } from 'viem'
 import { vi } from 'vitest'
 
-type Receipt = { status: 'success'; blockNumber: bigint; transactionHash: Hex }
+type Receipt = { status: 'success'; blockNumber: bigint; blockHash: Hex; transactionHash: Hex; transactionIndex: number; from: Address; to: Address; logs: [] }
+type WrittenTransaction = { hash: Hex; chainId: number; from: Address; to: Address; input: Hex; blockHash: Hex | null; blockNumber: bigint | null; transactionIndex: number | null }
 
 /** The hash the fake wallet answers its `n`th write (from 1) with. */
 export function sentHash(n: number): Hex {
@@ -20,7 +21,9 @@ export function sentHash(n: number): Hex {
  */
 function createFakeWallet() {
   let account: Address | undefined
+  let chainId = 1
   const receipts = new Map<string, Receipt>()
+  const transactions = new Map<string, WrittenTransaction>()
   /** Flows awaiting a receipt the chain has not reported yet. */
   const awaiting = new Map<string, ((receipt: Receipt) => void)[]>()
   const listeners = new Set<() => void>()
@@ -32,11 +35,20 @@ function createFakeWallet() {
     }
   }
   let sentCount = 0
-  const writeContract = vi.fn(async () => sentHash((sentCount += 1)))
+  const writeContract = vi.fn(async (request: { address: Address; account: Address; chainId: number; abi: Abi; functionName: string; args: readonly unknown[] }) => {
+    const hash = sentHash((sentCount += 1))
+    chainId = request.chainId
+    transactions.set(hash, { hash, chainId, from: request.account, to: request.address,
+      input: encodeFunctionData(request), blockHash: null, blockNumber: null, transactionIndex: null })
+    return hash
+  })
   const requestReview = vi.fn(async () => true)
   const switchChain = vi.fn(async () => undefined)
   /** One RPC for every chain: simulations pass and receipts are what `confirm` set. */
   const client = {
+    getChainId: vi.fn(async () => chainId),
+    getBlock: vi.fn(async ({ blockNumber = 1_000n }: { blockNumber?: bigint; blockTag?: string }) => ({ number: blockNumber, hash: sentHash(Number(blockNumber)), timestamp: 1_000n })),
+    getTransaction: vi.fn(async ({ hash }: { hash: Hex }) => transactions.get(hash.toLowerCase()) ?? null),
     simulateContract: vi.fn(async (request: Record<string, unknown>) => ({ request: { ...request } })),
     estimateContractGas: vi.fn(async () => 50_000n),
     getTransactionReceipt: vi.fn(async ({ hash }: { hash: Hex }) => receipts.get(hash.toLowerCase()) ?? null),
@@ -70,7 +82,11 @@ function createFakeWallet() {
     /** The chain reports `hash` as confirmed. */
     confirm(hash: Hex, blockNumber = 10n) {
       const key = hash.toLowerCase()
-      const receipt: Receipt = { status: 'success', blockNumber, transactionHash: hash }
+      const transaction = transactions.get(key)!
+      const blockHash = sentHash(Number(blockNumber))
+      Object.assign(transaction, { blockNumber, blockHash, transactionIndex: 0 })
+      const receipt: Receipt = { status: 'success', blockNumber, blockHash, transactionHash: hash,
+        transactionIndex: 0, from: transaction.from, to: transaction.to, logs: [] }
       receipts.set(key, receipt)
       for (const resolve of awaiting.get(key) ?? []) resolve(receipt)
       awaiting.delete(key)
@@ -90,13 +106,18 @@ function createFakeWallet() {
     reset() {
       account = undefined
       sentCount = 0
+      chainId = 1
       receipts.clear()
+      transactions.clear()
       awaiting.clear()
       writeContract.mockClear()
       requestReview.mockClear()
       requestReview.mockImplementation(async () => true)
       switchChain.mockClear()
       client.simulateContract.mockClear()
+      client.getChainId.mockReset().mockImplementation(async () => chainId)
+      client.getTransaction.mockReset().mockImplementation(async ({ hash }) => transactions.get(hash.toLowerCase()) ?? null)
+      client.getBlock.mockReset().mockImplementation(async ({ blockNumber = 1_000n }) => ({ number: blockNumber, hash: sentHash(Number(blockNumber)), timestamp: 1_000n }))
       client.getTransactionReceipt.mockClear()
       client.waitForTransactionReceipt.mockClear()
       client.readContract.mockReset()

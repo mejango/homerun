@@ -157,6 +157,12 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
         if (index === null) throw new Error('This shop update is already complete.')
         const request = projectShopWriteRequest(captured.plan, index)
         let submitting: ShopWriteSession | null = null
+        const persistSubmitted = (hash: Hex, safe?: boolean) => {
+          if (!submitting?.pending || (safe !== undefined && submitting.pending.safe !== safe)) throw new Error('The saved shop update does not match the submitted wallet write.')
+          if (submitting.pending.hash === hash) return
+          submitting = recordShopWriteHash(localStorage, key, submitting, hash)
+          changed()
+        }
         await reverifyProjectShopWrite(client, captured.plan, account, index, request)
         const hash = await tx.send(request, {
           reviewedAccount: captured.plan.snapshot.account,
@@ -166,17 +172,24 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
             await reverifyProjectShopWrite(client, captured.plan, account, index, reviewed)
           },
           onExistingProposal: async proposal => { submitting = await adoptShopWriteProposal(client, localStorage, key, captured, proposal); changed() },
-          beforeWrite: async () => {
-            const currentBlock = await client.getBlock({ blockTag: 'latest' })
-            if (currentBlock.number === null) throw new Error('The latest block could not be read.')
-            if (currentBlock.number < prerequisiteBlock) throw new Error('The network has not caught up with the previous shop transaction. Try again shortly.')
-            submitting = beginShopWriteSubmission(localStorage, key, captured, { safe: tx.isSafe, afterBlock: currentBlock.number })
-            changed()
+          durableRecovery: {
+            reserve: async () => {
+              const currentBlock = await client.getBlock({ blockTag: 'latest' })
+              if (currentBlock.number === null) throw new Error('The latest block could not be read.')
+              if (currentBlock.number < prerequisiteBlock) throw new Error('The network has not caught up with the previous shop transaction. Try again shortly.')
+              submitting = beginShopWriteSubmission(localStorage, key, captured, { safe: tx.isSafe, afterBlock: currentBlock.number })
+              changed()
+            },
+            releaseUnsubmitted: () => {
+              if (!submitting) return
+              rejectShopWriteSubmission(localStorage, key, submitting, 'before-write-aborted')
+              submitting = null
+              changed()
+            },
+            submitted: persistSubmitted,
           },
-          onBeforeWriteAborted: () => { if (submitting) { rejectShopWriteSubmission(localStorage, key, submitting, 'before-write-aborted'); changed() } },
-          onWriteRejected: () => { if (submitting) { rejectShopWriteSubmission(localStorage, key, submitting, 'wallet-rejected'); changed() } },
         })
-        if (hash && submitting) { recordShopWriteHash(localStorage, key, submitting, hash); changed() }
+        if (hash) persistSubmitted(hash)
       })
     } catch (reason) { setError(message(reason)) }
     finally { action.current = false; setWorking(false) }
@@ -248,6 +261,7 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
         </>}
         {progress && !complete && <p role="status">{progress}</p>}
         {(error || tx.error) && <p role="alert">{error ?? tx.error}</p>}
+        {session?.pending && !session.pending.hash && tx.submissionHash && <p className="break-all">{session.pending.safe ? 'Safe proposal' : 'Submitted transaction'}: <code>{tx.submissionHash}</code></p>}
         {link && <a href={link} className="underline" target="_blank" rel="noreferrer">View transaction</a>}
       </div>
     </ModalShell>}

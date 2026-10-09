@@ -19,7 +19,17 @@ const runtime = vi.hoisted(() => ({
   safe: false,
   quote: undefined as unknown,
   send: vi.fn(),
+  verifyDestinationMint: vi.fn(),
+  sourceClient: { chain: { id: 8453 } },
+  destinationClient: { chain: { id: 10 } },
   engine: null as null | { phase: string; notice?: string; receipt: { status: string; transactionHash: string; blockNumber: bigint } | null },
+}))
+vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
+  ...await importOriginal<typeof import('@bananapus/nana-sdk-core/v6')>(),
+  verifySuckerDestinationMint: runtime.verifyDestinationMint,
+}))
+vi.mock('@/lib/jbcenter-rpc', () => ({
+  jbCenterPublicClient: (chainId: number) => chainId === 10 ? runtime.destinationClient : runtime.sourceClient,
 }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address, isConnected: !!runtime.address }) }))
 vi.mock('@/hooks/useSafeTx', () => ({
@@ -60,7 +70,7 @@ import { FundBridgeActions } from '../src/components/FundBridgeActions'
 let host: HTMLDivElement
 let root: Root
 function makeRoute(): FundBridgeRoute {
-  const source = { chainId: 8453, projectId: 17n, account: runtime.address, blockNumber: 10n, creditBalance: 5n, erc20Balance: 0n, linkedPeers: [{ chainId: 10 }] }
+  const source = { chainId: 8453, projectId: 17n, account: runtime.address, blockNumber: 10n, creditBalance: 5n, erc20Balance: 0n, linkedPeers: [{ chainId: 10 }], tokenAddress: '0x6666666666666666666666666666666666666666', supportedController: true, knownOwnerWrapper: true, supportedTerminals: true, ruleset: { id: 1 } }
   const destination = { ...source, chainId: 10, projectId: 9n }
   return { source, destination, sourceSucker: '0x2222222222222222222222222222222222222222', destinationSucker: '0x3333333333333333333333333333333333333333', sourceToken: '0x4444444444444444444444444444444444444444', destinationToken: '0x5555555555555555555555555555555555555555', sourceContext: { symbol: 'USDC', decimals: 6 }, destinationContext: { symbol: 'USDC', decimals: 6 }, canPrepare: false, prepareIssue: 'Claim FUND credits as ERC20 tokens before bridging.', transport: 'ccip', baseFee: 1n } as unknown as FundBridgeRoute
 }
@@ -70,6 +80,7 @@ beforeEach(() => {
   runtime.route = makeRoute(); runtime.routeAvailable = true; runtime.routeError = false; runtime.historyError = false
   runtime.mounted = 0; runtime.unmounted = 0; runtime.enabled = []
   runtime.idle = false; runtime.safe = false; runtime.quote = undefined; runtime.engine = null; runtime.send.mockReset()
+  runtime.verifyDestinationMint.mockReset().mockResolvedValue(undefined)
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
 afterEach(async () => { await act(async () => { root.unmount() }); host.remove() })
@@ -129,11 +140,11 @@ it('reviews a move in the confirm dialog, listing its approval before any prompt
 })
 
 
-async function reviewApproval() {
+async function reviewApproval(allowance = 0n) {
   runtime.idle = true
   const route = makeRoute()
   runtime.route = { ...route, canPrepare: true, prepareIssue: undefined, source: { ...route.source, erc20Balance: 10n * 10n ** 18n } } as unknown as FundBridgeRoute
-  runtime.quote = { allowance: 0n, minTokensReclaimed: 5_000_000n, netReclaimAmount: 5_100_000n }
+  runtime.quote = { allowance, minTokensReclaimed: 5_000_000n, netReclaimAmount: 5_100_000n }
   await render()
   const input = [...host.querySelectorAll('label')].find(label => label.textContent?.startsWith('FUND to move'))!.querySelector('input')!
   await act(async () => {
@@ -143,6 +154,46 @@ async function reviewApproval() {
   await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Review move')!.click())
 }
 const approve = () => [...host.querySelectorAll<HTMLButtonElement>('[data-tx-confirm] button')].find(button => button.textContent === 'Approve FUND')!
+const prepare = () => [...host.querySelectorAll<HTMLButtonElement>('[data-tx-confirm] button')].find(button => button.textContent === 'Confirm & prepare')!
+
+it('rejects a destination mint denial before offering the source preparation to the wallet', async () => {
+  await reviewApproval(2n * 10n ** 18n)
+  runtime.verifyDestinationMint.mockRejectedValue(new Error('Destination peer cannot mint project tokens.'))
+  await act(async () => prepare().click())
+  expect(runtime.send).not.toHaveBeenCalled()
+  expect(runtime.verifyDestinationMint).toHaveBeenCalledWith(runtime.destinationClient, {
+    chainId: 10, projectId: 9n, sucker: runtime.route!.destinationSucker,
+    beneficiary: runtime.address, tokenCount: 2n * 10n ** 18n,
+  })
+  expect(host.textContent).toContain('Destination peer cannot mint project tokens.')
+  expect(host.textContent).toContain('Incoming FUND')
+  expect(runtime.unmounted).toBe(0)
+  expect(prepare().disabled).toBe(false)
+})
+
+it('rechecks destination mint authority before source submission and permits retry after a pre-wallet denial', async () => {
+  await reviewApproval(2n * 10n ** 18n)
+  const write = vi.fn()
+  runtime.send.mockImplementation(async (request: TxRequest, options: TxSendOptions) => {
+    await options.reverify?.()
+    options.beforeWrite?.()
+    write(request)
+  })
+  runtime.verifyDestinationMint.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('Destination peer cannot mint project tokens.'))
+  await act(async () => prepare().click())
+  expect(write).not.toHaveBeenCalled()
+  expect(runtime.verifyDestinationMint).toHaveBeenCalledTimes(2)
+  for (const call of runtime.verifyDestinationMint.mock.calls) expect(call).toEqual([
+    runtime.destinationClient,
+    { chainId: 10, projectId: 9n, sucker: runtime.route!.destinationSucker,
+      beneficiary: runtime.address, tokenCount: 2n * 10n ** 18n },
+  ])
+  expect(host.textContent).toContain('Destination peer cannot mint project tokens.')
+  expect(prepare().disabled).toBe(false)
+  await act(async () => prepare().click())
+  expect(write).toHaveBeenCalledOnce()
+  expect(runtime.verifyDestinationMint).toHaveBeenCalledTimes(4)
+})
 
 it('closes an unproven Safe outer revert without counting its approval or releasing the bridge lock', async () => {
   runtime.safe = true

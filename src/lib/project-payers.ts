@@ -4,6 +4,8 @@ import { decodeEventLog, encodeFunctionData, isAddress, isAddressEqual, parseAbi
 import { assertSafeProposalCall, type ExistingSafeProposal } from './sticky-session'
 import { bendystraw } from './bendystraw'
 import { safeExecutionRunsCalls, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
+import { verifyReviewedWriteReceipt } from '@bananapus/nana-sdk-core/review'
+import { withPrewalletReservation } from './prewallet-reservation'
 
 export type ProjectPayerRow = {
   chainId: number; projectId: number; version: number; address: Address
@@ -66,6 +68,31 @@ export function decodePayerAttempt(raw: string, chainId: JBChainId, projectId: b
   return attempt
 }
 
+/** Mutations share the project lock and compare the exact record reviewed by their caller. */
+export function persistPayerAttempt(storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>, chainId: JBChainId, projectId: bigint, next: PayerAttempt | null, expected: string | null, prewallet = false): string | null {
+  const key = payerAttemptKey(chainId, projectId)
+  const raw = next === null ? null : JSON.stringify(decodePayerAttempt(JSON.stringify(next), chainId, projectId))
+  if (raw !== null && storage.getItem(key) === raw) return raw
+  if (storage.getItem(key) !== expected) throw new Error('The saved payer deployment changed in another tab. Reload its recovery before continuing.')
+  const write = () => {
+    if (raw === null) storage.removeItem(key)
+    else storage.setItem(key, raw)
+    if (storage.getItem(key) !== raw) throw new Error('The browser could not save payer recovery. Keep the original transaction before continuing.')
+    return raw
+  }
+  if (!prewallet) return write()
+  if (!raw || !next || next.phase !== 'signing' || next.hash || next.executionHash || !next.id) throw new Error('Only a new pre-wallet payer attempt can reserve recovery.')
+  return withPrewalletReservation(storage, key, expected, raw, write)
+}
+
+export async function withPayerAttemptLock<T>(key: string, task: () => Promise<T>): Promise<T> {
+  if (typeof navigator === 'undefined' || typeof navigator.locks?.request !== 'function') throw new Error('Use a browser with Web Locks support to coordinate payer deployment recovery.')
+  return navigator.locks.request(key, { mode: 'exclusive', ifAvailable: true }, async lock => {
+    if (!lock) throw new Error('This payer deployment is being reviewed or checked in another tab.')
+    return task()
+  })
+}
+
 /** Existing component persistence owns the write; this only creates exact known-proposal recovery facts. */
 export function adoptPayerProposal(attempt: PayerAttempt, proposal: ExistingSafeProposal): PayerAttempt {
   const current = decodePayerAttempt(JSON.stringify(attempt), attempt.settings.chainId, BigInt(attempt.settings.projectId))
@@ -101,6 +128,16 @@ export async function verifyPayerReceipt(client: PublicClient, attempt: PayerAtt
   const [transaction, block] = await Promise.all([client.getTransaction({ hash: receipt.transactionHash }), client.getBlock({ blockNumber: receipt.blockNumber })])
   if (!receipt.blockHash || block.hash !== receipt.blockHash || transaction.blockHash !== receipt.blockHash || transaction.blockNumber !== receipt.blockNumber || transaction.hash !== receipt.transactionHash || transaction.chainId !== settings.chainId || receipt.blockNumber <= BigInt(attempt.afterBlock)) throw new Error('The payer receipt is no longer a matching canonical execution, or predates this attempt.')
   const data = encodeFunctionData(request)
+  const failed = async (): Promise<{ status: 'reverted' }> => {
+    if (!attempt.hash) throw new Error('The wallet did not return this attempt’s identity. A matching historical failure cannot release the payer deployment.')
+    const outcome = await verifyReviewedWriteReceipt(client, {
+      version: 1, id: attempt.id ?? `payer:${attempt.afterBlock}`, chainId: settings.chainId,
+      account, safe: attempt.safe, hash: attempt.hash,
+      call: { to: request.address, data, value: '0' },
+    }, receipt)
+    if (outcome !== 'failed') throw new Error('The saved payer deployment has not been proven failed.')
+    return { status: 'reverted' }
+  }
   if (attempt.safe) {
     if (!transaction.to || !isAddressEqual(transaction.to, account)) throw new Error('The payer transaction did not execute through the reviewed Safe.')
     if (!safeExecutionRunsCalls(transaction, account, [{ to: request.address, data, value: 0n }], false)) throw new Error('The Safe executed a different payer deployment call.')
@@ -108,10 +145,10 @@ export async function verifyPayerReceipt(client: PublicClient, attempt: PayerAtt
     // The saved proposal hash names this execution's event. Without one, this
     // transaction is the Safe's one execTransaction, so its own hash does.
     const result = safeExecutionResult(receipt, account, attempt.hash ?? receipt.transactionHash)
-    if (result.status === 'failed') return { status: 'reverted' }
+    if (result.status === 'failed') return failed()
     if (result.status !== 'success') throw new Error('The receipt does not prove successful execution of the reviewed Safe payer proposal.')
   } else if (!transaction.to || !isAddressEqual(transaction.to, request.address) || !isAddressEqual(transaction.from, account) || transaction.value !== 0n || transaction.input.toLowerCase() !== data.toLowerCase() || (attempt.hash && attempt.hash !== receipt.transactionHash)) throw new Error('The transaction differs from the reviewed payer deployment.')
-  if (receipt.status === 'reverted') return { status: 'reverted' }
+  if (receipt.status === 'reverted') return failed()
   const matches = receipt.logs.flatMap(log => {
     if (!isAddressEqual(log.address, request.address)) return []
     try {

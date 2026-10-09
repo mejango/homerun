@@ -2,13 +2,13 @@
 
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useId, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { formatUnits, isAddress, isAddressEqual, zeroAddress, type Address, type Hex } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { useSafeTx, txPhaseLabel } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { displayChainName, explorerAddressUrl, explorerTxUrl } from '@/lib/chainDisplay'
-import { adoptPayerProposal, buildPayerTransaction, checkPayerFactory, decodePayerAttempt, getProjectPayerAddresses, payerAttemptIdentity, payerAttemptKey, verifyPayerReceipt, type PayerAttempt, type ProjectPayerRow } from '@/lib/project-payers'
+import { adoptPayerProposal, buildPayerTransaction, checkPayerFactory, decodePayerAttempt, getProjectPayerAddresses, payerAttemptIdentity, payerAttemptKey, persistPayerAttempt, verifyPayerReceipt, withPayerAttemptLock, type PayerAttempt, type ProjectPayerRow } from '@/lib/project-payers'
 import { waitForSafeExecutionHash } from '@/lib/safe-connector'
 
 type Props = { chainId: JBChainId; projectId: bigint; tokenLabel?: string }
@@ -36,6 +36,7 @@ function ProjectPayerAddressContext({ chainId, projectId, tokenLabel = 'Project 
   const prefix = useId()
   const storageKey = payerAttemptKey(chainId, projectId)
   const [attempt, setAttempt] = useState<PayerAttempt | null>(null)
+  const storedRaw = useRef<string | null>(null)
   const [ready, setReady] = useState(false)
   const [storageError, setStorageError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -56,6 +57,7 @@ function ProjectPayerAddressContext({ chainId, projectId, tokenLabel = 'Project 
   useEffect(() => {
     try {
       const raw = localStorage.getItem(storageKey)
+      storedRaw.current = raw
       if (raw) {
         const saved = decodePayerAttempt(raw, chainId, projectId)
         // Persisted success is a recovery hint. Re-prove its receipt before
@@ -66,20 +68,19 @@ function ProjectPayerAddressContext({ chainId, projectId, tokenLabel = 'Project 
     setReady(true)
   }, [chainId, projectId, storageKey])
 
-  function save(next: PayerAttempt | null) {
-    // If durable storage fails, beforeWrite throws and the wallet never receives the call.
-    if (next) localStorage.setItem(storageKey, JSON.stringify(next))
-    else localStorage.removeItem(storageKey)
+  const save = useCallback((next: PayerAttempt | null, expected: string | null, prewallet = false) => {
+    storedRaw.current = persistPayerAttempt(localStorage, chainId, projectId, next, expected, prewallet)
     setAttempt(next)
-  }
+  }, [chainId, projectId])
   const confirmation = useQuery({
     queryKey: ['project-payer-confirmation', chainId, String(projectId), proofIdentity],
     enabled: !!client && unresolved && !!(attempt?.hash || attempt?.executionHash),
     queryFn: async ({ signal }) => {
       const saved = attempt!
+      const savedRaw = storedRaw.current
       const executionHash = saved.executionHash ?? (saved.safe ? await waitForSafeExecutionHash(chainId, saved.hash!, { signal }) : saved.hash!)
       const receipt = await client!.getTransactionReceipt({ hash: executionHash })
-      return { ...await verifyPayerReceipt(client!, saved, receipt), executionHash, proofFor: payerAttemptIdentity(saved) }
+      return { ...await verifyPayerReceipt(client!, saved, receipt), executionHash, proofFor: payerAttemptIdentity(saved), savedRaw }
     },
     staleTime: 0, refetchOnMount: 'always', retry: false, refetchInterval: unresolved ? 5_000 : false,
   })
@@ -87,9 +88,9 @@ function ProjectPayerAddressContext({ chainId, projectId, tokenLabel = 'Project 
     if (!confirmation.data || !confirmation.isFetchedAfterMount || confirmation.isFetching || confirmation.isError || confirmation.data.proofFor !== proofIdentity || !attempt || !unresolved) return
     const result = confirmation.data
     const next: PayerAttempt = { ...attempt, phase: result.status, executionHash: result.executionHash, ...(result.status === 'confirmed' ? { payer: result.payer } : {}) }
-    try { localStorage.setItem(storageKey, JSON.stringify(next)); setAttempt(next); tx.reset(); void rows.refetch() }
-    catch (reason) { setStorageError(message(reason)) }
-  }, [attempt, confirmation.data, confirmation.isFetchedAfterMount, confirmation.isFetching, confirmation.isError, proofIdentity, rows, storageKey, tx, unresolved])
+    void withPayerAttemptLock(storageKey, async () => { save(next, result.savedRaw); tx.reset(); void rows.refetch() })
+      .catch(reason => setStorageError(message(reason)))
+  }, [attempt, confirmation.data, confirmation.isFetchedAfterMount, confirmation.isFetching, confirmation.isError, proofIdentity, rows, save, storageKey, tx, unresolved])
 
   async function create() {
     if (!wallet.address) { wallet.openSignIn(); return }
@@ -111,29 +112,49 @@ function ProjectPayerAddressContext({ chainId, projectId, tokenLabel = 'Project 
           if (current.phase === 'signing' || current.phase === 'submitted') throw new Error('Another payer deployment is unresolved. Check its confirmation before creating another.')
         }
       }
-      const hash = await tx.send({ ...request, label: `Create ${tokenLabel} payer address` }, {
-        reviewedAccount: saved.account,
-        reviewNotice: `Create a dedicated payer address for project #${projectId} on ${displayChainName(chainId)}. ${addToBalance ? 'ETH received adds to the project balance without minting tokens.' : `ETH received pays the project; ${tokenLabel} goes to ${isAddressEqual(selectedBeneficiary, zeroAddress) ? 'the original payer' : selectedBeneficiary}. Direct ETH transfers accept the current minting rate with no minimum token amount.`} ${editable ? `Admin ${selectedOwner} may change the routing and beneficiary later.` : 'Routing is immutable because the admin is the zero address.'} Sending other tokens directly does not forward them. This creates a payer contract and spends only gas; it does not deploy a FUND or INCOME project.`,
-        reverify: async () => { await checkPayerFactory(client, chainId, projectId) },
-        onExistingProposal: proposal => { assertNoPending(); saved = adoptPayerProposal(saved, proposal); save(saved) },
-        beforeWrite: async () => {
-          saved.afterBlock = String(await client.getBlockNumber({ cacheTime: 0 }))
-          assertNoPending()
-          save(saved)
-        },
-        onBeforeWriteAborted: () => save(null),
-        onWriteRejected: () => save(null),
+      await withPayerAttemptLock(storageKey, async () => {
+        let attemptedRaw: string | null = null
+        const persistSubmitted = (hash: Hex, safe?: boolean) => {
+          if (!attemptedRaw || (safe !== undefined && saved.safe !== safe)) throw new Error('The saved payer deployment does not match the submitted wallet write.')
+          if (saved.hash === hash) return
+          const next: PayerAttempt = { ...saved, phase: 'submitted', hash }
+          save(next, attemptedRaw)
+          saved = next
+          attemptedRaw = storedRaw.current
+        }
+        const hash = await tx.send({ ...request, label: `Create ${tokenLabel} payer address` }, {
+          reviewedAccount: saved.account,
+          reviewNotice: `Create a dedicated payer address for project #${projectId} on ${displayChainName(chainId)}. ${addToBalance ? 'ETH received adds to the project balance without minting tokens.' : `ETH received pays the project; ${tokenLabel} goes to ${isAddressEqual(selectedBeneficiary, zeroAddress) ? 'the original payer' : selectedBeneficiary}. Direct ETH transfers accept the current minting rate with no minimum token amount.`} ${editable ? `Admin ${selectedOwner} may change the routing and beneficiary later.` : 'Routing is immutable because the admin is the zero address.'} Sending other tokens directly does not forward them. This creates a payer contract and spends only gas; it does not deploy a FUND or INCOME project.`,
+          reverify: async () => { await checkPayerFactory(client, chainId, projectId) },
+          onExistingProposal: proposal => { assertNoPending(); const previous = localStorage.getItem(storageKey); saved = adoptPayerProposal(saved, proposal); save(saved, previous); attemptedRaw = storedRaw.current },
+          durableRecovery: {
+            reserve: async () => {
+              saved.afterBlock = String(await client.getBlockNumber({ cacheTime: 0 }))
+              assertNoPending()
+              save(saved, localStorage.getItem(storageKey), true)
+              attemptedRaw = storedRaw.current
+            },
+            releaseUnsubmitted: () => {
+              if (!attemptedRaw) return
+              if (saved.hash || saved.executionHash) throw new Error('A submitted payer deployment must remain saved until its execution is verified.')
+              save(null, attemptedRaw)
+              attemptedRaw = null
+            },
+            submitted: persistSubmitted,
+          },
+        })
+        if (hash) persistSubmitted(hash)
       })
-      if (hash) save({ ...saved, phase: 'submitted', hash })
     } catch (reason) { setError(message(reason)) } finally { setPreparing(false) }
   }
   async function copy(address: Address) {
     try { await navigator.clipboard.writeText(address); setCopied(address) }
     catch { setError('Copy is unavailable in this browser. Select and copy the full address above.') }
   }
-  function recover() {
+  async function recover() {
     if (!attempt || !/^0x[0-9a-fA-F]{64}$/.test(recoveryHash.trim())) { setError('Enter the onchain transaction hash from your wallet or Safe execution.'); return }
-    try { setError(null); save({ ...attempt, executionHash: recoveryHash.trim() as Hex, phase: 'submitted' }) }
+    const expected = storedRaw.current
+    try { setError(null); await withPayerAttemptLock(storageKey, async () => save({ ...attempt, executionHash: recoveryHash.trim() as Hex, phase: 'submitted' }, expected)) }
     catch (reason) { setStorageError(message(reason)) }
   }
   const duplicates = (rows.data ?? []).filter(row => row.defaultAddToBalance === addToBalance && isAddressEqual(row.defaultBeneficiary, (isAddress(beneficiary.trim()) ? beneficiary.trim() : zeroAddress) as Address))
@@ -159,6 +180,7 @@ function ProjectPayerAddressContext({ chainId, projectId, tokenLabel = 'Project 
     {attempt && <div className="border-t border-[var(--line)] pt-6 text-sm" role="status">
       {attempt.phase === 'confirmed' && attempt.payer ? <><p>Payer deployment confirmed.</p><p className="mt-2 text-xs text-[var(--muted)]">This confirms the original deployment. Use the list above for current routing; an admin may have changed it. New addresses appear once indexed.</p></> : attempt.phase === 'reverted' ? <p>The payer deployment reverted. No payer was created by this call. Review the settings before trying again.</p> : <>
         <p>{attempt.safe && attempt.hash && !attempt.executionHash ? 'Proposed to Safe. Execution and onchain confirmation are still required.' : attempt.hash || attempt.executionHash ? 'Submitted. Verifying the payer deployment onchain…' : 'The wallet was asked to submit this deployment. Check your wallet before creating another payer address.'}</p>
+        {!attempt.hash && tx.submissionHash && <p className="mt-2 break-all">{attempt.safe ? 'Safe proposal' : 'Submitted transaction'}: <code>{tx.submissionHash}</code></p>}
         {confirmation.isError && <p className="mt-2">Confirmation is unavailable. {message(confirmation.error)}</p>}
         <details className="mt-3"><summary className="quiet-button cursor-pointer">Recover confirmation</summary><p className="mt-2 text-xs text-[var(--muted)]">Paste the executed transaction hash from your wallet or Safe. The call and settings are verified before another deployment is enabled.</p><label className="mt-3 block text-sm" htmlFor={`${prefix}-recovery`}>Onchain transaction hash</label><input id={`${prefix}-recovery`} className="mt-2 min-h-11 w-full rounded border border-[#bfc9b5] bg-white px-3" value={recoveryHash} onChange={event => setRecoveryHash(event.target.value)} placeholder="0x…" /><button type="button" className="btn-secondary mt-3 min-h-10 px-4" onClick={recover}>Verify execution</button></details>
       </>}

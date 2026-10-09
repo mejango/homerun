@@ -123,6 +123,7 @@ async function mount(incomeProjectId?: bigint) {
 }
 beforeEach(() => {
   localStorage.clear();
+  Object.defineProperty(navigator, "locks", { configurable: true, value: { request: vi.fn(async (_name: string, callback: () => unknown) => callback()) } });
   registry.StickyDeployer = { 1: DEPLOYER };
   vi.clearAllMocks();
   mocks.client = {};
@@ -145,6 +146,7 @@ afterEach(async () => {
   cache.clear();
   element.remove();
   localStorage.clear();
+  Reflect.deleteProperty(navigator, "locks");
 });
 describe("Sticky holder recovery and independent loading", () => {
   it("adopts a queued credit claim into the holder journal without a new wallet attempt", async () => {
@@ -154,6 +156,7 @@ describe("Sticky holder recovery and independent loading", () => {
     Object.defineProperty(navigator, "locks", { configurable: true, value: { request: async (_name: string, callback: () => unknown) => callback() } });
     mocks.send.mockImplementation(async (request: TxRequest, options: TxSendOptions) => {
       await options.onExistingProposal?.({ proposalHash: hash, call: { to: request.address, data: encodeFunctionData(request), value: request.value ?? 0n } });
+      await options.durableRecovery!.submitted(hash, true);
       return hash;
     });
     try {
@@ -221,12 +224,12 @@ describe("Sticky holder recovery and independent loading", () => {
     mocks.send.mockImplementation(
       async (
         _request: unknown,
-        options: { beforeWrite: () => Promise<void>; onBeforeWriteAborted: () => Promise<void> },
+        options: { durableRecovery: { reserve: () => Promise<void>; releaseUnsubmitted: () => Promise<void> } },
       ) => {
-        await options.beforeWrite();
+        await options.durableRecovery.reserve();
         marked = !!readStickyPending(localStorage, key);
         // A Safe connection that changes at the write: nothing reaches the wallet.
-        await options.onBeforeWriteAborted();
+        await options.durableRecovery.releaseUnsubmitted();
         return null;
       },
     );
@@ -284,6 +287,7 @@ describe("Sticky holder recovery and independent loading", () => {
           execution,
         );
         expect(readStickyPending(localStorage, key)).toBeNull();
+        expect(navigator.locks.request).toHaveBeenCalledWith(`sticky-submit:${key}`, expect.any(Function));
       } else {
         expect(verifyStickyExecution).not.toHaveBeenCalled();
         expect(readStickyPending(localStorage, key)).not.toBeNull();

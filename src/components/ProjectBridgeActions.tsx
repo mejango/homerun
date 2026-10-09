@@ -37,6 +37,7 @@ import {
   buildProjectBridgeClaim,
   readProjectBridgeMovements,
   readProjectBridgeSendValue,
+  verifyProjectBridgeDestinationMint,
   type ProjectBridgeRoute,
   type ProjectBridgeMovement,
 } from "@/lib/project-bridge";
@@ -518,6 +519,11 @@ function BridgePreparation<State extends BridgeProjectState>({
         fresh,
         count,
       );
+      await verifyProjectBridgeDestinationMint(
+        clientFor(fresh.destination.chainId),
+        fresh,
+        { amount: count, beneficiary },
+      );
       if (nextQuote.allowance < count) {
         const request = adapter.approval(fresh, count);
         await approval.send(
@@ -592,6 +598,11 @@ function BridgePreparation<State extends BridgeProjectState>({
               throw new Error(
                 "The bridge route, approval or minimum backing changed during review.",
               );
+            await verifyProjectBridgeDestinationMint(
+              clientFor(latest.destination.chainId),
+              latest,
+              { amount: count, beneficiary },
+            );
             adapter.prepare(latest, {
               amount: count,
               beneficiary,

@@ -38,7 +38,7 @@ import { displayChainName } from '../src/lib/chainDisplay'
 import { BLOCK_HASH, CHAIN_IDS, FUND_IDS, HELPER, OWNER, TOKEN, fundState, globalDraft, globalManifest, globalSnapshot, hashFor, launchInput, launchPlan } from './fixtures/income-global-launch'
 
 const KEY = incomeLaunchSessionKey(8453, 7n)
-type Callbacks = { reverify: () => Promise<unknown>; beforeWrite: () => Promise<void>; onWriteRejected: () => void; onBeforeWriteAborted: () => void }
+type Callbacks = { reverify: () => Promise<unknown>; durableRecovery: NonNullable<TxSendOptions['durableRecovery']> }
 function pending() { return readIncomeLaunchPending(localStorage, KEY) }
 function draft() { return readIncomeGlobalDraft(localStorage, 8453, 7n)! }
 function eventReceipt(chainId: number) {
@@ -213,14 +213,14 @@ describe('global INCOME launch flow', () => {
   })
 
   it('clears an unknown submission only after explicit wallet rejection', async () => {
-    runtime.send.mockImplementation(async (_request, callbacks: Callbacks) => { await callbacks.beforeWrite(); callbacks.onWriteRejected(); return null })
+    runtime.send.mockImplementation(async (_request, callbacks: Callbacks) => { await callbacks.durableRecovery.reserve(); callbacks.durableRecovery.releaseUnsubmitted(); return null })
     await ready(); await click('Review Base deployment'); expect(pending()).toBeNull()
   })
 
   it('withdraws the unknown submission when the write stops before the wallet', async () => {
     // A Safe connection that changes at the write: nothing reaches the wallet.
     let marked = false
-    runtime.send.mockImplementation(async (_request, callbacks: Callbacks) => { await callbacks.beforeWrite(); marked = !!pending(); callbacks.onBeforeWriteAborted(); return null })
+    runtime.send.mockImplementation(async (_request, callbacks: Callbacks) => { await callbacks.durableRecovery.reserve(); marked = !!pending(); callbacks.durableRecovery.releaseUnsubmitted(); return null })
     await ready(); await click('Review Base deployment')
     expect(marked).toBe(true)
     expect(pending()).toBeNull()
@@ -229,7 +229,7 @@ describe('global INCOME launch flow', () => {
   })
 
   it('rejects changed encoded request or fee before recording a write', async () => {
-    runtime.send.mockImplementation(async (_request, callbacks: Callbacks) => { runtime.prepare.mockImplementationOnce(async (_client, input) => ({ ...launchPlan(input), request: { ...launchPlan(input).request, value: 2n } })); await callbacks.reverify(); await callbacks.beforeWrite(); return null })
+    runtime.send.mockImplementation(async (_request, callbacks: Callbacks) => { runtime.prepare.mockImplementationOnce(async (_client, input) => ({ ...launchPlan(input), request: { ...launchPlan(input).request, value: 2n } })); await callbacks.reverify(); await callbacks.durableRecovery.reserve(); return null })
     await ready(); await click('Review Base deployment'); expect(host.textContent).toContain('deployment changed'); expect(pending()).toBeNull()
   })
 
@@ -294,6 +294,7 @@ describe('global INCOME launch flow', () => {
     runtime.waitSafe.mockRejectedValue(new Error('Still awaiting signatures'))
     runtime.send.mockImplementation(async (request: TxRequest, options: TxSendOptions) => {
       await options.onExistingProposal?.({ proposalHash: hashFor(8453), call: { to: request.address, data: encodeFunctionData(request), value: request.value ?? 0n } })
+      await options.durableRecovery!.submitted(hashFor(8453), true)
       return hashFor(8453)
     })
     await ready(); await click('Review Base deployment')
@@ -306,7 +307,7 @@ describe('global INCOME launch flow', () => {
   it('never treats a Safe proposal as a confirmed local deployment', async () => {
     runtime.safe = true; const proposal = BLOCK_HASH; let execute!: (hash: Hex) => void
     runtime.waitSafe.mockImplementation(() => new Promise<Hex>(resolve => { execute = resolve }))
-    runtime.send.mockImplementation(async (_request, callbacks: Callbacks) => { await callbacks.beforeWrite(); return proposal })
+    runtime.send.mockImplementation(async (_request, callbacks: Callbacks) => { await callbacks.durableRecovery.reserve(); await callbacks.durableRecovery.submitted(proposal, true); expect(pending()?.hash).toBe(proposal); return proposal })
     await ready(); await click('Review Base deployment')
     expect(pending()?.hash).toBe(proposal); expect(pending()?.safe).toBe(true); expect(runtime.verify).not.toHaveBeenCalled(); expect(host.textContent).toContain('0 of 4')
     await act(async () => execute(hashFor(8453)))
@@ -315,7 +316,7 @@ describe('global INCOME launch flow', () => {
 
   it('opens only one wallet review on immediate repeated clicks', async () => {
     let finish!: () => void; const submitted = new Promise<void>(resolve => { finish = resolve })
-    runtime.send.mockImplementation(async (_request, callbacks: Callbacks) => { await callbacks.beforeWrite(); await submitted; return null })
+    runtime.send.mockImplementation(async (_request, callbacks: Callbacks) => { await callbacks.durableRecovery.reserve(); await submitted; return null })
     await ready(); const deploy = button('Review Base deployment'); await act(async () => { deploy.click(); deploy.click(); await Promise.resolve() })
     expect(runtime.send).toHaveBeenCalledOnce(); await act(async () => finish()); expect(pending()?.phase).toBe('unknown')
   })
@@ -365,7 +366,7 @@ describe('global INCOME launch flow', () => {
     let callbacks!: Callbacks, finish!: () => void
     runtime.send.mockImplementation(async (_request, options: Callbacks) => { callbacks = options; await new Promise<void>(resolve => { finish = resolve }); return null })
     await ready(); await act(async () => { button('Review Base deployment').click(); await Promise.resolve() }); await render(true)
-    await expect(callbacks.beforeWrite()).rejects.toThrow('Refresh the FUND state'); expect(pending()).toBeNull(); await act(async () => finish())
+    await expect(callbacks.durableRecovery.reserve()).rejects.toThrow('Refresh the FUND state'); expect(pending()).toBeNull(); await act(async () => finish())
   })
 
   it('retains foreign or unconfirmed execution attempts without claiming completion', async () => {

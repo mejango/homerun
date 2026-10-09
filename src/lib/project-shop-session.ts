@@ -3,9 +3,10 @@ import { encodeFunctionData, zeroHash, type Hex, type PublicClient } from 'viem'
 import { FUND_CHAIN_IDS } from './fund-contracts'
 import { parseProjectShopWrite, projectShopWriteRequest, serializeProjectShopWrite, type PreparedProjectShopWrite } from './project-shop-write'
 import { assertSafeProposalCall, verifyStickyExecution, type ExistingSafeProposal, type StickyPending } from './sticky-session'
+import { withPrewalletReservation } from './prewallet-reservation'
 
 export type ShopWriteStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
-export type ShopWriteSubmission = { afterBlock: string; safe: boolean; startedAt: number; hash?: Hex }
+export type ShopWriteSubmission = { afterBlock: string; safe: boolean; startedAt: number; hash?: Hex; attemptId?: string }
 export type ShopWriteSession = {
   version: 1
   id: string
@@ -43,11 +44,13 @@ function validateKey(key: string): void {
 }
 
 function submission(value: unknown, minimumBlock: bigint): ShopWriteSubmission {
-  if (!object(value, ['afterBlock', 'safe', 'startedAt', 'hash']) || !uint(value.afterBlock)
+  if (!object(value, ['afterBlock', 'safe', 'startedAt', 'hash', 'attemptId']) || !uint(value.afterBlock)
     || BigInt(value.afterBlock) < minimumBlock || typeof value.safe !== 'boolean'
     || !Number.isSafeInteger(value.startedAt) || (value.startedAt as number) <= 0
+    || (value.attemptId !== undefined && (typeof value.attemptId !== 'string' || !UUID.test(value.attemptId)))
     || (value.hash !== undefined && !hash(value.hash))) throw invalid()
   return { afterBlock: value.afterBlock, safe: value.safe, startedAt: value.startedAt as number,
+    ...(value.attemptId === undefined ? {} : { attemptId: value.attemptId as string }),
     ...(value.hash === undefined ? {} : { hash: (value.hash as Hex).toLowerCase() as Hex }) }
 }
 
@@ -105,12 +108,15 @@ function matchingCurrent(storage: ShopWriteStorage, key: string, session: ShopWr
   return current
 }
 
-function persist(storage: ShopWriteStorage, key: string, session: ShopWriteSession): ShopWriteSession {
+function persist(storage: ShopWriteStorage, key: string, session: ShopWriteSession, previousRaw?: string | null): ShopWriteSession {
   const next = validated(session, key)
   const raw = encode(next)
-  storage.setItem(key, raw)
-  if (storage.getItem(key) !== raw) throw new Error('The browser could not save shop recovery data. Do not submit until the saved record is restored.')
-  return next
+  const write = () => {
+    storage.setItem(key, raw)
+    if (storage.getItem(key) !== raw) throw new Error('The browser could not save shop recovery data. Do not submit until the saved record is restored.')
+    return next
+  }
+  return previousRaw === undefined ? write() : withPrewalletReservation(storage, key, previousRaw, raw, write)
 }
 
 /** Call while holding withShopWriteLock; an existing record must be resolved, regardless of its account. */
@@ -144,7 +150,7 @@ export function beginShopWriteSubmission(storage: ShopWriteStorage, key: string,
   if (current.pending) throw new Error('A shop transaction may already be pending. Verify its execution before submitting another.')
   if (shopWriteRequestIndex(current) === null) throw new Error('This shop update has already completed.')
   if (typeof options.afterBlock !== 'bigint') throw invalid()
-  return persist(storage, key, { ...current, pending: { safe: options.safe, afterBlock: options.afterBlock.toString(), startedAt: Date.now() } })
+  return persist(storage, key, { ...current, pending: { safe: options.safe, afterBlock: options.afterBlock.toString(), startedAt: Date.now(), attemptId: globalThis.crypto.randomUUID() } }, storage.getItem(key))
 }
 
 /** Adopt the exact next call after proving the immutable plan's historical prerequisites. */
@@ -161,6 +167,8 @@ export async function adoptShopWriteProposal(client: PublicClient, storage: Shop
 }
 export function recordShopWriteHash(storage: ShopWriteStorage, key: string, session: ShopWriteSession, transactionHash: Hex): ShopWriteSession {
   if (!hash(transactionHash)) throw new Error('Invalid shop transaction or Safe proposal hash.')
+  const persisted = readShopWriteSession(storage, key)
+  if (session.pending && persisted && encode(persisted) === encode(validated({ ...session, pending: { ...session.pending, hash: transactionHash.toLowerCase() as Hex } }, key))) return persisted
   const current = matchingCurrent(storage, key, session)
   if (!current.pending) throw new Error('The pending shop submission is missing.')
   if (current.pending.hash && current.pending.hash !== transactionHash.toLowerCase()) throw new Error('A different shop transaction is already pending. Verify that execution before recording another hash.')

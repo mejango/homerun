@@ -193,16 +193,30 @@ function IncomeChainActions({ local, draft, manifest, clients, client, rootState
     await withIncomeLaunchLock(key, async () => {
       sameFrozenPlan(draft); if (readIncomeLaunchPending(localStorage, key)) throw new Error('A deployment may already be pending on this network.')
       let record: IncomeLaunchPending | null = null
+      const persistSubmitted = (hash: Hex, safe?: boolean) => {
+        if (!record || (safe !== undefined && record.safe !== safe)) throw new Error('The saved INCOME launch does not match the submitted wallet write.')
+        if (record.hash === hash) return
+        record = recordIncomeLaunchHash(localStorage, key, record, hash)
+        changed()
+      }
       const hash = await tx.send({ ...captured.plan.request, label: `Deploy INCOME on ${displayChainName(chainId)}` }, {
         reviewedAccount: captured.input.account,
         reviewNotice: 'You attest that the published global snapshot includes every FUND holder, unclaimed credit, and unsettled bridge entitlement. The contract records the allocation; it does not prove historical completeness. This transaction records only this network’s share of the global 500,000 allocation as an auto-issuance held for the FUND owner. Once the shared stage starts anyone can mint it to whoever owns the FUND, who settles it to the snapshot holders per the published allocation. Other networks deploy separately; there is no all-networks-ready barrier. Local payments may start before the full launch is finished. The shared issuance schedule, metadata, and reserved percentages are frozen.',
         reverify: async () => { if (unavailableRef.current) throw new Error('Refresh the FUND state before launching INCOME.'); sameFrozenPlan(draft); const current = await prepareIncomeLaunch(client, captured.input); if (!sameRequest(current.request, captured.plan.request) || current.manifestHash !== captured.plan.manifestHash) throw new Error('The deployment changed. Prepare and review this network again.') },
         onExistingProposal: proposal => { sameFrozenPlan(draft); record = adoptIncomeLaunchProposal(localStorage, key, captured.plan.request, projectId, account, proposal); changed() },
-        beforeWrite: async () => { if (unavailableRef.current) throw new Error('Refresh the FUND state before launching INCOME.'); sameFrozenPlan(draft); const block = await client.getBlock({ blockTag: 'latest' }); if (block.number === null || await client.getChainId() !== chainId) throw new Error('The submission network could not be verified.'); record = beginIncomeLaunchSubmission(localStorage, key, captured.plan.request, projectId, account, isSafeConnection(wagmiConfig), block.number); changed() },
-        onWriteRejected: () => { if (record) { clearIncomeLaunchPending(localStorage, key, record); changed() } },
-        // Nothing reached the wallet, so the pending record is withdrawn.
-        onBeforeWriteAborted: () => { if (record) { clearIncomeLaunchPending(localStorage, key, record); changed() } },
-      }); if (hash && record) { recordIncomeLaunchHash(localStorage, key, record, hash); changed() }
+        durableRecovery: {
+          reserve: async () => { if (unavailableRef.current) throw new Error('Refresh the FUND state before launching INCOME.'); sameFrozenPlan(draft); const block = await client.getBlock({ blockTag: 'latest' }); if (block.number === null || await client.getChainId() !== chainId) throw new Error('The submission network could not be verified.'); record = beginIncomeLaunchSubmission(localStorage, key, captured.plan.request, projectId, account, isSafeConnection(wagmiConfig), block.number); changed() },
+          releaseUnsubmitted: () => {
+            if (!record) return
+            if (record.hash) throw new Error('A submitted INCOME launch must remain saved until its execution is verified.')
+            clearIncomeLaunchPending(localStorage, key, record)
+            record = null
+            changed()
+          },
+          submitted: persistSubmitted,
+        },
+      })
+      if (hash) persistSubmitted(hash)
     })
   }) }
   async function recover() { const record = local.execution?.record ?? pending; if (!record || !HASH.test(executionHash)) return; await run(() => confirm(record, executionHash as Hex)) }
@@ -221,6 +235,7 @@ function IncomeChainActions({ local, draft, manifest, clients, client, rootState
     <details><summary className="cursor-pointer text-sm">Restore this network’s transaction</summary><label className="mt-4 grid gap-2 text-sm">Recovery record<input type="file" accept="application/json,.json" disabled={working} onChange={event => { void restore(event.target.files?.[0]); event.target.value = '' }} /></label></details>
     <div role="status" className="text-sm" aria-live="polite">{notice && <p>{notice}</p>}{tx.safeProposalHash && <p>Proposed to Safe; execution is still required.</p>}{link && <a className="underline" href={link} target="_blank" rel="noreferrer">View deployment transaction</a>}</div>
     {(error || journalError || tx.error) && <p role="alert" className="text-sm text-red-800">{error ?? journalError ?? tx.error}</p>}
+    {pending && !pending.hash && tx.submissionHash && <p className="break-all text-sm">{pending.safe ? 'Safe proposal' : 'Submitted transaction'}: <code>{tx.submissionHash}</code></p>}
     {verifiedId && !(rootState.chainId === chainId && rootIncomeId === verifiedId) && (embedExistingProject ? <IncomeProject chainId={chainId} projectId={verifiedId} fundProjectId={projectId} /> : <a className="w-fit text-sm underline" href={projectPath(chainId, verifiedId)}>Open INCOME on {displayChainName(chainId)} →</a>)}
   </section>
 }
