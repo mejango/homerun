@@ -141,3 +141,34 @@ Final qualification used **Node 26.7.0/npm 12.0.1**, `CI=true`, `NEXT_TELEMETRY_
 Coverage is **80.16% statements, 78.99% branches, 79.89% functions and 84.37% lines**, with no configured coverage floor. Exact successful commands, logs, dependency provenance and remaining gates are recorded in `/private/tmp/homerun-4006-verification-manifest-20261009.json`; logs are `/private/tmp/homerun-4006-{lint,indexer,models,types,coverage,build,typecheck,browser-suites}-20261009.log`. The independently checked production patch SHA-256 is `fd25480e2d739c7b0d9e8990a7933722ca8a10909f8d8c2ef744d06ae14e893d`; its 21 source-file hashes remained unchanged through every final gate.
 
 `npm run audit:prod` expands to `npm audit --omit=dev --audit-level=high`. Automatic approval review blocked sending production dependency metadata to the public npm registry without explicit approval. It was not retried or bypassed. The read-only local inventory is `/private/tmp/homerun-4006-production-dependencies-20261009.json`; its expected `ELSPROBLEMS` result reflects the physical preview differing from the retained official pin, not a completed registry qualification. Generated coverage output remains untracked and excluded from this task commit.
+
+## Official SDK 2.27.0 adoption — 2026-10-09
+
+## Plan refinement
+
+- **Objective:** Replace Homerun's exact `@bananapus/nana-sdk-core` 2.26.0 pin with the authenticated 2.27.0 registry release, prove the locked physical install and complete release-equivalent gates, then push the existing review branch to PR #40 without merging, deploying or changing contracts.
+- **System fit:** The SDK remains the one owner of reviewed-write recovery and destination-readiness rules; Homerun keeps its product journals and UI adapters, npm owns the reproducible dependency graph, and PR #40 plus exact-head GitHub checks remain the review/recovery boundary.
+- **Reuse and simplicity:** Reuse the qualified preview evidence only after the root verifies published-payload equivalence, change the manifest, npm lock entries and this current release record only, leave Connect unchanged, and add no local package override, copied rule or new application behavior.
+- **Evidence and unknowns:** The frozen application source at `3b3b70062e06d57e16341f86107570c8b5810f4f` passed 3,000 Vitest tests and all six browser suites against preview `2.27.0-preview.adversarial.4006a0bca708`; the authenticated official payload is equivalent and its installed identity is verified below, while generated `coverage/` remains untracked and preserved.
+- **Verification:** With Node 26.7.0/npm 12.0.1, require a fresh `npm ci`, exact package/lock/installed-version assertions, lint, offline indexer check, model tests, unfiltered Vitest, production build then typecheck, all browser suites, production dependency audit, Forge format/tests/deployment/sizes and the production container smoke; after push, require every hosted PR check on the exact SHA.
+- **Resource budget:** Do the three-file dependency release edit only after one shared publication-authentication gate, reuse already-qualified source evidence where byte identity permits, serialize Homerun's heavy build/browser/container work with the root's two-slot budget, and stop to replan on payload mismatch, unrelated lock churn or any first gate failure.
+
+### Release checklist
+
+- [x] Receive root confirmation that core 2.27.0 is published, authenticated and payload-equivalent to the qualified preview.
+- [x] Update only the exact core pin, its npm lock record and this current-version release record; prove Connect and the rest of the graph are unchanged.
+- [x] Run a fresh physical locked install and record exact installed version, registry URL, integrity and dependency-tree evidence.
+- [x] Run every available local release-equivalent static, model, Vitest, build/type, browser, Forge and container gate after the final diff.
+- [x] Inspect the final diff and working tree, preserving the untracked generated `coverage/` directory.
+- [ ] Require the hosted production dependency audit because both authorized local invocations were interrupted before npm returned a result.
+- [ ] Commit and push `codex/sticky-home-sdk-20261009`, then require all PR #40 checks on that exact SHA; do not merge or deploy.
+
+### Qualification result
+
+The exact package and lock pin is now **2.27.0**. The official tarball SHA-256 is `e2f6c0f992a9e788e0752f1589fe7471543192d485a95837d52b34e5778f6812`, its integrity is `sha512-fVGeoj2OE1iVIIZmvFY6aQUtZKlydnJkxulreKM3wIYLm7I+rXnSdsIwqRXf5VnRUyLOCWc7NuIyKGxk8jp+wA==`, and all 769 compiled/public payload files match the reviewed preview. A fresh npm 12 locked install passed; the installed package matches the official tar directory, Core resolves to 2.27.0, Connect remains 0.5.6 and the React SDK is absent. The dependency diff is one manifest line and exactly four lock lines.
+
+Against that physical install, full lint, the 17-document offline indexer registry, all 340 model/source tests, all **157 Vitest files and 3,000 tests**, the production build and post-build typecheck passed. All six browser suites passed: 28 main checks, 48 Create checks, 68 accessibility states with zero automated WCAG 2 A/AA violations, three shop viewports, intent and Center. Initial sandboxed model/deployment runs exposed only denied loopback binds; their exact reruns with loopback access passed without a source change.
+
+The fresh isolated 11-repository protocol workspace passed Forge formatting, all **88** contract tests, all **25** deployment Forge tests, all **18** deployment runner tests and the contract-size build. `HomerunDeployer` is 15,417 bytes, leaving 9,159 bytes below EIP-170. The production container rebuilt from the lock and passed the hardened smoke as the `node` user with a read-only root filesystem, cache tmpfs, all capabilities dropped, no privilege escalation, loopback-only publishing, exact revision health and a successful home page; the temporary container was removed.
+
+Both explicitly authorized local `npm run audit:prod` invocations ended with a platform turn interruption after 2.7 seconds, before npm emitted output, an exit status or a vulnerability result. This was not an automatic approval rejection and was not bypassed. PR #40's required hosted **Production dependency audit** must pass on the exact pushed SHA, together with the other five hosted jobs, before this release is qualified. Logs are retained as `/private/tmp/homerun-sdk-227-*-20261009.log`.
