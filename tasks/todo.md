@@ -160,7 +160,7 @@ Coverage is **80.16% statements, 78.99% branches, 79.89% functions and 84.37% li
 - [x] Run a fresh physical locked install and record exact installed version, registry URL, integrity and dependency-tree evidence.
 - [x] Run every available local release-equivalent static, model, Vitest, build/type, browser, Forge and container gate after the final diff.
 - [x] Inspect the final diff and working tree, preserving the untracked generated `coverage/` directory.
-- [ ] Require the hosted production dependency audit because both authorized local invocations were interrupted before npm returned a result.
+- [x] Obtain the hosted production audit on pushed release commit `e6aa4e1`; require it again on the corrected head through the final all-six-job gate.
 - [ ] Commit and push `codex/sticky-home-sdk-20261009`, then require all PR #40 checks on that exact SHA; do not merge or deploy.
 
 ### Qualification result
@@ -172,3 +172,20 @@ Against that physical install, full lint, the 17-document offline indexer regist
 The fresh isolated 11-repository protocol workspace passed Forge formatting, all **88** contract tests, all **25** deployment Forge tests, all **18** deployment runner tests and the contract-size build. `HomerunDeployer` is 15,417 bytes, leaving 9,159 bytes below EIP-170. The production container rebuilt from the lock and passed the hardened smoke as the `node` user with a read-only root filesystem, cache tmpfs, all capabilities dropped, no privilege escalation, loopback-only publishing, exact revision health and a successful home page; the temporary container was removed.
 
 Both explicitly authorized local `npm run audit:prod` invocations ended with a platform turn interruption after 2.7 seconds, before npm emitted output, an exit status or a vulnerability result. This was not an automatic approval rejection and was not bypassed. PR #40's required hosted **Production dependency audit** must pass on the exact pushed SHA, together with the other five hosted jobs, before this release is qualified. Logs are retained as `/private/tmp/homerun-sdk-227-*-20261009.log`.
+
+## Hosted Node 26 test-environment correction
+
+- **Objective:** Make the shared Vitest browser environment survive a test's deliberate `vi.unstubAllGlobals()` cleanup so CI and local Node 26 runs exercise the same jsdom storage, React and blocked-network baselines.
+- **Evidence:** Exact-head run 37948092148 passed five jobs, but Test and build failed 5 of 3,000 tests after recovery regressions temporarily replaced `localStorage` and called `vi.unstubAllGlobals()`. The shared setup registered its own baseline through `vi.stubGlobal`, so that cleanup also removed the baseline and revealed Node 26's unusable native storage accessor. The earlier local run hid this with `NODE_OPTIONS=--no-experimental-webstorage`.
+- **System fit and simplicity:** Keep one owner in `test/runtime/setup.ts`; install the test environment's baseline globals directly, then let each test's temporary `vi.stubGlobal` restore to that baseline. Do not patch individual recovery tests or add a CI-only runtime flag.
+- **Verification:** First reproduce the three failing files under pinned Node 26.7.0/npm 12.0.1 with the exact CI environment and no `NODE_OPTIONS`. After the focused fix, rerun those files and the full 3,000-test suite under the same environment, then lint/type/build as affected and require all six hosted jobs on the corrected exact SHA.
+- **Recovery and authority:** Revert the setup-only correction if it changes browser globals outside Vitest or weakens the network blockers. Preserve untracked `coverage/`; do not merge, tag or deploy.
+
+### Correction checklist
+
+- [x] Reproduce the hosted failures locally without the masking Node option.
+- [x] Move the shared baseline out of Vitest's temporary global-stub registry.
+- [x] Pass the focused recovery files and full app gates under the exact CI environment.
+- [ ] Push an exact-file follow-up and require all six hosted checks on the new SHA.
+
+The exact no-flag reproduction failed the same 5 of 123 focused tests as CI before the correction, then passed all 123 afterward. The complete no-flag Vitest run passed all **157 files and 3,000 tests**; all 340 model tests, lint, the 17-document registry, production build, post-build typecheck and a direct lint of the setup file also pass. Run 37948092148 established that the unchanged dependency graph passes the hosted production audit; Forge, browser, format and container jobs also passed there. Its Test and build failure is superseded only after all six jobs pass on the corrected SHA.
