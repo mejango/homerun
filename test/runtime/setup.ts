@@ -10,21 +10,32 @@ function blockedNetworkConstructor(transport: string) {
   }
 }
 
+function installTestGlobal(name: string, value: unknown) {
+  Object.defineProperty(globalThis, name, {
+    configurable: true,
+    value,
+    writable: true,
+  })
+}
+
 beforeEach(() => {
   // Match the reference Vitest config's clearMocks policy for shared spies.
   vi.clearAllMocks()
-  // Node 26 exposes native storage; browser tests use the document storage.
+  // These are the environment baseline, not temporary test stubs. Recovery
+  // tests use unstubAllGlobals() after simulating a broken storage provider;
+  // their cleanup must restore jsdom and the network guards instead of
+  // exposing Node 26's native globals.
   const browser = (globalThis as unknown as { jsdom?: { window: Window } }).jsdom?.window
   if (browser) {
-    vi.stubGlobal('localStorage', browser.localStorage)
-    vi.stubGlobal('sessionStorage', browser.sessionStorage)
+    installTestGlobal('localStorage', browser.localStorage)
+    installTestGlobal('sessionStorage', browser.sessionStorage)
   }
   // React 19 requires test environments to opt into act() semantics
   // explicitly. Every renderer mutation in the component suites is wrapped
   // in act(), so advertise that contract and fail loudly if a future test is
   // not.
-  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
-  vi.stubGlobal(
+  installTestGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  installTestGlobal(
     'fetch',
     vi.fn(async input => {
       throw new Error(
@@ -32,9 +43,9 @@ beforeEach(() => {
       )
     }),
   )
-  vi.stubGlobal('XMLHttpRequest', blockedNetworkConstructor('XMLHttpRequest'))
-  vi.stubGlobal('WebSocket', blockedNetworkConstructor('WebSocket'))
-  vi.stubGlobal('EventSource', blockedNetworkConstructor('EventSource'))
+  installTestGlobal('XMLHttpRequest', blockedNetworkConstructor('XMLHttpRequest'))
+  installTestGlobal('WebSocket', blockedNetworkConstructor('WebSocket'))
+  installTestGlobal('EventSource', blockedNetworkConstructor('EventSource'))
 })
 
 afterEach(() => {
