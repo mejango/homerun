@@ -5,8 +5,9 @@ import { encodeAbiParameters, encodeEventTopics, encodeFunctionData, parseAbi, z
 import { buildFundLaunch, initialFundRuleset, type FundLaunchInput } from '../src/lib/fund-contracts'
 import { homerunDeployerAbi } from '../src/lib/income-contracts'
 import { HOMERUN_ALLOWLIST_HOOK } from './fixtures/homerun-deployer'
-import { checkLaunchDeployment, fundLaunchFailed, verifyFailedFundLaunch, verifyFundLaunch } from '../src/lib/fund-launch-verification'
+import { checkLaunchDeployment, fundLaunchFailed, verifyFailedFundLaunch, verifyFundLaunch, verifyReturnedFundWriteFailure } from '../src/lib/fund-launch-verification'
 import { safeExecutionLog } from './support/safe-logs'
+import { placeReceipt } from './support/recovery-receipt'
 
 vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fixtures/homerun-deployer')).withHomerunDeployer(await importOriginal()))
 
@@ -62,6 +63,24 @@ function fixture(options: { linked?: boolean; safe?: boolean; future?: boolean; 
 }
 
 describe('FUND launch confirmation', () => {
+  it.each(['finalized', 'nonfinal', 'different hash', 'missing provenance', 'wrong calldata'])('requires the wallet-recorded ordinary failure at finality: %s', async kind => {
+    const f = fixture()
+    Object.assign(f.receipt, { status: 'reverted', logs: [] })
+    const transaction = { ...f.tx, hash, blockHash, blockNumber: f.receipt.blockNumber }
+    if (kind === 'wrong calldata') transaction.input = '0x'
+    placeReceipt(transaction, f.receipt)
+    const client = { ...f.client,
+      getTransaction: vi.fn(async () => transaction),
+      getTransactionReceipt: vi.fn(async () => f.receipt),
+      getBlock: vi.fn(async ({ blockNumber }: { blockNumber?: bigint }) => ({ number: blockNumber ?? (kind === 'nonfinal' ? 122n : 123n), hash: blockHash, timestamp: 1100n })),
+    } as unknown as PublicClient
+    const proof = verifyReturnedFundWriteFailure(client, f.request, f.input, f.receipt, {
+      hash: kind === 'different hash' ? `0x${'ef'.repeat(32)}` : hash, safe: false,
+      ...(kind !== 'missing provenance' ? { walletReturned: true as const } : {}),
+    })
+    if (kind === 'finalized') await expect(proof).resolves.toBeUndefined()
+    else await expect(proof).rejects.toThrow()
+  })
   it('verifies relayed launches against the signed call and every project postcondition', async () => {
     const f = fixture({ linked: true })
     const target = v6Address('ERC2771Forwarder', 8453)

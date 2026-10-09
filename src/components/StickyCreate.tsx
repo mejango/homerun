@@ -18,6 +18,7 @@ import {
 import type { FundProjectState } from "@/lib/fund-state";
 import {
   recordStickyHash,
+  releaseStickyUnsubmitted,
   stickySessionKey,
   type StickyPending,
 } from "@/lib/sticky-session";
@@ -127,61 +128,66 @@ export function StickyCreate({
   const recover = useCallback(
     async (record: StickyPending, hash: Hex, expectedProjectId?: string) => {
       const result = await verifyStickyCreationExecution(client, record, hash);
-      if (result.status === "confirmed") {
-        if (
-          expectedProjectId &&
-          result.projectId.toString() !== expectedProjectId
-        )
-          throw new Error(
-            "The saved project ID does not match its canonical creation event.",
+      if (!navigator.locks) throw new Error("Use a browser with Web Locks support to coordinate Sticky recovery across tabs.");
+      await navigator.locks.request(`homerun-sticky-create:${record.chainId}:${record.projectId}`, () => {
+        if (result.status === "confirmed") {
+          if (
+            expectedProjectId &&
+            result.projectId.toString() !== expectedProjectId
+          )
+            throw new Error(
+              "The saved project ID does not match its canonical creation event.",
+            );
+          // Save completion first. A reload between these writes must retain duplicate protection.
+          const existing = readStickyCreated(
+            localStorage,
+            record.chainId,
+            BigInt(record.projectId),
           );
-        // Save completion first. A reload between these writes must retain duplicate protection.
-        const existing = readStickyCreated(
-          localStorage,
-          record.chainId,
-          BigInt(record.projectId),
-        );
-        if (
-          existing &&
-          (existing.executionHash !== hash ||
-            existing.projectId !== result.projectId.toString())
-        )
-          throw new Error(
-            "A different Sticky creation is already saved for this FUND. Resolve both executions before continuing.",
+          if (
+            existing &&
+            (existing.executionHash !== hash ||
+              existing.projectId !== result.projectId.toString())
+          )
+            throw new Error(
+              "A different Sticky creation is already saved for this FUND. Resolve both executions before continuing.",
+            );
+          const unresolved = readStickyCreationPending(
+            localStorage,
+            record.chainId,
+            BigInt(record.projectId),
+            record.holder,
           );
-        const unresolved = readStickyCreationPending(
-          localStorage,
-          record.chainId,
-          BigInt(record.projectId),
-          record.holder,
-        );
-        if (!existing)
-          saveStickyCreated(localStorage, record, hash, result.projectId);
-        if (unresolved) clearStickyCreationPending(localStorage, record);
-        if (!existing || unresolved) changed();
-        if (liveScope.current === `${record.chainId}:${record.projectId}`) {
-          setVerifying(false);
-          setVerifiedId({ scope: liveScope.current, id: result.projectId });
-          const receiptKey = `${record.chainId}:${hash}`;
-          if (notified.current !== receiptKey) {
-            notified.current = receiptKey;
-            callback.current(result.projectId);
+          if (unresolved && JSON.stringify(unresolved) !== JSON.stringify(record))
+            throw new Error("The saved Sticky creation changed during verification. Keep its current record and check again.");
+          if (!existing)
+            saveStickyCreated(localStorage, record, hash, result.projectId);
+          if (unresolved) clearStickyCreationPending(localStorage, record);
+          if (!existing || unresolved) changed();
+          if (liveScope.current === `${record.chainId}:${record.projectId}`) {
+            setVerifying(false);
+            setVerifiedId({ scope: liveScope.current, id: result.projectId });
+            const receiptKey = `${record.chainId}:${hash}`;
+            if (notified.current !== receiptKey) {
+              notified.current = receiptKey;
+              callback.current(result.projectId);
+            }
+          }
+        } else {
+          if (expectedProjectId)
+            throw new Error(
+              "The saved completed creation has no successful execution.",
+            );
+          clearStickyCreationPending(localStorage, record);
+          changed();
+          if (liveScope.current === `${record.chainId}:${record.projectId}`) {
+            setVerifying(false);
+            setError(
+              "The exact creation transaction reverted. No Sticky project was created by that call; prepare a fresh review.",
+            );
           }
         }
-      } else {
-        if (expectedProjectId)
-          throw new Error(
-            "The saved completed creation has no successful execution.",
-          );
-        clearStickyCreationPending(localStorage, record);
-        changed();
-        if (liveScope.current === `${record.chainId}:${record.projectId}`) {
-          setVerifying(false);
-          setError(
-            "The exact creation transaction reverted. No Sticky project was created by that call; prepare a fresh review.",
-          );
-        }
-      }
+      });
     },
     [client],
   );
@@ -316,6 +322,15 @@ export function StickyCreate({
     const reviewed = prepared,
       captured = identity;
     let saved: StickyPending | null = null;
+    const persistSubmitted = async (hash: Hex, safe?: boolean) => {
+      await navigator.locks.request(`homerun-sticky-create:${scope}`, () => {
+        if (!saved || (safe !== undefined && saved.safe !== safe))
+          throw new Error("The saved Sticky creation does not match the submitted wallet write.");
+        if (saved.hash === hash) return;
+        saved = recordStickyHash(localStorage, stickySessionKey(saved.chainId, BigInt(saved.projectId), saved.holder), hash, saved);
+        changed();
+      });
+    };
     setError(null);
     try {
       const hash = await tx.send(
@@ -365,64 +380,61 @@ export function StickyCreate({
               changed();
             });
           },
-          beforeWrite: async () => {
-            if (liveUnavailable.current)
-              throw new Error(
-                "FUND verification is unavailable. Refresh before creating SHARE.",
-              );
-            if (captured !== liveIdentity.current)
-              throw new Error("The creation context changed before signing.");
-            if (!navigator.locks)
-              throw new Error(
-                "Use a browser with Web Locks support to coordinate creation across tabs.",
-              );
-            await navigator.locks.request(
-              `homerun-sticky-create:${scope}`,
-              async () => {
-                if ((await client.getChainId()) !== reviewed.fund.chainId)
-                  throw new Error("The creation RPC changed networks.");
-                const block = await client.getBlock({ blockTag: "latest" });
-                if (block.number === null || !block.hash)
-                  throw new Error(
-                    "A mined block is required before submission.",
-                  );
-                if (
-                  liveUnavailable.current ||
-                  captured !== liveIdentity.current
-                )
-                  throw new Error(
-                    "FUND verification or the creation context changed before signing.",
-                  );
-                saved = beginStickyCreationSubmission(
-                  localStorage,
-                  reviewed,
-                  address,
-                  isSafeConnection(wagmiConfig),
-                  block.number,
+          durableRecovery: {
+            reserve: async () => {
+              if (liveUnavailable.current)
+                throw new Error(
+                  "FUND verification is unavailable. Refresh before creating SHARE.",
                 );
+              if (captured !== liveIdentity.current)
+                throw new Error("The creation context changed before signing.");
+              if (!navigator.locks)
+                throw new Error(
+                  "Use a browser with Web Locks support to coordinate creation across tabs.",
+                );
+              await navigator.locks.request(
+                `homerun-sticky-create:${scope}`,
+                async () => {
+                  if ((await client.getChainId()) !== reviewed.fund.chainId)
+                    throw new Error("The creation RPC changed networks.");
+                  const block = await client.getBlock({ blockTag: "latest" });
+                  if (block.number === null || !block.hash)
+                    throw new Error(
+                      "A mined block is required before submission.",
+                    );
+                  if (
+                    liveUnavailable.current ||
+                    captured !== liveIdentity.current
+                  )
+                    throw new Error(
+                      "FUND verification or the creation context changed before signing.",
+                    );
+                  saved = beginStickyCreationSubmission(
+                    localStorage,
+                    reviewed,
+                    address,
+                    isSafeConnection(wagmiConfig),
+                    block.number,
+                  );
+                  changed();
+                },
+              );
+            },
+            releaseUnsubmitted: async () => {
+              if (!saved) return;
+              await navigator.locks.request(`homerun-sticky-create:${scope}`, () => {
+                if (!saved) return;
+                releaseStickyUnsubmitted(localStorage, stickySessionKey(saved.chainId, BigInt(saved.projectId), saved.holder), saved);
+                clearStickyCreationPending(localStorage, saved);
+                saved = null;
                 changed();
-              },
-            );
-          },
-          onWriteRejected: async () => {
-            if (saved) clearStickyCreationPending(localStorage, saved);
-            changed();
-          },
-          // Nothing reached the wallet, so the pending creation is withdrawn.
-          onBeforeWriteAborted: async () => {
-            if (saved) clearStickyCreationPending(localStorage, saved);
-            changed();
+              });
+            },
+            submitted: persistSubmitted,
           },
         },
       );
-      if (hash) {
-        recordStickyHash(
-          localStorage,
-          stickySessionKey(state.chainId, state.projectId, address),
-          hash,
-        );
-        changed();
-      }
+      if (hash) await persistSubmitted(hash);
     } catch (reason) {
       setError(message(reason));
     }
@@ -598,6 +610,7 @@ export function StickyCreate({
             View creation transaction
           </a>
         )}
+        {pending && !pending.hash && tx.submissionHash && <p className="break-all">{pending.safe ? "Safe proposal" : "Submitted transaction"}: <code>{tx.submissionHash}</code></p>}
       </div>
     </section>
   );

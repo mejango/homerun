@@ -1,8 +1,10 @@
+import { placeReceipt } from './support/recovery-receipt'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import { encodeAbiParameters, encodeEventTopics, encodeFunctionData, parseAbi, zeroAddress, type Hex, type PublicClient } from 'viem'
 import { newDemoShopItem } from '../src/lib/demo-shop'
 import { safeExecutionLog } from './support/safe-logs'
+import { failReservationReadback } from './support/reservation-storage'
 import { initialFundRuleset } from '../src/lib/fund-contracts'
 import { parseProjectShopWrite, projectShopWriteRequest, type PreparedProjectShopWrite } from '../src/lib/project-shop-write'
 import {
@@ -68,6 +70,7 @@ function rpc(session: ShopWriteSession, options: Record<number, ExecutionOptions
         data: encodeAbiParameters([{ type: 'bytes32' }, { type: 'uint256' }], [opts.proposalHash ?? saved.hash ?? executionHash(step), 0n]) }] : []),
     }
   })
+  receipts.forEach((receipt, step) => placeReceipt(transactions[step], receipt))
   const getTransaction = vi.fn(async ({ hash }: { hash: Hex }) => {
     const tx = transactions.find(tx => tx.hash === hash)
     if (!tx) throw new Error('Transaction not found')
@@ -78,7 +81,7 @@ function rpc(session: ShopWriteSession, options: Record<number, ExecutionOptions
     if (!receipt) throw new Error('Receipt not found')
     return receipt
   })
-  const getBlock = vi.fn(async ({ blockNumber }: { blockNumber: bigint }) => ({ hash: options[Number(blockNumber - 101n)]?.reorg ? executionHash(9) : BLOCK_HASH }))
+  const getBlock = vi.fn(async ({ blockNumber }: { blockNumber?: bigint }) => ({ hash: options[Number((blockNumber ?? 200n) - 101n)]?.reorg ? executionHash(9) : BLOCK_HASH, number: blockNumber ?? 200n, timestamp: 1_000n }))
   return { getTransaction, getTransactionReceipt, getBlock, getChainId: vi.fn(async () => 8453) }
 }
 
@@ -91,6 +94,25 @@ function pending(safe = false) {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('durable live shop updates', () => {
+  it.each([undefined, 'replacement'])('restores only its exact failed pre-wallet reservation (%s)', replacement => {
+    const storage = memory(), session = startShopWriteSession(storage, key, plan()), original = storage.getItem(key)
+    const broken = failReservationReadback(storage, key, { replacement })
+    expect(() => beginShopWriteSubmission(broken, key, session, { safe: false, afterBlock: 100n })).toThrow()
+    expect(storage.getItem(key)).toBe(replacement ?? original)
+  })
+  it('distinguishes retries of the same shop step at the same clock and block', () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000)
+    try {
+      const { storage, session } = pending()
+      const ready = rejectShopWriteSubmission(storage, key, session, 'wallet-rejected')
+      const next = beginShopWriteSubmission(storage, key, ready, { safe: false, afterBlock: 100n })
+      expect(next.pending?.attemptId).not.toBe(session.pending?.attemptId)
+      expect(next.pending?.startedAt).toBe(session.pending?.startedAt)
+      expect(() => rejectShopWriteSubmission(storage, key, session, 'wallet-rejected')).toThrow('another tab')
+      expect(() => recordShopWriteHash(storage, key, session, executionHash(0))).toThrow('another tab')
+      expect(readShopWriteSession(storage, key)).toEqual(next)
+    } finally { clock.mockRestore() }
+  })
   it('persists canonical plan facts without executable ABIs or requests and resumes after reload', () => {
     const { storage, session } = pending()
     const raw = storage.getItem(key)!
@@ -180,6 +202,7 @@ describe('durable live shop updates', () => {
     const f = pending()
     let session = (await confirmShopWriteExecution(rpc(f.session) as unknown as PublicClient, f.storage, key, f.session, executionHash(0))).session
     session = beginShopWriteSubmission(f.storage, key, session, { safe: false, afterBlock: 101n })
+    session = recordShopWriteHash(f.storage, key, session, executionHash(1))
     const result = await confirmShopWriteExecution(rpc(session, { 1: { reverted: true } }) as unknown as PublicClient, f.storage, key, session, executionHash(1))
     expect(result.status).toBe('reverted')
     expect(result.session.pending).toBeUndefined()
@@ -213,7 +236,8 @@ describe('durable live shop updates', () => {
   })
 
   it('recognizes a Safe inner-call failure without treating a successful outer receipt as successful creation', async () => {
-    const { storage, session } = pending(true)
+    const { storage, session: initial } = pending(true)
+    const session = recordShopWriteHash(storage, key, initial, executionHash(0))
     const result = await confirmShopWriteExecution(rpc(session, { 0: { safeFailure: true } }) as unknown as PublicClient, storage, key, session, executionHash(0))
     expect(result.status).toBe('reverted')
     expect(result.session.completed).toEqual([])

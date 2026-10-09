@@ -4,6 +4,7 @@ import { decodeFunctionData, encodeFunctionData, getAddress, isAddress, isAddres
 import { FUND_CHAIN_IDS, type FundTransaction } from './fund-contracts'
 import { homerunDeployerAbi, INITIAL_INCOME_SUPPLY, registeredHomerunDeployer } from './income-contracts'
 import { assertSafeProposalCall, verifyStickyExecution, type ExistingSafeProposal, type StickyPending, type StickyStorage } from './sticky-session'
+import { withPrewalletReservation } from './prewallet-reservation'
 
 export type IncomeLaunchPending = StickyPending & {
   kind: 'income-launch'
@@ -115,12 +116,15 @@ export function readIncomeLaunchPending(storage: IncomeLaunchStorage, key: strin
   return saved === null ? null : parseRecord(saved, key)
 }
 
-function persist(storage: IncomeLaunchStorage, key: string, record: IncomeLaunchPending): IncomeLaunchPending {
+function persist(storage: IncomeLaunchStorage, key: string, record: IncomeLaunchPending, previousRaw?: string | null): IncomeLaunchPending {
   const validated = parseRecord(JSON.stringify(record), key)
   const encoded = JSON.stringify(validated)
-  storage.setItem(key, encoded)
-  if (storage.getItem(key) !== encoded) throw new Error('The browser could not save INCOME launch recovery data. Do not submit another launch until the saved record is restored.')
-  return validated
+  const write = () => {
+    storage.setItem(key, encoded)
+    if (storage.getItem(key) !== encoded) throw new Error('The browser could not save INCOME launch recovery data. Do not submit another launch until the saved record is restored.')
+    return validated
+  }
+  return previousRaw === undefined ? write() : withPrewalletReservation(storage, key, previousRaw, encoded, write)
 }
 
 /** Call from beforeWrite, while holding withIncomeLaunchLock across review and wallet submission. */
@@ -135,7 +139,7 @@ function persistIncomeLaunchSubmission(storage: IncomeLaunchStorage, key: string
     value: (request.value ?? 0n).toString(), label: 'Deploy INCOME', safe, submittedAt: Date.now(), afterBlock: afterBlock.toString(),
     ...(proposal ? { phase: 'pending' as const, hash: proposal.proposalHash } : {}),
   }
-  return persist(storage, key, record)
+  return persist(storage, key, record, proposal ? undefined : null)
 }
 
 export function beginIncomeLaunchSubmission(storage: IncomeLaunchStorage, key: string, request: FundTransaction, projectId: bigint, holder: Address, safe: boolean, afterBlock: bigint): IncomeLaunchPending {
@@ -160,6 +164,8 @@ function matchingCurrent(storage: IncomeLaunchStorage, key: string, record: Inco
 
 export function recordIncomeLaunchHash(storage: IncomeLaunchStorage, key: string, record: IncomeLaunchPending, hash: Hex): IncomeLaunchPending {
   if (!nonzeroHash(hash)) throw new Error('Invalid INCOME transaction or Safe proposal hash.')
+  const persisted = readIncomeLaunchPending(storage, key)
+  if (persisted && JSON.stringify(persisted) === JSON.stringify(parseRecord(JSON.stringify({ ...record, phase: 'pending', hash }), key))) return persisted
   const current = matchingCurrent(storage, key, record)
   if (current.hash && current.hash.toLowerCase() !== hash.toLowerCase()) throw new Error('A different INCOME transaction is already pending. Verify that execution before recording another hash.')
   return persist(storage, key, { ...current, phase: 'pending', hash })

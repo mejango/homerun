@@ -11,6 +11,7 @@ import {
   formatUnits,
   isAddressEqual,
   type Address,
+  type Hex,
   type PublicClient,
 } from "viem";
 import { usePublicClient } from "wagmi";
@@ -44,6 +45,7 @@ import {
   clearStickyPending,
   readStickyPending,
   recordStickyHash,
+  releaseStickyUnsubmitted,
   stickySessionKey,
   verifyStickyExecution,
   type StickyPending,
@@ -126,6 +128,7 @@ function Status({ tx, chainId }: { tx: StickyTx; chainId: number }) {
         <p>Confirmed onchain. Balances and available actions are refreshing.</p>
       ) : null}
       {tx.error && <p className="text-red-800">{tx.error}</p>}
+      {tx.submissionHash && !tx.hash && <p className="break-all">Safe proposal: <code>{tx.submissionHash}</code></p>}
       {link && (
         <a className="underline" href={link} target="_blank" rel="noreferrer">
           View transaction
@@ -190,9 +193,12 @@ function useStickyTx(state: StickyProjectState) {
       const record = journal.pending,
         key = journal.key;
       void verifyStickyExecution(client, record, tx.receipt.transactionHash)
-        .then(() => {
-          clearStickyPending(localStorage, key, record);
-          changedJournal();
+        .then(async () => {
+          if (!navigator.locks) throw new Error("Use a browser with Web Locks support to coordinate Sticky recovery across tabs.");
+          await navigator.locks.request(`sticky-submit:${key}`, () => {
+            clearStickyPending(localStorage, key, record);
+            changedJournal();
+          });
         })
         .catch((failure) => setRecoveryError(reason(failure)));
     }
@@ -222,6 +228,15 @@ function useStickyTx(state: StickyProjectState) {
       );
     let record: StickyPending | null = null;
     const key = journal.key;
+    const persistSubmitted = async (hash: Hex, safe?: boolean) => {
+      await navigator.locks.request(`sticky-submit:${key}`, () => {
+        if (!record || (safe !== undefined && record.safe !== safe))
+          throw new Error("The saved Sticky transaction does not match the submitted wallet write.");
+        if (record.hash === hash) return;
+        record = recordStickyHash(localStorage, key, hash, record);
+        changedJournal();
+      });
+    };
     const hash = await tx.send(request, {
       ...options,
       onExistingProposal: async (proposal) => {
@@ -233,48 +248,45 @@ function useStickyTx(state: StickyProjectState) {
           await options.onExistingProposal?.(proposal);
         });
       },
-      beforeWrite: async () => {
-        await options.beforeWrite?.();
-        if ((await client.getChainId()) !== state.chainId)
-          throw new Error("The Sticky RPC changed networks.");
-        const block = await client.getBlock({ blockTag: "latest" });
-        if (block.number === null)
-          throw new Error("A confirmed block is required before submission.");
-        const save = () => {
-          record = beginStickySubmission(
-            localStorage,
-            key,
-            request,
-            state.stickyProjectId,
-            address,
-            isSafeConnection(wagmiConfig),
-            request.label ?? "Sticky transaction",
-            block.number!,
-          );
-          changedJournal();
-        };
-        if (!navigator.locks)
-          throw new Error(
-            "This browser cannot coordinate Sticky transaction recovery across tabs. Use a browser with Web Locks support.",
-          );
-        await navigator.locks.request(`sticky-submit:${key}`, save);
-      },
-      onWriteRejected: async () => {
-        if (record) clearStickyPending(localStorage, key, record);
-        changedJournal();
-        await options.onWriteRejected?.();
-      },
-      // Nothing reached the wallet, so the saved transaction is withdrawn.
-      onBeforeWriteAborted: async () => {
-        if (record) clearStickyPending(localStorage, key, record);
-        changedJournal();
-        await options.onBeforeWriteAborted?.();
+      durableRecovery: {
+        reserve: async () => {
+          if ((await client.getChainId()) !== state.chainId)
+            throw new Error("The Sticky RPC changed networks.");
+          const block = await client.getBlock({ blockTag: "latest" });
+          if (block.number === null)
+            throw new Error("A confirmed block is required before submission.");
+          const save = () => {
+            record = beginStickySubmission(
+              localStorage,
+              key,
+              request,
+              state.stickyProjectId,
+              address,
+              isSafeConnection(wagmiConfig),
+              request.label ?? "Sticky transaction",
+              block.number!,
+            );
+            changedJournal();
+          };
+          if (!navigator.locks)
+            throw new Error(
+              "This browser cannot coordinate Sticky transaction recovery across tabs. Use a browser with Web Locks support.",
+            );
+          await navigator.locks.request(`sticky-submit:${key}`, save);
+        },
+        releaseUnsubmitted: async () => {
+          if (!record) return;
+          await navigator.locks.request(`sticky-submit:${key}`, () => {
+            if (!record) return;
+            releaseStickyUnsubmitted(localStorage, key, record);
+            record = null;
+            changedJournal();
+          });
+        },
+        submitted: persistSubmitted,
       },
     });
-    if (hash) {
-      recordStickyHash(localStorage, key, hash);
-      changedJournal();
-    }
+    if (hash) await persistSubmitted(hash);
     return hash;
   }
   return {
@@ -1157,8 +1169,11 @@ function StickyRecovery({
     setError(null);
     try {
       await verifyStickyExecution(client, pending, hash as `0x${string}`);
-      clearStickyPending(localStorage, journal.key, pending);
-      changedJournal();
+      if (!navigator.locks) throw new Error("Use a browser with Web Locks support to coordinate Sticky recovery across tabs.");
+      await navigator.locks.request(`sticky-submit:${journal.key}`, () => {
+        clearStickyPending(localStorage, journal.key!, pending);
+        changedJournal();
+      });
       void cache.invalidateQueries({
         queryKey: ["sticky-project", chainId, projectId.toString()],
       });

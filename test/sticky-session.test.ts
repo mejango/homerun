@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { placeReceipt } from "./support/recovery-receipt";
+import { describe, expect, it, vi } from "vitest";
 import {
   encodeAbiParameters,
   encodeEventTopics,
@@ -16,11 +17,13 @@ import {
   clearStickyPending,
   readStickyPending,
   recordStickyHash,
+  releaseStickyUnsubmitted,
   stickySessionKey,
   verifyStickyExecution,
   type StickyPending,
 } from "../src/lib/sticky-session";
 import { safeExecutionLog } from "./support/safe-logs";
+import { failReservationReadback } from "./support/reservation-storage";
 
 const HOLDER = "0x1111111111111111111111111111111111111111",
   TARGET = "0x2222222222222222222222222222222222222222",
@@ -35,6 +38,11 @@ const request = {
   args: [OTHER, 100n],
 };
 const key = stickySessionKey(1, 9n, HOLDER);
+it.each([undefined, "replacement"])("cleans only its exact failed pre-wallet Sticky reservation (%s)", replacement => {
+  const storage = memory(), broken = failReservationReadback(storage, key, { replacement });
+  expect(() => beginStickySubmission(broken, key, request, 9n, HOLDER, false, "Approve FUND", 100n)).toThrow();
+  expect(storage.getItem(key)).toBe(replacement ?? null);
+});
 const safeAbi = parseAbi([
   "function execTransaction(address to,uint256 value,bytes data,uint8 operation,uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,address gasToken,address refundReceiver,bytes signatures) payable returns (bool success)",
   "event ExecutionSuccess(bytes32 txHash,uint256 payment)",
@@ -76,6 +84,7 @@ function clientFor(
     noEvent?: boolean;
     delegateCall?: boolean;
     logs?: ReturnType<typeof safeExecutionLog>[];
+    finalized?: bigint;
   } = {},
 ) {
   const safeData = encodeFunctionData({
@@ -130,14 +139,41 @@ function clientFor(
     status: options.reverted ? "reverted" : "success",
     logs,
   };
+  placeReceipt(transaction, receipt);
   return {
     getChainId: async () => 1,
     getTransaction: async () => transaction,
     getTransactionReceipt: async () => receipt,
-    getBlock: async () => ({ hash: options.reorg ? HASH : BLOCK_HASH }),
+    getBlock: async ({ blockNumber }: { blockNumber?: bigint }) => ({ hash: options.reorg ? HASH : BLOCK_HASH, number: blockNumber ?? options.finalized ?? 200n, timestamp: 1_000n }),
   } as unknown as PublicClient;
 }
 describe("Sticky durable submission recovery", () => {
+  it('distinguishes identical attempts even when the clock does not advance', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
+    try {
+      const storage = memory()
+      const first = beginStickySubmission(storage, key, request, 9n, HOLDER, false, 'Approve FUND', 100n)
+      releaseStickyUnsubmitted(storage, key, first)
+      const second = beginStickySubmission(storage, key, request, 9n, HOLDER, false, 'Approve FUND', 100n)
+      expect(second.submittedAt).toBe(first.submittedAt)
+      expect(second.id).not.toBe(first.id)
+      expect(() => recordStickyHash(storage, key, HASH, first)).toThrow(/changed/)
+      expect(() => clearStickyPending(storage, key, first)).toThrow(/changed/)
+      expect(readStickyPending(storage, key)).toEqual(second)
+    } finally { now.mockRestore() }
+  })
+  it('holds a hashless attempt despite a later matching failure', async () => {
+    const record = saved()
+    await expect(verifyStickyExecution(clientFor(record, { reverted: true }), record, HASH)).rejects.toThrow(/historical failure/)
+  })
+  it('does not release a known failed write before its receipt is finalized', async () => {
+    const record = { ...saved(), hash: HASH }
+    await expect(verifyStickyExecution(clientFor(record, { reverted: true, finalized: 100n }), record, HASH)).rejects.toThrow(/not yet proven/)
+  })
+  it('does not settle a saved EOA hash with another identical transaction', async () => {
+    const record = { ...saved(), hash: BLOCK_HASH }
+    await expect(verifyStickyExecution(clientFor(record), record, HASH)).rejects.toThrow(/saved Sticky transaction hash/)
+  })
   it("persists the exact payload before signing and blocks a duplicate after reopening", () => {
     const storage = memory(),
       record = beginStickySubmission(
@@ -173,6 +209,26 @@ describe("Sticky durable submission recovery", () => {
     storage.setItem(key, JSON.stringify({ ...saved(), holder: OTHER }));
     expect(() => readStickyPending(storage, key)).toThrow(/does not match/);
   });
+  it("withdraws only the exact unsubmitted attempt and retains submitted hashes", () => {
+    const storage = memory();
+    const record = beginStickySubmission(storage, key, request, 9n, HOLDER, false, "Approve FUND", 100n);
+    releaseStickyUnsubmitted(storage, key, record);
+    expect(readStickyPending(storage, key)).toBeNull();
+    const next = beginStickySubmission(storage, key, request, 9n, HOLDER, false, "Approve FUND", 100n);
+    const submitted = recordStickyHash(storage, key, HASH, next);
+    expect(() => releaseStickyUnsubmitted(storage, key, next)).toThrow(/changed or was submitted/);
+    expect(() => releaseStickyUnsubmitted(storage, key, submitted)).toThrow(/changed or was submitted/);
+    expect(readStickyPending(storage, key)).toEqual(submitted);
+  });
+  it("cannot overwrite or release a replaced attempt with the same call and timestamp", () => {
+    const storage = memory();
+    const record = beginStickySubmission(storage, key, request, 9n, HOLDER, false, "Approve FUND", 100n);
+    const replacement = { ...record, afterBlock: "101" };
+    storage.setItem(key, JSON.stringify(replacement));
+    expect(() => recordStickyHash(storage, key, HASH, record)).toThrow(/changed before its hash/);
+    expect(() => releaseStickyUnsubmitted(storage, key, record)).toThrow(/changed or was submitted/);
+    expect(readStickyPending(storage, key)).toEqual(replacement);
+  });
   it("does not clear a newer submission record from another tab", () => {
     const storage = memory(),
       record = beginStickySubmission(
@@ -189,11 +245,18 @@ describe("Sticky durable submission recovery", () => {
       key,
       JSON.stringify({ ...record, submittedAt: record.submittedAt + 1 }),
     );
-    clearStickyPending(storage, key, record);
+    expect(() => clearStickyPending(storage, key, record)).toThrow(/changed/);
     expect(readStickyPending(storage, key)).not.toBeNull();
   });
+  it('does not clear a record whose wallet identity arrived while its earlier proof was pending', () => {
+    const storage = memory()
+    const record = beginStickySubmission(storage, key, request, 9n, HOLDER, false, 'Approve FUND', 100n)
+    recordStickyHash(storage, key, HASH, record)
+    expect(() => clearStickyPending(storage, key, record)).toThrow(/changed/)
+    expect(readStickyPending(storage, key)?.hash).toBe(HASH)
+  })
   it("verifies the exact EOA payload and fresh canonical receipt", async () => {
-    const record = saved();
+    const record = { ...saved(), hash: HASH };
     await expect(
       verifyStickyExecution(clientFor(record), record, HASH),
     ).resolves.toBe("confirmed");
@@ -220,7 +283,7 @@ describe("Sticky durable submission recovery", () => {
     },
   );
   it("requires a matching Safe single-call execution and its actual success event", async () => {
-    const record = saved(true);
+    const record = { ...saved(true), hash: HASH };
     await expect(
       verifyStickyExecution(clientFor(record), record, HASH),
     ).resolves.toBe("confirmed");

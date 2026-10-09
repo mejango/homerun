@@ -3,6 +3,7 @@ import { encodeFunctionData, isAddress, zeroAddress, zeroHash, type Address, typ
 import type { TxRequest } from '@/hooks/useSafeTx'
 import { displayChainSlug } from './chainDisplay'
 import { assertSafeProposalCall, verifyStickyExecution, type ExistingSafeProposal, type StickyPending } from './sticky-session'
+import { withPrewalletReservation } from './prewallet-reservation'
 
 export type ProjectAdminStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 export type ProjectAdminPending = StickyPending & { id: string }
@@ -59,12 +60,15 @@ function matching(storage: ProjectAdminStorage, key: string, expected: ProjectAd
   if (!current || encode(current) !== encode(parse(encode(expected), key))) throw new Error('The project update changed in another tab. Reload its saved progress before continuing.')
   return current
 }
-function persist(storage: ProjectAdminStorage, key: string, record: ProjectAdminPending): ProjectAdminPending {
+function persist(storage: ProjectAdminStorage, key: string, record: ProjectAdminPending, previousRaw?: string | null): ProjectAdminPending {
   const next = parse(encode(record), key)
   const raw = encode(next)
-  storage.setItem(key, raw)
-  if (storage.getItem(key) !== raw) throw new Error('This browser could not save project update recovery. Do not submit until browser storage is available.')
-  return next
+  const write = () => {
+    storage.setItem(key, raw)
+    if (storage.getItem(key) !== raw) throw new Error('This browser could not save project update recovery. Do not submit until browser storage is available.')
+    return next
+  }
+  return previousRaw === undefined ? write() : withPrewalletReservation(storage, key, previousRaw, raw, write)
 }
 function clear(storage: ProjectAdminStorage, key: string, record: ProjectAdminPending): void {
   matching(storage, key, record)
@@ -84,7 +88,7 @@ function persistProjectAdminSubmission(storage: ProjectAdminStorage, key: string
     holder: account, target: request.address, data: encodeFunctionData(request), value: (request.value ?? 0n).toString(),
     label: request.label ?? 'Update project', safe, submittedAt: Date.now(), afterBlock: afterBlock.toString(),
     ...(proposal ? { target: proposal.call.to, data: proposal.call.data, value: (proposal.call.value ?? 0n).toString(), hash: proposal.proposalHash } : {}),
-  })
+  }, proposal ? undefined : null)
 }
 export function beginProjectAdminSubmission(storage: ProjectAdminStorage, key: string, options: {
   request: TxRequest; projectId: bigint; account: Address; safe: boolean; afterBlock: bigint
@@ -100,6 +104,9 @@ export function adoptProjectAdminProposal(storage: ProjectAdminStorage, key: str
 }
 export function recordProjectAdminHash(storage: ProjectAdminStorage, key: string, record: ProjectAdminPending, transactionHash: Hex): ProjectAdminPending {
   if (!hash(transactionHash)) throw new Error('Use a valid transaction or Safe proposal hash.')
+  const persisted = readProjectAdminPending(storage, key)
+  const next = parse(encode({ ...record, hash: transactionHash.toLowerCase() as Hex }), key)
+  if (persisted && encode(persisted) === encode(next)) return persisted
   const current = matching(storage, key, record)
   if (current.hash && current.hash !== transactionHash.toLowerCase()) throw new Error('A different project update hash is already saved. Verify that execution first.')
   return persist(storage, key, { ...current, hash: transactionHash.toLowerCase() as Hex })

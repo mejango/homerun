@@ -17,6 +17,7 @@ export function ProjectAdminTransactionStatus({ tx }: { tx: ProjectAdminTx }) {
     {!tx.pending && tx.busy && <p>{tx.phase === 'review' ? 'Review the project update…' : tx.phase === 'signing' ? 'Confirm in your wallet…' : 'Checking the project update…'}</p>}
     {tx.status && tx.status !== tx.notice && <p role="status">{tx.status}</p>}
     {tx.error && <p role="alert">{tx.error}</p>}
+    {tx.pending && !tx.hash && tx.submissionHash && <p className="break-all">{tx.safe ? 'Safe proposal' : 'Submitted transaction'}: <code>{tx.submissionHash}</code></p>}
     {explorer && <a className="underline" href={explorer} target="_blank" rel="noopener noreferrer">View transaction</a>}
     {tx.pending && <details>
       <summary className="cursor-pointer underline">Check an execution transaction</summary>

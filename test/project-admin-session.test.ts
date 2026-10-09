@@ -1,3 +1,4 @@
+import { placeReceipt } from './support/recovery-receipt'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { encodeAbiParameters, encodeEventTopics, encodeFunctionData, parseAbi, zeroAddress, zeroHash, type Hex, type PublicClient } from 'viem'
 import type { TxRequest } from '../src/hooks/useSafeTx'
@@ -6,6 +7,7 @@ import {
   recordProjectAdminHash, rejectProjectAdminSubmission, withProjectAdminLock, type ProjectAdminPending,
 } from '../src/lib/project-admin-session'
 import { safeExecutionLog } from './support/safe-logs'
+import { failReservationReadback } from './support/reservation-storage'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as const
 const TARGET = '0x2222222222222222222222222222222222222222' as const
@@ -75,17 +77,23 @@ function rpc(record: ProjectAdminPending, opts: ExecutionOptions = {}) {
       data: encodeAbiParameters([{ type: 'bytes32' }, { type: 'uint256' }], [opts.proposalHash ?? record.hash ?? PROPOSAL_HASH, 0n]),
     }] : []),
   }
+  placeReceipt(transaction, receipt)
   return {
     getChainId: vi.fn(async () => opts.wrongChain ? 1 : 8453),
     getTransaction: vi.fn(async () => transaction),
     getTransactionReceipt: vi.fn(async () => receipt),
-    getBlock: vi.fn(async () => ({ hash: opts.reorg ? OTHER_HASH : BLOCK_HASH })),
+    getBlock: vi.fn(async ({ blockNumber }: { blockNumber?: bigint }) => ({ hash: opts.reorg ? OTHER_HASH : BLOCK_HASH, number: blockNumber ?? 200n, timestamp: 1_000n })),
   }
 }
 
 afterEach(() => vi.unstubAllGlobals())
 
 describe('durable project administration submissions', () => {
+  it.each([undefined, 'replacement'])('cleans only its exact failed pre-wallet reservation (%s)', replacement => {
+    const storage = memory(), broken = failReservationReadback(storage, key, { replacement })
+    expect(() => beginProjectAdminSubmission(broken, key, { request: request(), projectId: 7n, account: OWNER, safe: false, afterBlock: 100n })).toThrow()
+    expect(storage.getItem(key)).toBe(replacement ?? null)
+  })
   it('persists an unknown broadcast marker and restores only transaction facts after remount', () => {
     const { storage, record } = pending()
     const raw = storage.getItem(key)!
@@ -181,7 +189,8 @@ describe('durable project administration submissions', () => {
   })
 
   it.each([false, true])('releases a canonical matching direct execution with reverted=%s', async reverted => {
-    const { storage, record } = pending()
+    const { storage, record: initial } = pending()
+    const record = recordProjectAdminHash(storage, key, initial, EXECUTION_HASH)
     const result = await confirmProjectAdminExecution(rpc(record, { reverted }) as unknown as PublicClient, storage, key, record, EXECUTION_HASH)
     expect(result).toEqual({ status: reverted ? 'reverted' : 'confirmed', blockNumber: 101n })
     expect(readProjectAdminPending(storage, key)).toBeNull()

@@ -160,10 +160,16 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
         if (readProjectAdminPending(localStorage, key)) throw new Error('A project update may already be pending. Verify its execution before submitting another update.')
         resetTx()
         let submitting: ProjectAdminPending | null = null
-        const reject = (reason: 'wallet-rejected' | 'before-write-aborted') => {
+        const releaseUnsubmitted = () => {
           if (!submitting) return
-          rejectProjectAdminSubmission(localStorage, key, submitting, reason)
+          rejectProjectAdminSubmission(localStorage, key, submitting, 'before-write-aborted')
           submitting = null; submittedId.current = null; changed()
+        }
+        const persistSubmitted = (hash: Hex, safe?: boolean) => {
+          if (!submitting || (safe !== undefined && submitting.safe !== safe)) throw new Error('The saved project update does not match the submitted wallet write.')
+          if (submitting.hash === hash) return
+          submitting = recordProjectAdminHash(localStorage, key, submitting, hash)
+          changed()
         }
         const hash = await tx.send(captured, {
           reviewedAccount: options.reviewedAccount,
@@ -173,26 +179,26 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
             await options.reverify(reviewed)
             if (requestIdentity(reviewed) !== identity) throw new Error('The project update changed during review. Review the current settings again.')
           },
-          beforeWrite: async () => {
-            assertNoViewAs()
-            if (requestIdentity(captured) !== identity) throw new Error('The project update changed during review. Review it again.')
-            const afterBlock = await latestConfirmedBlock()
-            submitting = beginProjectAdminSubmission(localStorage, key, { request: captured, projectId, account: options.reviewedAccount, safe: tx.isSafe, afterBlock })
-            submittedId.current = submitting.id
-            changed()
+          durableRecovery: {
+            reserve: async () => {
+              assertNoViewAs()
+              if (requestIdentity(captured) !== identity) throw new Error('The project update changed during review. Review it again.')
+              const afterBlock = await latestConfirmedBlock()
+              submitting = beginProjectAdminSubmission(localStorage, key, { request: captured, projectId, account: options.reviewedAccount, safe: tx.isSafe, afterBlock })
+              submittedId.current = submitting.id
+              changed()
+            },
+            releaseUnsubmitted,
+            submitted: persistSubmitted,
           },
           onExistingProposal: proposal => {
             submitting = adoptProjectAdminProposal(localStorage, key, { request: captured, projectId, account: options.reviewedAccount }, proposal)
             submittedId.current = submitting.id
             changed()
           },
-          onBeforeWriteAborted: () => reject('before-write-aborted'),
-          onWriteRejected: () => reject('wallet-rejected'),
         })
-        if (hash && submitting) {
-          recordProjectAdminHash(localStorage, key, submitting, hash)
-          changed()
-        }
+        // A returned wallet hash remains valid if its first persistence callback failed.
+        if (hash) persistSubmitted(hash)
         return hash
       })
     } catch (reason) { setError(errorMessage(reason)); refresh(); return null }
@@ -230,6 +236,7 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
     busy: working || (pending && phase !== 'submitted') || tx.busy || tx.phase === 'review', pending,
     phase, settled: phase === 'submitted' || phase === 'success', notice,
     error: storageError ?? error ?? tx.error, status, hash: record?.safe ? null : record?.hash ?? resolution?.hash ?? null,
+    submissionHash: tx.submissionHash,
     safe: record?.safe ?? tx.isSafe, chainId, pendingLabel: record?.label ?? null,
     /** Recovery is read-only and may be used even while a transaction is pending. */
     recovering: working,

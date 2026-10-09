@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FundProjectState } from '@/lib/fund-state'
 import type { IncomeProjectState } from '@/lib/income-state'
 import type { ProjectAuthorityState } from '@/lib/project-authority'
+import { installRecoveryLocks } from './runtime/write-recovery-fixture'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const BOB = '0x2222222222222222222222222222222222222222' as Address
@@ -132,6 +133,8 @@ const dialogText = () => document.querySelector('[data-tx-confirm]')?.textConten
 const switchTo = (account: Address) => act(async () => wallet.connect(account))
 
 beforeEach(() => {
+  localStorage.clear()
+  installRecoveryLocks()
   wallet.reset()
   wallet.connect(ALICE)
   m.permitted = false
@@ -143,7 +146,7 @@ beforeEach(() => {
   cache = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); cache.clear() })
+afterEach(async () => { await act(async () => root.unmount()); host.remove(); cache.clear(); localStorage.clear() })
 
 describe('a FUND cash out reviewed for one account', () => {
   it('never sends from an account switched to before confirming', async () => {

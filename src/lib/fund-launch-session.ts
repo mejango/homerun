@@ -2,20 +2,25 @@ import { type Address, type Hex } from 'viem'
 import { assertSafeProposalCall, type ExistingSafeProposal } from './sticky-session'
 import type { LaunchRelayrJournal } from './fund-launch-relayr'
 import { buildFundLaunch, type FundLaunchInput } from './fund-contracts'
+import { withPrewalletReservation } from './prewallet-reservation'
 
 export const FUND_LAUNCH_KEY = 'homerun:fund-launch:v1'
 export type LaunchStatus = {
   /** Direct Safe-wallet setup is idempotent, but a pending proposal must be resumed. */
-  multisigSetup?: { hash?: Hex; safe: boolean }
+  multisigSetup?: { hash?: Hex; safe: boolean; walletReturned?: true; attemptId?: string }
   phase: 'ready' | 'signing' | 'pending' | 'confirmed' | 'reverted' | 'authorized' | 'unresolved' | 'expired'
   error?: string
   hash?: Hex
+  /** Unique reservation identity, even when the same immutable call is retried. */
+  attemptId?: string
+  /** Recorded by the wallet submission callback or authenticated Safe adoption. */
+  walletReturned?: true
   safe?: boolean
   /** Actual receipt hash, kept separate from a pending Safe proposal identifier. */
   executionHash?: Hex
   projectId?: string
 }
-const INTENT_ID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i
+const UUID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i
 const ADDRESS = /^0x[\da-f]{40}$/i
 const DECIMAL = /^\d+$/
 
@@ -95,17 +100,22 @@ export function decodeLaunchSession(raw: string): FundLaunchSession {
       || (status.hash !== undefined && !/^0x[\da-f]{64}$/i.test(status.hash))
       || (status.executionHash !== undefined && !/^0x[\da-f]{64}$/i.test(status.executionHash))
       || (status.safe !== undefined && typeof status.safe !== 'boolean')
+      || (status.attemptId !== undefined && (typeof status.attemptId !== 'string' || !UUID.test(status.attemptId)))
+      || (status.walletReturned !== undefined && (status.walletReturned !== true || !status.hash))
       || (status.phase === 'ready' && (status.hash !== undefined || status.executionHash !== undefined || status.projectId !== undefined))
       || (status.phase === 'pending' && !status.hash)
       || (status.phase === 'reverted' && !status.hash)
       || (status.phase === 'confirmed' && (!status.hash || !/^[1-9]\d*$/.test(status.projectId ?? '')))) throw new Error('Saved launch progress is incomplete. Verify the submitted transaction before continuing.')
-    if (status.multisigSetup && (typeof status.multisigSetup.safe !== 'boolean' || (status.multisigSetup.hash !== undefined && !/^0x[\da-f]{64}$/i.test(status.multisigSetup.hash)))) throw new Error('Invalid multisig setup transaction.')
+    if (status.multisigSetup && (typeof status.multisigSetup.safe !== 'boolean'
+      || (status.multisigSetup.attemptId !== undefined && (typeof status.multisigSetup.attemptId !== 'string' || !UUID.test(status.multisigSetup.attemptId)))
+      || (status.multisigSetup.hash !== undefined && !/^0x[\da-f]{64}$/i.test(status.multisigSetup.hash))
+      || (status.multisigSetup.walletReturned !== undefined && (status.multisigSetup.walletReturned !== true || !status.multisigSetup.hash)))) throw new Error('Invalid multisig setup transaction.')
     if (status.projectId !== undefined && (typeof status.projectId !== 'string' || !/^[1-9]\d*$/.test(status.projectId) || BigInt(status.projectId) >= 1n << 256n)) throw new Error('Saved project ID is invalid.')
   }
   if (value.transport !== undefined && !['direct', 'relayr', 'intent'].includes(value.transport)) throw new Error('Invalid launch transport.')
   if (value.relayr && value.transport !== 'relayr') throw new Error('Relayed authorizations cannot use direct deployment.')
   if (value.relayr !== undefined && !validJournal(value.relayr, input.chainIds)) throw new Error('The saved launch is invalid. Keep its original transaction records before continuing.')
-  if (value.intentId !== undefined && (value.transport !== 'intent' || typeof value.intentId !== 'string' || !INTENT_ID.test(value.intentId))) throw new Error('Invalid published project reference.')
+  if (value.intentId !== undefined && (value.transport !== 'intent' || typeof value.intentId !== 'string' || !UUID.test(value.intentId))) throw new Error('Invalid published project reference.')
   if (value.transport === 'intent' && (value.relayr || !Object.values(value.statuses).every(status => status.phase === 'ready'))) throw new Error('A published project has no wallet transactions to resume.')
   return value
 }
@@ -147,7 +157,7 @@ function persistLaunch(session: FundLaunchSession, options: { cancelledChainId?:
     const previous = decodeLaunchSession(existing)
     if (options.adoption && encodeLaunchSession(previous) !== options.adoption.previous) throw new Error('Launch progress changed elsewhere. Reload the saved record before adopting its proposal.')
     if (previous.input.salt !== validated.input.salt) throw new Error('Another FUND launch is already saved. Finish that launch before preparing another.')
-    if ((previous.transport ?? 'direct') !== (validated.transport ?? 'direct') && !(validated.transport === 'relayr' && !previous.relayr && Object.values(previous.statuses).every(status => status.phase === 'ready'))) throw new Error('A submitted launch cannot change transport.')
+    if ((previous.transport ?? 'direct') !== (validated.transport ?? 'direct') && !(validated.transport === 'relayr' && !previous.relayr && Object.values(previous.statuses).every(status => status.phase === 'ready' && !status.multisigSetup))) throw new Error('A submitted launch cannot change transport.')
     if (previous.intentId && previous.intentId !== validated.intentId) throw new Error('A published project cannot be replaced.')
     if (previous.relayr?.published && !validated.relayr) throw new Error('Published authorizations must be retained for recovery.')
     if (frozenInput(previous) !== frozenInput(validated)) throw new Error('A saved launch plan is immutable. Finish it before changing deployment parameters.')
@@ -157,7 +167,7 @@ function persistLaunch(session: FundLaunchSession, options: { cancelledChainId?:
     }
   }
   localStorage.setItem(FUND_LAUNCH_KEY, encodeLaunchSession(validated))
-  if (options.adoption && localStorage.getItem(FUND_LAUNCH_KEY) !== encodeLaunchSession(validated)) throw new Error('The browser could not save the existing FUND proposal. Restore its recovery record before continuing.')
+  if (localStorage.getItem(FUND_LAUNCH_KEY) !== encodeLaunchSession(validated)) throw new Error('The browser could not save FUND launch recovery. Restore its recovery record before continuing.')
   return validated
 }
 
@@ -173,7 +183,7 @@ export function adoptFundLaunchProposal(salt: Hex, chainId: number, proposal: Ex
   const request = buildFundLaunch(session.input).requests.find(item => item.chainId === chainId)
   if (!request) throw new Error('This chain is not part of the saved launch.')
   assertSafeProposalCall(request, proposal)
-  const status: LaunchStatus = { phase: 'pending', safe: true, hash: proposal.proposalHash,
+  const status: LaunchStatus = { phase: 'pending', safe: true, hash: proposal.proposalHash, walletReturned: true, attemptId: globalThis.crypto.randomUUID(),
     ...(previous.multisigSetup ? { multisigSetup: previous.multisigSetup } : {}) }
   return persistLaunch({ ...session, statuses: { ...session.statuses, [chainId]: status } }, { adoption: { chainId, previous: encodeLaunchSession(session) } })
 }
@@ -187,11 +197,22 @@ function requireLaunch(salt: Hex): FundLaunchSession {
 }
 
 /** Merge one chain's result into the latest record, not a stale React closure. */
-export function updateLaunchStatus(salt: Hex, chainId: number, status: LaunchStatus, expectedPhase?: LaunchStatus['phase']): FundLaunchSession {
+export function updateLaunchStatus(salt: Hex, chainId: number, status: LaunchStatus, expectedPhase?: LaunchStatus['phase'], expectedStatus?: LaunchStatus, prewallet = false): FundLaunchSession {
   const session = requireLaunch(salt)
   if (!session.input.chainIds.includes(chainId)) throw new Error('This chain is not part of the saved launch.')
   if (expectedPhase && session.statuses[chainId].phase !== expectedPhase) throw new Error('This deployment is already being handled. Reload its progress before continuing.')
-  return saveLaunch({ ...session, statuses: { ...session.statuses, [chainId]: status } }, { cancelledChainId: expectedPhase === 'signing' && status.phase === 'ready' ? chainId : undefined })
+  if (expectedStatus && JSON.stringify(session.statuses[chainId]) !== JSON.stringify(expectedStatus)) {
+    if (JSON.stringify(session.statuses[chainId]) === JSON.stringify(status)) return session
+    throw new Error('This deployment changed in another tab. Keep its saved transaction and reload before continuing.')
+  }
+  const next = { ...session, statuses: { ...session.statuses, [chainId]: status } }
+  const write = () => saveLaunch(next, { cancelledChainId: expectedPhase === 'signing' && status.phase === 'ready' ? chainId : undefined })
+  if (!prewallet) return write()
+  const previous = session.statuses[chainId]
+  const reservingLaunch = status.phase === 'signing' && !status.hash && !!status.attemptId && status.attemptId !== previous.attemptId
+  const reservingSetup = !previous.multisigSetup && !!status.multisigSetup?.attemptId && !status.multisigSetup.hash
+  if (!reservingLaunch && !reservingSetup) throw new Error('Only a new pre-wallet launch or setup can reserve recovery.')
+  return withPrewalletReservation(localStorage, FUND_LAUNCH_KEY, localStorage.getItem(FUND_LAUNCH_KEY), encodeLaunchSession(next), write)
 }
 
 export function refreshLaunchCreationFee(salt: Hex, chainId: number, creationFee: bigint): FundLaunchSession {
@@ -223,7 +244,7 @@ export function sameSender(actual: Address | undefined, expected: Address): void
 export function discardUnsignedLaunch(salt: Hex): boolean {
   const session = requireLaunch(salt)
   if (session.intentId) return false
-  if (!Object.values(session.statuses).every(status => status.phase === 'ready')
+  if (!Object.values(session.statuses).every(status => status.phase === 'ready' && !status.multisigSetup)
     || session.relayr?.signed.length || session.relayr?.superseded?.length
     || session.relayr?.published || session.relayr?.quote || session.relayr?.paymentHash
     || (session.relayr && session.relayr.phase !== 'signing')) return false
@@ -236,7 +257,7 @@ export function canCancelLaunch(session: FundLaunchSession): boolean {
   // Every request the launch published was found dead at a canonical finalized block (ruling R117), so none can run again.
   if (session.relayr?.abandonable === true) return true
   const phases = session.transport === 'relayr' ? ['ready', 'signing', 'authorized'] : ['ready']
-  return Object.values(session.statuses).every(status => phases.includes(status.phase) && !status.hash && !status.executionHash)
+  return Object.values(session.statuses).every(status => phases.includes(status.phase) && !status.hash && !status.executionHash && !status.multisigSetup)
     && (!session.relayr || (['signing', 'quoting'].includes(session.relayr.phase)
       && !session.relayr.published && !session.relayr.quote && !session.relayr.paymentHash
       && !session.relayr.superseded?.length && !session.relayr.records.length))
