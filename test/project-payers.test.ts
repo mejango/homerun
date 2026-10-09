@@ -1,10 +1,12 @@
+import { placeReceipt } from './support/recovery-receipt'
 import { JB_PROJECT_PAYER_DEPLOYER, jbProjectPayerDeployerAbi, v6Address } from '@bananapus/nana-sdk-core/v6'
 import { decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodeFunctionData, getAbiItem, parseAbi, zeroAddress, type AbiEvent, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({ bendystraw: vi.fn() }))
 vi.mock('../src/lib/bendystraw', () => ({ bendystraw: mocks.bendystraw }))
-import { adoptPayerProposal, buildPayerTransaction, checkPayerFactory, decodePayerAttempt, getProjectPayerAddresses, payerAttemptIdentity, verifyPayerReceipt, type PayerAttempt, type ProjectPayerRow } from '../src/lib/project-payers'
+import { adoptPayerProposal, buildPayerTransaction, checkPayerFactory, decodePayerAttempt, getProjectPayerAddresses, payerAttemptIdentity, payerAttemptKey, persistPayerAttempt, verifyPayerReceipt, type PayerAttempt, type ProjectPayerRow } from '../src/lib/project-payers'
 import { safeExecutionLog } from './support/safe-logs'
+import { failReservationReadback } from './support/reservation-storage'
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111' as Address
 const PAYER = '0x2222222222222222222222222222222222222222' as Address
@@ -17,20 +19,38 @@ const safeAbi = parseAbi(['function execTransaction(address to,uint256 value,byt
 function attempt(): PayerAttempt {
   return { version: 1, settings: { chainId: 1, projectId: '7', beneficiary: zeroAddress, owner: zeroAddress, addToBalance: false, memo: 'Homerun' }, account: ACCOUNT, safe: false, phase: 'submitted', hash: HASH, afterBlock: '99' }
 }
+it.each([undefined, 'replacement'])('restores only its exact failed pre-wallet payer reservation (%s)', replacement => {
+  const values = new Map<string, string>()
+  const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value) }, removeItem: (key: string) => { values.delete(key) } }
+  const key = payerAttemptKey(1, 7n), previous = persistPayerAttempt(storage, 1, 7n, { ...attempt(), phase: 'reverted' }, null)
+  const next = { ...attempt(), id: crypto.randomUUID(), phase: 'signing' as const, hash: undefined }
+  expect(() => persistPayerAttempt(failReservationReadback(storage, key, { replacement }), 1, 7n, next, previous, true)).toThrow()
+  expect(storage.getItem(key)).toBe(replacement ?? previous)
+})
+it('never overwrites or clears a payer attempt replaced by another tab', () => {
+  const values = new Map<string, string>()
+  const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value) }, removeItem: (key: string) => { values.delete(key) } }
+  const original = persistPayerAttempt(storage, 1, 7n, attempt(), null)
+  const newer = persistPayerAttempt(storage, 1, 7n, { ...attempt(), afterBlock: '100' }, original)
+  expect(() => persistPayerAttempt(storage, 1, 7n, null, original)).toThrow(/changed in another tab/)
+  expect(() => persistPayerAttempt(storage, 1, 7n, attempt(), original)).toThrow(/changed in another tab/)
+  expect(storage.getItem(payerAttemptKey(1, 7n))).toBe(newer)
+})
 function event(name: string, values: Record<string, unknown>, address = JB_PROJECT_PAYER_DEPLOYER, abi = jbProjectPayerDeployerAbi as readonly unknown[]) {
   const item = getAbiItem({ abi: abi as readonly AbiEvent[], name }) as AbiEvent
-  return { address, data: encodeAbiParameters(item.inputs.filter(input => !input.indexed), item.inputs.filter(input => !input.indexed).map(input => values[input.name!])), topics: encodeEventTopics({ abi: [item], eventName: name, args: values }) } as unknown as TransactionReceipt['logs'][number]
+  return { address, transactionHash: HASH, blockHash: BLOCK, blockNumber: 100n, transactionIndex: 0, removed: false, data: encodeAbiParameters(item.inputs.filter(input => !input.indexed), item.inputs.filter(input => !input.indexed).map(input => values[input.name!])), topics: encodeEventTopics({ abi: [item], eventName: name, args: values }) } as unknown as TransactionReceipt['logs'][number]
 }
 function fixture() {
   const saved = attempt(), request = buildPayerTransaction(saved.settings)
   const args = { projectPayer: PAYER, defaultProjectId: 7n, defaultBeneficiary: zeroAddress, defaultMemo: 'Homerun', defaultMetadata: '0x', defaultAddToBalance: false, directory: v6Address('JBDirectory', 1), owner: zeroAddress, caller: ACCOUNT }
   const receipt = { transactionHash: HASH, blockNumber: 100n, blockHash: BLOCK, status: 'success', logs: [event('DeployProjectPayer', args)] } as TransactionReceipt
   const transaction = { hash: HASH, chainId: 1, blockNumber: 100n, blockHash: BLOCK, from: ACCOUNT, to: request.address, value: 0n, input: encodeFunctionData(request) }
-  const client = { getChainId: vi.fn(async () => 1), getBlock: vi.fn(async () => ({ hash: BLOCK })), getTransaction: vi.fn(async () => transaction), readContract: vi.fn(async () => IMPL), getBytecode: vi.fn(async () => `0x363d3d373d3d3d363d73${IMPL.slice(2)}5af43d82803e903d91602b57fd5bf3`) }
+  placeReceipt(transaction, receipt)
+  const client = { getTransactionReceipt: vi.fn(async () => receipt), getChainId: vi.fn(async () => 1), getBlock: vi.fn(async ({ blockNumber }: { blockNumber?: bigint }) => ({ hash: BLOCK, number: blockNumber ?? 200n, timestamp: 1_000n })), getTransaction: vi.fn(async () => transaction), readContract: vi.fn(async () => IMPL), getBytecode: vi.fn(async () => `0x363d3d373d3d3d363d73${IMPL.slice(2)}5af43d82803e903d91602b57fd5bf3`) }
   return { saved, request, args, receipt, transaction, client, rpc: client as unknown as PublicClient }
 }
 function safe(f: ReturnType<typeof fixture>) {
-  f.saved.safe = true; f.saved.hash = PROPOSAL; f.transaction.to = ACCOUNT
+  f.saved.safe = true; f.saved.hash = PROPOSAL; f.transaction.to = ACCOUNT; f.receipt.to = ACCOUNT
   f.transaction.input = encodeFunctionData({ abi: safeAbi, functionName: 'execTransaction', args: [f.request.address, 0n, encodeFunctionData(f.request), 0, 0n, 0n, 0n, zeroAddress, zeroAddress, '0x'] })
   f.receipt.logs.push(event('ExecutionSuccess', { txHash: PROPOSAL, payment: 0n }, ACCOUNT, safeAbi))
 }
@@ -95,6 +115,15 @@ describe('canonical payer readiness', () => {
 })
 
 describe('payer deployment receipt proof', () => {
+  it('holds a hashless deployment despite a matching canonical failure', async () => {
+    const f = fixture(); f.saved.hash = undefined; f.receipt.status = 'reverted'; f.receipt.logs = []
+    await expect(verifyPayerReceipt(f.rpc, f.saved, f.receipt)).rejects.toThrow(/historical failure/)
+  })
+  it('holds a known failed payer deployment before finality', async () => {
+    const f = fixture(); f.receipt.status = 'reverted'; f.receipt.logs = []
+    f.client.getBlock.mockImplementation(async ({ blockNumber }: { blockNumber?: bigint }) => ({ hash: BLOCK, number: blockNumber ?? 99n, timestamp: 1_000n }))
+    await expect(verifyPayerReceipt(f.rpc, f.saved, f.receipt)).rejects.toThrow(/not yet proven/)
+  })
   it('confirms an exact EOA factory deployment and canonical clone', async () => {
     const f = fixture()
     await expect(verifyPayerReceipt(f.rpc, f.saved, f.receipt)).resolves.toEqual({ status: 'confirmed', payer: PAYER })
@@ -113,6 +142,7 @@ describe('payer deployment receipt proof', () => {
     const verify = (...events: ReturnType<typeof safeExecutionLog>[]) => {
       const f = fixture(); safe(f)
       f.receipt.logs = [f.receipt.logs[0], ...events as unknown as TransactionReceipt['logs']]
+      placeReceipt(f.transaction, f.receipt)
       return verifyPayerReceipt(f.rpc, f.saved, f.receipt)
     }
     it('confirms a Safe 1.4.1 execution, whose txHash is indexed', async () => {

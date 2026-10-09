@@ -12,21 +12,23 @@ vi.mock('@/lib/project-payers', async importOriginal => ({ ...await importOrigin
 import { ProjectPayerAddresses } from '../src/components/ProjectPayerAddresses'
 import { payerAttemptKey, type PayerAttempt } from '../src/lib/project-payers'
 import { submitReviewedContractWrite } from '../src/lib/contract-write'
+import { failReservationReadback } from './support/reservation-storage'
 const HASH = `0x${'aa'.repeat(32)}`, EXECUTION = `0x${'bb'.repeat(32)}`, PAYER = '0x2222222222222222222222222222222222222222', KEY = payerAttemptKey(1, 7n)
 function saved(): PayerAttempt { return { version: 1, settings: { chainId: 1, projectId: '7', beneficiary: '0x0000000000000000000000000000000000000000', owner: '0x0000000000000000000000000000000000000000', memo: '', addToBalance: false }, account: '0x1111111111111111111111111111111111111111', safe: false, phase: 'signing', afterBlock: '100' } }
 describe('project payer controls', () => {
   let client: QueryClient, root: Root, host: HTMLDivElement
   beforeEach(() => {
     localStorage.clear(); vi.clearAllMocks()
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: async (_name: string, _options: unknown, task: (lock: object) => Promise<unknown>) => task({}) } })
     mocks.address = saved().account; mocks.safe = false
     mocks.factory.mockResolvedValue({ acceptsNative: true }); mocks.rows.mockResolvedValue([])
     mocks.getReceipt.mockRejectedValue(new Error('Transaction pending')); mocks.waitSafe.mockRejectedValue(new Error('Safe not yet executed')); mocks.getBlockNumber.mockResolvedValue(100n)
     mocks.verify.mockResolvedValue({ status: 'confirmed', payer: PAYER })
-    mocks.send.mockImplementation(async (_request, options) => { await options.reverify(); await options.beforeWrite(); return HASH })
+    mocks.send.mockImplementation(async (_request, options) => { await options.reverify(); await options.durableRecovery.reserve(); await options.durableRecovery.submitted(HASH, mocks.safe); expect(JSON.parse(localStorage.getItem(KEY)!).hash).toBe(HASH); return HASH })
     client = new QueryClient({ defaultOptions: { queries: { staleTime: 30_000, retry: false, retryDelay: 0, gcTime: Infinity } } })
     host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   })
-  afterEach(async () => { await act(async () => root.unmount()); client.clear(); host.remove(); localStorage.clear() })
+  afterEach(async () => { await act(async () => root.unmount()); client.clear(); host.remove(); localStorage.clear(); Reflect.deleteProperty(navigator, 'locks') })
   async function settle() { await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)) }) }
   async function render() { await act(async () => root.render(<QueryClientProvider client={client}><ProjectPayerAddresses chainId={1} projectId={7n} tokenLabel="FUND" /></QueryClientProvider>)); await settle(); await settle() }
   function button(text: string) { return [...host.querySelectorAll('button')].find(item => item.textContent === text)! }
@@ -64,6 +66,7 @@ describe('project payer controls', () => {
     mocks.safe = true
     mocks.send.mockImplementation(async (request, options) => {
       await options.onExistingProposal({ proposalHash: HASH, call: { to: request.address, data: encodeFunctionData(request), value: request.value ?? 0n } })
+      await options.durableRecovery.submitted(HASH, true)
       return HASH
     })
     await render(); await click('Review payer creation')
@@ -110,9 +113,25 @@ describe('project payer controls', () => {
     expect(button('Review payer creation').disabled).toBe(true)
   })
   it('clears the unknown-submission marker only after an explicit wallet rejection', async () => {
-    mocks.send.mockImplementation(async (_request, options) => { await options.beforeWrite(); await options.onWriteRejected(); return null })
+    mocks.send.mockImplementation(async (_request, options) => { await options.durableRecovery.reserve(); await options.durableRecovery.releaseUnsubmitted(); return null })
     await render(); await click('Review payer creation')
     expect(localStorage.getItem(KEY)).toBeNull()
+    expect(button('Review payer creation').closest('fieldset')?.disabled).toBe(false)
+  })
+  it('cleans a failed reservation readback even when the SDK never invokes pre-write abort cleanup', async () => {
+    const writer = vi.fn(async () => HASH), aborted = vi.fn()
+    mocks.send.mockImplementation(async (request, options) => {
+      try { return await submitReviewedContractWrite({ request, expectedAccount: saved().account, review: async () => {}, switchChain: async () => {}, currentAccount: () => mocks.address, simulate: async () => request, beforeWrite: options.durableRecovery.reserve, onBeforeWriteAborted: aborted, write: writer }) }
+      catch { return null }
+    })
+    await render()
+    const storage = localStorage
+    vi.stubGlobal('localStorage', failReservationReadback(storage, KEY))
+    try { await click('Review payer creation') }
+    finally { vi.unstubAllGlobals() }
+    expect(writer).not.toHaveBeenCalled()
+    expect(aborted).not.toHaveBeenCalled()
+    expect(storage.getItem(KEY)).toBeNull()
     expect(button('Review payer creation').closest('fieldset')?.disabled).toBe(false)
   })
   it('re-verifies immediately on remount even with a recently confirmed proof in the same cache', async () => {
@@ -154,7 +173,7 @@ describe('project payer controls', () => {
     const writer = vi.fn(async () => HASH)
     mocks.getBlockNumber.mockImplementation(async () => { mocks.address = PAYER as Address; return 100n })
     mocks.send.mockImplementation(async (request, options) => {
-      try { return await submitReviewedContractWrite({ request, expectedAccount: saved().account, review: async () => {}, switchChain: async () => {}, currentAccount: () => mocks.address, simulate: async () => request, ...options, write: writer }) }
+      try { return await submitReviewedContractWrite({ request, expectedAccount: saved().account, review: async () => {}, switchChain: async () => {}, currentAccount: () => mocks.address, simulate: async () => request, ...options, beforeWrite: options.durableRecovery.reserve, onBeforeWriteAborted: options.durableRecovery.releaseUnsubmitted, onWriteRejected: options.durableRecovery.releaseUnsubmitted, write: writer }) }
       catch { return null }
     })
     await render(); await click('Review payer creation')
@@ -165,7 +184,7 @@ describe('project payer controls', () => {
   it('retains the lock for an ambiguous writer error after the wallet boundary', async () => {
     const writer = vi.fn(async () => { throw new Error('RPC disconnected after submitting') })
     mocks.send.mockImplementation(async (request, options) => {
-      try { return await submitReviewedContractWrite({ request, expectedAccount: saved().account, review: async () => {}, switchChain: async () => {}, currentAccount: () => mocks.address, simulate: async () => request, ...options, write: writer }) }
+      try { return await submitReviewedContractWrite({ request, expectedAccount: saved().account, review: async () => {}, switchChain: async () => {}, currentAccount: () => mocks.address, simulate: async () => request, ...options, beforeWrite: options.durableRecovery.reserve, onBeforeWriteAborted: options.durableRecovery.releaseUnsubmitted, onWriteRejected: options.durableRecovery.releaseUnsubmitted, write: writer }) }
       catch { return null }
     })
     await render(); await click('Review payer creation')

@@ -141,8 +141,10 @@ beforeEach(() => {
   runtime.lock.mockReset().mockImplementation(async (_key, task) => task())
   runtime.send.mockReset().mockImplementation(async (request: TxRequest, options: TxSendOptions) => {
     await options.reverify?.(request)
-    await options.beforeWrite?.()
+    await options.durableRecovery!.reserve()
     expect(runtime.saved.get(KEY)?.pending).toMatchObject({ safe: runtime.safe })
+    await options.durableRecovery!.submitted(HASH, runtime.safe)
+    expect(runtime.saved.get(KEY)?.pending?.hash).toBe(HASH)
     return HASH
   })
   runtime.reset.mockReset()
@@ -203,6 +205,7 @@ describe('live project shop management', () => {
     runtime.safe = true
     runtime.send.mockImplementation(async (request: TxRequest, options: TxSendOptions) => {
       await options.onExistingProposal?.({ proposalHash: HASH, call: { to: request.address, data: encodeFunctionData(request), value: request.value ?? 0n } })
+      await options.durableRecovery!.submitted(HASH, true)
       return HASH
     })
     await reviewNext()
@@ -313,7 +316,7 @@ describe('live project shop management', () => {
   it('preserves an uncertain wallet submission across phase changes and permits only explicit execution recovery', async () => {
     existing()
     runtime.send.mockImplementation(async (request: TxRequest, options: TxSendOptions) => {
-      await options.reverify?.(request); await options.beforeWrite?.()
+      await options.reverify?.(request); await options.durableRecovery!.reserve()
       throw new Error('Wallet connection closed before returning a hash')
     })
     await draft(); await reviewNext()

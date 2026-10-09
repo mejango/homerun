@@ -56,6 +56,13 @@ function recover(raw = envelope()) {
   return deserializeRulesetRecovery(JSON.stringify(raw), ROOT, ACCOUNT)
 }
 
+it('preserves distinct attempt identities when the same ruleset call is retried', () => {
+  for (const attemptId of ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222']) {
+    const records = new Map([[8453, { kind: 'submission-unknown' as const, attemptId }]])
+    expect(deserializeRulesetRecovery(serializeRulesetRecovery(plan(), records, ROOT), ROOT, ACCOUNT).submissions.get(8453)).toEqual({ kind: 'submission-unknown', attemptId })
+  }
+})
+
 function assetAllowancePlan(amount = 9_007_199_254_740_993n): Plan {
   const result = plan()
   for (const state of result.states) {
@@ -341,7 +348,7 @@ function executionFixture() {
 describe('recovered transaction intent verification', () => {
   it('accepts the exact direct transaction after checking its canonical block', async () => {
     const fixture = executionFixture()
-    await expect(verifyRulesetRecoveryExecution(fixture.client, fixture.request, ACCOUNT, receipt())).resolves.toBeUndefined()
+    await expect(verifyRulesetRecoveryExecution(fixture.client, fixture.request, ACCOUNT, receipt())).resolves.toBe('transaction')
     expect(fixture.getTransaction).toHaveBeenCalledWith({ hash: HASH })
     expect(fixture.getBlock).toHaveBeenCalledWith({ blockNumber: 100n })
   })
@@ -382,7 +389,7 @@ describe('recovered transaction intent verification', () => {
       })
       fixture.getTransaction.mockResolvedValue({ ...fixture.transaction, from: OTHER_ACCOUNT, to: ACCOUNT, input })
       const result = verifyRulesetRecoveryExecution(fixture.client, fixture.request, ACCOUNT, receipt())
-      if (variant.valid) await expect(result).resolves.toBeUndefined()
+      if (variant.valid) await expect(result).resolves.toBe('safe')
       else await expect(result).rejects.toThrow()
     }
   })

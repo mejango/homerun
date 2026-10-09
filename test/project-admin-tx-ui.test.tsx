@@ -8,13 +8,13 @@ import type { ProjectAdminTx } from '@/hooks/useProjectAdminTx'
 
 const runtime = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111' as Address | undefined,
-  safe: false, phase: 'idle', send: vi.fn(), reset: vi.fn(), reverify: vi.fn(), waitSafe: vi.fn(), viewAs: vi.fn(),
+  safe: false, phase: 'idle', submissionHash: null as Hex | null, send: vi.fn(), reset: vi.fn(), reverify: vi.fn(), waitSafe: vi.fn(), viewAs: vi.fn(),
   client: { getBlock: vi.fn(), getChainId: vi.fn(), getTransaction: vi.fn(), getTransactionReceipt: vi.fn() },
 }))
 vi.mock('wagmi', () => ({ usePublicClient: () => runtime.client }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.account }) }))
 vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({
-  phase: runtime.phase, busy: false, error: null, isSafe: runtime.safe, send: runtime.send, reset: runtime.reset, dismiss: runtime.reset, notice: null,
+  phase: runtime.phase, busy: false, error: null, isSafe: runtime.safe, send: runtime.send, reset: runtime.reset, dismiss: runtime.reset, notice: null, submissionHash: runtime.submissionHash,
 }) }))
 vi.mock('@/lib/safe-connector', () => ({ waitForSafeExecutionHash: runtime.waitSafe, SAFE_PROPOSAL_AWAITING: 'Proposed to your Safe. Its other signers can approve it there.' }))
 vi.mock('@/lib/viewAs', () => ({ assertNoViewAs: runtime.viewAs }))
@@ -60,7 +60,7 @@ function Panel({ feature, projectId = 7n }: { feature: string; projectId?: bigin
 
 beforeEach(() => {
   localStorage.clear(); handles.clear(); callbacks.clear()
-  runtime.account = OWNER; runtime.safe = false; runtime.phase = 'idle'
+  runtime.account = OWNER; runtime.safe = false; runtime.phase = 'idle'; runtime.submissionHash = null
   runtime.reset.mockReset()
   runtime.reverify.mockReset().mockResolvedValue(undefined)
   runtime.viewAs.mockReset()
@@ -78,12 +78,15 @@ beforeEach(() => {
   }) } })
   runtime.send.mockReset().mockImplementation(async (reviewed: TxRequest, options: TxSendOptions) => {
     await options.reverify?.(reviewed)
-    await options.beforeWrite?.()
+    await options.durableRecovery!.reserve()
     // This is the mocked wallet boundary: the real journal must already exist.
     expect(readProjectAdminPending(localStorage, KEY)).toMatchObject({
       holder: OWNER, target: TARGET, data: encodeFunctionData(reviewed), afterBlock: '100', safe: runtime.safe,
     })
-    return runtime.safe ? PROPOSAL : EXECUTION
+    const hash = runtime.safe ? PROPOSAL : EXECUTION
+    await options.durableRecovery!.submitted(hash, runtime.safe)
+    expect(readProjectAdminPending(localStorage, KEY)?.hash).toBe(hash)
+    return hash
   })
   cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
@@ -120,12 +123,14 @@ function canonicalExecution({ safe = false, wrongPayload = false, reverted = fal
   runtime.client.getTransaction.mockResolvedValue({
     hash: EXECUTION, from: OWNER, to: safe ? OWNER : TARGET, value: 0n,
     input: safe ? encodeFunctionData({ abi: SAFE_ABI, functionName: 'execTransaction', args: [TARGET, 0n, data, 0, 0n, 0n, 0n, zeroAddress, zeroAddress, '0x'] }) : data,
-    blockNumber: 101n, blockHash: BLOCK_HASH,
+    blockNumber: 101n, blockHash: BLOCK_HASH, transactionIndex: 0,
   })
   runtime.client.getTransactionReceipt.mockResolvedValue({
     transactionHash: EXECUTION, status: reverted ? 'reverted' : 'success', blockNumber: 101n, blockHash: BLOCK_HASH,
+    from: OWNER, to: safe ? OWNER : TARGET, transactionIndex: 0,
     logs: safe ? [{ address: OWNER, topics: encodeEventTopics({ abi: SAFE_ABI, eventName: 'ExecutionSuccess' }), data: encodeAbiParameters([{ type: 'bytes32' }, { type: 'uint256' }], [proposal, 0n]) }] : [],
   })
+  runtime.client.getBlock.mockImplementation(async ({ blockNumber }: { blockNumber?: bigint }) => ({ number: blockNumber ?? 200n, hash: BLOCK_HASH, timestamp: 1_000n }))
 }
 
 describe('project administrative transaction recovery', () => {
@@ -155,7 +160,7 @@ describe('project administrative transaction recovery', () => {
 
   it('restores an unknown wallet broadcast after remount and blocks every editor for that project', async () => {
     runtime.send.mockImplementation(async (reviewed: TxRequest, options: TxSendOptions) => {
-      await options.reverify?.(reviewed); await options.beforeWrite?.()
+      await options.reverify?.(reviewed); await options.durableRecovery!.reserve()
       throw new Error('Wallet closed without returning a hash')
     })
     await render(); await click('Metadata')
@@ -180,11 +185,55 @@ describe('project administrative transaction recovery', () => {
     expect(button('Metadata').disabled).toBe(true)
   })
 
-  it.each(['onWriteRejected', 'onBeforeWriteAborted'] as const)('releases only explicitly rejected or aborted submissions via %s', async callback => {
-    runtime.send.mockImplementation(async (reviewed: TxRequest, options: TxSendOptions) => {
-      await options.reverify?.(reviewed); await options.beforeWrite?.()
+  it.each(['before storage write', 'after storage write'] as const)('repairs a returned wallet hash when its callback fails %s', async failure => {
+    const original = Storage.prototype.setItem
+    let fail = true
+    const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, value) {
+      if (key === KEY && JSON.parse(value).hash === EXECUTION && fail) {
+        fail = false
+        if (failure === 'after storage write') original.call(this, key, value)
+        throw new Error('Storage temporarily unavailable')
+      }
+      original.call(this, key, value)
+    })
+    runtime.send.mockImplementation(async (_request: TxRequest, options: TxSendOptions) => {
+      await options.durableRecovery!.reserve()
+      expect(() => options.durableRecovery!.submitted(EXECUTION, false)).toThrow('Storage temporarily unavailable')
+      return EXECUTION
+    })
+    try {
+      await render(); await click('Metadata')
+      expect(readProjectAdminPending(localStorage, KEY)?.hash).toBe(EXECUTION)
+      expect(runtime.send).toHaveBeenCalledOnce()
+    } finally { write.mockRestore() }
+  })
+
+  it('keeps the unknown marker and exposes a returned hash when recovery storage keeps failing', async () => {
+    const original = Storage.prototype.setItem
+    const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, value) {
+      if (key === KEY && JSON.parse(value).hash === EXECUTION) throw new Error('Storage unavailable')
+      original.call(this, key, value)
+    })
+    runtime.send.mockImplementation(async (_request: TxRequest, options: TxSendOptions) => {
+      await options.durableRecovery!.reserve()
+      expect(() => options.durableRecovery!.submitted(EXECUTION, false)).toThrow('Storage unavailable')
+      runtime.submissionHash = EXECUTION
+      return EXECUTION
+    })
+    try {
+      await render(); await click('Metadata')
       expect(readProjectAdminPending(localStorage, KEY)).not.toBeNull()
-      await options[callback]?.()
+      expect(readProjectAdminPending(localStorage, KEY)?.hash).toBeUndefined()
+      expect(host.textContent).toContain(EXECUTION)
+      expect(button('Metadata').disabled).toBe(true)
+    } finally { write.mockRestore() }
+  })
+
+  it('releases explicitly rejected or aborted submissions through the recovery owner', async () => {
+    runtime.send.mockImplementation(async (reviewed: TxRequest, options: TxSendOptions) => {
+      await options.reverify?.(reviewed); await options.durableRecovery!.reserve()
+      expect(readProjectAdminPending(localStorage, KEY)).not.toBeNull()
+      await options.durableRecovery!.releaseUnsubmitted()
       return null
     })
     await render(); await click('Metadata')
@@ -198,7 +247,7 @@ describe('project administrative transaction recovery', () => {
     const otherConfirmed = vi.fn()
     callbacks.set('Metadata', confirmed)
     callbacks.set('Ownership', otherConfirmed)
-    runtime.send.mockImplementation(async (_reviewed: TxRequest, options: TxSendOptions) => { await options.beforeWrite?.(); return null })
+    runtime.send.mockImplementation(async (_reviewed: TxRequest, options: TxSendOptions) => { await options.durableRecovery!.reserve(); return null })
     for (const prefix of ['project-metadata', 'income-operator', 'project-permissions', 'project-ownership', 'project-splits', 'project-admin-custom', 'unrelated']) cache.setQueryData([prefix, 8453, '7'], 'cached')
     await render(['Metadata', 'Ownership']); await click('Metadata')
     canonicalExecution({ wrongPayload: true })
@@ -225,7 +274,7 @@ describe('project administrative transaction recovery', () => {
   it('shares the review lock across independently mounted feature hooks before any pending record exists', async () => {
     let release!: () => void
     const review = new Promise<void>(resolve => { release = resolve })
-    runtime.send.mockImplementation(async (_reviewed: TxRequest, options: TxSendOptions) => { await review; await options.beforeWrite?.(); return EXECUTION })
+    runtime.send.mockImplementation(async (_reviewed: TxRequest, options: TxSendOptions) => { await review; await options.durableRecovery!.reserve(); await options.durableRecovery!.submitted(EXECUTION, false); return EXECUTION })
     await render(['Metadata', 'Permissions'])
     await act(async () => button('Metadata').click())
     expect(localStorage.getItem(KEY)).toBeNull()
@@ -296,7 +345,7 @@ describe('project administrative transaction recovery', () => {
     if (advanceFloor) runtime.reverify.mockImplementation(async () => { cache.setQueryData(['project-admin-confirmed-block', 8453, '7'], 101n) })
     runtime.send.mockImplementation(async (reviewed: TxRequest, options: TxSendOptions) => {
       await options.reverify?.(reviewed)
-      await options.beforeWrite?.()
+      await options.durableRecovery!.reserve()
       return walletWrite()
     })
     await render(); await click('Metadata')
@@ -313,6 +362,7 @@ describe('project administrative transaction recovery', () => {
   runtime.safe = true
   runtime.send.mockImplementation(async (reviewed: TxRequest, options: TxSendOptions) => {
     await options.onExistingProposal?.({ proposalHash: PROPOSAL, call: { to: reviewed.address, data: encodeFunctionData(reviewed), value: reviewed.value } })
+    await options.durableRecovery!.submitted(PROPOSAL, true)
     return PROPOSAL
   })
   await render()
@@ -335,8 +385,10 @@ describe('project administrative transaction recovery', () => {
   let finish!: (hash: Hex) => void
   runtime.send.mockImplementation(async (_reviewed: TxRequest, options: TxSendOptions) => {
     runtime.phase = 'success'
-    await options.beforeWrite?.()
-    return new Promise<Hex>(resolve => { finish = resolve })
+    await options.durableRecovery!.reserve()
+    const hash = await new Promise<Hex>(resolve => { finish = resolve })
+    await options.durableRecovery!.submitted(hash, true)
+    return hash
   })
   await render()
   await click('Metadata')

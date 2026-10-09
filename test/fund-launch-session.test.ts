@@ -4,6 +4,7 @@ vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fix
 import { encodeFunctionData, zeroAddress, zeroHash, type Hex } from 'viem'
 import { buildFundLaunch } from '../src/lib/fund-contracts'
 import { adoptFundLaunchProposal, FUND_LAUNCH_KEY, archiveLaunch, canCancelLaunch, cancelUnsubmittedLaunch, decodeLaunchSession, discardUnsignedLaunch, encodeLaunchSession, refreshLaunchCreationFee, saveLaunch, sameSender, updateLaunchStatus, type FundLaunchSession } from '../src/lib/fund-launch-session'
+import { failReservationReadback } from './support/reservation-storage'
 
 const owner = '0x1111111111111111111111111111111111111111' as const
 const salt = `0x${'12'.repeat(32)}` as Hex
@@ -15,6 +16,20 @@ function session(): FundLaunchSession {
 beforeEach(() => localStorage.clear())
 
 describe('durable FUND deployment journal', () => {
+  it.each(['launch', 'setup'] as const)('rolls back only its exact %s reservation after a failed readback', kind => {
+    for (const replacement of [undefined, 'replacement']) {
+      const storage = localStorage
+      storage.clear()
+      const previous = saveLaunch(session()).statuses[8453], raw = storage.getItem(FUND_LAUNCH_KEY)
+      const attemptId = crypto.randomUUID()
+      const next = kind === 'launch' ? { phase: 'signing' as const, safe: false, attemptId }
+        : { phase: 'ready' as const, multisigSetup: { safe: false, attemptId } }
+      vi.stubGlobal('localStorage', failReservationReadback(storage, FUND_LAUNCH_KEY, { replacement }))
+      try { expect(() => updateLaunchStatus(salt, 8453, next, previous.phase, previous, true)).toThrow() }
+      finally { vi.unstubAllGlobals() }
+      expect(storage.getItem(FUND_LAUNCH_KEY)).toBe(replacement ?? raw)
+    }
+  })
   it('roundtrips exact fees without converting user text into bigint', () => {
     expect(decodeLaunchSession(encodeLaunchSession(session()))).toEqual(session())
     const legacy = JSON.parse(encodeLaunchSession(session()))
@@ -39,6 +54,31 @@ describe('durable FUND deployment journal', () => {
     expect(() => saveLaunch({ ...original, input: { ...original.input, owner: '0x2222222222222222222222222222222222222222' } })).toThrow(/immutable/)
     expect(() => saveLaunch({ ...original, input: { ...original.input, mustStartAtOrAfter: original.input.mustStartAtOrAfter + 1 } })).toThrow(/immutable/)
   })
+  it('accepts legacy recovery without inventing wallet provenance and rejects malformed provenance', () => {
+    const legacy = session()
+    legacy.statuses[8453] = { phase: 'pending', hash, multisigSetup: { safe: true, hash } }
+    expect(decodeLaunchSession(encodeLaunchSession(legacy)).statuses[8453].walletReturned).toBeUndefined()
+    expect(decodeLaunchSession(encodeLaunchSession(legacy)).statuses[8453].attemptId).toBeUndefined()
+    for (const status of [
+      { phase: 'pending', hash, walletReturned: false }, { phase: 'pending', hash, walletReturned: 'true' },
+      { phase: 'signing', walletReturned: true }, { phase: 'ready', multisigSetup: { safe: true, walletReturned: true } },
+      { phase: 'ready', multisigSetup: { safe: true, hash, walletReturned: false } },
+      { phase: 'signing', attemptId: 'not-a-uuid' }, { phase: 'signing', attemptId: 1 },
+      { phase: 'ready', multisigSetup: { safe: true, attemptId: 'not-a-uuid' } },
+    ]) {
+      const raw = JSON.parse(encodeLaunchSession(session())); raw.statuses[8453] = status
+      expect(() => decodeLaunchSession(JSON.stringify(raw))).toThrow()
+    }
+  })
+  it.each([undefined, hash])('holds a saved multisig setup through unsigned discard, cancellation and transport changes (%s)', setupHash => {
+    const current = session()
+    current.statuses[8453] = { phase: 'ready', multisigSetup: { safe: true, ...(setupHash ? { hash: setupHash } : {}) } }
+    saveLaunch(current)
+    expect(canCancelLaunch(current)).toBe(false)
+    expect(discardUnsignedLaunch(salt)).toBe(false)
+    expect(() => saveLaunch({ ...current, transport: 'relayr' })).toThrow(/cannot change transport/)
+    expect(decodeLaunchSession(localStorage.getItem(FUND_LAUNCH_KEY)!)).toEqual(current)
+  })
   it('merges two chain completions without stale-closure progress loss', () => {
     const stale = saveLaunch(session())
     updateLaunchStatus(salt, 8453, { phase: 'signing' }, 'ready')
@@ -48,6 +88,26 @@ describe('durable FUND deployment journal', () => {
     expect(merged.statuses[10].phase).toBe('signing')
     expect(() => updateLaunchStatus(salt, 8453, { phase: 'signing' }, 'ready')).toThrow(/already being handled/)
   })
+  it.each(['launch', 'setup'] as const)('rejects stale %s callbacks after an identical same-clock retry', kind => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000)
+    try {
+      saveLaunch(session())
+      const firstId = globalThis.crypto.randomUUID(), secondId = globalThis.crypto.randomUUID()
+      expect(firstId).not.toBe(secondId)
+      const attempt = (attemptId: string) => kind === 'launch'
+        ? { phase: 'signing' as const, safe: false, attemptId }
+        : { phase: 'ready' as const, multisigSetup: { safe: false, attemptId } }
+      const first = updateLaunchStatus(salt, 8453, attempt(firstId), 'ready').statuses[8453]
+      const ready = updateLaunchStatus(salt, 8453, { phase: 'ready' }, kind === 'launch' ? 'signing' : undefined, first).statuses[8453]
+      const second = updateLaunchStatus(salt, 8453, attempt(secondId), 'ready', ready).statuses[8453]
+      const staleSubmitted = kind === 'launch'
+        ? { ...first, phase: 'pending' as const, hash, walletReturned: true as const }
+        : { ...first, multisigSetup: { ...first.multisigSetup!, hash, walletReturned: true as const } }
+      expect(() => updateLaunchStatus(salt, 8453, staleSubmitted, undefined, first)).toThrow(/changed in another tab/)
+      expect(() => updateLaunchStatus(salt, 8453, { phase: 'ready' }, undefined, first)).toThrow(/changed in another tab/)
+      expect(decodeLaunchSession(localStorage.getItem(FUND_LAUNCH_KEY)!).statuses[8453]).toEqual(second)
+    } finally { clock.mockRestore() }
+  })
   it('never resets a pending transaction or replaces a confirmed project', () => {
     saveLaunch(session())
     updateLaunchStatus(salt, 8453, { phase: 'signing' }, 'ready')
@@ -56,6 +116,14 @@ describe('durable FUND deployment journal', () => {
     expect(() => updateLaunchStatus(salt, 8453, { phase: 'pending', hash: otherHash, safe: false })).toThrow(/pending transaction/)
     updateLaunchStatus(salt, 8453, { phase: 'confirmed', hash, projectId: '17' })
     expect(() => updateLaunchStatus(salt, 8453, { phase: 'confirmed', hash, projectId: '18' })).toThrow(/cannot be replaced/)
+  })
+  it('does not withdraw a multisig attempt whose hash was recorded by another tab', () => {
+    saveLaunch(session())
+    const reserved = updateLaunchStatus(salt, 8453, { phase: 'ready', multisigSetup: { safe: true } }).statuses[8453]
+    const submitted = { ...reserved, multisigSetup: { safe: true, hash } }
+    updateLaunchStatus(salt, 8453, submitted, undefined, reserved)
+    expect(() => updateLaunchStatus(salt, 8453, { phase: 'ready' }, undefined, reserved)).toThrow(/changed in another tab/)
+    expect(decodeLaunchSession(localStorage.getItem(FUND_LAUNCH_KEY)!).statuses[8453]).toEqual(submitted)
   })
   it('refreshes fees only before a new attempt, retaining other chain fees and frozen payload', () => {
     saveLaunch(session())
@@ -294,7 +362,7 @@ describe('existing FUND Safe proposal adoption', () => {
     updateLaunchStatus(salt, 10, { phase: 'signing' })
     expect(() => updateLaunchStatus(salt, 8453, { phase: 'pending', hash, safe: true })).toThrow('changed elsewhere')
     const adopted = adoptFundLaunchProposal(salt, 8453, proposalFor(original))
-    expect(adopted.statuses[8453]).toEqual({ phase: 'pending', hash, safe: true })
+    expect(adopted.statuses[8453]).toEqual({ phase: 'pending', hash, safe: true, walletReturned: true, attemptId: expect.any(String) })
     expect(adopted.statuses[10].phase).toBe('signing')
     expect(adopted.input).toEqual(original.input)
     expect(decodeLaunchSession(localStorage.getItem(FUND_LAUNCH_KEY)!)).toEqual(adopted)
@@ -308,7 +376,7 @@ describe('existing FUND Safe proposal adoption', () => {
     updateLaunchStatus(salt, 8453, { phase: 'signing' })
     updateLaunchStatus(salt, 8453, { phase: 'pending', hash: otherHash })
     updateLaunchStatus(salt, 8453, { phase: 'reverted', hash: otherHash })
-    expect(adoptFundLaunchProposal(salt, 8453, proposal).statuses[8453]).toEqual({ phase: 'pending', safe: true, hash })
+    expect(adoptFundLaunchProposal(salt, 8453, proposal).statuses[8453]).toEqual({ phase: 'pending', safe: true, hash, walletReturned: true, attemptId: expect.any(String) })
     localStorage.clear()
     saveLaunch({ ...session(), transport: 'intent' })
     expect(() => adoptFundLaunchProposal(salt, 8453, proposal)).toThrow('direct deployment')

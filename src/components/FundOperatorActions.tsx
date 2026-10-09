@@ -1,6 +1,7 @@
 'use client'
 
 import { assertSafeProposalCall } from '@/lib/sticky-session'
+import { withPrewalletReservation } from '@/lib/prewallet-reservation'
 
 import { NATIVE_TOKEN, jbControllerAbi, jbTokensAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
@@ -22,6 +23,7 @@ import {
 import { assertFundStateForWrite, readFundProjectState, readLinkedFundProjects, type FundProjectState } from '@/lib/fund-state'
 import { waitForSafeExecutionHash } from '@/lib/safe-connector'
 import { SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
+import { verifyReviewedWriteReceipt } from '@bananapus/nana-sdk-core/review'
 import { wagmiConfig } from '@/providers/Providers'
 import { readableError } from '@/lib/readable-error'
 
@@ -101,7 +103,8 @@ function rebuildPlan(plan: Pick<RulesetPlan, 'states' | 'action' | 'startsAt' | 
   return buildFundRulesetChange({ snapshots, action: plan.action, mustStartAtOrAfter: plan.startsAt })
 }
 
-export type RulesetSubmission = { hash: Hex; kind: 'transaction' | 'safe-proposal' } | { kind: 'submission-unknown' }
+export type RulesetSubmission = ({ hash: Hex; kind: 'transaction' | 'safe-proposal' } | { kind: 'submission-unknown' }) & { attemptId?: string }
+type RulesetCompletion = { rulesetId: bigint; receipt: TransactionReceipt; submission: RulesetSubmission }
 type RecoveryRoot = { chainId: number; projectId: bigint }
 const MAX_RECOVERY_BYTES = 262_144
 
@@ -147,12 +150,14 @@ export function deserializeRulesetRecovery(raw: string, root: RecoveryRoot, acco
     if (!Array.isArray(entry) || entry.length !== 2) throw new Error('Invalid recovery transaction entry.')
     const [chainId, transaction] = entry as [number, RulesetSubmission]
     if (!states.some(project => project.chainId === chainId) || submissions.has(chainId) || !transaction) throw new Error('Invalid or duplicate recovery transaction.')
+    if (transaction.attemptId !== undefined && (typeof transaction.attemptId !== 'string' || !/^[0-9a-f-]{36}$/i.test(transaction.attemptId))) throw new Error('Invalid recovery attempt identity.')
+    const identity = transaction.attemptId ? { attemptId: transaction.attemptId } : {}
     if (transaction.kind === 'submission-unknown') {
-      if (Object.keys(transaction).length !== 1) throw new Error('Invalid unknown-submission marker.')
-      submissions.set(chainId, { kind: 'submission-unknown' })
+      if (Object.keys(transaction).some(key => key !== 'kind' && key !== 'attemptId')) throw new Error('Invalid unknown-submission marker.')
+      submissions.set(chainId, { kind: 'submission-unknown', ...identity })
     } else {
       if ((transaction.kind !== 'transaction' && transaction.kind !== 'safe-proposal') || typeof transaction.hash !== 'string' || !/^0x[\da-fA-F]{64}$/.test(transaction.hash)) throw new Error('Invalid recovery transaction hash.')
-      submissions.set(chainId, { hash: transaction.hash, kind: transaction.kind })
+      submissions.set(chainId, { hash: transaction.hash, kind: transaction.kind, ...identity })
     }
   }
   return { plan: { states, requests: built.requests, account: getAddress(saved.account), action: saved.action, startsAt: saved.startsAt!, ...(saved.allowances ? { allowances: saved.allowances } : {}) }, submissions }
@@ -173,30 +178,47 @@ export function validateRulesetRecoveryReceipt(receipt: TransactionReceipt, proj
 }
 
 /** A matching log alone cannot authenticate imported transaction intent. */
-export async function verifyRulesetRecoveryExecution(client: PublicClient, request: FundTransaction, account: Address, receipt: TransactionReceipt): Promise<void> {
+export async function verifyRulesetRecoveryExecution(client: PublicClient, request: FundTransaction, account: Address, receipt: TransactionReceipt): Promise<'transaction' | 'safe'> {
   const transaction = await client.getTransaction({ hash: receipt.transactionHash })
   const block = await client.getBlock({ blockNumber: receipt.blockNumber })
   if (transaction.blockHash !== receipt.blockHash || block.hash !== receipt.blockHash) throw new Error('The transaction changed during recovery. Refresh its canonical receipt.')
   const expectedData = encodeFunctionData({ abi: request.abi, functionName: request.functionName, args: request.args })
   const expectedValue = request.value ?? 0n
-  if (transaction.to && isAddressEqual(transaction.to, request.address) && isAddressEqual(transaction.from, account) && transaction.value === expectedValue && transaction.input.toLowerCase() === expectedData.toLowerCase()) return
+  if (transaction.to && isAddressEqual(transaction.to, request.address) && isAddressEqual(transaction.from, account) && transaction.value === expectedValue && transaction.input.toLowerCase() === expectedData.toLowerCase()) return 'transaction'
   if (transaction.to && isAddressEqual(transaction.to, account)) {
     try {
       const decoded = decodeFunctionData({ abi: SAFE_EXEC_ABI, data: transaction.input })
       if (decoded.functionName === 'execTransaction') {
         const [to, value, data, operation] = decoded.args
-        if (operation === 0 && isAddressEqual(to, request.address) && value === expectedValue && data.toLowerCase() === expectedData.toLowerCase()) return
+        if (operation === 0 && isAddressEqual(to, request.address) && value === expectedValue && data.toLowerCase() === expectedData.toLowerCase()) return 'safe'
       }
     } catch { /* Unsupported execution wrapper must be reconciled explicitly. */ }
   }
   throw new Error('The recovered transaction does not execute this exact reviewed call. No remaining transaction will be offered until the plan is reconciled.')
 }
 
+/** The saved submission stays authoritative even when a Safe executes at another hash. */
+async function verifyRulesetSubmissionReceipt(plan: RulesetPlan, chainId: number, submission: RulesetSubmission, receipt: TransactionReceipt) {
+  if (submission.kind === 'submission-unknown') throw new Error('The ruleset submission hash is still unknown. Keep this attempt pending until its execution is reconciled.')
+  const index = plan.states.findIndex(project => project.chainId === chainId)
+  if (index < 0) throw new Error('This transaction is not part of the linked plan.')
+  const request = plan.requests[index]
+  const client = chainClient(plan.states[index].chainId)
+  if (submission.kind === 'transaction' && submission.hash.toLowerCase() !== receipt.transactionHash.toLowerCase()) throw new Error('This receipt belongs to another saved ruleset submission.')
+  const execution = await verifyRulesetRecoveryExecution(client, request, plan.account, receipt)
+  if (submission.kind === 'safe-proposal' && execution !== 'safe') throw new Error('The saved Safe proposal must be proven by its Safe execution.')
+  return verifyReviewedWriteReceipt(client, {
+    version: 1, id: submission.attemptId ?? `ruleset:${plan.startsAt}:${chainId}`, chainId, account: plan.account,
+    safe: execution === 'safe', hash: submission.hash,
+    call: { to: request.address, data: encodeFunctionData(request), value: (request.value ?? 0n).toString() },
+  }, receipt)
+}
+
 function RecoveryPanel({ plan, submissions, onSubmitted, onRemoveSubmission, onResume }: {
   plan: RulesetPlan; submissions: ReadonlyMap<number, RulesetSubmission>
-  onSubmitted: (chainId: number, submission: RulesetSubmission) => void
-  onRemoveSubmission: (chainId: number) => void
-  onResume: (completed: Map<number, { rulesetId: bigint; receipt: TransactionReceipt }>) => void
+  onSubmitted: (chainId: number, submission: RulesetSubmission, expected: RulesetSubmission | null) => Promise<void>
+  onRemoveSubmission: (chainId: number, expected: RulesetSubmission) => Promise<void>
+  onResume: (completed: Map<number, RulesetCompletion>) => Promise<void>
 }) {
   const [checking, setChecking] = useState(false)
   const [notice, setNotice] = useState('Saved intent found. The transactions and every linked project must be verified again before continuing.')
@@ -207,14 +229,23 @@ function RecoveryPanel({ plan, submissions, onSubmitted, onRemoveSubmission, onR
   const abort = useRef<AbortController | null>(null)
   useEffect(() => () => abort.current?.abort(), [])
 
-  async function execution(chainId: number, submission: RulesetSubmission, signal: AbortSignal) {
+  async function verifyFailed(chainId: number, submission: RulesetSubmission, receipt: TransactionReceipt) {
+    const saved = submissions.get(chainId)
+    if (submission.kind === 'submission-unknown' || !saved || saved.kind === 'submission-unknown'
+      || saved.kind !== submission.kind || saved.hash.toLowerCase() !== submission.hash.toLowerCase()) {
+      throw new Error('A matching historical failure cannot release an unknown ruleset submission.')
+    }
+    if (await verifyRulesetSubmissionReceipt(plan, chainId, saved, receipt) !== 'failed') throw new Error('The saved ruleset submission has not been proven failed.')
+  }
+
+  async function execution(chainId: number, submission: RulesetSubmission, signal: AbortSignal, executionHash?: Hex) {
     if (submission.kind === 'submission-unknown') throw new Error(`A wallet submission may have started on ${displayChainName(chainId)}, but no hash was recorded. Inspect the wallet or Safe and add its execution hash below; this uncertainty cannot authorize a duplicate.`)
     const index = plan.states.findIndex(project => project.chainId === chainId)
     if (index < 0) throw new Error('This transaction is not part of the linked plan.')
     const project = plan.states[index]
     const client = chainClient(project.chainId)
-    let hash = submission.hash
-    if (submission.kind === 'safe-proposal') {
+    let hash = executionHash ?? submission.hash
+    if (!executionHash && submission.kind === 'safe-proposal') {
       setNotice(`Waiting for the Safe proposal on ${displayChainName(chainId)} to execute. An unexecuted proposal is not a confirmed ruleset change.`)
       hash = await waitForSafeExecutionHash(chainId, hash, { signal })
     }
@@ -224,15 +255,13 @@ function RecoveryPanel({ plan, submissions, onSubmitted, onRemoveSubmission, onR
     // successful receipt: its call failed, and its nonce is spent.
     const failedInSafe = safeExecutionResult(receipt, plan.account, submission.hash).status === 'failed'
     if ((receipt.status === 'reverted' && submission.kind === 'transaction') || failedInSafe) {
-      await verifyRulesetRecoveryExecution(client, plan.requests[index], plan.account, receipt)
-      // The failed execution, like a revert, is what can be cleared.
-      if (submission.kind === 'safe-proposal') onSubmitted(chainId, { kind: 'transaction', hash })
+      await verifyFailed(chainId, submission, receipt)
       setReverted({ chainId, hash })
     }
     if (failedInSafe) throw new Error('The Safe executed this transaction, but its call failed. It has not changed the rules.')
     const rulesetId = validateRulesetRecoveryReceipt(receipt, project.projectId, project.rulesetSnapshot.controller, `Homerun: ${plan.action}`)
-    await verifyRulesetRecoveryExecution(client, plan.requests[index], plan.account, receipt)
-    return { rulesetId, receipt }
+    if (await verifyRulesetSubmissionReceipt(plan, chainId, submission, receipt) !== 'success') throw new Error('The saved ruleset submission has not been proven successful.')
+    return { rulesetId, receipt, submission }
   }
 
   async function recover() {
@@ -240,11 +269,10 @@ function RecoveryPanel({ plan, submissions, onSubmitted, onRemoveSubmission, onR
     const controller = new AbortController(); abort.current = controller
     setChecking(true); setError(null); setNotice('Checking the saved transaction hashes against chain receipts…')
     try {
-      const completed = new Map<number, { rulesetId: bigint; receipt: TransactionReceipt }>()
+      const completed = new Map<number, RulesetCompletion>()
       for (const [chainId, submission] of submissions) {
         const result = await execution(chainId, submission, controller.signal)
         completed.set(chainId, result)
-        if (submission.kind === 'safe-proposal') onSubmitted(chainId, { kind: 'transaction', hash: result.receipt.transactionHash })
       }
       const seed = plan.states[0]
       const current = await readLinkedFundProjects(chainClient, await readFundProjectState(chainClient(seed.chainId), { chainId: seed.chainId, projectId: seed.projectId, account: plan.account }))
@@ -262,7 +290,7 @@ function RecoveryPanel({ plan, submissions, onSubmitted, onRemoveSubmission, onR
         if (!alreadyActivated && snapshotTerms(expected) !== snapshotTerms(latest.rulesetSnapshot)) throw new Error(`The rules on ${displayChainName(original.chainId)} do not match the saved plan. If a submitted transaction hash is missing, add it below; do not submit a duplicate.`)
       }
       if (completed.size < plan.states.length && (Date.now() / 1000 >= plan.startsAt - 60 || current.some(project => project.blockTimestamp >= BigInt(plan.startsAt - 60)))) throw new Error('Some chains confirmed, but the shared activation deadline has passed. The remaining calls cannot be sent late. Export this plan and reconcile the active and queued rules on every chain before scheduling a replacement.')
-      onResume(completed)
+      await onResume(completed)
     } catch (reason) {
       if (!(reason instanceof DOMException && reason.name === 'AbortError')) setError(`${message(reason)} No duplicate transaction will be submitted during recovery.`)
     } finally { setChecking(false); abort.current = null }
@@ -273,8 +301,10 @@ function RecoveryPanel({ plan, submissions, onSubmitted, onRemoveSubmission, onR
     const controller = new AbortController(); abort.current = controller
     setChecking(true); setError(null)
     try {
-      const result = await execution(manualChain, { kind: 'transaction', hash: manualHash as Hex }, controller.signal)
-      onSubmitted(manualChain, { kind: 'transaction', hash: result.receipt.transactionHash })
+      const previous = submissions.get(manualChain) ?? null
+      const submission: RulesetSubmission = previous && previous.kind !== 'submission-unknown' ? previous : { kind: 'transaction', hash: manualHash as Hex, attemptId: previous?.attemptId ?? crypto.randomUUID() }
+      const result = await execution(manualChain, submission, controller.signal, manualHash as Hex)
+      await onSubmitted(manualChain, result.submission, previous)
       setManualHash(''); setNotice('The exact execution was verified and its hash saved. Verify every chain to resume the remaining plan.')
     } catch (reason) { setError(message(reason)) } finally { setChecking(false); abort.current = null }
   }
@@ -282,15 +312,14 @@ function RecoveryPanel({ plan, submissions, onSubmitted, onRemoveSubmission, onR
   async function clearReverted() {
     if (!reverted || checking) return
     const saved = submissions.get(reverted.chainId)
-    if (saved?.kind !== 'transaction' || saved.hash.toLowerCase() !== reverted.hash.toLowerCase()) return
+    if (!saved || saved.kind === 'submission-unknown' || (saved.kind === 'transaction' && saved.hash.toLowerCase() !== reverted.hash.toLowerCase())) return
     setChecking(true); setError(null)
     try {
       const index = plan.states.findIndex(project => project.chainId === reverted.chainId)
       const client = chainClient(plan.states[index].chainId)
-      const receipt = await client.getTransactionReceipt({ hash: saved.hash })
-      if (receipt.status !== 'reverted' && safeExecutionResult(receipt, plan.account, saved.hash).status !== 'failed') throw new Error('The transaction is not confirmed as reverted. Its recovery lock must remain.')
-      await verifyRulesetRecoveryExecution(client, plan.requests[index], plan.account, receipt)
-      onRemoveSubmission(reverted.chainId); setReverted(null)
+      const receipt = await client.getTransactionReceipt({ hash: reverted.hash })
+      await verifyFailed(reverted.chainId, saved, receipt)
+      await onRemoveSubmission(reverted.chainId, saved); setReverted(null)
       setNotice('The failed execution was verified and removed from this plan. Verify every chain again before reviewing a retry.')
     } catch (reason) { setError(message(reason)) } finally { setChecking(false) }
   }
@@ -299,19 +328,20 @@ function RecoveryPanel({ plan, submissions, onSubmitted, onRemoveSubmission, onR
     <p role="status" className="text-sm">{notice}</p>
     <div className="flex flex-wrap gap-3"><button type="button" className="btn-primary min-h-11 px-5" disabled={checking} onClick={() => void recover()}>{checking ? 'Verifying saved transactions…' : 'Verify and resume queued plan'}</button>{checking && <button type="button" className="btn-secondary min-h-10 px-4" onClick={() => abort.current?.abort()}>Pause recovery checks</button>}</div>
     {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
-    {reverted && submissions.get(reverted.chainId)?.kind === 'transaction' && <button type="button" className="btn-secondary min-h-10 w-fit px-4" disabled={checking} onClick={() => void clearReverted()}>Clear the confirmed reverted attempt</button>}
+    {reverted && submissions.get(reverted.chainId)?.kind !== 'submission-unknown' && <button type="button" className="btn-secondary min-h-10 w-fit px-4" disabled={checking} onClick={() => void clearReverted()}>Clear the confirmed reverted attempt</button>}
     <details><summary className="cursor-pointer text-sm">Add a missing execution hash</summary><div className="mt-4 grid gap-4"><p className="text-xs text-[var(--muted)]">Use this if a Safe executed without tracking or the page closed before the hash was saved. The call and receipt are verified before it counts.</p><label className="grid gap-2 text-sm">Network<select className="min-h-11 w-full rounded border border-[#bfc9b5] bg-white px-3 pr-9" value={manualChain} disabled={checking} onChange={event => setManualChain(Number(event.target.value) as JBChainId)}>{plan.states.map(project => <option key={project.chainId} value={project.chainId}>{displayChainName(project.chainId)}</option>)}</select></label><Field label="Onchain transaction hash" value={manualHash} onChange={setManualHash} disabled={checking} decimal={false} /><button type="button" className="btn-secondary min-h-10 w-fit px-4" disabled={checking || !/^0x[\da-fA-F]{64}$/.test(manualHash)} onClick={() => void recordExecution()}>Verify execution hash</button></div></details>
   </div>
 }
 
 /** A chain-specific hook instance prevents a wallet switch from watching the wrong chain. */
-function LinkedRulesetStep({ plan, index, completed, onConfirmed, onCancel, onSubmitted, onBeforeWrite, onWriteRejected, submission }: {
-  plan: RulesetPlan; index: number; completed: ReadonlyMap<number, { rulesetId: bigint; receipt: TransactionReceipt }>
-  onConfirmed: (chainId: number, rulesetId: bigint, receipt: TransactionReceipt) => void
+function LinkedRulesetStep({ plan, index, completed, onConfirmed, onCancel, onSubmitted, onBeforeWrite, onWriteRejected, withSubmissionLock, submission }: {
+  plan: RulesetPlan; index: number; completed: ReadonlyMap<number, RulesetCompletion>
+  onConfirmed: (chainId: number, result: RulesetCompletion) => Promise<void>
   onCancel: () => void
   onSubmitted: (chainId: number, submission: RulesetSubmission) => void
-  onBeforeWrite: (chainId: number) => void
-  onWriteRejected: (chainId: number) => void
+  onBeforeWrite: (chainId: number) => string
+  onWriteRejected: (chainId: number, attemptId: string) => void
+  withSubmissionLock: (task: () => Promise<void>) => Promise<void>
   submission?: RulesetSubmission
 }) {
   const state = plan.states[index]
@@ -321,27 +351,23 @@ function LinkedRulesetStep({ plan, index, completed, onConfirmed, onCancel, onSu
   const [preparing, setPreparing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const delivered = useRef(false)
-  const recordedHash = useRef<string | null>(null)
   const busy = preparing || tx.busy || tx.phase === 'review'
 
   useEffect(() => {
-    if (delivered.current || tx.phase !== 'success' || !tx.receipt || tx.receipt.status !== 'success') return
-    try {
-      const rulesetId = validateRulesetRecoveryReceipt(tx.receipt, state.projectId, state.rulesetSnapshot.controller, `Homerun: ${plan.action}`)
-      delivered.current = true
-      onConfirmed(state.chainId, rulesetId, tx.receipt)
-    } catch (reason) { setError(message(reason)) }
-  }, [onConfirmed, plan.action, state.chainId, state.rulesetSnapshot.controller, state.projectId, tx.phase, tx.receipt])
-
-  useEffect(() => {
-    const hash = tx.safeProposalHash ?? tx.hash
-    if (!hash) return
-    const kind = tx.safeProposalHash ? 'safe-proposal' : 'transaction'
-    const key = `${kind}:${hash}`
-    if (recordedHash.current === key) return
-    recordedHash.current = key
-    onSubmitted(state.chainId, { kind, hash })
-  }, [onSubmitted, state.chainId, tx.hash, tx.safeProposalHash])
+    if (delivered.current || tx.phase !== 'success' || !tx.receipt || tx.receipt.status !== 'success' || !submission || submission.kind === 'submission-unknown') return
+    let stopped = false
+    const receipt = tx.receipt
+    void (async () => {
+      try {
+        const rulesetId = validateRulesetRecoveryReceipt(receipt, state.projectId, state.rulesetSnapshot.controller, `Homerun: ${plan.action}`)
+        if (await verifyRulesetSubmissionReceipt(plan, state.chainId, submission, receipt) !== 'success') throw new Error('The saved ruleset submission has not been proven successful.')
+        if (stopped) return
+        await onConfirmed(state.chainId, { rulesetId, receipt, submission })
+        delivered.current = true
+      } catch (reason) { if (!stopped) setError(message(reason)) }
+    })()
+    return () => { stopped = true }
+  }, [onConfirmed, plan, state.chainId, state.rulesetSnapshot.controller, state.projectId, submission, tx.phase, tx.receipt])
 
   async function reverify() {
     const connected = getAccount(wagmiConfig).address
@@ -368,21 +394,38 @@ function LinkedRulesetStep({ plan, index, completed, onConfirmed, onCancel, onSu
     if (submission) { setError('A transaction or Safe proposal is already recorded for this chain. Recheck the saved transaction before considering another submission.'); return }
     setError(null); setPreparing(true)
     try {
-      await reverify()
-      const hash = await tx.send({ ...request, label: `${RULESET_LABELS[plan.action]} on ${displayChainName(state.chainId)}` }, {
-        reviewedAccount: plan.account,
-        reviewNotice: [`This is transaction ${index + 1} of ${plan.requests.length}. Every chain must confirm before ${new Date(plan.startsAt * 1000).toLocaleString()}. Changes are separate transactions and are not atomic.`, rulesetNotice(plan.action)].filter(Boolean).join('\n\n'),
-        reverify,
-        onExistingProposal: proposal => {
-          assertSafeProposalCall(request, proposal)
-          onSubmitted(state.chainId, { kind: 'safe-proposal', hash: proposal.proposalHash })
-        },
-        beforeWrite: () => onBeforeWrite(state.chainId),
-        onWriteRejected: () => onWriteRejected(state.chainId),
-        // Nothing reached the wallet here either, so the unknown-submission marker goes.
-        onBeforeWriteAborted: () => onWriteRejected(state.chainId),
+      await withSubmissionLock(async () => {
+        await reverify()
+        let attempted = false
+        let attemptId: string | undefined
+        let submittedHash: Hex | null = null
+        const persistSubmitted = (hash: Hex, safe = tx.isSafe) => {
+          if (!attempted && !submittedHash) throw new Error('The ruleset update has no saved submission to record.')
+          if (submittedHash === hash) return
+          onSubmitted(state.chainId, { kind: safe ? 'safe-proposal' : 'transaction', hash, attemptId })
+          submittedHash = hash
+        }
+        const hash = await tx.send({ ...request, label: `${RULESET_LABELS[plan.action]} on ${displayChainName(state.chainId)}` }, {
+          reviewedAccount: plan.account,
+          reviewNotice: [`This is transaction ${index + 1} of ${plan.requests.length}. Every chain must confirm before ${new Date(plan.startsAt * 1000).toLocaleString()}. Changes are separate transactions and are not atomic.`, rulesetNotice(plan.action)].filter(Boolean).join('\n\n'),
+          reverify,
+          onExistingProposal: proposal => {
+            assertSafeProposalCall(request, proposal)
+            attemptId = crypto.randomUUID()
+            onSubmitted(state.chainId, { kind: 'safe-proposal', hash: proposal.proposalHash, attemptId })
+            submittedHash = proposal.proposalHash
+          },
+          durableRecovery: {
+            reserve: () => { attemptId = onBeforeWrite(state.chainId); attempted = true },
+            releaseUnsubmitted: () => {
+              if (submittedHash) throw new Error('The submitted ruleset update must remain saved until its execution is verified.')
+              if (attempted && attemptId) { onWriteRejected(state.chainId, attemptId); attempted = false }
+            },
+            submitted: persistSubmitted,
+          },
+        })
+        if (hash) persistSubmitted(hash)
       })
-      if (hash) onSubmitted(state.chainId, { kind: tx.isSafe ? 'safe-proposal' : 'transaction', hash })
     } catch (reason) { setError(message(reason)) } finally { setPreparing(false) }
   }
 
@@ -391,7 +434,7 @@ function LinkedRulesetStep({ plan, index, completed, onConfirmed, onCancel, onSu
     <div className="flex flex-wrap gap-3"><button type="button" className="btn-primary min-h-11 px-5" disabled={busy || !!submission || tx.phase === 'success'} onClick={() => void submit()}>{preparing ? 'Verifying every chain…' : txPhaseLabel(tx.phase, { idle: `Review transaction ${index + 1} of ${plan.requests.length}`, pending: 'Confirming onchain…' })}</button>
     {completed.size === 0 && !busy && !tx.hash && !submission && <button type="button" className="btn-secondary min-h-10 px-4" onClick={onCancel}>Cancel plan</button>}</div>
     {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
-    <Status tx={tx} chainId={state.chainId} />
+    <Status tx={tx.phase === 'success' ? { ...tx, phase: 'pending' } : tx} chainId={state.chainId} />
   </div>
 }
 
@@ -403,6 +446,7 @@ function Status({ tx, chainId }: { tx: Tx; chainId: number }) {
         : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p>
           : tx.phase === 'review' ? <p>Review the exact transaction before continuing.</p> : null}
     {tx.error && <p className="text-red-800">{tx.error}</p>}
+    {tx.submissionHash && !tx.hash && <p className="break-all">Safe proposal: <code>{tx.submissionHash}</code></p>}
     {explorer && <a className="underline" href={explorer} target="_blank" rel="noreferrer">View transaction</a>}
   </div>
 }
@@ -449,7 +493,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
   const [approvalNeeded, setApprovalNeeded] = useState(false)
   const [approvedIntent, setApprovedIntent] = useState<string | null>(null)
   const [plan, setPlan] = useState<RulesetPlan | null>(null)
-  const [completed, setCompleted] = useState<Map<number, { rulesetId: bigint; receipt: TransactionReceipt }>>(new Map())
+  const [completed, setCompleted] = useState<Map<number, RulesetCompletion>>(new Map())
   const [submissions, setSubmissions] = useState<Map<number, RulesetSubmission>>(new Map())
   const submissionsRef = useRef<Map<number, RulesetSubmission>>(new Map())
   const planRef = useRef<RulesetPlan | null>(null)
@@ -457,6 +501,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
   const [storageChecked, setStorageChecked] = useState(false)
   const [recoveryLoadError, setRecoveryLoadError] = useState(false)
   const loadedStorageKey = useRef<string | null>(null)
+  const savedRecovery = useRef<{ key: string; raw: string | null } | null>(null)
   const [scheduleHours, setScheduleHours] = useState('1')
   // The owner action open in Juicebox Money's confirm dialog; linked multi-chain changes use the plan below instead.
   const [review, setReview] = useState<FundRulesetAction | 'mint' | 'return' | null>(null)
@@ -518,8 +563,12 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
   function persistIntent(next: RulesetPlan, records: ReadonlyMap<number, RulesetSubmission>) {
     const raw = serializeRulesetRecovery(next, records, { chainId: state.chainId, projectId: state.projectId })
     const key = recoveryKey(next.account)
+    const expected = savedRecovery.current?.key === key ? savedRecovery.current.raw : null
+    if (window.localStorage.getItem(key) === raw) { savedRecovery.current = { key, raw }; return }
+    if (window.localStorage.getItem(key) !== expected) throw new Error('The linked ruleset recovery changed in another tab. Reload its saved progress before continuing.')
     window.localStorage.setItem(key, raw)
     if (window.localStorage.getItem(key) !== raw) throw new Error('Recovery intent could not be saved. Enable browser storage before preparing linked transactions.')
+    savedRecovery.current = { key, raw }
   }
 
   function activatePlan(next: RulesetPlan, records = new Map<number, RulesetSubmission>(), restore = false) {
@@ -535,6 +584,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
     loadedStorageKey.current = key
     try {
       const raw = window.localStorage.getItem(key)
+      savedRecovery.current = { key, raw }
       if (raw) {
         const restored = deserializeRulesetRecovery(raw, { chainId: state.chainId, projectId: state.projectId }, address)
         planRef.current = restored.plan; submissionsRef.current = restored.submissions
@@ -546,38 +596,77 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
 
   function recordSubmission(chainId: number, submission: RulesetSubmission) {
     const active = planRef.current
-    if (!active) return
-    const records = new Map(submissionsRef.current).set(chainId, submission)
+    if (!active) throw new Error('The linked ruleset plan is no longer available. Keep its submitted transaction for recovery.')
+    const previous = submissionsRef.current.get(chainId)
+    if (submission.attemptId && previous?.attemptId && submission.attemptId !== previous.attemptId) throw new Error('This ruleset submission belongs to an older attempt. Keep the current action pending.')
+    const attemptId = submission.attemptId ?? previous?.attemptId
+    const records = new Map(submissionsRef.current).set(chainId, { ...submission, ...(attemptId ? { attemptId } : {}) })
+    persistIntent(active, records)
     submissionsRef.current = records; setSubmissions(records)
-    try { persistIntent(active, records) } catch (reason) { setError(`The transaction was submitted, but browser recovery storage failed. Download the recovery plan now. ${message(reason)}`) }
   }
 
   function recordBeforeWrite(chainId: number) {
     const active = planRef.current
     if (!active || submissionsRef.current.has(chainId)) throw new Error('This chain already has an unresolved submission. Recheck its saved transaction before continuing.')
-    const records = new Map(submissionsRef.current).set(chainId, { kind: 'submission-unknown' } as const)
+    const attemptId = crypto.randomUUID()
+    const records = new Map(submissionsRef.current).set(chainId, { kind: 'submission-unknown', attemptId } as const)
     // Deliberately throws before the wallet writer if durable storage fails.
     // A page close after this point must never reopen a duplicate submit button.
-    persistIntent(active, records)
+    const key = recoveryKey(active.account)
+    const previousRaw = savedRecovery.current?.key === key ? savedRecovery.current.raw : null
+    const candidateRaw = serializeRulesetRecovery(active, records, { chainId: state.chainId, projectId: state.projectId })
+    withPrewalletReservation(window.localStorage, key, previousRaw, candidateRaw, () => persistIntent(active, records))
     submissionsRef.current = records; setSubmissions(records)
+    return attemptId
+  }
+
+  function assertSubmission(chainId: number, expected: RulesetSubmission | null) {
+    if (JSON.stringify(submissionsRef.current.get(chainId) ?? null) !== JSON.stringify(expected)) throw new Error('This ruleset submission changed during recovery. Keep the current attempt pending.')
   }
 
   function removeSubmission(chainId: number) {
     const active = planRef.current
     if (!active) return
     const records = new Map(submissionsRef.current); records.delete(chainId)
-    try {
-      persistIntent(active, records)
-      submissionsRef.current = records; setSubmissions(records)
-    } catch (reason) { setError(`The recovery lock could not be updated: ${message(reason)}`) }
+    persistIntent(active, records)
+    submissionsRef.current = records; setSubmissions(records)
   }
 
-  function closePlan() {
+  async function withSubmissionLock(task: () => Promise<void>) {
+    const active = planRef.current
+    if (!active) throw new Error('Reload the saved linked ruleset plan before continuing.')
+    if (typeof navigator.locks?.request !== 'function') throw new Error('Use a browser with Web Locks support to coordinate linked ruleset submissions.')
+    const key = recoveryKey(active.account)
+    await navigator.locks.request(key, { mode: 'exclusive', ifAvailable: true }, async lock => {
+      if (!lock) throw new Error('This linked ruleset plan is being reviewed or submitted in another tab.')
+      if (savedRecovery.current?.key !== key || window.localStorage.getItem(key) !== savedRecovery.current.raw) throw new Error('The linked ruleset recovery changed in another tab. Reload its saved progress before continuing.')
+      await task()
+    })
+  }
+
+  async function closePlan() {
     const active = planRef.current
     if (!active) return
-    try { window.localStorage.removeItem(recoveryKey(active.account)) } catch { /* A stale saved intent is reverified, never assumed executed. */ }
-    planRef.current = null; submissionsRef.current = new Map()
-    setPlan(null); setSubmissions(new Map()); setCompleted(new Map()); setRecovering(false)
+    try {
+      await withSubmissionLock(async () => {
+        if (planRef.current !== active) throw new Error('The linked plan changed while closing. Keep its current submissions pending.')
+        const records = submissionsRef.current
+        if (records.size || completed.size) {
+          if (completed.size !== active.states.length || records.size !== active.states.length) throw new Error('Every saved submission must be verified before this plan can be closed.')
+          for (const project of active.states) {
+            const result = completed.get(project.chainId)
+            if (!result) throw new Error('A linked submission is not yet verified.')
+            assertSubmission(project.chainId, result.submission)
+          }
+        }
+        const key = recoveryKey(active.account)
+        window.localStorage.removeItem(key)
+        if (window.localStorage.getItem(key) !== null) throw new Error('The saved recovery plan could not be cleared.')
+        savedRecovery.current = { key, raw: null }
+        planRef.current = null; submissionsRef.current = new Map()
+        setPlan(null); setSubmissions(new Map()); setCompleted(new Map()); setRecovering(false)
+      })
+    } catch (reason) { setError(message(reason)) }
   }
 
   function downloadRecovery() {
@@ -807,8 +896,8 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
           }
         })}
       />
-      {recovering ? <RecoveryPanel plan={plan} submissions={submissions} onSubmitted={recordSubmission} onRemoveSubmission={removeSubmission} onResume={verified => { setCompleted(verified); setRecovering(false) }} />
-        : completed.size < plan.states.length ? <LinkedRulesetStep key={`${plan.startsAt}:${completed.size}`} plan={plan} index={plan.states.findIndex(peer => !completed.has(peer.chainId))} submission={submissions.get(plan.states.find(peer => !completed.has(peer.chainId))!.chainId)} completed={completed} onConfirmed={(chainId, rulesetId, receipt) => { recordSubmission(chainId, { kind: 'transaction', hash: receipt.transactionHash }); setCompleted(previous => new Map(previous).set(chainId, { rulesetId, receipt })) }} onCancel={closePlan} onSubmitted={recordSubmission} onBeforeWrite={recordBeforeWrite} onWriteRejected={chainId => { if (submissionsRef.current.get(chainId)?.kind === 'submission-unknown') removeSubmission(chainId) }} />
+      {recovering ? <RecoveryPanel plan={plan} submissions={submissions} onSubmitted={(chainId, submission, expected) => withSubmissionLock(async () => { assertSubmission(chainId, expected); recordSubmission(chainId, submission) })} onRemoveSubmission={(chainId, expected) => withSubmissionLock(async () => { assertSubmission(chainId, expected); removeSubmission(chainId) })} onResume={verified => withSubmissionLock(async () => { if (planRef.current !== plan) throw new Error('The linked plan changed during recovery.'); for (const [chainId, submission] of submissions) assertSubmission(chainId, submission); if (submissionsRef.current.size !== submissions.size) throw new Error('A linked submission changed during recovery.'); setCompleted(verified); setRecovering(false) })} />
+        : completed.size < plan.states.length ? <LinkedRulesetStep key={`${plan.startsAt}:${completed.size}`} plan={plan} index={plan.states.findIndex(peer => !completed.has(peer.chainId))} submission={submissions.get(plan.states.find(peer => !completed.has(peer.chainId))!.chainId)} completed={completed} onConfirmed={(chainId, result) => withSubmissionLock(async () => { if (planRef.current !== plan) throw new Error('The linked plan changed during confirmation.'); assertSubmission(chainId, result.submission); setCompleted(previous => new Map(previous).set(chainId, result)) })} onCancel={closePlan} onSubmitted={recordSubmission} withSubmissionLock={withSubmissionLock} onBeforeWrite={recordBeforeWrite} onWriteRejected={(chainId, attemptId) => { assertSubmission(chainId, { kind: 'submission-unknown', attemptId }); removeSubmission(chainId) }} />
           : <><p role="status" className="text-sm">Every ruleset transaction is confirmed. The new rules take effect at the shared activation time.</p><button type="button" className="btn-secondary min-h-10 w-fit px-4" onClick={closePlan}>Done</button></>}
     </section>}
 

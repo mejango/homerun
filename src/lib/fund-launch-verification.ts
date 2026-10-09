@@ -3,7 +3,9 @@ import { BASE_CURRENCY_USD, tokenCurrencyId, v6Address } from '@bananapus/nana-s
 import { decodeEventLog, decodeFunctionData, encodeFunctionData, erc20Abi, isAddressEqual, zeroAddress, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import { unbundleMultisigLaunch, verifyCreatedMultisigs } from './create-multisig'
 import { requireSafeExecutionSuccess, safeExecutionRunsCalls, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
+import { verifyReviewedWriteReceipt, type ReviewedWriteRecoveryRecord } from '@bananapus/nana-sdk-core/review'
 import type { RelayrEntry } from './relayr'
+import type { LaunchStatus } from './fund-launch-session'
 import { buildFundLaunch, initialFundRuleset, type FundLaunchInput, type FundTransaction } from './fund-contracts'
 import { homerunAllowlistHookAbi, homerunDeployerAbi, registeredAllowlistHook } from './income-contracts'
 
@@ -61,6 +63,18 @@ async function verifyMinedCall(client: PublicClient, request: FundTransaction, i
  */
 export function fundLaunchFailed(receipt: TransactionReceipt, input: FundLaunchInput, safe: boolean, proposal?: Hex): boolean {
   return receipt.status === 'reverted' || (safe && !!proposal && safeExecutionResult(receipt, input.sender, proposal).status === 'failed')
+}
+
+/** Only the recorded wallet reply can bind a failed attempt to finalized chain evidence. */
+export async function verifyReturnedFundWriteFailure(client: PublicClient, request: FundTransaction, input: FundLaunchInput, receipt: TransactionReceipt, submission: Pick<LaunchStatus, 'hash' | 'safe' | 'walletReturned'>): Promise<void> {
+  if (!submission.hash || submission.walletReturned !== true) throw new Error('This attempt has no recorded wallet-returned hash. Keep it saved and check your wallet activity; an older or pasted transaction cannot release it.')
+  const record: ReviewedWriteRecoveryRecord = {
+    version: 1, id: `${input.salt}:${request.chainId}:${request.address}`, chainId: request.chainId,
+    account: input.sender, safe: submission.safe ?? false, hash: submission.hash,
+    call: { to: request.address, data: encodeFunctionData(request), value: (request.value ?? 0n).toString() },
+  }
+  if (await verifyReviewedWriteReceipt(client, record, receipt) !== 'failed') throw new Error('The saved transaction has no finalized failure proof. Keep this launch saved.')
+  if (!record.safe) await verifyMinedCall(client, request, input, receipt, false, false)
 }
 
 /** A failed unrelated transaction cannot unlock an unresolved launch attempt. */
