@@ -26,6 +26,7 @@ import { SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/saf
 import { verifyReviewedWriteReceipt } from '@bananapus/nana-sdk-core/review'
 import { wagmiConfig } from '@/providers/Providers'
 import { readableError } from '@/lib/readable-error'
+import { HeldNotice } from '@/components/ui/HeldWriteExit'
 
 type Props = { state: FundProjectState; client: PublicClient; contextIndex: number }
 type Tx = ReturnType<typeof useSafeTx>
@@ -441,7 +442,7 @@ function LinkedRulesetStep({ plan, index, completed, onConfirmed, onCancel, onSu
 function Status({ tx, chainId }: { tx: Tx; chainId: number }) {
   const explorer = tx.hash && !tx.safeProposalHash ? explorerTxUrl(chainId, tx.hash) : null
   return <div role="status" aria-live="polite" className="break-words text-sm">
-    {tx.phase === 'submitted' ? <p>{tx.notice}</p>
+    {tx.phase === 'submitted' ? <HeldNotice tx={tx} />
       : tx.phase === 'success' ? <p>Transaction confirmed onchain. Refreshing the project’s contract state.</p>
         : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p>
           : tx.phase === 'review' ? <p>Review the exact transaction before continuing.</p> : null}
@@ -1004,6 +1005,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
         busy={running && !tx.safeProposalHash && !approval.safeProposalHash}
         complete={tx.phase === 'success'}
         settled={tx.phase === 'submitted' || approval.phase === 'submitted'}
+        held={tx.held ?? approval.held}
         status={tx.notice ?? approval.notice ?? (tx.phase === 'pending' || approval.phase === 'pending' ? 'Submitted. Waiting for onchain confirmation…' : approvalBlock !== undefined && review === 'return' && tx.phase !== 'success' ? 'Token approval confirmed. Confirm the return to continue.' : null)}
         error={error ?? tx.error ?? approval.error}
         onClose={() => { setReview(null); if (tx.phase === 'submitted') tx.dismiss(); if (approval.phase === 'submitted') approval.dismiss() }}

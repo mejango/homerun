@@ -10,6 +10,7 @@ import { useWallet } from '@/hooks/useWallet'
 import { displayChainName, explorerTxUrl } from '@/lib/chainDisplay'
 import { fundIpfsUrl } from '@/lib/fund-project-metadata'
 import { buildInitialIncomeMint, readInitialIncomeAllocation } from '@/lib/income-initial-allocation'
+import { HeldNotice } from '@/components/ui/HeldWriteExit'
 
 const message = (error: unknown) => error instanceof Error ? error.message : 'The initial allocation could not be verified.'
 
@@ -64,7 +65,7 @@ export function InitialIncomeMint({ chainId, fundProjectId, incomeProjectId, man
       <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={blocked} onClick={() => void mint()}>{preparing ? 'Preparing…' : txPhaseLabel(tx.phase, { idle: 'Mint initial INCOME to the FUND owner', pending: 'Minting…' })}</button>
     </>}
     <div className="mt-4 break-words text-sm" role="status" aria-live="polite">
-      {tx.phase === 'submitted' ? <p>{tx.notice}</p> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? <p>Initial INCOME minted to the FUND owner.</p> : null}
+      {tx.phase === 'submitted' ? <HeldNotice tx={tx} /> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? <p>Initial INCOME minted to the FUND owner.</p> : null}
       {link && <a href={link} target="_blank" rel="noreferrer" className="underline">View transaction</a>}
     </div>
     {(error || tx.error) && <p role="alert" className="mt-3 text-sm text-red-800">{error ?? tx.error}</p>}

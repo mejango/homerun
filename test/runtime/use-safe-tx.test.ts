@@ -10,6 +10,7 @@ import {
   type Hex,
 } from 'viem'
 import { SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
+import { WRITE_EXIT_LABEL, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { installRecoveryLocks, recoveryRecords } from './write-recovery-fixture'
 
@@ -26,7 +27,8 @@ const mocks = vi.hoisted(() => ({
   connectorUid: 'reviewed',
   connected: true,
   publicClient: { simulateContract: vi.fn(), estimateContractGas: vi.fn(), getTransaction: vi.fn(),
-    getChainId: vi.fn(), getBlock: vi.fn(), getTransactionReceipt: vi.fn() },
+    getChainId: vi.fn(), getBlock: vi.fn(), getTransactionReceipt: vi.fn(),
+    getBlockNumber: vi.fn(), getTransactionCount: vi.fn() },
   receipt: { data: undefined, isError: false } as {
     data?: {
       status: 'success' | 'reverted'
@@ -142,6 +144,8 @@ beforeEach(() => {
   mocks.connectorUid = 'reviewed'
   mocks.connected = true
   mocks.receipt = { data: undefined, isError: false }
+  mocks.publicClient.getBlockNumber.mockResolvedValue(90n)
+  mocks.publicClient.getTransactionCount.mockResolvedValue(5)
   mocks.getAccount.mockImplementation(() => ({ address: mocks.account, chainId: mocks.chainId, connector: { uid: mocks.connectorUid } }))
   mocks.requestReview.mockResolvedValue(true)
   mocks.safeConnection = false
@@ -666,26 +670,58 @@ describe('useSafeTx', () => {
     expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 
-  it('holds a lost wallet reply across reset, remount and a changed amount despite an in-memory beforeWrite', async () => {
+  it('holds a lost wallet reply across reset and remount, and ends the hold on the user’s word', async () => {
     const beforeWrite = vi.fn()
+    mocks.publicClient.getBlockNumber.mockResolvedValue(90n)
+    mocks.publicClient.getTransactionCount.mockResolvedValue(5)
     mocks.writeContract.mockImplementationOnce(async () => {
       expect(recoveryRecords()).toHaveLength(1)
       throw new Error('Wallet reply was lost after broadcast')
     })
     const first = await renderHook()
-    await act(async () => { await first.ref.current!.send(request, { ...reviewedByAlice, beforeWrite }) })
-    expect(first.ref.current).toMatchObject({ phase: 'submitted', confirmationUncertain: true })
+    await act(async () => { await first.ref.current!.send(request, { ...reviewedByAlice, beforeWrite, action: 'payment' }) })
+    expect(first.ref.current).toMatchObject({ phase: 'submitted', confirmationUncertain: true, notice: writeHeldMessage('payment') })
+    expect(first.ref.current!.held).toMatchObject({ line: writeHeldMessage('payment'), label: WRITE_EXIT_LABEL })
     expect(beforeWrite).toHaveBeenCalledOnce()
+    // The account's next nonce is saved before the wallet opens, so the chain can release it.
+    expect(recoveryRecords()[0]).toMatchObject({ nonce: '5', fromBlock: '90' })
     expect(recoveryRecords()[0].hash).toBeUndefined()
     await act(async () => { first.ref.current!.reset() })
-    await act(async () => { await first.ref.current!.send(request, reviewedByAlice) })
+    await act(async () => { await first.ref.current!.send(request, { ...reviewedByAlice, action: 'payment' }) })
     expect(first.ref.current!.phase).toBe('submitted')
     await act(async () => { first.renderer.unmount() })
     const reopened = await renderHook()
-    await act(async () => { await reopened.ref.current!.send({ ...request, args: [BOB, 6n] }, reviewedByAlice) })
+    await act(async () => { await reopened.ref.current!.send(request, reviewedByAlice) })
     expect(reopened.ref.current).toMatchObject({ phase: 'submitted', confirmationUncertain: true })
     expect(mocks.writeContract).toHaveBeenCalledOnce()
     expect(mocks.requestReview).toHaveBeenCalledOnce()
+    // They checked their wallet: the same call can be sent again.
+    await act(async () => { reopened.ref.current!.held!.release() })
+    expect(reopened.ref.current).toMatchObject({ phase: 'idle', held: null })
+    await act(async () => { await reopened.ref.current!.send(request, reviewedByAlice) })
+    expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+    expect(reopened.ref.current!.phase).toBe('pending')
+  })
+
+  it('sends a changed amount as its own write while another amount is held', async () => {
+    mocks.writeContract.mockRejectedValueOnce(new Error('Wallet reply was lost after broadcast'))
+    const first = await renderHook()
+    await act(async () => { await first.ref.current!.send(request, reviewedByAlice) })
+    expect(first.ref.current!.phase).toBe('submitted')
+    await act(async () => { first.ref.current!.reset() })
+    await act(async () => { await first.ref.current!.send({ ...request, args: [BOB, 6n] }, reviewedByAlice) })
+    expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+    expect(first.ref.current!.phase).toBe('pending')
+  })
+
+  it('holds a whole action under its name, whatever the amount', async () => {
+    mocks.writeContract.mockRejectedValueOnce(new Error('Wallet reply was lost after broadcast'))
+    const hook = await renderHook()
+    await act(async () => { await hook.ref.current!.send(request, { ...reviewedByAlice, recoveryNamespace: 'project-update' }) })
+    await act(async () => { hook.ref.current!.reset() })
+    await act(async () => { await hook.ref.current!.send({ ...request, args: [BOB, 6n] }, { ...reviewedByAlice, recoveryNamespace: 'project-update' }) })
+    expect(hook.ref.current).toMatchObject({ phase: 'submitted', confirmationUncertain: true })
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 
   it('does not treat a rejection-looking transport message as a definite wallet rejection', async () => {
@@ -704,12 +740,27 @@ describe('useSafeTx', () => {
     expect(hook.ref.current!.phase).toBe('error')
   })
 
-  it('refuses a wallet write without cross-tab exclusion', async () => {
+  it('offers the exit for a returned hash whose result stays unreadable', async () => {
+    const hook = await renderHook()
+    await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+    expect(hook.ref.current!.held).toBeNull()
+    mocks.receipt = { data: undefined, isError: true }
+    await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
+    expect(hook.ref.current!.held).toMatchObject({ label: WRITE_EXIT_LABEL })
+    await act(async () => { hook.ref.current!.held!.release() })
+    expect(hook.ref.current).toMatchObject({ phase: 'idle', held: null })
+    mocks.receipt = { data: undefined, isError: false }
+    await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+    expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+  })
+
+  it('sends without Web Locks, holding within the tab instead of refusing', async () => {
     Object.defineProperty(navigator, 'locks', { configurable: true, value: undefined })
     const hook = await renderHook()
     await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
-    expect(mocks.writeContract).not.toHaveBeenCalled()
-    expect(hook.ref.current!.error).toMatch(/coordinate wallet writes/i)
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    expect(hook.ref.current).toMatchObject({ phase: 'pending', error: null })
+    expect(recoveryRecords()).toHaveLength(1)
   })
 
   it('repairs a returned hash after storage recovers without submitting twice', async () => {
@@ -732,20 +783,6 @@ describe('useSafeTx', () => {
       await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
       expect(mocks.writeContract).toHaveBeenCalledOnce()
     } finally { vi.useRealTimers() }
-  })
-
-  it('recovers a prior different amount without attributing its success to the new request', async () => {
-    const first = await renderHook()
-    await act(async () => { await first.ref.current!.send(request, reviewedByAlice) })
-    await act(async () => { first.renderer.unmount() })
-    const reopened = await renderHook()
-    await act(async () => { await reopened.ref.current!.send({ ...request, args: [BOB, 6n] }, reviewedByAlice) })
-    mocks.receipt = { data: canonicalReceipt('success'), isError: false }
-    await act(async () => { reopened.renderer.update(createElement(Harness, { ref: reopened.ref })) })
-    expect(reopened.ref.current!.phase).toBe('submitted')
-    expect(reopened.ref.current!.notice).toMatch(/earlier transaction is confirmed/i)
-    expect(recoveryRecords()).toHaveLength(0)
-    expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 
   it('keeps a noncanonical receipt pending and retains its durable record', async () => {

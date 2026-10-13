@@ -23,6 +23,7 @@ import { swapDeadline } from '@/lib/safe-connector'
 import dynamic from 'next/dynamic'
 import { readableError } from '@/lib/readable-error'
 import { refreshIndexedProject } from '@/lib/refresh-indexed'
+import { HeldNotice } from '@/components/ui/HeldWriteExit'
 
 const CenterProjectPayment = dynamic(() => import('./CenterProjectPayment'))
 export function ProjectPayment(props: Parameters<typeof ExternalProjectPayment>[0]) {
@@ -41,7 +42,7 @@ function message(error: unknown) { return readableError(error, 'The payment coul
 function Status({ tx, chainId }: { tx: PaymentTx; chainId: number }) {
   const url = tx.hash && !tx.safeProposalHash ? explorerTxUrl(chainId, tx.hash) : null
   return <div role="status" aria-live="polite" className="mt-3 break-words text-sm">
-    {tx.phase === 'submitted' ? <p>{tx.notice}</p> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? <p>Confirmed onchain.</p> : null}
+    {tx.phase === 'submitted' ? <HeldNotice tx={tx} /> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? <p>Confirmed onchain.</p> : null}
     {tx.error && <p className="text-red-800">{tx.error}</p>}{url && <a className="underline" href={url} target="_blank" rel="noreferrer">View transaction</a>}
   </div>
 }
@@ -229,6 +230,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       setStatus(`Review and execute the ${route} payment.`); setStage('pay')
       await tx.send({ ...request, label: `Pay ${formatUnits(count, context.decimals)} ${context.symbol} through ${route}; minimum ${formatUnits(latest.minimumTokenCount, 18)} ${tokenLabel}` }, {
         reviewedAccount: address,
+        action: 'payment',
         simulationBlockNumber: latestBlock === undefined ? undefined : checked.blockNumber,
         reviewNotice: noTokens ? `You receive no ${tokenLabel} for this payment. This project allocates 100% of new tokens to its reserved recipients.` : [swap ? 'This route buys existing tokens on Uniswap. It does not add the payment to the project treasury or issue reserved tokens.' : null, latest.minimumTokenCount < minimum ? `The quote decreased. Your protected minimum is now ${formatUnits(latest.minimumTokenCount, 18)} ${tokenLabel}.` : null].filter(Boolean).join(' ') || undefined,
         reverify: async () => {
@@ -270,6 +272,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       busy={prompting}
       complete={tx.phase === 'success'}
       settled={!!submitted}
+      held={submitted?.held}
       status={submitted?.notice ?? status ?? (tx.phase === 'pending' ? <>Submitted. Waiting for onchain confirmation{tx.hash && explorerTxUrl(chainId, tx.hash) ? <> (<a className="underline" href={explorerTxUrl(chainId, tx.hash)!} target="_blank" rel="noreferrer">view transaction</a>)</> : null}</> : null)}
       error={error ?? tx.error ?? approval.error ?? routerApproval.error}
       onClose={() => { setOpen(false); for (const item of [tx, approval, routerApproval]) if (item.phase === 'submitted') item.dismiss(); setStatus(null) }}

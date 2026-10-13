@@ -10,6 +10,7 @@ import { assertSameIncomeOperatorSnapshot, buildIncomeOperatorTx, readIncomeOper
 import type { IncomeProjectState } from '@/lib/income-state'
 import { isOperatorWallet, OPERATOR_BURN_ADDRESS, PROJECT_OPERATOR_PROFILE_QUERY } from '@/lib/project-operator-profile'
 import { readableError } from '@/lib/readable-error'
+import { HeldNotice } from '@/components/ui/HeldWriteExit'
 
 function message(error: unknown) { return readableError(error, 'The INCOME Operator could not be verified.') }
 
@@ -94,7 +95,7 @@ export function IncomeOperatorActions({ state, client }: { state: IncomeProjectS
     <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={!address || !snapshot?.isOwner || !accountMatches || !validRecipient || !nextStage || locked || busy || query.isError} onClick={() => void submit()}>{preparing ? 'Preparing…' : txPhaseLabel(tx.phase, { idle: `Review ${nextStage?.isCurrent ? 'current' : 'upcoming'} stage change`, pending: 'Confirming onchain…' })}</button>
     {error && <p className="mt-4 text-sm text-red-800" role="alert">{error}</p>}
     <div className="mt-4 break-words text-sm" role="status" aria-live="polite">
-      {tx.phase === 'submitted' ? <p>{tx.notice}</p> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? verified.data ? <p>Operator change confirmed for stage {verified.data.rulesetId.toString()}. Check the remaining stages above.</p> : verified.isError ? <p role="alert">The transaction was mined, but the Operator change could not be verified. {message(verified.error)} <button type="button" className="underline" onClick={() => void verified.refetch()}>Retry verification</button></p> : <p>Transaction mined. Verifying the Operator change…</p> : null}
+      {tx.phase === 'submitted' ? <HeldNotice tx={tx} /> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? verified.data ? <p>Operator change confirmed for stage {verified.data.rulesetId.toString()}. Check the remaining stages above.</p> : verified.isError ? <p role="alert">The transaction was mined, but the Operator change could not be verified. {message(verified.error)} <button type="button" className="underline" onClick={() => void verified.refetch()}>Retry verification</button></p> : <p>Transaction mined. Verifying the Operator change…</p> : null}
       {tx.error && <p className="text-red-800">{tx.error}</p>}
       {tx.hash && !tx.safeProposalHash && <a className="underline" href={explorerTxUrl(state.chainId, tx.hash) ?? undefined} target="_blank" rel="noreferrer">View transaction</a>}
     </div>

@@ -18,6 +18,7 @@ import {
 } from '@bananapus/nana-sdk-core/safe-service'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildPermit2ApproveTx } from '@bananapus/nana-sdk-core/v6'
+import { WRITE_EXIT_LABEL, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
 import { installRecoveryLocks, recoveryRecords } from './write-recovery-fixture'
 const STAMPED_CHAIN = 10
 const STAMPED_SITES = [['Permit2 allowance expiration', (stamp: bigint, other = 0n) => buildPermit2ApproveTx({ chainId: STAMPED_CHAIN, token: '0x3333333333333333333333333333333333333333', amount: 5n + other, expiration: Number(stamp) })]] as const
@@ -633,7 +634,7 @@ describe('a call stamped at send time', () => {
 
 describe('a Safe proposal awaiting its signers', () => {
   const EXPIRED = "This Safe proposal's deadline passed. Review it again."
-  const REPLACED = 'Safe moved past this proposal without running it. Review it again.'
+  const REPLACED = 'Another Safe transaction used this nonce. Propose it again to run it.'
 
   it.each([
     ['its deadline passed before the Safe ran it', 'expired', EXPIRED],
@@ -660,6 +661,22 @@ describe('a Safe proposal awaiting its signers', () => {
     await act(async () => flow.tx.reset())
     await expect(flow.send()).resolves.toBe(SECOND_PROPOSAL)
     expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+  })
+
+  it('follows the execution the Safe ran when its nonce passed the proposal', async () => {
+    const execute = signersDecide()
+    let watchEnds!: (end: string) => void
+    mocks.watchSafeProposal.mockImplementationOnce(() => new Promise(resolve => (watchEnds = resolve)))
+    const flow = await mount()
+    await flow.send()
+    await settle()
+    watchEnds('executed')
+    await settle()
+    // The nonce passing it is not the result: the execution's own receipt decides.
+    expect(flow.tx.phase).toBe('submitted')
+    execute()
+    await settle()
+    expect(flow.tx.phase).toBe('success')
   })
 
   it('stops being watched once its execution is known', async () => {
@@ -961,7 +978,7 @@ describe("a Safe proposal's last look at the chain", () => {
     const resumed = await mount()
     await resumed.send()
     await settle()
-    expect(resumed.tx).toMatchObject({ phase: 'error', error: 'Safe moved past this proposal without running it. Review it again.' })
+    expect(resumed.tx).toMatchObject({ phase: 'error', error: 'Another Safe transaction used this nonce. Propose it again to run it.' })
     expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 
@@ -1005,7 +1022,7 @@ describe("a Safe app's reply", () => {
 })
 
 describe('generic Safe durable recovery', () => {
-  it('holds a lost reply across a module reload and a changed amount', async () => {
+  it('holds a lost reply across a module reload, with the user’s exit', async () => {
     mocks.writeContract.mockRejectedValueOnce(new Error('Lost wallet response'))
     const first = await mount(10, undefined, { reviewedAccount: SAFE })
     await first.send()
@@ -1014,10 +1031,13 @@ describe('generic Safe durable recovery', () => {
     vi.resetModules()
     ;({ useSafeTx } = await import('@/hooks/useSafeTx'))
     const reopened = await mount(10, undefined, { reviewedAccount: SAFE })
-    await reopened.send({ ...request, args: [BOB, 6n] })
-    expect(reopened.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: true })
+    await reopened.send()
+    expect(reopened.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: true, notice: writeHeldMessage('transaction') })
+    expect(reopened.tx.held).toMatchObject({ label: WRITE_EXIT_LABEL })
     expect(mocks.writeContract).toHaveBeenCalledOnce()
     expect(mocks.findPendingSafeAppProposal).toHaveBeenCalledOnce()
+    await act(async () => reopened.tx.held!.release())
+    expect(reopened.tx).toMatchObject({ phase: 'idle', held: null })
   })
 
   it('saves the adopted proposal’s actual stamped calldata for later proof', async () => {
@@ -1060,38 +1080,15 @@ describe('generic Safe durable recovery', () => {
     expect(recoveryRecords()).toHaveLength(1)
   })
 
-  it('detaches an older amount’s confirmed Safe proposal from a new review', async () => {
+  it('sends a changed amount as its own write while the earlier amount stays followed', async () => {
     canonicalExecution()
-    const execute = signersDecide()
-    const first = await mount(10, undefined, { reviewedAccount: SAFE })
-    await first.send()
-    await settle()
-    await first.close()
-    const reopened = await mount(10, undefined, { reviewedAccount: SAFE })
-    await reopened.send({ ...request, args: [BOB, 6n] })
-    await act(async () => { execute() })
-    await settle()
-    expect(reopened.tx).toMatchObject({ phase: 'submitted', hash: null, safeProposalHash: null })
-    expect(reopened.tx.notice).toMatch(/earlier transaction is confirmed/i)
-    expect(recoveryRecords()).toHaveLength(0)
-    expect(mocks.writeContract).toHaveBeenCalledOnce()
-  })
-
-  it('does not let an older proof settle a later review of the same saved identity', async () => {
-    canonicalExecution()
-    let release!: (block: { hash: Hex; number: bigint }) => void
-    mocks.publicClient.getBlock.mockImplementationOnce(() => new Promise(resolve => { release = resolve }))
+    signersDecide()
+    mocks.writeContract.mockResolvedValueOnce(PROPOSAL).mockResolvedValueOnce(SECOND_PROPOSAL)
     const flow = await mount(10, undefined, { reviewedAccount: SAFE })
     await flow.send()
     await settle()
-    expect(release).toBeTypeOf('function')
-    // Safe proposals allow closing/reviewing another action while the first proof waits.
-    await flow.send({ ...request, args: [BOB, 6n] })
-    await act(async () => { release({ hash: `0x${'ed'.repeat(32)}`, number: 9n }) })
-    await settle()
-    expect(flow.tx).toMatchObject({ phase: 'submitted', hash: null, safeProposalHash: null })
-    expect(flow.tx.notice).toMatch(/earlier transaction is confirmed/i)
-    expect(mocks.writeContract).toHaveBeenCalledOnce()
-    expect(recoveryRecords()).toHaveLength(0)
+    await expect(flow.send({ ...request, args: [BOB, 6n] })).resolves.toBe(SECOND_PROPOSAL)
+    expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+    expect(recoveryRecords()).toHaveLength(2)
   })
 })

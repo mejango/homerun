@@ -3,6 +3,7 @@ import { act, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 import { encodeFunctionData, parseAbi, type Address } from 'viem'
+import { WRITE_EXIT_LABEL, writeExitMessage, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
 import type { TxRequest, TxSendOptions } from '../src/hooks/useSafeTx'
 import type { FundBridgeRoute } from '../src/lib/fund-bridge'
 
@@ -36,7 +37,7 @@ vi.mock('@/hooks/useSafeTx', () => ({
   txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,
   useSafeTx: () => {
     useEffect(() => { runtime.mounted++; return () => { runtime.unmounted++ } }, [])
-    if (runtime.engine) return { ...runtime.engine, busy: false, error: null, hash: runtime.engine.receipt?.transactionHash ?? null, safeProposalHash: null, isSafe: runtime.safe, send: runtime.send, reset: vi.fn() }
+    if (runtime.engine) return { held: null, ...runtime.engine, busy: ['pending', 'simulating', 'signing'].includes(runtime.engine.phase), error: null, hash: runtime.engine.receipt?.transactionHash ?? null, safeProposalHash: null, isSafe: runtime.safe, send: runtime.send, reset: vi.fn() }
     return runtime.idle
       ? { phase: 'idle', busy: false, error: null, hash: null, safeProposalHash: null, receipt: null, isSafe: runtime.safe, send: runtime.send, reset: vi.fn() }
       : { phase: 'pending', busy: true, error: null, hash: null, safeProposalHash: null, receipt: null, isSafe: false, send: vi.fn(), reset: vi.fn() }
@@ -198,10 +199,7 @@ it('rechecks destination mint authority before source submission and permits ret
 it('closes an unproven Safe outer revert without counting its approval or releasing the bridge lock', async () => {
   runtime.safe = true
   await reviewApproval()
-  runtime.send.mockImplementation(async (_request: unknown, options: { beforeWrite: () => void }) => {
-    options.beforeWrite()
-    return `0x${'ab'.repeat(32)}`
-  })
+  runtime.send.mockImplementation(async () => `0x${'ab'.repeat(32)}`)
   await act(async () => approve().click())
   runtime.engine = { phase: 'error', receipt: { status: 'reverted', transactionHash: `0x${'cd'.repeat(32)}`, blockNumber: 100n } }
   await render()
@@ -222,37 +220,34 @@ it('closes an unproven Safe outer revert without counting its approval or releas
 
 it('frees the move when its approval stops before the wallet', async () => {
   await reviewApproval()
-  runtime.send.mockImplementation(async (_request: unknown, options: { beforeWrite: () => void; onBeforeWriteAborted: () => void }) => {
-    options.beforeWrite()
-    // A Safe connection that changes at the write: nothing reaches the wallet.
-    options.onBeforeWriteAborted()
-    return null
-  })
+  runtime.send.mockImplementation(async () => null)
   await act(async () => approve().click())
   expect(runtime.send).toHaveBeenCalledOnce()
   expect(runtime.send.mock.calls[0][1].reviewedAccount).toBe(runtime.address)
   expect(approve().disabled).toBe(false)
 })
 
-it('keeps an adopted proposal locked when no new wallet attempt was made', async () => {
+it('leaves a held approval to the engine: its one line and its exit, never a lock until reload', async () => {
   await reviewApproval()
-  runtime.send.mockImplementation(async (request: TxRequest, options: TxSendOptions) => {
-    await options.onExistingProposal?.({ proposalHash: `0x${'ab'.repeat(32)}`, call: { to: request.address, data: encodeFunctionData(request), value: request.value ?? 0n } })
-    return `0x${'ab'.repeat(32)}`
-  })
+  const release = vi.fn()
+  runtime.send.mockImplementation(async () => null)
   await act(async () => approve().click())
-  expect(approve().disabled).toBe(true)
-  await act(async () => approve().click())
-  expect(runtime.send).toHaveBeenCalledOnce()
+  runtime.engine = { phase: 'submitted', notice: writeHeldMessage('bridge step'), receipt: null,
+    held: { line: writeHeldMessage('bridge step'), warning: writeExitMessage({ to: '0x', data: '0x', value: 0n }, 'bridge step'), label: WRITE_EXIT_LABEL, release } } as never
+  await render()
+  const dialog = host.querySelector('[data-tx-confirm]')!
+  expect(dialog.textContent).toContain(writeHeldMessage('bridge step'))
+  const exit = [...dialog.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === WRITE_EXIT_LABEL)!
+  await act(async () => exit.click())
+  expect(release).toHaveBeenCalledOnce()
 })
 
 it('frees the move once the engine reads its Safe execution as failed', async () => {
   await reviewApproval()
-  runtime.send.mockImplementation(async (_request: unknown, options: { beforeWrite: () => void }) => {
-    options.beforeWrite()
-    return `0x${'ab'.repeat(32)}`
-  })
+  runtime.send.mockImplementation(async () => `0x${'ab'.repeat(32)}`)
   await act(async () => approve().click())
+  runtime.engine = { phase: 'pending', receipt: null }
+  await render()
   expect(approve().disabled).toBe(true)
   // The receipt succeeds, but the Safe logged ExecutionFailure: useSafeTx reports an error.
   runtime.engine = { phase: 'error', receipt: { status: 'success', transactionHash: `0x${'cd'.repeat(32)}`, blockNumber: 11n } }

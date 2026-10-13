@@ -9,6 +9,7 @@ import {
   useHoldEnclosingModal,
 } from '@/components/ui/ModalShell'
 import { TxSteps } from '@/components/ui/TxSteps'
+import { HeldWriteExit, type HeldWrite } from '@/components/ui/HeldWriteExit'
 
 export type TxConfirmRow = {
   label: ReactNode
@@ -43,6 +44,7 @@ export function TxConfirmDialog({
   settled = false,
   preparing = false,
   status,
+  held,
   error,
 }: {
   open: boolean
@@ -66,6 +68,8 @@ export function TxConfirmDialog({
   /** Rows and steps are still being read; `status` says what is happening. */
   preparing?: boolean
   status?: ReactNode
+  /** The write is held: the user's exit, shown under `status`. */
+  held?: HeldWrite | null
   error?: ReactNode
 }) {
   const titleId = useId()
@@ -137,6 +141,7 @@ export function TxConfirmDialog({
                 className="rounded-xl border border-smoke-200 bg-white p-3"
               />
               {status ? <p className="text-sm text-bluebs-700">{status}</p> : null}
+              <HeldWriteExit held={held} />
             </>
           )}
           {error ? <p className="text-sm text-red-600">{error}</p> : null}

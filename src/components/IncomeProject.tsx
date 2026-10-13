@@ -50,6 +50,7 @@ import {
   type IncomeAccountingContext, type IncomeProjectState,
 } from '@/lib/income-state'
 import { readableError } from '@/lib/readable-error'
+import { HeldNotice } from '@/components/ui/HeldWriteExit'
 
 function message(reason: unknown) { return readableError(reason, 'The transaction could not be prepared. Refresh and try again.') }
 function amount(value: string, decimals = 18) { try { return parseAmount(value.trim(), decimals) } catch { return 0n } }
@@ -65,7 +66,7 @@ function Field({ label, value, onChange, text = false }: { label: string; value:
 function Status({ tx, chainId }: { tx: IncomeTx; chainId: number }) {
   const link = tx.hash && !tx.safeProposalHash ? explorerTxUrl(chainId, tx.hash) : null
   return <div className="mt-4 break-words text-sm" role="status" aria-live="polite">
-    {tx.phase === 'submitted' ? <p>{tx.notice}</p> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? <p>Confirmed onchain.</p> : null}
+    {tx.phase === 'submitted' ? <HeldNotice tx={tx} /> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? <p>Confirmed onchain.</p> : null}
     {tx.error && <p className="text-red-800">{tx.error}</p>}{link && <a className="underline" href={link} target="_blank" rel="noreferrer">View transaction</a>}
   </div>
 }
@@ -450,6 +451,7 @@ export function IncomeBorrow({ state, client, context }: { state: IncomeProjectS
       busy={running && !tx.safeProposalHash && !grant.safeProposalHash}
       complete={tx.phase === 'success'}
       settled={tx.phase === 'submitted' || grant.phase === 'submitted'}
+      held={tx.held ?? grant.held}
       status={tx.notice ?? grant.notice ?? (tx.phase === 'pending' || grant.phase === 'pending' ? 'Submitted. Waiting for onchain confirmation…' : null)}
       error={error ?? tx.error ?? grant.error}
       onClose={() => { setReviewing(false); if (tx.phase === 'submitted') tx.dismiss(); if (grant.phase === 'submitted') grant.dismiss() }}
@@ -530,6 +532,7 @@ function IncomeRepayDialog({ state, client, loanId, tx, approval, onClose }: { s
     busy={running && !tx.safeProposalHash && !approval.safeProposalHash}
     complete={tx.phase === 'success'}
     settled={tx.phase === 'submitted' || approval.phase === 'submitted'}
+    held={tx.held ?? approval.held}
     status={loan.isPending ? 'Reading the loan…' : tx.notice ?? approval.notice ?? (tx.phase === 'pending' || approval.phase === 'pending' ? 'Submitted. Waiting for onchain confirmation…' : null)}
     error={error ?? (loan.isError ? message(loan.error) : null) ?? tx.error ?? approval.error}
     onClose={() => { if (tx.phase === 'submitted') tx.dismiss(); if (approval.phase === 'submitted') approval.dismiss(); onClose() }}
