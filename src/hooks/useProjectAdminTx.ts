@@ -8,9 +8,9 @@ import { useSafeTx, type TxRequest } from './useSafeTx'
 import { useWallet } from './useWallet'
 import { assertNoViewAs } from '@/lib/viewAs'
 import { WRITE_STILL_PENDING_LINE, provenDropped } from '@/lib/write-hold'
-import { WRITE_EXIT_LABEL, writeExitMessage, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
+import { WRITE_EXIT_LABEL, browserLocks, writeExitMessage, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
 import {
-  adoptLegacyProjectAdminRecord, noteProjectAdminAccount, otherProjectAdminHolds, projectAdminNamespace, type ProjectAdminHold,
+  adoptLegacyProjectAdminRecord, noteProjectAdminAccount, otherProjectAdminHolds, projectAdminLockName, projectAdminNamespace, type ProjectAdminHold,
 } from '@/lib/project-admin-reservation'
 
 const INVALIDATE_PREFIXES = ['project-admin', 'project-authority', 'project-metadata', 'fund-project-metadata', 'fund-project', 'income-project', 'income-operator', 'income-reserved', 'income-sticky-binding', 'sticky-project', 'sticky-rewards', 'project-operator-profile', 'project-shop-write', 'project-permissions', 'project-ownership', 'project-splits', 'project-splits-edit', 'account-projects', 'account-tokens']
@@ -97,6 +97,7 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
       if (typeof options?.reverify !== 'function') throw new Error('Recheck project permissions before submitting this update.')
       // Editors retain their own mutable drafts. Only this captured request reaches review.
       const captured = structuredClone(request)
+      watched.current = options.reviewedAccount
       const identity = requestIdentity(captured)
       const latestConfirmedBlock = async () => {
         const block = await client.getBlock({ blockTag: 'latest' })
@@ -104,34 +105,58 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
         const minimumBlock = cache.getQueryData<bigint>(['project-admin-confirmed-block', chainId, projectId.toString()])
         if (minimumBlock !== undefined && block.number < minimumBlock) throw new Error('The network has not reached the last confirmed project update. Wait for it to catch up before submitting another update.')
       }
-      // One reservation covers the project, whichever authorized wallet made the update.
-      const holds = await otherProjectAdminHolds(localStorage, client, chainId, projectId, options.reviewedAccount)
-      if (holds.length) { setOtherHold(holds[0]); return null }
-      setOtherHold(null)
-      setLabel(captured.label ?? 'Project update')
-      handled.current = null
-      resetTx()
-      return await tx.send(captured, {
-        reviewedAccount: options.reviewedAccount,
-        reviewNotice: options.reviewNotice,
-        recoveryNamespace: projectAdminNamespace(projectId),
-        action: 'project update',
-        reverify: async reviewed => {
-          await latestConfirmedBlock()
-          await options.reverify(reviewed)
-          if (requestIdentity(reviewed) !== identity) throw new Error('The project update changed during review. Review the current settings again.')
-        },
-        beforeWrite: async () => {
-          assertNoViewAs()
-          if (requestIdentity(captured) !== identity) throw new Error('The project update changed during review. Review it again.')
-          noteProjectAdminAccount(localStorage, chainId, projectId, options.reviewedAccount)
-          await latestConfirmedBlock()
-        },
+      // The project check and the reservation run under one lock per chain and project.
+      return await browserLocks().request(projectAdminLockName(chainId, projectId), { mode: 'exclusive', ifAvailable: true }, async lock => {
+        if (!lock) throw new Error('Another tab is updating this project. Finish that update first.')
+        // One reservation covers the project, whichever authorized wallet made the update.
+        const holds = await otherProjectAdminHolds(localStorage, client, chainId, projectId, options.reviewedAccount)
+        if (holds.length) { setOtherHold(holds[0]); return null }
+        setOtherHold(null)
+          setLabel(captured.label ?? 'Project update')
+          handled.current = null
+          resetTx()
+          return await tx.send(captured, {
+            reviewedAccount: options.reviewedAccount,
+            reviewNotice: options.reviewNotice,
+            recoveryNamespace: projectAdminNamespace(projectId),
+            action: 'project update',
+            reverify: async reviewed => {
+              await latestConfirmedBlock()
+              await options.reverify(reviewed)
+              if (requestIdentity(reviewed) !== identity) throw new Error('The project update changed during review. Review the current settings again.')
+            },
+            beforeWrite: async () => {
+              assertNoViewAs()
+              if (requestIdentity(captured) !== identity) throw new Error('The project update changed during review. Review it again.')
+              // Checked again right before the wallet opens: another wallet may have reserved the project meanwhile.
+              const late = await otherProjectAdminHolds(localStorage, client, chainId, projectId, options.reviewedAccount)
+              if (late.length) { setOtherHold(late[0]); throw new Error('Another wallet’s project update is still unresolved. Check it before sending another.') }
+              noteProjectAdminAccount(localStorage, chainId, projectId, options.reviewedAccount)
+              await latestConfirmedBlock()
+            },
+          })
       })
     } catch (reason) { setError(errorMessage(reason)); return null }
     finally { inFlight.current = false; setWorking(false) }
   }, [address, adopted, cache, chainId, client, projectId, resetTx, tx])
 
+  // The displayed hold follows its chain proof: it refreshes when the proof changes and clears when it ends.
+  const watched = useRef<Address | null>(null)
+  useEffect(() => {
+    if (!otherHold || !client) return
+    let cancelled = false
+    const look = async () => {
+      const account = watched.current ?? otherHold.record.account
+      try {
+        const holds = await otherProjectAdminHolds(localStorage, client, chainId, projectId, account)
+        if (cancelled) return
+        if (!holds.length) setOtherHold(null)
+        else if (JSON.stringify(holds[0].record) !== JSON.stringify(otherHold.record) || holds[0].exit !== otherHold.exit) setOtherHold(holds[0])
+      } catch { /* The next look asks again. */ }
+    }
+    const timer = setInterval(() => void look(), 15_000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [chainId, client, otherHold, projectId])
   const phase = otherHold ? 'submitted' as const : tx.phase
   const exitOther = useCallback(async () => {
     if (!otherHold) return

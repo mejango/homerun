@@ -1,7 +1,8 @@
 import { provenDropped } from './write-hold'
+import { lookAtSafeProposal, waitForSafeExecutionHash } from '@bananapus/nana-sdk-core/safe-service'
 import { isAddress, zeroAddress, zeroHash, type Address, type Hex, type PublicClient } from 'viem'
 import {
-  createBrowserWriteRecovery, parseReviewedWriteRecoveryRecord, readBrowserWriteRecovery, sameReviewedWrite, verifyReviewedWriteReceipt,
+  createBrowserWriteRecovery, parseReviewedWriteRecoveryRecord, readBrowserWriteRecovery, sameReviewedWrite, verifyReviewedWriteExpiry, verifyReviewedWriteReceipt,
   type ReviewedWriteRecoveryRecord,
 } from '@bananapus/nana-sdk-core/review'
 
@@ -10,6 +11,8 @@ type Store = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 const HASH = /^0x[\da-f]{64}$/i
 const UINT = /^(?:0|[1-9]\d{0,77})$/
 
+/** One lock per chain and project, held while the project is checked and the reservation made. */
+export const projectAdminLockName = (chainId: number, projectId: bigint) => `homerun:project-admin:lock:${chainId}:${projectId}`
 export const projectAdminNamespace = (projectId: bigint) => `homerun:project-admin:${projectId}`
 const accountsKey = (chainId: number, projectId: bigint) => `homerun:project-admin:accounts:v1:${chainId}:${projectId}`
 /** Where the editors kept an unresolved update before the SDK's journal took over. */
@@ -60,13 +63,19 @@ export async function adoptLegacyProjectAdminRecord(storage: Store, chainId: num
   await journal.withLock(async () => {
     const existing = journal.read()
     if (existing) {
-      if (!sameReviewedWrite(existing, input)) throw new Error('Two saved project updates are unresolved. Keep this browser’s data and check your wallet before sending another update.')
+      const conflict = () => new Error('Two saved project updates are unresolved. Keep this browser’s data and check your wallet before sending another update.')
+      if (!sameReviewedWrite(existing, input)) throw conflict()
+      const wanted = hash?.toLowerCase()
+      if (wanted && existing.hash && existing.hash.toLowerCase() !== wanted) throw conflict()
+      // The old record knows the hash this reservation lacks: merge it, and only then let the old key go.
+      if (wanted && !existing.hash) journal.submitted(wanted as Hex, existing)
     } else {
       journal.reserve()
       if (hash) journal.submitted(hash.toLowerCase() as Hex)
     }
   })
-  if (!journal.read()) throw unreadable()
+  const saved = journal.read()
+  if (!saved || (hash && saved.hash?.toLowerCase() !== hash.toLowerCase())) throw unreadable()
   noteProjectAdminAccount(storage, chainId, projectId, input.account)
   storage.removeItem(key)
 }
@@ -99,6 +108,17 @@ export async function otherProjectAdminHolds(storage: Store, client: PublicClien
           const receipt = await client.getTransactionReceipt({ hash: current.hash })
           await verifyReviewedWriteReceipt(client, current, receipt)
           journal.clear(current)
+        } else if (current?.hash && current.safe) {
+          // The Safe's own events decide: replaced, expired and executed are each proven before the hold ends.
+          const look = await lookAtSafeProposal(client, chainId, current.account, current.hash)
+          if (look === 'replaced') journal.clear(current)
+          else if (look === 'expired') { await verifyReviewedWriteExpiry(client, current); journal.clear(current) }
+          else {
+            const execution = await waitForSafeExecutionHash(chainId, current.hash, { client, signal: AbortSignal.timeout(5_000) })
+            const receipt = await client.getTransactionReceipt({ hash: execution })
+            await verifyReviewedWriteReceipt(client, current, receipt)
+            journal.clear(current)
+          }
         }
       })
     } catch { /* The chain can't place it yet: it stays held. */ }

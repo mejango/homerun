@@ -112,6 +112,17 @@ describe('Create submission recovery', () => {
       expect(saved().statuses[8453]).toEqual({ phase: 'ready' })
     })
 
+    it('refuses the exit when the saved attempt or hash is no longer the one the user saw', async () => {
+      holdSigning()
+      await render()
+      await vi.waitFor(() => expect(exit()).toBeTruthy())
+      // Another tab recorded the hash after this tab last drew the held line.
+      updateLaunchStatus(salt, 8453, { phase: 'pending', safe: false, attemptId: ATTEMPT, hash: FOUND, walletReturned: true })
+      await act(async () => exit()!.click())
+      expect(saved().statuses[8453]).toMatchObject({ phase: 'pending', hash: FOUND })
+      expect(host.textContent).toMatch(/saved launch changed/i)
+    })
+
     it('offers a pasted hash only as the fallback, and records nothing unless it verifies', async () => {
       holdSigning()
       runtime.getTransactionReceipt.mockRejectedValue(new Error('receipt unavailable'))

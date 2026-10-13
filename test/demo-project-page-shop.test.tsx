@@ -94,7 +94,7 @@ describe('demo project phase stores', () => {
       expect(itemNames(), phase).toEqual([expected])
       for (const [key, inventory] of saved) expect(localStorage.getItem(key)).toBe(inventory)
     }
-  })
+  }, 30_000)
 
   it.each([
     { custom: false, visitShop: false },

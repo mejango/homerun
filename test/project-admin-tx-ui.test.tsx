@@ -6,7 +6,7 @@ import { parseAbi, type Address, type Hex } from 'viem'
 import { WRITE_EXIT_LABEL, writeExitMessage, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
 import { createBrowserWriteRecovery } from '@bananapus/nana-sdk-core/review'
 import { installRecoveryLocks, recoveryRecords } from './runtime/write-recovery-fixture'
-import { noteProjectAdminAccount, projectAdminNamespace } from '@/lib/project-admin-reservation'
+import { noteProjectAdminAccount, projectAdminLockName, projectAdminNamespace } from '@/lib/project-admin-reservation'
 import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
 import type { ProjectAdminTx } from '@/hooks/useProjectAdminTx'
 
@@ -188,6 +188,56 @@ describe('project administrative writes', () => {
     expect(runtime.send).not.toHaveBeenCalled()
     expect(handle.notice).toBe('Still pending in your wallet. Speed it up or cancel it there.')
     expect(handle.held).toBeNull()
+  })
+
+  async function foreignHold() {
+    const first = '0x3333333333333333333333333333333333333333' as Address
+    const journal = createBrowserWriteRecovery({ chainId: 8453, account: first, safe: false, namespace: projectAdminNamespace(7n), call: { to: TARGET, data: '0x12345678', value: 0n } })
+    await journal.withLock(async () => { journal.reserve() })
+    noteProjectAdminAccount(localStorage, 8453, 7n, first)
+    return { journal, first }
+  }
+
+  it('check the project and reserve under one lock per chain and project', async () => {
+    await render()
+    await vi.waitFor(() => expect(handle.ready).toBe(true))
+    let release!: () => void
+    const held = new Promise<void>(resolve => { release = resolve })
+    const taking = navigator.locks.request(projectAdminLockName(8453, 7n), { mode: 'exclusive' }, () => held)
+    await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })
+    expect(runtime.send).not.toHaveBeenCalled()
+    expect(handle.error).toMatch(/another tab/i)
+    release(); await taking
+    await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })
+    expect(runtime.send).toHaveBeenCalledOnce()
+  })
+
+  it('check the project again right before the wallet opens', async () => {
+    await render()
+    await vi.waitFor(() => expect(handle.ready).toBe(true))
+    runtime.send.mockImplementation(async (reviewed: TxRequest, options: TxSendOptions) => {
+      await options.reverify?.(reviewed)
+      await foreignHold()
+      await options.beforeWrite?.()
+      return EXECUTION
+    })
+    await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })
+    expect(handle.error).toMatch(/another wallet/i)
+  })
+
+  it('watch the displayed hold and clear it when its chain proof changes', async () => {
+    vi.useFakeTimers()
+    try {
+      const { journal } = await foreignHold()
+      await render()
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })
+      expect(handle.held).not.toBeNull()
+      await act(async () => { journal.abandon(journal.read()!, { checkedWallet: true }) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
+      expect(handle.held).toBeNull()
+      expect(handle.phase).toBe('idle')
+    } finally { vi.useRealTimers() }
   })
 })
 

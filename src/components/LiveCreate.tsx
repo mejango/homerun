@@ -111,11 +111,18 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lostLaunch, lostSetup, lostBusy, status.attemptId, status.multisigSetup?.attemptId])
   const releaseLost = () => {
+    // The exit is given the status the user saw, and refused if the saved attempt or hash moved on since.
+    const shown = status
     const current = loadLaunchSession()?.statuses[request.chainId]
     if (!current) return
+    if (current.attemptId !== shown.attemptId || current.hash !== shown.hash || current.phase !== shown.phase
+      || current.multisigSetup?.attemptId !== shown.multisigSetup?.attemptId || current.multisigSetup?.hash !== shown.multisigSetup?.hash) {
+      setError('The saved launch changed. Reload its progress before releasing it.')
+      return
+    }
     try {
-      if (lostLaunch) update({ phase: 'ready', ...(current.multisigSetup ? { multisigSetup: current.multisigSetup } : {}) }, 'signing', current)
-      else update({ ...current, multisigSetup: undefined }, undefined, current)
+      if (lostLaunch) update({ phase: 'ready', ...(shown.multisigSetup ? { multisigSetup: shown.multisigSetup } : {}) }, 'signing', shown)
+      else update({ ...shown, multisigSetup: undefined }, undefined, shown)
       setLostChecked(false); setError('')
     } catch (cause) { setError(message(cause)) }
   }
