@@ -113,7 +113,7 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
       return await tx.send(captured, {
         reviewedAccount: options.reviewedAccount,
         reviewNotice: options.reviewNotice,
-        recoveryNamespace: `homerun:project-admin:${projectId}`,
+        recoveryNamespace: projectAdminNamespace(projectId),
         action: 'project update',
         reverify: async reviewed => {
           await latestConfirmedBlock()
