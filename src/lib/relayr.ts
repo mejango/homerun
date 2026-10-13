@@ -12,7 +12,8 @@ import {
   FORWARD_REQUEST_TYPES,
   MAX_RELAYR_SENT_PAYMENTS,
   RELAYR_API,
-  RELAYR_FORWARDER_DEADLINE_SECONDS,
+  RELAYR_REQUEST_RUN_MARGIN_SECONDS,
+  relayrForwarderDeadline,
   RELAYR_PAYMENT_GAS,
   RelayrProofError,
   RelayrPaymentNotSentError,
@@ -55,6 +56,11 @@ import {
 } from '@/lib/wallet-core'
 
 const RELAYR_QUOTE_TIMEOUT_MS = 45_000
+/**
+ * Signatures are refreshed once less than this is left: a quote's payment window (about ten minutes,
+ * with room to open the wallet) plus the SDK's run margin, so a quote keeps a payable option.
+ */
+export const RELAYR_SIGNATURE_REFRESH_SECONDS = 15 * 60 + RELAYR_REQUEST_RUN_MARGIN_SECONDS
 const RELAYR_STATUS_REQUEST_TIMEOUT_MS = 15_000
 /** Consecutive 404s that prove the uuid was never Relayr's, not a blip. */
 const RELAYR_NOT_FOUND_ATTEMPTS = 3
@@ -137,16 +143,6 @@ export function relayrChainClient(chainId: number): ReturnType<typeof publicClie
   }
 }
 
-/**
- * The line a launch shows while one of its old requests can still run: until
- * `until` (seconds), or, once the clock is past it, until a finalized block is.
- */
-export function relayrHeldMessage(until: number, nowMs = Date.now()): string {
-  return until * 1_000 > nowMs
-    ? `This launch's earlier signature can still run until ${new Date(until * 1_000).toLocaleString()}. Try again after that.`
-    : "This launch's earlier signature may still run. Try again in a few minutes."
-}
-
 class RelayrHttpTimeoutError extends Error {
   readonly name = 'RelayrHttpTimeoutError'
 }
@@ -218,7 +214,7 @@ export async function prepareForwardedTx(
     value,
     gas: call.gas ?? 500_000n,
     nonce,
-    deadline: Math.floor(Date.now() / 1000) + RELAYR_FORWARDER_DEADLINE_SECONDS,
+    deadline: relayrForwarderDeadline(),
     data: call.data,
   }
   const typedDomain = {
@@ -258,7 +254,7 @@ export async function prepareForwardedTx(
   return { review, sign: async () => {
     const { wallet } = await connectedWallet(call.chainId)
     const currentNonce = await client.readContract({ address: forwarder, abi: erc2771ForwarderAbi, functionName: 'nonces', args: [expectedAccount] })
-    if (currentNonce !== nonce || request.deadline <= Math.floor(Date.now() / 1000) + 120) throw new Error('The launch authorization changed or expired. Review it again.')
+    if (currentNonce !== nonce || request.deadline <= Math.floor(Date.now() / 1000) + RELAYR_SIGNATURE_REFRESH_SECONDS) throw new Error('The launch authorization changed or expired. Review it again.')
     assertReviewedWallet({ account: expectedAccount, connectorUid: preparedWallet.connector?.uid, chainId: call.chainId, safe: false }, 'Connected wallet changed. Review the cross-chain request again.')
     const signature = await wallet.signTypedData({
       account: expectedAccount,

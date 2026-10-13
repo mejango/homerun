@@ -160,7 +160,7 @@ describe('creating a FUND without a transaction', () => {
     await act(async () => root.render(<FundDeploy />))
     expect(host.querySelector('a[href^="/intent/"]')).toBeNull()
     expect(host.textContent).not.toContain('This project is published')
-    expect(button('Cancel creation and edit details')).toBeTruthy()
+    expect(button('Discard and edit details')).toBeTruthy()
   })
 
   it('says a published project must be finished before its networks change', async () => {

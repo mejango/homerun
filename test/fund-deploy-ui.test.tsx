@@ -97,7 +97,7 @@ describe('Create submission recovery', () => {
   it('cancels an unsubmitted launch and preserves the setup draft', async () => {
     localStorage.setItem('homerun:create-draft:v1', 'keep this draft')
     await act(async () => root.render(<FundDeploy />))
-    const cancel = [...host.querySelectorAll('button')].find(button => button.textContent === 'Cancel creation and edit details')!
+    const cancel = [...host.querySelectorAll('button')].find(button => button.textContent === 'Discard and edit details')!
     await act(async () => cancel.click())
     expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()
     expect(localStorage.getItem('homerun:create-draft:v1')).toBe('keep this draft')
@@ -140,7 +140,7 @@ describe('Create submission recovery', () => {
     const settled = () => saveLaunch({ version: 1, name: 'Test asset', transport: 'relayr', input: { owner, sender: owner, chainIds: [1, 10], projectUri: 'ipfs://bafkreimetadata', tokenName: 'House FUND', ticker: 'HOUSE', salt, mustStartAtOrAfter: 1000, creationFees: { 1: 0n, 10: 0n } },
       statuses: { 1: { phase: 'authorized' }, 10: { phase: 'unresolved', error: 'The launch may already have run.' } },
       relayr: { account: owner, phase: 'executing', paymentChainId: 8453, signed: [], records: [], published: true, abandonable: true } })
-    const cancel = () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Cancel creation and edit details')
+    const cancel = () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Discard and edit details')
 
     it('says a chain may have run, and offers cancelling', async () => {
       localStorage.removeItem(FUND_LAUNCH_KEY)
@@ -272,7 +272,7 @@ describe('Create submission recovery', () => {
     expect(host.textContent).toContain('Check your wallet activity')
     expect(host.textContent).toContain(runtime.submissionHash)
     expect(host.textContent).not.toContain('Save setup hash')
-    expect(host.textContent).not.toContain('Cancel creation and edit details')
+    expect(host.textContent).not.toContain('Discard and edit details')
     expect(host.querySelector('input')).toBeNull()
   })
 

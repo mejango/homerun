@@ -389,7 +389,7 @@ export function FundDeploy({ values, onLockChange, importedRecord, onRecordUsed 
         <p role="alert">This saved record has no published project to open. Cancel it and create the project again.</p>
         <button type="button" className="quiet-button" disabled={running || preparing} onClick={() => {
           void cancelUnsubmittedLaunch(session.input.salt).then(() => { setSession(null); setError(''); setProgress(''); onLockChange?.(null) }).catch(cause => setError(message(cause)))
-        }}>Cancel creation and edit details</button>
+        }}>Discard and edit details</button>
       </>
       : <>
         {signingChain !== undefined && <div className="fund-launch-action" role="status"><span>Confirm the {displayChainName(signingChain)} request in your wallet.</span></div>}
@@ -403,7 +403,7 @@ export function FundDeploy({ values, onLockChange, importedRecord, onRecordUsed 
         {!complete && <button type="button" className="create-primary" disabled={running || preparing || !address} onClick={() => void run(session)}>{running ? 'Creating your project…' : 'Continue creation'}</button>}
         {!complete && canCancelLaunch(session) && <button type="button" className="quiet-button" disabled={running || preparing} onClick={() => {
           void cancelUnsubmittedLaunch(session.input.salt, launchRequestsDead).then(() => { setSession(null); setError(''); setProgress(''); onLockChange?.(null) }).catch(cause => setError(message(cause)))
-        }}>Cancel creation and edit details</button>}
+        }}>Discard and edit details</button>}
         {complete && <a className="create-primary" href={projectPath(session.input.chainIds[0], session.statuses[session.input.chainIds[0]].projectId!)}>Open project ↗</a>}
       </>}
     {(error || invalid) && <p role="alert">{transactionMessage(error || invalid)}</p>}

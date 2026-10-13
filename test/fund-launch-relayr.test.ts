@@ -44,7 +44,9 @@ vi.mock('@/lib/relayr', async importOriginal => ({
   },
 }))
 
-import { relayrHeldMessage, relayrPaymentLabel } from '@/lib/relayr'
+import { relayrDiscardLine, relayrHeldMessage as heldMessage } from '@bananapus/nana-sdk-core/review'
+import { relayrPaymentLabel } from '@/lib/relayr'
+const relayrHeldMessage = (until: number) => heldMessage(until, { action: 'launch' })
 import { predictMultisig, MULTICALL3, CREATE_BATCH_ABI, unbundleMultisigLaunch, type CreateMultisig } from '@/lib/create-multisig'
 import { canRelayrLaunch, launchRequestsDead, runRelayrLaunch } from '@/lib/fund-launch-relayr'
 import { FUND_LAUNCH_KEY, canCancelLaunch, cancelUnsubmittedLaunch, loadLaunchSession, saveLaunch as saveLaunchSession, type FundLaunchSession as LaunchSession } from '@/lib/fund-launch-session'
@@ -57,10 +59,10 @@ const NOW = 1_900_000_000
 const BUNDLE = '00000000-0000-0000-0000-000000000001'
 const OTHER_BUNDLE = '00000000-0000-0000-0000-000000000002'
 const TESTNETS = [11155111, 11155420, 84532, 421614]
-const MAY_HAVE_RUN = 'This launch\'s earlier signature may already have run. Check the project, then cancel creation to start over.'
-const CHANGED = 'The launch changed since this review. Cancel creation to start over.'
-const UNCHECKED = 'Couldn\'t check the launch. Try again, or cancel creation.'
-const UNCHECKED_PAID = 'Couldn\'t check the launch. Try again, or cancel creation; the payment already made is not refunded.'
+const MAY_HAVE_RUN = relayrDiscardLine('ran', { action: 'launch' })
+const CHANGED = relayrDiscardLine('changed', { subject: 'launch' })
+const UNCHECKED = 'Couldn\'t check the launch. Try again, or discard it.'
+const UNCHECKED_PAID = 'Couldn\'t check the launch. Try again, or discard it; the payment already made is not refunded.'
 let storage: Map<string, string>
 let quote: RelayrQuote
 let entries: RelayrEntry[]
@@ -68,6 +70,7 @@ let records: RelayrTransactionRecord[]
 let clients: Map<number, ReturnType<typeof makeClient>>
 let failed: Set<number>
 let offeredPaymentChains: number[]
+let signedLifetime = 3600
 
 function paymentFor(chain: number, deadline = NOW + 600): RelayrPayment {
   return { chain, amount: '200', target: RELAYR_PAYMENT_ADDRESS, token: RELAYR_NATIVE_TOKEN,
@@ -147,6 +150,7 @@ beforeEach(() => {
   })
   vi.stubGlobal('navigator', { locks: { request: async (_name: string, _options: unknown, fn: (lock: object) => Promise<void>) => fn({}) } })
   failed = new Set()
+  signedLifetime = 3600
   clients = new Map([1, 10, 8453, 42161, ...TESTNETS].map(chain => [chain, makeClient(chain)]))
   offeredPaymentChains = [8453, 1]
   m.client.mockImplementation(chain => clients.get(chain))
@@ -157,7 +161,7 @@ beforeEach(() => {
     expect(nonce).toBe(0n)
     return { review: { calls: [{ chainId: call.chainId, from: account, to: call.target, data: call.data, value: call.value }], authorization: { type: 'test' } }, sign: async () => ({ chain: call.chainId, target: jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][call.chainId as JBChainId],
       value: call.value.toString(), data: encodeFunctionData({ abi: erc2771ForwarderAbi, functionName: 'execute',
-        args: [{ from: account, to: call.target, value: call.value, gas: call.gas, deadline: Math.floor(Date.now() / 1000) + 3600,
+        args: [{ from: account, to: call.target, value: call.value, gas: call.gas, deadline: Math.floor(Date.now() / 1000) + signedLifetime,
           data: call.data, signature: `0x${'dd'.repeat(65)}` }] }) }) }
   })
   entries = []
@@ -828,6 +832,17 @@ describe('relayed launch execution and recovery', () => {
     expect(m.pay).not.toHaveBeenCalled()
   })
 
+  it('refreshes signatures with less than a quote\'s payment window and the run margin left, at the same nonces', async () => {
+    // 40 minutes cannot cover a 15 minute payment window and the 30 minute margin Relayr needs to run a paid bundle.
+    signedLifetime = 40 * 60
+    await expect(run()).rejects.toThrow('about to expire')
+    expect(m.quote).not.toHaveBeenCalled()
+    expect(loadLaunchSession()?.relayr?.retryNonces).toEqual({ 1: '0', 10: '0' })
+    signedLifetime = 3600
+    await run()
+    expect(m.pay).toHaveBeenCalledTimes(1)
+  })
+
   it('refreshes changed creation fees with the same nonce before any funding', async () => {
     m.fee.mockResolvedValueOnce(17n).mockResolvedValueOnce(17n).mockResolvedValue(18n)
     await expect(run()).rejects.toThrow('creation fee changed')
@@ -1271,7 +1286,7 @@ describe('relayed launch execution and recovery', () => {
     })
 
     describe('a saved payment the funding chain shows to be another transaction', () => {
-      const UNMATCHED = 'The saved payment couldn\'t be matched to this launch and isn\'t refunded. Cancel creation to start over.'
+      const UNMATCHED = relayrDiscardLine('expired', { action: 'launch', paymentUnmatched: true })
       const REFUSED = /does not match the reviewed (?:Relayr )?payment/
       /** The hash the launch saved for its payment is mined on the funding chain as a call to another contract. */
       const anotherTransaction = () => {
@@ -1549,9 +1564,18 @@ describe('paying a reverted launch quote again', () => {
       expect(m.pay).toHaveBeenCalledTimes(1)
     })
 
+    it('releases the quote when a wallet contract paid and its receipt shows the payment reverted', async () => {
+      await expired()
+      clients.get(8453)!.getTransaction.mockRejectedValue(new Error('node unavailable'))
+      m.pay.mockImplementationOnce(paying)
+      await run()
+      expect(m.quote).toHaveBeenCalledTimes(2)
+    })
+
     it('does not release the quote while its payment cannot be proven reverted', async () => {
       await expired()
       clients.get(8453)!.getTransaction.mockRejectedValue(new Error('node unavailable'))
+      clients.get(8453)!.getTransactionReceipt.mockRejectedValue(new Error('node unavailable'))
       await expect(run()).rejects.toMatchObject({ message: relayrHeldMessage(NOW + 3600), cause: expect.objectContaining({ message: WAITING }) })
       expect(m.quote).toHaveBeenCalledTimes(1)
       expect(m.pay).toHaveBeenCalledTimes(1)
