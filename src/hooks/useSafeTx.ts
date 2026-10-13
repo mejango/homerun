@@ -222,6 +222,8 @@ const SAFE_REPLY_UNREADABLE = 'Safe did not return a proposal hash. Check Safe b
 const SAFE_PROPOSAL_EXPIRED = "This Safe proposal's deadline passed. Review it again."
 /** A receipt still missing this long after its execution was first seen is not coming. */
 const RECEIPT_HORIZON_MS = 60 * 60_000
+/** Past the horizon, a known execution's receipt is asked for this often. */
+const RECEIPT_RETRY_MS = 30_000
 
 type SafeProposal = {
   chainId: number
@@ -380,11 +382,11 @@ async function followProposal(key: string, client: FollowClient, reply: boolean)
     if (Date.now() - seenAt >= RECEIPT_HORIZON_MS) {
       const hash = executionHash
       receipt = await chainAnswer(() => client.getTransactionReceipt({ hash }))
-      if (!receipt) {
-        updateProposal(key, unconfirmedProposal(key))
-        return
-      }
-      break
+      if (receipt) break
+      // A known execution stays held until its receipt decides it: success or failure, never a timer.
+      updateProposal(key, { phase: 'confirming' })
+      await new Promise(resolve => setTimeout(resolve, RECEIPT_RETRY_MS))
+      continue
     }
     updateProposal(key, { phase: 'confirming' })
   }
@@ -1015,7 +1017,9 @@ export function useSafeTx(chainId: number) {
    * released stays, with its exit, until the user takes it.
    */
   const dismiss = useCallback(() => {
-    if (shownKey && proposals.get(shownKey)?.phase === 'unproven') {
+    const shown = shownKey ? proposals.get(shownKey) : undefined
+    // A known execution stays held until its receipt decides it: closing only hides it.
+    if (shownKey && shown?.phase === 'unproven' && !shown.executionHash) {
       proposals.delete(shownKey)
       notifyProposals()
       // Its line told the user to check their Safe; closing it is their exit.

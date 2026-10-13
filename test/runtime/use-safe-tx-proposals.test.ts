@@ -744,10 +744,18 @@ describe('an executed Safe proposal', () => {
     await pass(50 * 60_000)
     expect(flow.tx.notice).toBe(PENDING_RECEIPT)
     await pass(10 * 60_000)
-    expect(flow.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: true, notice: UNCONFIRMED })
+    // A known execution is held until its receipt decides it, however long the node takes.
+    expect(flow.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: false, notice: PENDING_RECEIPT, held: null })
     await act(async () => flow.tx.dismiss())
     await flow.send()
     expect(mocks.writeContract).toHaveBeenCalledOnce()
+    await pass(3 * 60 * 60_000)
+    await act(async () => flow.tx.dismiss())
+    await flow.send()
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    mocks.publicClient.getTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => receiptOf(hash, PROPOSAL))
+    await pass(5 * 60_000)
+    expect(flow.tx.phase).toBe('success')
   })
 
   it('settles once its receipt arrives within the hour', async () => {
@@ -876,7 +884,8 @@ describe("a Safe proposal's last look at the chain", () => {
     expect(flow.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: false })
     nodeUp = true
     await pass(60_000)
-    expect(flow.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: true, notice: UNCONFIRMED })
+    // The node answers that it has no receipt: the execution is still held, not given up on.
+    expect(flow.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: false, notice: 'Executed by your Safe. Confirming it onchain.' })
   })
 
   it('binds an execution returned at once on the transaction the probe read, whatever a later read says', async () => {
