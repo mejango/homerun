@@ -49,6 +49,7 @@ import {
   verifyStickyCreationExecution,
 } from "../src/lib/sticky-create";
 import { StickyCreate } from "../src/components/StickyCreate";
+import { failReservationReadback } from "./support/reservation-storage";
 
 vi.mock("../src/lib/fund-state", async (original) => ({
   ...(await original<typeof import("../src/lib/fund-state")>()),
@@ -438,6 +439,7 @@ const input = () => ({
 });
 beforeEach(() => {
   localStorage.clear();
+  Object.defineProperty(navigator, "locks", { configurable: true, value: { request: vi.fn(async (_name: string, callback: () => unknown) => callback()) } });
   connected.address = undefined;
   registry.StickyDeployer = { 1: DEPLOYER };
   registry.JBTokenDistributor = { 1: DISTRIBUTOR };
@@ -461,6 +463,7 @@ beforeEach(() => {
     } as StickyProjectState);
 });
 afterEach(() => {
+  Reflect.deleteProperty(navigator, "locks");
   if (oldFactory) registry.StickyDeployer = oldFactory;
   else delete registry.StickyDeployer;
   if (oldDistributor) registry.JBTokenDistributor = oldDistributor;
@@ -790,6 +793,7 @@ function executionClient(
     reverted?: boolean;
     wrongPayload?: boolean;
     stateReorg?: boolean;
+    finalized?: bigint;
   } = {},
 ) {
   const topics = encodeEventTopics({
@@ -810,6 +814,9 @@ function executionClient(
     transactionHash: EXECUTION,
     blockNumber: 130n,
     blockHash: hash(130n),
+    from: OWNER,
+    to: DEPLOYER,
+    transactionIndex: 0,
     status: options.reverted ? "reverted" : "success",
     logs: [{ address: options.emitter ?? DEPLOYER, topics, data }],
   }));
@@ -823,6 +830,7 @@ function executionClient(
       value: 123n,
       blockNumber: 130n,
       blockHash: hash(130n),
+      transactionIndex: 0,
     })),
     getTransactionReceipt,
     getBlock: options.stateReorg
@@ -831,10 +839,28 @@ function executionClient(
           hash: hash(blockNumber === 140n ? 999n : blockNumber),
           timestamp,
         }))
-      : client.getBlock,
+      : options.reverted
+        ? vi.fn(async ({ blockNumber }: { blockNumber?: bigint }) => {
+            const number = blockNumber ?? options.finalized ?? 140n;
+            return { number, hash: hash(number), timestamp };
+          })
+        : client.getBlock,
   } as unknown as PublicClient;
 }
 describe("creation recovery and duplicate protection", () => {
+  it.each(["pointer", "pending"])("cleans failed pre-wallet %s persistence without removing replacements", async kind => {
+    const { prepared } = await pendingFixture();
+    const pointer = "homerun:sticky:create-pending:v1:1:7", key = stickySessionKey(1, 7n, OWNER);
+    for (const replacement of [undefined, "replacement"]) {
+      const storage = storageFixture(), target = kind === "pointer" ? pointer : key;
+      expect(() => beginStickyCreationSubmission(failReservationReadback(storage, target, { replacement }), prepared, OWNER, false, 120n)).toThrow();
+      expect(storage.getItem(target)).toBe(replacement ?? null);
+      if (replacement === undefined) {
+        expect(storage.getItem(key)).toBeNull();
+        expect(storage.getItem(pointer)).toBeNull();
+      }
+    }
+  });
   it("saves exact calldata before submission and blocks another wallet from bypassing the pending creation", async () => {
     const { storage, record, prepared } = await pendingFixture();
     expect(readStickyCreationPending(storage, 1, 7n, SHARE)).toEqual(record);
@@ -895,15 +921,16 @@ describe("creation recovery and duplicate protection", () => {
       ),
     ).rejects.toThrow("event differs");
   });
-  it("distinguishes a proven reverted execution without claiming a project was created", async () => {
+  it.each(["unknown", "nonfinal", "finalized"])("releases only a wallet-recorded finalized creation failure: %s", async kind => {
     const { client, record } = await pendingFixture();
-    expect(
-      await verifyStickyCreationExecution(
-        executionClient(client, record, { reverted: true }),
-        record,
-        EXECUTION,
-      ),
-    ).toEqual({ status: "reverted" });
+    const pending = kind === "unknown" ? record : { ...record, hash: EXECUTION };
+    const proof = verifyStickyCreationExecution(
+      executionClient(client, pending, { reverted: true, finalized: kind === "nonfinal" ? 129n : 140n }),
+      pending,
+      EXECUTION,
+    );
+    if (kind === "finalized") await expect(proof).resolves.toEqual({ status: "reverted" });
+    else await expect(proof).rejects.toThrow();
     expect(readStickyProjectState).not.toHaveBeenCalled();
   });
   it("rejects a live state reorg after metadata verification", async () => {
@@ -953,12 +980,12 @@ describe("creation recovery and duplicate protection", () => {
     engine.send.mockImplementation(
       async (
         _request: unknown,
-        options: { beforeWrite: () => Promise<void>; onBeforeWriteAborted: () => Promise<void> },
+        options: { durableRecovery: { reserve: () => Promise<void>; releaseUnsubmitted: () => Promise<void> } },
       ) => {
-        await options.beforeWrite();
+        await options.durableRecovery.reserve();
         marked = !!readStickyCreationPending(localStorage, 1, 7n);
         // A Safe connection that changes at the write: nothing reaches the wallet.
-        await options.onBeforeWriteAborted();
+        await options.durableRecovery.releaseUnsubmitted();
         return null;
       },
     );
@@ -1089,6 +1116,7 @@ describe("creation recovery and duplicate protection", () => {
         await new Promise((resolve) => setTimeout(resolve, 20));
       });
       expect(onCreated).toHaveBeenCalledExactlyOnceWith(9n);
+      expect(navigator.locks.request).toHaveBeenCalledWith("homerun-sticky-create:1:7", expect.any(Function));
       expect(readStickyProjectState).toHaveBeenCalledTimes(1);
       expect(container.textContent).toContain(
         "Sticky project 9 is confirmed and verified",

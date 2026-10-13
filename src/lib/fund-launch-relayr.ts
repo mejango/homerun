@@ -25,7 +25,7 @@ import { wagmiConfig } from '@/providers/Providers'
 import { buildFundLaunch, type FundTransaction } from '@/lib/fund-contracts'
 import { verifyFundLaunch } from '@/lib/fund-launch-verification'
 import { LAUNCH_JOURNAL_PHASES, loadLaunchSession, saveLaunch as saveLaunchSession, type LaunchStatus as LaunchChainStatus, type FundLaunchSession as LaunchSession } from '@/lib/fund-launch-session'
-import { gasWithHeadroom } from '@bananapus/nana-sdk-core/review'
+import { gasWithHeadroom, relayrDiscardLine, relayrHeldMessage } from '@bananapus/nana-sdk-core/review'
 import {
   RelayrDestinationRevertedError,
   RelayrPaymentRevertedError,
@@ -57,7 +57,7 @@ import {
   prepareForwardedTx,
   relayrChainClient,
   relayrDestinationRecords,
-  relayrHeldMessage,
+  RELAYR_SIGNATURE_REFRESH_SECONDS,
   relayrPay,
   relayrPaymentLabel,
   relayrPoll,
@@ -75,17 +75,18 @@ import { requireFundingChainSelection, requireTransactionReview } from '@/lib/tr
 
 const activeLaunches = new Set<string>()
 class LaunchSignaturesNeedRefresh extends Error {}
+const launchHeld = (until: number) => relayrHeldMessage(until, { action: 'launch' })
 
 /** The line a launch shows once every request it published is dead and one may have run (ruling R114). */
-const LAUNCH_MAY_HAVE_RUN = 'This launch\'s earlier signature may already have run. Check the project, then cancel creation to start over.'
+const LAUNCH_MAY_HAVE_RUN = relayrDiscardLine('ran', { action: 'launch' })
 /** The line a launch shows once every request it published is dead, none ran, and the launch's recheck refuses its calls. */
-const LAUNCH_CHANGED = 'The launch changed since this review. Cancel creation to start over.'
+const LAUNCH_CHANGED = relayrDiscardLine('changed', { subject: 'launch' })
 /** The line a launch shows while the node cannot answer its recheck, which decides nothing about signing it again. */
-const LAUNCH_UNCHECKED = 'Couldn\'t check the launch. Try again, or cancel creation.'
+const LAUNCH_UNCHECKED = 'Couldn\'t check the launch. Try again, or discard it.'
 /** The same line once a payment was made, which cancelling does not refund. */
-const LAUNCH_UNCHECKED_PAID = 'Couldn\'t check the launch. Try again, or cancel creation; the payment already made is not refunded.'
+const LAUNCH_UNCHECKED_PAID = 'Couldn\'t check the launch. Try again, or discard it; the payment already made is not refunded.'
 /** The line a launch shows once every request it published is dead and unused, and the payment it saved is another transaction. */
-const LAUNCH_PAYMENT_UNMATCHED = 'The saved payment couldn\'t be matched to this launch and isn\'t refunded. Cancel creation to start over.'
+const LAUNCH_PAYMENT_UNMATCHED = relayrDiscardLine('expired', { action: 'launch', paymentUnmatched: true })
 
 type SignedLaunch = {
   chainId: number
@@ -346,8 +347,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
      * the launch not to be signed again. Returns the outcomes that may go on.
      */
     const requireGoOn = (target: LaunchRelayrJournal, outcome: RelayrSessionOutcome): Extract<RelayrSessionOutcome, { kind: 'refresh' | 're-sign' | 'discard' }> => {
-      if (outcome.kind === 'hold') throw new Error(relayrHeldMessage(outcome.until))
-      if (outcome.kind === 'reorg-hold') throw new Error(relayrHeldMessage(0))
+      if (outcome.kind === 'hold') throw new Error(launchHeld(outcome.until))
+      if (outcome.kind === 'reorg-hold') throw new Error(launchHeld(0))
       if (outcome.kind === 'unchecked') {
         // The recheck runs only once every request is dead and unused, so none can run: the launch is not signed again
         // until the node answers, but it may be cancelled meanwhile.
@@ -414,7 +415,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         }
       }
     }
-    if (unreleased) throw heldUntil === null ? unreleased : new Error(relayrHeldMessage(heldUntil), { cause: unreleased })
+    if (unreleased) throw heldUntil === null ? unreleased : new Error(launchHeld(heldUntil), { cause: unreleased })
     if (journal?.abandonable === true && ['signing', 'quoting', 'quoted', 'payment-reverted'].includes(journal.phase) && journal.signed.length) {
       const previous = journal
       journal = { account, phase: 'signing', signed: [], records: [],
@@ -620,7 +621,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
           client.readContract({ address: forwarderFor(signed.chainId), abi: erc2771ForwarderAbi, functionName: 'verify', args: [request] }),
           client.getCode({ address: account }),
         ])
-        if (request.deadline < Math.floor(Date.now() / 1000) + 120) {
+        if (request.deadline < Math.floor(Date.now() / 1000) + RELAYR_SIGNATURE_REFRESH_SECONDS) {
           throw new LaunchSignaturesNeedRefresh('Launch signatures are about to expire. Review fresh authorizations before payment.')
         }
         if (!trusted || !valid || (code && code !== '0x' && !isEip7702DelegatedEoaRuntime(code))) {
@@ -700,7 +701,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       // Ruling R114: while a published request can still run, the launch signs again only at the saved nonces, never
       // later ones, and says until when otherwise.
       if (heldUntil !== null && !(error instanceof LaunchSignaturesNeedRefresh)) {
-        throw new Error(relayrHeldMessage(heldUntil), { cause: error })
+        throw new Error(launchHeld(heldUntil), { cause: error })
       }
       if (error instanceof LaunchSignaturesNeedRefresh) {
         // No payment has been attempted here. Old and new authorizations retain the SAME

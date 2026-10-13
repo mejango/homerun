@@ -4,21 +4,17 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { encodeFunctionData, type Address, type Hex } from 'viem'
 import { usePublicClient } from 'wagmi'
-import { useSafeTx, type TxPhase, type TxRequest } from './useSafeTx'
+import { useSafeTx, type TxRequest } from './useSafeTx'
 import { useWallet } from './useWallet'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { waitForSafeExecutionHash, SAFE_PROPOSAL_AWAITING } from '@/lib/safe-connector'
+import { WRITE_STILL_PENDING_LINE, provenDropped } from '@/lib/write-hold'
+import { WRITE_EXIT_LABEL, browserLocks, writeExitMessage, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
 import {
-  adoptProjectAdminProposal, beginProjectAdminSubmission, confirmProjectAdminExecution, projectAdminSessionKey,
-  readProjectAdminPending, recordProjectAdminHash, rejectProjectAdminSubmission,
-  withProjectAdminLock, type ProjectAdminPending,
-} from '@/lib/project-admin-session'
+  adoptLegacyProjectAdminRecord, noteProjectAdminAccount, otherProjectAdminHolds, projectAdminLockName, projectAdminNamespace, pruneProjectAdminAccounts, type ProjectAdminHold,
+} from '@/lib/project-admin-reservation'
 
-const SESSION_EVENT = 'homerun-project-admin-session'
-const RESOLVED_EVENT = 'homerun-project-admin-resolved'
 const INVALIDATE_PREFIXES = ['project-admin', 'project-authority', 'project-metadata', 'fund-project-metadata', 'fund-project', 'income-project', 'income-operator', 'income-reserved', 'income-sticky-binding', 'sticky-project', 'sticky-rewards', 'project-operator-profile', 'project-shop-write', 'project-permissions', 'project-ownership', 'project-splits', 'project-splits-edit', 'account-projects', 'account-tokens']
 const errorMessage = (reason: unknown) => reason instanceof Error ? reason.message : 'The project update could not be completed.'
-type Resolution = { key: string; id: string; status: 'confirmed' | 'reverted'; hash: Hex; label: string }
 export type ProjectAdminSendOptions = {
   /**
    * The account the update was built for, whose authority the editor read.
@@ -34,7 +30,11 @@ function requestIdentity(request: TxRequest): string {
   return `${request.chainId}:${request.address.toLowerCase()}:${request.value ?? 0n}:${encodeFunctionData(request).toLowerCase()}`
 }
 
-/** Reviewed single writes with a durable lock shared by every editor for this project. */
+/**
+ * Reviewed single writes for a project's editors. The SDK's write recovery holds the whole
+ * project's updates (one name, whatever the call) until the chain places an unconfirmed one
+ * or the user checks their wallet.
+ */
 export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
   chainId: number; projectId: bigint; onConfirmed?: () => void | Promise<unknown>
 }) {
@@ -43,18 +43,26 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
   const cache = useQueryClient()
   const tx = useSafeTx(chainId)
   const resetTx = tx.reset
-  const key = projectAdminSessionKey(chainId, projectId)
-  const [record, setRecord] = useState<ProjectAdminPending | null>(null)
-  const [ready, setReady] = useState(false)
-  const [storageError, setStorageError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [status, setStatus] = useState<string | null>(null)
-  const [resolution, setResolution] = useState<Resolution | null>(null)
+  const [label, setLabel] = useState('Project update')
   const [working, setWorking] = useState(false)
+  /** Saved updates from before the SDK's journal are moved into it before any write. */
+  const [adopted, setAdopted] = useState(false)
+  /** Another wallet's unresolved update on this project. */
+  const [otherHold, setOtherHold] = useState<ProjectAdminHold | null>(null)
   const inFlight = useRef(false)
-  const submittedId = useRef<string | null>(null)
+  const handled = useRef<string | null>(null)
   const onConfirmedRef = useRef(onConfirmed)
   useEffect(() => { onConfirmedRef.current = onConfirmed }, [onConfirmed])
+  useEffect(() => { resetTx(); setError(null); handled.current = null; setOtherHold(null) }, [chainId, projectId, resetTx])
+  useEffect(() => {
+    let cancelled = false
+    setAdopted(false)
+    adoptLegacyProjectAdminRecord(localStorage, chainId, projectId)
+      .then(() => { if (!cancelled) setAdopted(true) })
+      .catch(reason => { if (!cancelled) setError(errorMessage(reason)) })
+    return () => { cancelled = true }
+  }, [chainId, projectId])
 
   const invalidate = useCallback(async () => {
     const filters = { predicate: (query: { queryKey: readonly unknown[] }) => {
@@ -65,174 +73,129 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
     await cache.cancelQueries(filters)
     await cache.invalidateQueries(filters)
   }, [cache])
-  const refresh = useCallback(() => {
-    try { setRecord(readProjectAdminPending(localStorage, key)); setStorageError(null) }
-    catch (reason) { setStorageError(errorMessage(reason)) }
-    finally { setReady(true) }
-  }, [key])
-  useEffect(() => {
-    setReady(false); setRecord(null); setResolution(null); setError(null); setStatus(null)
-    submittedId.current = null
-    resetTx()
-    refresh()
-    const storageChanged = (event: StorageEvent) => {
-      if (event.key !== key && event.key !== null) return
-      refresh()
-      // A different tab may have confirmed the update. Re-read authoritative data.
-      if (event.oldValue && !event.newValue) { resetTx(); setError(null); setStatus(null); void invalidate() }
-    }
-    window.addEventListener('storage', storageChanged)
-    window.addEventListener(SESSION_EVENT, refresh)
-    return () => { window.removeEventListener('storage', storageChanged); window.removeEventListener(SESSION_EVENT, refresh) }
-  }, [invalidate, key, refresh, resetTx])
-  useEffect(() => {
-    const resolved = (event: Event) => {
-      const detail = (event as CustomEvent<Resolution>).detail
-      if (detail.key !== key) return
-      refresh(); resetTx(); setResolution(detail); setError(null)
-      setStatus(detail.status === 'confirmed' ? `${detail.label} confirmed.` : `${detail.label} reverted onchain. Review the current settings before trying again.`)
-      if (detail.status === 'confirmed' && submittedId.current === detail.id) {
-        submittedId.current = null
-        void Promise.resolve().then(() => onConfirmedRef.current?.()).catch(reason => setError(`The update confirmed, but refreshing this panel failed. ${errorMessage(reason)}`))
-      }
-    }
-    window.addEventListener(RESOLVED_EVENT, resolved)
-    return () => window.removeEventListener(RESOLVED_EVENT, resolved)
-  }, [key, refresh, resetTx])
-  const changed = useCallback(() => {
-    refresh()
-    window.dispatchEvent(new Event(SESSION_EVENT))
-  }, [refresh])
 
-  const confirm = useCallback(async (captured: ProjectAdminPending, hash: Hex) => {
-    if (!client) throw new Error('The network connection is unavailable.')
-    const current = readProjectAdminPending(localStorage, key)
-    // Another mounted editor or browser tab may have completed this same check.
-    if (!current || current.id !== captured.id) { refresh(); return }
-    const confirmed = await confirmProjectAdminExecution(client, localStorage, key, captured, hash)
-    if (confirmed.status === 'confirmed') cache.setQueryData<bigint>(['project-admin-confirmed-block', chainId, projectId.toString()], previous => previous !== undefined && previous > confirmed.blockNumber ? previous : confirmed.blockNumber)
-    const detail: Resolution = { key, id: captured.id, status: confirmed.status, hash, label: captured.label }
-    window.dispatchEvent(new CustomEvent(RESOLVED_EVENT, { detail }))
-    changed()
-    await invalidate()
-  }, [cache, chainId, changed, client, invalidate, key, projectId, refresh])
+  // A confirmed update refreshes what the editors read, once.
+  const receipt = tx.receipt
   useEffect(() => {
-    if (!client || !record?.hash) return
-    const captured = record
-    const controller = new AbortController()
-    let timer: ReturnType<typeof setTimeout> | undefined
-    async function check() {
-      try {
-        const hash = captured.safe
-          ? await waitForSafeExecutionHash(chainId, captured.hash!, { pollingIntervalMs: 5_000, signal: controller.signal })
-          : captured.hash!
-        if (!controller.signal.aborted) await withProjectAdminLock(key, () => confirm(captured, hash))
-      } catch (reason) {
-        if (controller.signal.aborted) return
-        setStatus(`Waiting for the saved project update to confirm. ${errorMessage(reason)}`)
-        timer = setTimeout(() => void check(), 5_000)
-      }
-    }
-    void check()
-    return () => { controller.abort(); if (timer) clearTimeout(timer) }
-  }, [chainId, client, confirm, key, record])
+    if (tx.phase !== 'success') return
+    const id = receipt?.transactionHash ?? tx.hash ?? tx.submissionHash ?? 'confirmed'
+    if (handled.current === id) return
+    handled.current = id
+    if (receipt) cache.setQueryData<bigint>(['project-admin-confirmed-block', chainId, projectId.toString()], previous => previous !== undefined && previous > receipt.blockNumber ? previous : receipt.blockNumber)
+    void invalidate().then(() => onConfirmedRef.current?.())
+      .catch(reason => setError(`The update confirmed, but refreshing this panel failed. ${errorMessage(reason)}`))
+  }, [cache, chainId, invalidate, projectId, receipt, tx.hash, tx.phase, tx.submissionHash])
 
   const send = useCallback(async (request: TxRequest, options: ProjectAdminSendOptions): Promise<Hex | null> => {
     if (inFlight.current) return null
-    inFlight.current = true; setWorking(true); setError(null); setStatus(null); setResolution(null)
+    inFlight.current = true; setWorking(true); setError(null)
     try {
       assertNoViewAs()
-      if (!ready || storageError) throw new Error(storageError ?? 'Wait for saved project updates to load.')
       if (!client || !address) throw new Error('Connect a wallet first.')
       if (request.chainId !== chainId) throw new Error('This update belongs to a different network.')
+      if (!adopted) throw new Error('Wait for saved project updates to load.')
       if (typeof options?.reverify !== 'function') throw new Error('Recheck project permissions before submitting this update.')
       // Editors retain their own mutable drafts. Only this captured request reaches review.
       const captured = structuredClone(request)
+      watched.current = options.reviewedAccount
       const identity = requestIdentity(captured)
       const latestConfirmedBlock = async () => {
         const block = await client.getBlock({ blockTag: 'latest' })
         if (block.number === null) throw new Error('The latest mined block could not be checked.')
         const minimumBlock = cache.getQueryData<bigint>(['project-admin-confirmed-block', chainId, projectId.toString()])
         if (minimumBlock !== undefined && block.number < minimumBlock) throw new Error('The network has not reached the last confirmed project update. Wait for it to catch up before submitting another update.')
-        return block.number
       }
-      return await withProjectAdminLock(key, async () => {
-        if (readProjectAdminPending(localStorage, key)) throw new Error('A project update may already be pending. Verify its execution before submitting another update.')
-        resetTx()
-        let submitting: ProjectAdminPending | null = null
-        const reject = (reason: 'wallet-rejected' | 'before-write-aborted') => {
-          if (!submitting) return
-          rejectProjectAdminSubmission(localStorage, key, submitting, reason)
-          submitting = null; submittedId.current = null; changed()
-        }
-        const hash = await tx.send(captured, {
-          reviewedAccount: options.reviewedAccount,
-          reviewNotice: options.reviewNotice,
-          reverify: async reviewed => {
-            await latestConfirmedBlock()
-            await options.reverify(reviewed)
-            if (requestIdentity(reviewed) !== identity) throw new Error('The project update changed during review. Review the current settings again.')
-          },
-          beforeWrite: async () => {
-            assertNoViewAs()
-            if (requestIdentity(captured) !== identity) throw new Error('The project update changed during review. Review it again.')
-            const afterBlock = await latestConfirmedBlock()
-            submitting = beginProjectAdminSubmission(localStorage, key, { request: captured, projectId, account: options.reviewedAccount, safe: tx.isSafe, afterBlock })
-            submittedId.current = submitting.id
-            changed()
-          },
-          onExistingProposal: proposal => {
-            submitting = adoptProjectAdminProposal(localStorage, key, { request: captured, projectId, account: options.reviewedAccount }, proposal)
-            submittedId.current = submitting.id
-            changed()
-          },
-          onBeforeWriteAborted: () => reject('before-write-aborted'),
-          onWriteRejected: () => reject('wallet-rejected'),
+      // The project check and the reservation run under one lock per chain and project.
+      return await browserLocks().request(projectAdminLockName(chainId, projectId), { mode: 'exclusive', ifAvailable: true }, async lock => {
+        if (!lock) throw new Error('Another tab is updating this project. Finish that update first.')
+        // One reservation covers the project, whichever authorized wallet made the update.
+        const holds = await otherProjectAdminHolds(localStorage, client, chainId, projectId, options.reviewedAccount)
+        if (holds.length) { setOtherHold(holds[0]); return null }
+        setOtherHold(null)
+        pruneProjectAdminAccounts(localStorage, chainId, projectId, options.reviewedAccount)
+          setLabel(captured.label ?? 'Project update')
+          handled.current = null
+          resetTx()
+          return await tx.send(captured, {
+            reviewedAccount: options.reviewedAccount,
+            reviewNotice: options.reviewNotice,
+            recoveryNamespace: projectAdminNamespace(projectId),
+        // Adopting a proposal the Safe already has skips the wallet, so the account is registered here, still under the lock.
+        onExistingProposal: () => { noteProjectAdminAccount(localStorage, chainId, projectId, options.reviewedAccount) },
+            action: 'project update',
+            reverify: async reviewed => {
+              await latestConfirmedBlock()
+              await options.reverify(reviewed)
+              if (requestIdentity(reviewed) !== identity) throw new Error('The project update changed during review. Review the current settings again.')
+            },
+            beforeWrite: async () => {
+              assertNoViewAs()
+              if (requestIdentity(captured) !== identity) throw new Error('The project update changed during review. Review it again.')
+              // Checked again right before the wallet opens: another wallet may have reserved the project meanwhile.
+              const late = await otherProjectAdminHolds(localStorage, client, chainId, projectId, options.reviewedAccount)
+              if (late.length) { setOtherHold(late[0]); throw new Error('Another wallet’s project update is still unresolved. Check it before sending another.') }
+              noteProjectAdminAccount(localStorage, chainId, projectId, options.reviewedAccount)
+              await latestConfirmedBlock()
+            },
+          })
+      })
+    } catch (reason) { setError(errorMessage(reason)); return null }
+    finally { inFlight.current = false; setWorking(false) }
+  }, [address, adopted, cache, chainId, client, projectId, resetTx, tx])
+
+  // The displayed hold follows its chain proof: it refreshes when the proof changes and clears when it ends.
+  const watched = useRef<Address | null>(null)
+  useEffect(() => {
+    if (!otherHold || !client) return
+    let cancelled = false
+    const look = async () => {
+      const account = watched.current ?? otherHold.record.account
+      try {
+        const holds = await otherProjectAdminHolds(localStorage, client, chainId, projectId, account)
+        if (cancelled) return
+        await browserLocks().request(projectAdminLockName(chainId, projectId), { mode: 'exclusive', ifAvailable: true }, async lock => {
+          if (lock) pruneProjectAdminAccounts(localStorage, chainId, projectId, account)
         })
-        if (hash && submitting) {
-          recordProjectAdminHash(localStorage, key, submitting, hash)
-          changed()
-        }
-        return hash
-      })
-    } catch (reason) { setError(errorMessage(reason)); refresh(); return null }
-    finally { inFlight.current = false; setWorking(false) }
-  }, [address, cache, chainId, changed, client, key, projectId, ready, refresh, resetTx, storageError, tx])
-
-  const recover = useCallback(async (hash: Hex) => {
-    if (inFlight.current) return
-    inFlight.current = true; setWorking(true); setError(null)
+        if (!holds.length) setOtherHold(null)
+        else if (JSON.stringify(holds[0].record) !== JSON.stringify(otherHold.record) || holds[0].exit !== otherHold.exit) setOtherHold(holds[0])
+      } catch { /* The next look asks again. */ }
+    }
+    const timer = setInterval(() => void look(), 15_000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [chainId, client, otherHold, projectId])
+  const phase = otherHold ? 'submitted' as const : tx.phase
+  const exitOther = useCallback(async () => {
+    if (!otherHold) return
     try {
-      await withProjectAdminLock(key, async () => {
-        const captured = readProjectAdminPending(localStorage, key)
-        if (!captured) throw new Error('There is no saved project update to check.')
-        await confirm(captured, hash)
-      })
-    } catch (reason) { setError(errorMessage(reason)); refresh() }
-    finally { inFlight.current = false; setWorking(false) }
-  }, [confirm, key, refresh])
-
-  const pending = !!record
-  /** Clears a settled result before the next review. A pending update is never cleared. */
+      // Ask again as the exit is taken, and hand the abandon the record the user saw.
+      if (otherHold.record.hash && !(client && await provenDropped(client, otherHold.record))) { setError(WRITE_STILL_PENDING_LINE); return }
+      otherHold.journal.abandon(otherHold.record, { checkedWallet: true }); setOtherHold(null); setError(null)
+    } catch (reason) { setError(errorMessage(reason)) }
+  }, [client, otherHold])
+  const held = tx.held ?? (otherHold?.exit ? {
+    line: writeHeldMessage('project update'), warning: writeExitMessage(otherHold.record.call, 'project update'),
+    label: WRITE_EXIT_LABEL, release: () => void exitOther(),
+  } : null)
+  const pending = phase === 'pending' || phase === 'submitted'
+  /** Clears a settled result before the next review. A write still being followed is never cleared. */
   const reset = useCallback(() => {
-    if (inFlight.current || record) return
-    resetTx(); setResolution(null); setStatus(null); setError(null)
-  }, [record, resetTx])
-  const phase: TxPhase = pending
-    ? working && ['review', 'simulating', 'signing'].includes(tx.phase) ? tx.phase : record.safe && record.hash ? 'submitted' : 'pending'
-    : resolution?.status === 'confirmed' ? 'success' : resolution?.status === 'reverted' ? 'error' : tx.phase
-  // Dismiss only presentation. The durable project lock survives until its
-  // exact canonical execution is verified by this product's recovery owner.
-  const dismiss = () => { tx.dismiss(); reset() }
-  const notice = phase === 'submitted' ? tx.notice ?? status ?? SAFE_PROPOSAL_AWAITING : null
+    if (inFlight.current || phase === 'pending') return
+    resetTx(); setError(null)
+  }, [phase, resetTx])
+  // Closing a review only hides it: a write in flight keeps being followed so its
+  // confirmation still refreshes the editors. A line the user cannot wait out is released.
+  const dismiss = useCallback(() => {
+    if (phase === 'pending' || (phase === 'submitted' && !tx.confirmationUncertain)) return
+    tx.dismiss(); setError(null)
+  }, [phase, tx])
   return {
-    send, recover, reset, dismiss, ready: ready && !storageError,
-    busy: working || (pending && phase !== 'submitted') || tx.busy || tx.phase === 'review', pending,
-    phase, settled: phase === 'submitted' || phase === 'success', notice,
-    error: storageError ?? error ?? tx.error, status, hash: record?.safe ? null : record?.hash ?? resolution?.hash ?? null,
-    safe: record?.safe ?? tx.isSafe, chainId, pendingLabel: record?.label ?? null,
-    /** Recovery is read-only and may be used even while a transaction is pending. */
-    recovering: working,
+    send, reset, dismiss, ready: adopted,
+    busy: working || tx.busy || phase === 'review', pending,
+    phase, settled: tx.settled || !!otherHold, notice: otherHold ? (otherHold.record.hash ? WRITE_STILL_PENDING_LINE : writeHeldMessage('project update')) : phase === 'submitted' ? tx.notice : null,
+    error: error ?? tx.error, status: phase === 'success' ? `${label} confirmed.` : null,
+    hash: tx.hash, submissionHash: tx.submissionHash,
+    safe: tx.isSafe, chainId, pendingLabel: pending ? label : null,
+    held,
   }
 }
 export type ProjectAdminTx = ReturnType<typeof useProjectAdminTx>

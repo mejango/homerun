@@ -193,9 +193,12 @@ describe('demo shop editor', () => {
     await act(async () => {
       Object.defineProperty(input, 'files', { configurable: true, value: [new File(['image'], 'day-pass.png', { type: 'image/png' })] })
       input.dispatchEvent(new Event('change', { bubbles: true }))
-      await new Promise(resolve => setTimeout(resolve, 25))
     })
-    expect(host.querySelector('.ds-media-field img')?.getAttribute('src')).toBe('data:image/png;base64,aW1hZ2U=')
+    // The file reads on its own clock: wait for it instead of a fixed pause a loaded machine overruns.
+    await vi.waitFor(async () => {
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)) })
+      expect(host.querySelector('.ds-media-field img')?.getAttribute('src')).toBe('data:image/png;base64,aW1hZ2U=')
+    }, { timeout: 5000 })
     expect(button('Review items').disabled).toBe(false)
     await review()
     await click('Add item to demo shop')

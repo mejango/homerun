@@ -92,3 +92,100 @@ Official `npm install` and a fresh physical `npm ci` passed. Final full lint, Ty
 - **Resource budget:** One bootstrap flag and explanatory comment; no new application or contract source, no broad local dependency workspace, and hosted CI remains the final exact-head gate.
 
 The four existing workspace-bootstrap tests, scoped ESLint and diff checks pass after the npm 12 compatibility fix. On the first official-package PR revision, Test and build, Container smoke, Forge format and Production dependency audit passed; Forge setup hit the documented npm fetch policy before contract tests ran. All required checks must pass on the follow-up revision before merge.
+
+## Plan refinement
+
+- **Objective:** Qualify Homerun against the additive shared SDK home-chain collector/review release, then pin the normal published SDK 2.26.0 package without changing existing Sticky split behavior.
+- **System fit:** SDK owns collector routing and transaction decoding; Homerun retains its existing same-chain Sticky distributor detection, launch/recovery journals and wallet boundaries. No collector is treated as deployed before verified configuration exists.
+- **Reuse and simplicity:** Reuse the current shared decoder, existing Sticky helpers and focused suites. Prefer a dependency-only application change; keep collector rules and addresses out of local copies.
+- **Evidence and unknowns:** Start from origin/main 3f292b9 on the isolated codex/sticky-home-sdk-20261009 branch. The user has merged the release PR and core 2.26.0 is now available from npm. Compare its runtime payload to the qualified preview and its integrity to the release record before carrying preview results forward; neither package qualification nor registry publication proves contract deployment readiness.
+- **Verification:** Review the decoder and same-chain consumers; run focused review/Sticky and architecture-ownership tests, source/model gates, TypeScript, lint, indexer checks and a production build with Node 26.7.0/npm 12.0.1. After release confirmation, install the exact registry version and check the lock/dependency graph; investigate any payload mismatch before carrying preview evidence forward.
+- **Resource budget:** One agent owns the dependency and application gates; a read-only reviewer traces imports and classification. Back up the ignored SDK directory before preview substitution, leave manifests/locks untouched until registry publication, and avoid unrelated contract/browser suites. No commit, push, merge or deployment is authorized for this task.
+
+### Home-chain SDK consumer qualification
+
+- [x] Review the shared decoder integration and existing same-chain Sticky behavior.
+- [x] Qualify the SDK payload with focused suites and required application gates.
+- [x] Pin published SDK 2.26.0 and verify physical package/lock identity.
+- [x] Record actual results and unresolved release evidence.
+
+The preview compatibility review found no application change necessary. Homerun consumes the shared review decoder directly; `isStickySplit` retains same-chain distributor semantics, and collector deployment defaults remain empty until verified deployment configuration exists. The focused transaction-review/Sticky/architecture suites passed 236 tests in 17 files; the split-editor suites passed another 68 tests in two files. All 340 model/source tests, full lint, the 17-document indexer registry check, the production build and separate TypeScript check passed. The model suite's first sandboxed run hit loopback `EPERM` in six server cases; the full rerun with loopback access passed without a source change. The published-package comparison below binds these preview results to the installed release.
+
+The core feature PR #196 and user-merged version PR #197 are complete; core 2.26.0 is now published. The preview tarball SHA-256 is `9f4e801d2d7f1089cc8dbf1612455c773bc187e81b912bdcc90c72e62ed97c8a`. Qualification logs are retained as `homerun-home-sdk-{focused,splits,model-unsandboxed,lint,indexer,build,types}.log` in the local temporary evidence directory. The original installed 2.25.0 SDK was restored after preview qualification; the normal registry install below replaces it. No commit, push, merge, deployment or wallet operation was performed.
+
+The normal npm 12 registry install changed exactly one package. The manifest, lock and installed SDK now agree on exact version **2.26.0**, with release integrity `sha512-7V9wFoBtteL0Y7jTzTO5qwfYMcBCKZ+W5C8JEXVadqf8iZ+fuAi5jg6qZzBWvrDFHHRRC7K6Ed2ZpevdXV/79g==`. All 761 installed `dist` files match the qualified preview byte-for-byte; package metadata differs only in `version`, including unchanged exports and dependency declarations. The only changed lock entries are the root core pin and core's own version/URL/integrity; the unrelated dependency graph is unchanged. Against this physical registry install, all **304 focused tests in 19 files** and TypeScript pass again. The identical runtime/declaration payload supports carrying forward the earlier build, model/source, lint and indexer results without repeating them. Installed dependency identity and whitespace checks pass. The package comparison and final logs are retained as `homerun-home-sdk-official-{equivalence.json,install.log,focused.log,types.log}`. Hosted checks remain the final PR gate.
+
+## Ordinary wallet-write recovery and bridge readiness — 2026-10-09
+
+The implementation and final-review refinements follow the checked cross-client plan at `/Users/jango/Documents/jb/v6/evm/.worktrees/sdk-sticky-adversarial-20261009/tasks/ordinary-write-recovery-20261009.md`. The root authorized this task's local commit after independent review and the unaffected final gates; publication, push and deployment remain outside this commit's authority.
+
+- **Objective:** Keep an uncertain wallet submission from becoming a second write after reset, remount, reload, a changed quote or another browser tab.
+- **System fit:** The shared SDK owns ordinary durable write records and canonical receipt/finality proof. Existing domain journals retain their ownership through the explicit typed `durableRecovery` callbacks; arbitrary `beforeWrite` callbacks never bypass ordinary recovery. Bridge mint availability consumes the shared readiness result.
+- **Evidence and authority:** Account/chain/call identity and mounted-generation checks remain at the wallet boundary. Saved UUID attempts and exact record comparisons protect asynchronous hash saves, receipt recovery and cleanup. A failure releases an attempt only with its saved submission identity and canonical finalized proof; an unknown historical failure never authorizes a retry.
+- **Recovery:** Linked ruleset completion, resume and closing use the owner lock and exact captured submission; original Safe proposal hashes remain saved. One shared prewallet helper restores only its exact failed reservation after persistence/readback failure, retaining replaced or unreadable records. Ordinary pending receipt data stays hidden until shared proof succeeds.
+- **Verification and learning:** Regressions enforce reset/remount/reload uncertainty, storage failure, cross-tab coordination, stale proofs, same-clock retry UUIDs, known hash persistence failures, canonical/finalized outcomes, manual Safe positive recovery, and reservation rollback before wallet invocation. The independent final reviewer found and rechecked the linked-ruleset completion and reservation-readback repairs, then reported no unresolved concrete source finding.
+- **Resource budget:** Qualification used the physically installed SDK preview and the prescribed Node/npm profile. Root coordinated the two heavy slots; the complete browser runner and its Center build completed in the assigned slot. No Forge, deployment, audit workaround or unrelated source work was performed.
+
+### Final local qualification
+
+- [x] Freeze and independently review all 21 changed production files.
+- [x] Run full lint, the 17-document offline indexer registry check and preliminary types.
+- [x] Run all 340 model/source tests and unfiltered Vitest coverage: **157 files, 3,000 tests passed** with `--maxWorkers=2`.
+- [x] Build production and run the prescribed post-build typecheck.
+- [x] Run the complete `npm run test:suites`: all six scripts passed, including 28 main browser checks, 48 native Create checks, 68 accessibility states with zero automated WCAG 2 A/AA violations, three shop viewports, the intent workflow and the Center workflow/build. All fixture ports were released.
+- [ ] Complete the production dependency audit after explicit approval of the external metadata request.
+- [ ] Verify the published SDK payload, update the official pin and qualify the physical clean install, then complete root-coordinated release/hosted gates.
+
+Final qualification used **Node 26.7.0/npm 12.0.1**, `CI=true`, `NEXT_TELEMETRY_DISABLED=1`, `NODE_OPTIONS=--no-experimental-webstorage`, and the physical package **2.27.0-preview.adversarial.4006a0bca708**, built from SDK commit `930f89f2f2cd06afaced3d5fddfd466b29edd24e`. This is a local, unpublished preview; the manifest and lock deliberately remain pinned to **2.26.0** pending root's publication/equivalence gate. Earlier `9ee3` preview results are historical evidence only.
+
+Coverage is **80.16% statements, 78.99% branches, 79.89% functions and 84.37% lines**, with no configured coverage floor. Exact successful commands, logs, dependency provenance and remaining gates are recorded in `/private/tmp/homerun-4006-verification-manifest-20261009.json`; logs are `/private/tmp/homerun-4006-{lint,indexer,models,types,coverage,build,typecheck,browser-suites}-20261009.log`. The independently checked production patch SHA-256 is `fd25480e2d739c7b0d9e8990a7933722ca8a10909f8d8c2ef744d06ae14e893d`; its 21 source-file hashes remained unchanged through every final gate.
+
+`npm run audit:prod` expands to `npm audit --omit=dev --audit-level=high`. Automatic approval review blocked sending production dependency metadata to the public npm registry without explicit approval. It was not retried or bypassed. The read-only local inventory is `/private/tmp/homerun-4006-production-dependencies-20261009.json`; its expected `ELSPROBLEMS` result reflects the physical preview differing from the retained official pin, not a completed registry qualification. Generated coverage output remains untracked and excluded from this task commit.
+
+## Official SDK 2.27.0 adoption — 2026-10-09
+
+## Plan refinement
+
+- **Objective:** Replace Homerun's exact `@bananapus/nana-sdk-core` 2.26.0 pin with the authenticated 2.27.0 registry release, prove the locked physical install and complete release-equivalent gates, then push the existing review branch to PR #40 without merging, deploying or changing contracts.
+- **System fit:** The SDK remains the one owner of reviewed-write recovery and destination-readiness rules; Homerun keeps its product journals and UI adapters, npm owns the reproducible dependency graph, and PR #40 plus exact-head GitHub checks remain the review/recovery boundary.
+- **Reuse and simplicity:** Reuse the qualified preview evidence only after the root verifies published-payload equivalence, change the manifest, npm lock entries and this current release record only, leave Connect unchanged, and add no local package override, copied rule or new application behavior.
+- **Evidence and unknowns:** The frozen application source at `3b3b70062e06d57e16341f86107570c8b5810f4f` passed 3,000 Vitest tests and all six browser suites against preview `2.27.0-preview.adversarial.4006a0bca708`; the authenticated official payload is equivalent and its installed identity is verified below, while generated `coverage/` remains untracked and preserved.
+- **Verification:** With Node 26.7.0/npm 12.0.1, require a fresh `npm ci`, exact package/lock/installed-version assertions, lint, offline indexer check, model tests, unfiltered Vitest, production build then typecheck, all browser suites, production dependency audit, Forge format/tests/deployment/sizes and the production container smoke; after push, require every hosted PR check on the exact SHA.
+- **Resource budget:** Do the three-file dependency release edit only after one shared publication-authentication gate, reuse already-qualified source evidence where byte identity permits, serialize Homerun's heavy build/browser/container work with the root's two-slot budget, and stop to replan on payload mismatch, unrelated lock churn or any first gate failure.
+
+### Release checklist
+
+- [x] Receive root confirmation that core 2.27.0 is published, authenticated and payload-equivalent to the qualified preview.
+- [x] Update only the exact core pin, its npm lock record and this current-version release record; prove Connect and the rest of the graph are unchanged.
+- [x] Run a fresh physical locked install and record exact installed version, registry URL, integrity and dependency-tree evidence.
+- [x] Run every available local release-equivalent static, model, Vitest, build/type, browser, Forge and container gate after the final diff.
+- [x] Inspect the final diff and working tree, preserving the untracked generated `coverage/` directory.
+- [x] Obtain the hosted production audit on pushed release commit `e6aa4e1`; require it again on the corrected head through the final all-six-job gate.
+- [ ] Commit and push `codex/sticky-home-sdk-20261009`, then require all PR #40 checks on that exact SHA; do not merge or deploy.
+
+### Qualification result
+
+The exact package and lock pin is now **2.27.0**. The official tarball SHA-256 is `e2f6c0f992a9e788e0752f1589fe7471543192d485a95837d52b34e5778f6812`, its integrity is `sha512-fVGeoj2OE1iVIIZmvFY6aQUtZKlydnJkxulreKM3wIYLm7I+rXnSdsIwqRXf5VnRUyLOCWc7NuIyKGxk8jp+wA==`, and all 769 compiled/public payload files match the reviewed preview. A fresh npm 12 locked install passed; the installed package matches the official tar directory, Core resolves to 2.27.0, Connect remains 0.5.6 and the React SDK is absent. The dependency diff is one manifest line and exactly four lock lines.
+
+Against that physical install, full lint, the 17-document offline indexer registry, all 340 model/source tests, all **157 Vitest files and 3,000 tests**, the production build and post-build typecheck passed. All six browser suites passed: 28 main checks, 48 Create checks, 68 accessibility states with zero automated WCAG 2 A/AA violations, three shop viewports, intent and Center. Initial sandboxed model/deployment runs exposed only denied loopback binds; their exact reruns with loopback access passed without a source change.
+
+The fresh isolated 11-repository protocol workspace passed Forge formatting, all **88** contract tests, all **25** deployment Forge tests, all **18** deployment runner tests and the contract-size build. `HomerunDeployer` is 15,417 bytes, leaving 9,159 bytes below EIP-170. The production container rebuilt from the lock and passed the hardened smoke as the `node` user with a read-only root filesystem, cache tmpfs, all capabilities dropped, no privilege escalation, loopback-only publishing, exact revision health and a successful home page; the temporary container was removed.
+
+Both explicitly authorized local `npm run audit:prod` invocations ended with a platform turn interruption after 2.7 seconds, before npm emitted output, an exit status or a vulnerability result. This was not an automatic approval rejection and was not bypassed. PR #40's required hosted **Production dependency audit** must pass on the exact pushed SHA, together with the other five hosted jobs, before this release is qualified. Logs are retained as `/private/tmp/homerun-sdk-227-*-20261009.log`.
+
+## Hosted Node 26 test-environment correction
+
+- **Objective:** Make the shared Vitest browser environment survive a test's deliberate `vi.unstubAllGlobals()` cleanup so CI and local Node 26 runs exercise the same jsdom storage, React and blocked-network baselines.
+- **Evidence:** Exact-head run 37948092148 passed five jobs, but Test and build failed 5 of 3,000 tests after recovery regressions temporarily replaced `localStorage` and called `vi.unstubAllGlobals()`. The shared setup registered its own baseline through `vi.stubGlobal`, so that cleanup also removed the baseline and revealed Node 26's unusable native storage accessor. The earlier local run hid this with `NODE_OPTIONS=--no-experimental-webstorage`.
+- **System fit and simplicity:** Keep one owner in `test/runtime/setup.ts`; install the test environment's baseline globals directly, then let each test's temporary `vi.stubGlobal` restore to that baseline. Do not patch individual recovery tests or add a CI-only runtime flag.
+- **Verification:** First reproduce the three failing files under pinned Node 26.7.0/npm 12.0.1 with the exact CI environment and no `NODE_OPTIONS`. After the focused fix, rerun those files and the full 3,000-test suite under the same environment, then lint/type/build as affected and require all six hosted jobs on the corrected exact SHA.
+- **Recovery and authority:** Revert the setup-only correction if it changes browser globals outside Vitest or weakens the network blockers. Preserve untracked `coverage/`; do not merge, tag or deploy.
+
+### Correction checklist
+
+- [x] Reproduce the hosted failures locally without the masking Node option.
+- [x] Move the shared baseline out of Vitest's temporary global-stub registry.
+- [x] Pass the focused recovery files and full app gates under the exact CI environment.
+- [ ] Push an exact-file follow-up and require all six hosted checks on the new SHA.
+
+The exact no-flag reproduction failed the same 5 of 123 focused tests as CI before the correction, then passed all 123 afterward. The complete no-flag Vitest run passed all **157 files and 3,000 tests**; all 340 model tests, lint, the 17-document registry, production build, post-build typecheck and a direct lint of the setup file also pass. Run 37948092148 established that the unchanged dependency graph passes the hosted production audit; Forge, browser, format and container jobs also passed there. Its Test and build failure is superseded only after all six jobs pass on the corrected SHA.

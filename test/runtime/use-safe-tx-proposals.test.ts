@@ -16,8 +16,10 @@ import {
   SAFE_EXEC_ABI,
   safeProposalFor,
 } from '@bananapus/nana-sdk-core/safe-service'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildPermit2ApproveTx } from '@bananapus/nana-sdk-core/v6'
+import { WRITE_EXIT_LABEL, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
+import { installRecoveryLocks, recoveryRecords } from './write-recovery-fixture'
 const STAMPED_CHAIN = 10
 const STAMPED_SITES = [['Permit2 allowance expiration', (stamp: bigint, other = 0n) => buildPermit2ApproveTx({ chainId: STAMPED_CHAIN, token: '0x3333333333333333333333333333333333333333', amount: 5n + other, expiration: Number(stamp) })]] as const
 
@@ -39,6 +41,8 @@ const mocks = vi.hoisted(() => ({
     getTransaction: vi.fn(),
     waitForTransactionReceipt: vi.fn(),
     getTransactionReceipt: vi.fn(),
+    getChainId: vi.fn(),
+    getBlock: vi.fn(),
   },
   getAccount: vi.fn(),
   chainId: 10,
@@ -95,7 +99,11 @@ const WORD = `0x${'00'.repeat(32)}` as Hex
 const AWAITING = 'Proposed to your Safe. Its other signers can approve it there.'
 const UNCONFIRMED =
   'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.'
-const reviewedBySafe = { reviewedAccount: SAFE }
+// This suite exercises the shared Safe registry for flows with their own durable
+// domain owner. Generic browser-journal coverage follows in its own cases below.
+const reviewedBySafe = { reviewedAccount: SAFE, durableRecovery: {
+  reserve: () => undefined, releaseUnsubmitted: () => undefined, submitted: () => undefined,
+} }
 const ABI = parseAbi(['function transfer(address to, uint256 amount)'])
 const request = {
   chainId: 10,
@@ -139,12 +147,13 @@ const Harness = forwardRef<Value, { chainId: number; phases?: string[] }>(functi
 })
 
 /** One flow's useSafeTx, mounted on `chainId`. */
-async function mount(chainId = 10, phases?: string[]) {
+async function mount(chainId = 10, phases?: string[], options: import('@/hooks/useSafeTx').TxSendOptions = reviewedBySafe) {
   const ref = createRef<Value>()
   let renderer!: TestRenderer.ReactTestRenderer
   await act(async () => {
     renderer = TestRenderer.create(createElement(Harness, { ref, chainId, phases }))
   })
+  renderers.push(renderer)
   return {
     get tx() {
       return ref.current!
@@ -152,7 +161,7 @@ async function mount(chainId = 10, phases?: string[]) {
     send: async (sent: TxRequest = request) => {
       let result: Hex | null = null
       await act(async () => {
-        result = await ref.current!.send(sent, reviewedBySafe)
+        result = await ref.current!.send(sent, options)
       })
       return result
     },
@@ -177,7 +186,14 @@ function signersDecide() {
   return (proposal: Hex = PROPOSAL, execution: Hex = EXECUTION) => executions.get(proposal)!(execution)
 }
 
+const renderers: TestRenderer.ReactTestRenderer[] = []
+afterEach(async () => {
+  await act(async () => { for (const renderer of renderers.splice(0)) renderer.unmount() })
+})
+
 beforeEach(async () => {
+  localStorage.clear()
+  installRecoveryLocks()
   displayQueries.clear()
   // The registry lives for the page: each test starts a page of its own.
   vi.resetModules()
@@ -618,7 +634,7 @@ describe('a call stamped at send time', () => {
 
 describe('a Safe proposal awaiting its signers', () => {
   const EXPIRED = "This Safe proposal's deadline passed. Review it again."
-  const REPLACED = 'Safe moved past this proposal without running it. Review it again.'
+  const REPLACED = 'Another Safe transaction used this nonce. Propose it again to run it.'
 
   it.each([
     ['its deadline passed before the Safe ran it', 'expired', EXPIRED],
@@ -645,6 +661,22 @@ describe('a Safe proposal awaiting its signers', () => {
     await act(async () => flow.tx.reset())
     await expect(flow.send()).resolves.toBe(SECOND_PROPOSAL)
     expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+  })
+
+  it('follows the execution the Safe ran when its nonce passed the proposal', async () => {
+    const execute = signersDecide()
+    let watchEnds!: (end: string) => void
+    mocks.watchSafeProposal.mockImplementationOnce(() => new Promise(resolve => (watchEnds = resolve)))
+    const flow = await mount()
+    await flow.send()
+    await settle()
+    watchEnds('executed')
+    await settle()
+    // The nonce passing it is not the result: the execution's own receipt decides.
+    expect(flow.tx.phase).toBe('submitted')
+    execute()
+    await settle()
+    expect(flow.tx.phase).toBe('success')
   })
 
   it('stops being watched once its execution is known', async () => {
@@ -712,10 +744,18 @@ describe('an executed Safe proposal', () => {
     await pass(50 * 60_000)
     expect(flow.tx.notice).toBe(PENDING_RECEIPT)
     await pass(10 * 60_000)
-    expect(flow.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: true, notice: UNCONFIRMED })
+    // A known execution is held until its receipt decides it, however long the node takes.
+    expect(flow.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: false, notice: PENDING_RECEIPT, held: null })
     await act(async () => flow.tx.dismiss())
     await flow.send()
     expect(mocks.writeContract).toHaveBeenCalledOnce()
+    await pass(3 * 60 * 60_000)
+    await act(async () => flow.tx.dismiss())
+    await flow.send()
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    mocks.publicClient.getTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => receiptOf(hash, PROPOSAL))
+    await pass(5 * 60_000)
+    expect(flow.tx.phase).toBe('success')
   })
 
   it('settles once its receipt arrives within the hour', async () => {
@@ -844,7 +884,8 @@ describe("a Safe proposal's last look at the chain", () => {
     expect(flow.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: false })
     nodeUp = true
     await pass(60_000)
-    expect(flow.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: true, notice: UNCONFIRMED })
+    // The node answers that it has no receipt: the execution is still held, not given up on.
+    expect(flow.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: false, notice: 'Executed by your Safe. Confirming it onchain.' })
   })
 
   it('binds an execution returned at once on the transaction the probe read, whatever a later read says', async () => {
@@ -946,7 +987,7 @@ describe("a Safe proposal's last look at the chain", () => {
     const resumed = await mount()
     await resumed.send()
     await settle()
-    expect(resumed.tx).toMatchObject({ phase: 'error', error: 'Safe moved past this proposal without running it. Review it again.' })
+    expect(resumed.tx).toMatchObject({ phase: 'error', error: 'Another Safe transaction used this nonce. Propose it again to run it.' })
     expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 
@@ -971,18 +1012,92 @@ describe("a Safe proposal's last look at the chain", () => {
 })
 
 describe("a Safe app's reply", () => {
-  it('ends one that is not a 32-byte hash as an error, holding nothing', async () => {
+  it('holds an invalid wallet reply as unknown across reset', async () => {
     mocks.writeContract.mockResolvedValueOnce('0x1234').mockResolvedValueOnce(PROPOSAL)
-    const flow = await mount()
+    const flow = await mount(10, undefined, { reviewedAccount: SAFE })
     await expect(flow.send()).resolves.toBeNull()
     expect(flow.tx).toMatchObject({
-      phase: 'error',
+      phase: 'submitted',
       busy: false,
-      error: 'Safe did not return a proposal hash. Check Safe before sending this again.',
+      confirmationUncertain: true,
     })
     expect(mocks.waitForSafeExecutionHash).not.toHaveBeenCalled()
     await act(async () => flow.tx.reset())
-    await expect(flow.send()).resolves.toBe(PROPOSAL)
+    await expect(flow.send()).resolves.toBeNull()
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    expect(recoveryRecords()).toHaveLength(1)
+    expect(recoveryRecords()[0].hash).toBeUndefined()
+  })
+})
+
+describe('generic Safe durable recovery', () => {
+  it('holds a lost reply across a module reload, with the user’s exit', async () => {
+    mocks.writeContract.mockRejectedValueOnce(new Error('Lost wallet response'))
+    const first = await mount(10, undefined, { reviewedAccount: SAFE })
+    await first.send()
+    expect(first.tx.phase).toBe('submitted')
+    await first.close()
+    vi.resetModules()
+    ;({ useSafeTx } = await import('@/hooks/useSafeTx'))
+    const reopened = await mount(10, undefined, { reviewedAccount: SAFE })
+    await reopened.send()
+    expect(reopened.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: true, notice: writeHeldMessage('transaction') })
+    expect(reopened.tx.held).toMatchObject({ label: WRITE_EXIT_LABEL })
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    expect(mocks.findPendingSafeAppProposal).toHaveBeenCalledOnce()
+    await act(async () => reopened.tx.held!.release())
+    expect(reopened.tx).toMatchObject({ phase: 'idle', held: null })
+  })
+
+  it('saves the adopted proposal’s actual stamped calldata for later proof', async () => {
+    signersDecide()
+    const original = STAMPED_SITES[0][1](1_800_000_000n)
+    const fresh = STAMPED_SITES[0][1](1_800_000_600n)
+    const call = { to: original.address, data: encodeFunctionData(original), value: 0n }
+    mocks.findPendingSafeAppProposal.mockResolvedValueOnce({ proposalHash: PROPOSAL, call })
+    const flow = await mount(10, undefined, { reviewedAccount: SAFE })
+    await flow.send(fresh)
+    expect(recoveryRecords()[0]).toMatchObject({ hash: PROPOSAL, call: { data: call.data } })
+    expect(mocks.writeContract).not.toHaveBeenCalled()
+    expect(flow.tx.phase).toBe('submitted')
+  })
+
+  function canonicalExecution() {
+    const blockHash = `0x${'ed'.repeat(32)}` as Hex
+    const placement = { transactionHash: EXECUTION, blockHash, blockNumber: 9n, transactionIndex: 0 }
+    const receipt = { ...receiptOf(EXECUTION, PROPOSAL), ...placement, from: BOB, to: SAFE,
+      logs: [{ address: SAFE, topics: [SUCCESS, PROPOSAL], data: WORD, ...placement, removed: false }] }
+    mocks.publicClient.getChainId.mockResolvedValue(10)
+    mocks.publicClient.getBlock.mockImplementation(async ({ blockNumber }: { blockNumber?: bigint }) => ({
+      hash: blockHash, number: blockNumber ?? 10n, timestamp: 1_900_000_000n,
+    }))
+    mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => {
+      if (hash !== EXECUTION) throw new TransactionNotFoundError({ hash })
+      return { hash, from: BOB, to: SAFE, input: execTransaction(), ...placement }
+    })
+    mocks.publicClient.getTransactionReceipt.mockResolvedValue(receipt)
+    mocks.publicClient.waitForTransactionReceipt.mockResolvedValue(receipt)
+  }
+
+  it('does not present a noncanonical Safe execution as success or clear its record', async () => {
+    canonicalExecution()
+    mocks.publicClient.getBlock.mockResolvedValue({ hash: PROPOSAL, number: 9n })
+    const flow = await mount(10, undefined, { reviewedAccount: SAFE })
+    await flow.send()
+    await settle()
+    expect(flow.tx.phase).toBe('pending')
+    expect(recoveryRecords()).toHaveLength(1)
+  })
+
+  it('sends a changed amount as its own write while the earlier amount stays followed', async () => {
+    canonicalExecution()
+    signersDecide()
+    mocks.writeContract.mockResolvedValueOnce(PROPOSAL).mockResolvedValueOnce(SECOND_PROPOSAL)
+    const flow = await mount(10, undefined, { reviewedAccount: SAFE })
+    await flow.send()
+    await settle()
+    await expect(flow.send({ ...request, args: [BOB, 6n] })).resolves.toBe(SECOND_PROPOSAL)
     expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+    expect(recoveryRecords()).toHaveLength(2)
   })
 })

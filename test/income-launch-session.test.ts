@@ -1,3 +1,4 @@
+import { placeReceipt } from './support/recovery-receipt'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MappableAsset, parseSuckerDeployerConfig, type JBChainId } from '@bananapus/nana-sdk-core'
 import { encodeAbiParameters, encodeEventTopics, encodeFunctionData, parseAbi, zeroAddress, zeroHash, type Hex, type PublicClient } from 'viem'
@@ -9,6 +10,7 @@ import {
   withIncomeLaunchLock, type IncomeLaunchPending, type IncomeLaunchStorage,
 } from '../src/lib/income-launch-session'
 import { safeExecutionLog } from './support/safe-logs'
+import { failReservationReadback } from './support/reservation-storage'
 
 const { registered } = vi.hoisted(() => ({ registered: vi.fn() }))
 vi.mock('../src/lib/income-contracts', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/income-contracts')>(), registeredHomerunDeployer: registered }))
@@ -40,12 +42,18 @@ function clientFor(record: IncomeLaunchPending, options: { payload?: Hex; sender
   const transaction = { hash: EXECUTION_HASH, to: record.safe ? HOLDER : options.target ?? TARGET, from: options.sender ?? HOLDER, input, value: record.safe ? 0n : options.value ?? 100n, blockNumber: options.block ?? 101n, blockHash: BLOCK_HASH }
   const logs = options.logs ?? (record.safe && !options.missingEvent ? [{ address: HOLDER, topics: encodeEventTopics({ abi: safeAbi, eventName: options.safeFailure ? 'ExecutionFailure' : 'ExecutionSuccess' }), data: encodeAbiParameters([{ type: 'bytes32' }, { type: 'uint256' }], [options.proposal ?? record.hash ?? HASH, 0n]) }] : [])
   const receipt = { transactionHash: EXECUTION_HASH, status: options.failed ? 'reverted' : 'success', blockNumber: transaction.blockNumber, blockHash: BLOCK_HASH, logs }
-  return { getChainId: async () => options.chain ?? 1, getTransaction: async () => transaction, getTransactionReceipt: async () => receipt, getBlock: async () => ({ hash: options.reorg ? HASH : BLOCK_HASH }) } as unknown as PublicClient
+  placeReceipt(transaction, receipt)
+  return { getChainId: async () => options.chain ?? 1, getTransaction: async () => transaction, getTransactionReceipt: async () => receipt, getBlock: async ({ blockNumber }: { blockNumber?: bigint }) => ({ hash: options.reorg ? HASH : BLOCK_HASH, number: blockNumber ?? 200n, timestamp: 1_000n }) } as unknown as PublicClient
 }
 beforeEach(() => { registered.mockReturnValue(TARGET) })
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); Reflect.deleteProperty(navigator, 'locks') })
 
 describe('INCOME launch journal identity and persistence', () => {
+  it.each([undefined, 'replacement'])('cleans only its exact failed pre-wallet reservation (%s)', replacement => {
+    const storage = memory(), broken = failReservationReadback(storage, key, { replacement })
+    expect(() => begin(broken)).toThrow()
+    expect(storage.getItem(key)).toBe(replacement ?? null)
+  })
   it('saves an unknown submission before a hash exists and blocks duplicates after remount or owner change', () => {
     const storage = memory(), record = begin(storage)
     expect(record.phase).toBe('unknown')
@@ -88,7 +96,8 @@ describe('INCOME launch journal identity and persistence', () => {
     const pending = recordIncomeLaunchHash(storage, key, first, HASH)
     expect(readIncomeLaunchPending(storage, key)).toEqual(pending)
     expect(pending.phase).toBe('pending')
-    expect(() => recordIncomeLaunchHash(storage, key, first, HASH)).toThrow(/changed in another tab/)
+    expect(recordIncomeLaunchHash(storage, key, first, HASH)).toEqual(pending)
+    expect(() => recordIncomeLaunchHash(storage, key, { ...first, afterBlock: '101' }, HASH)).toThrow(/changed in another tab/)
     expect(() => recordIncomeLaunchHash(storage, key, pending, EXECUTION_HASH)).toThrow(/different INCOME transaction/)
     expect(recordIncomeLaunchHash(storage, key, pending, HASH)).toEqual(pending)
     expect(() => clearIncomeLaunchPending(storage, key, first)).toThrow(/changed in another tab/)
@@ -242,9 +251,9 @@ describe('exact INCOME EOA and Safe execution recovery', () => {
     clearIncomeLaunchPending(storage, key, record)
     expect(readIncomeLaunchPending(storage, key)).toBeNull()
   })
-  it('verifies an exact reverted EOA execution', async () => {
+  it('keeps an unknown attempt held despite an exact reverted EOA execution', async () => {
     const record = begin()
-    await expect(verifyIncomeLaunchExecution(clientFor(record, { failed: true }), record, EXECUTION_HASH)).resolves.toBe('reverted')
+    await expect(verifyIncomeLaunchExecution(clientFor(record, { failed: true }), record, EXECUTION_HASH)).rejects.toThrow(/historical failure/)
   })
   it('does not use another identical EOA transaction to resolve a known pending transaction', async () => {
     const storage = memory(), record = recordIncomeLaunchHash(storage, key, begin(storage), HASH)

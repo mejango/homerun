@@ -14,6 +14,7 @@ import { v6Address } from '@/lib/income-contracts'
 import { readIncomeLoan, type IncomeProjectState } from '@/lib/income-state'
 import { assertSameIncomeLoan, buildIncomePartialRepayment, incomeLoanRecipient, prepareIncomeLoanReallocation, prepareIncomeLoanTransfer, prepareIncomePartialRepayment } from '@/lib/income-loan-tools'
 import { readableError } from '@/lib/readable-error'
+import { HeldNotice } from '@/components/ui/HeldWriteExit'
 
 type Props = { state: IncomeProjectState; client: PublicClient }
 type LoanAction = 'transfer' | 'reallocate' | 'partialRepay'
@@ -25,7 +26,7 @@ function Field({ label, value, onChange, address = false }: { label: string; val
 }
 function TransactionStatus({ tx, chainId }: { tx: ReturnType<typeof useSafeTx>; chainId: number }) {
   return <div className="mt-4 break-words text-sm" role="status" aria-live="polite">
-    {tx.phase === 'submitted' ? <p>{tx.notice}</p> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? <p>Confirmed onchain. Loan balances are refreshing.</p> : null}
+    {tx.phase === 'submitted' ? <HeldNotice tx={tx} /> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? <p>Confirmed onchain. Loan balances are refreshing.</p> : null}
     {tx.error && <p className="text-red-800">{tx.error}</p>}
     {tx.hash && !tx.safeProposalHash && <a className="underline" href={explorerTxUrl(chainId, tx.hash) ?? undefined} target="_blank" rel="noreferrer">View transaction</a>}
   </div>

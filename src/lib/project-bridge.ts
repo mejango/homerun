@@ -24,6 +24,7 @@ import {
   suckerBytes32ToAddress,
   suckerLeafHash,
   v6Address,
+  verifySuckerDestinationMint,
   type JBSuckerMovement,
   type JBSuckerTransport,
 } from "@bananapus/nana-sdk-core/v6";
@@ -473,6 +474,22 @@ export function buildProjectBridgeApproval(
     token: projectToken,
     spender: route.sourceSucker,
     amount: tokenCount,
+  });
+}
+
+/** New preparations require a live destination mint; existing movement recovery does not. */
+export async function verifyProjectBridgeDestinationMint(
+  client: PublicClient,
+  route: ProjectBridgeRoute,
+  input: { amount: bigint; beneficiary: Address },
+): Promise<void> {
+  routeForPrepare(route, input.amount);
+  await verifySuckerDestinationMint(client, {
+    chainId: route.destination.chainId,
+    projectId: route.destination.projectId,
+    sucker: route.destinationSucker,
+    beneficiary: recipient(input.beneficiary),
+    tokenCount: input.amount,
   });
 }
 

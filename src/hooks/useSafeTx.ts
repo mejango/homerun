@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { getAccount } from '@wagmi/core'
 import {
   BaseError,
@@ -19,7 +19,14 @@ import {
 } from 'wagmi'
 import { useWallet } from '@/hooks/useWallet'
 import { submitReviewedContractWrite } from '@/lib/contract-write'
-import { gasWithHeadroom, waitForTrackedReceipt, transactionMessage } from '@bananapus/nana-sdk-core/review'
+import {
+  createBrowserWriteRecovery, gasWithHeadroom, readReviewedWriteNonce, sameReviewedWrite, SubmittedContractWriteError,
+  SubmittedWritePersistenceError, WRITE_EXIT_LABEL, SAFE_PROPOSAL_REPLACED_LINE,
+  waitForTrackedReceipt, transactionMessage, verifyReviewedWriteExpiry, verifyReviewedWriteReceipt,
+  writeExitMessage, writeHeldMessage,
+  type ReviewedWriteRecoveryRecord,
+} from '@bananapus/nana-sdk-core/review'
+import { WRITE_STILL_PENDING_LINE, provenDropped } from '@/lib/write-hold'
 import { hasSafeService } from '@bananapus/nana-sdk-core/safe-service'
 import { getViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import {
@@ -49,6 +56,23 @@ import {
 /** How long the block-subscription watcher gets before its silence is reported. */
 const RECEIPT_WATCH_TIMEOUT_MS = 120_000
 const RECEIPT_POLL_INTERVAL_MS = 4_000
+const STORAGE_REFUSED_LINE = "This browser can't remember pending transactions. Check your wallet before repeating one."
+
+/** Writes held in this tab's memory only, while the browser refuses to store them. */
+const memoryHolds = new Map<string, { hash?: Hex; safe: boolean }>()
+
+function storageRefuses(): boolean {
+  try {
+    const probe = 'nana-sdk:storage-probe'
+    localStorage.setItem(probe, '1')
+    const stored = localStorage.getItem(probe) === '1'
+    localStorage.removeItem(probe)
+    return !stored
+  } catch { return true }
+}
+
+/** A held write is checked against the chain this often while its line shows. */
+const HELD_LOOK_INTERVAL_MS = 15_000
 /** ~10 minutes of direct lookups, matching the watcher's own retry horizon. */
 const RECEIPT_POLL_ATTEMPTS = 150
 
@@ -88,7 +112,7 @@ export type TxSendOptions = {
    */
   reviewedAccount: Address
   reverify?: (request: TxRequest) => Promise<unknown>
-  /** Persist an unknown-submission marker immediately before the wallet write. */
+  /** Additional preflight work; this does not replace the durable recovery owner. */
   beforeWrite?: () => unknown | Promise<unknown>
   /** Adopt known proposal facts without simulating or marking a new wallet write. */
   onExistingProposal?: (proposal: { proposalHash: Hex; call: SafeAppCall }) => unknown | Promise<unknown>
@@ -96,6 +120,19 @@ export type TxSendOptions = {
   onBeforeWriteAborted?: () => unknown | Promise<unknown>
   /** Called only for a typed, explicit wallet rejection of the write itself. */
   onWriteRejected?: () => unknown | Promise<unknown>
+  /**
+   * Hold the whole action under this stable name, not just the exact call: an earlier
+   * attempt with another amount then holds a new one (a project's updates, say).
+   */
+  recoveryNamespace?: string
+  /** What the user calls this write in the held line: "payment", "update". */
+  action?: string
+  /** An existing domain journal owns this write, including its returned hash. */
+  durableRecovery?: {
+    reserve: () => unknown | Promise<unknown>
+    releaseUnsubmitted: () => unknown | Promise<unknown>
+    submitted: (hash: Hex, safe: boolean) => unknown | Promise<unknown>
+  }
   /**
    * The exact request was already rendered in a parent confirmation surface.
    * This skips only the second app-owned review; account checks, revalidation,
@@ -199,9 +236,10 @@ const SAFE_EXECUTION_CONFIRMING = 'Executed by your Safe. Confirming it onchain.
 /** What a Safe app replied in place of a proposal or execution hash. */
 const SAFE_REPLY_UNREADABLE = 'Safe did not return a proposal hash. Check Safe before sending this again.'
 const SAFE_PROPOSAL_EXPIRED = "This Safe proposal's deadline passed. Review it again."
-const SAFE_PROPOSAL_REPLACED = 'Safe moved past this proposal without running it. Review it again.'
 /** A receipt still missing this long after its execution was first seen is not coming. */
 const RECEIPT_HORIZON_MS = 60 * 60_000
+/** Past the horizon, a known execution's receipt is asked for this often. */
+const RECEIPT_RETRY_MS = 30_000
 
 type SafeProposal = {
   chainId: number
@@ -303,10 +341,14 @@ async function awaitExecution(
   )
   const ended = hasSafeService(chainId)
     ? watchSafeProposal(client, chainId, safe, proposalHash, stop.signal).then(
-        (end): Outcome =>
+        (end): Promise<Outcome> | Outcome =>
           end === 'expired'
             ? { phase: 'expired', message: SAFE_PROPOSAL_EXPIRED }
-            : { phase: 'replaced', message: SAFE_PROPOSAL_REPLACED },
+            // The Safe's nonce passed this proposal at a finalized block and its events name it:
+            // the execution's own hash still decides the result.
+            : end === 'executed'
+              ? executed
+              : { phase: 'replaced', message: SAFE_PROPOSAL_REPLACED_LINE },
       )
     : new Promise<never>(() => {})
   try {
@@ -356,11 +398,11 @@ async function followProposal(key: string, client: FollowClient, reply: boolean)
     if (Date.now() - seenAt >= RECEIPT_HORIZON_MS) {
       const hash = executionHash
       receipt = await chainAnswer(() => client.getTransactionReceipt({ hash }))
-      if (!receipt) {
-        updateProposal(key, unconfirmedProposal(key))
-        return
-      }
-      break
+      if (receipt) break
+      // A known execution stays held until its receipt decides it: success or failure, never a timer.
+      updateProposal(key, { phase: 'confirming' })
+      await new Promise(resolve => setTimeout(resolve, RECEIPT_RETRY_MS))
+      continue
     }
     updateProposal(key, { phase: 'confirming' })
   }
@@ -455,6 +497,35 @@ export function useSafeTx(chainId: number) {
     () => undefined,
   )
   const inFlightRef = useRef(false)
+  const mounted = useRef(false)
+  const generation = useRef(0)
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false; generation.current += 1 }
+  }, [chainId])
+  const [recovery, setRecovery] = useState<{
+    journal: ReturnType<typeof createBrowserWriteRecovery>
+    record: ReviewedWriteRecoveryRecord
+  } | null>(null)
+  const recoveryRef = useRef<typeof recovery>(null)
+  const actionRef = useRef('transaction')
+  const showRecovery = useCallback((next: typeof recovery) => {
+    recoveryRef.current = next
+    setRecovery(next)
+  }, [])
+  const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null)
+  /** A write the chain has not placed: the user's one exit, once they checked their wallet. */
+  const [held, setHeld] = useState<{
+    action: string
+    value: bigint
+    /** The record as the user saw it: what the exit is given, never a fresher read. */
+    journal?: ReturnType<typeof createBrowserWriteRecovery>
+    record?: ReviewedWriteRecoveryRecord
+    /** The tab's memory key, when the browser refuses to store the hold. */
+    memory?: string
+  } | null>(null)
+  const memoryKeyRef = useRef<string | null>(null)
+  const [droppedId, setDroppedId] = useState<string | null>(null)
 
   const receipt = useWaitForTransactionReceipt({
     hash: hash ?? undefined,
@@ -504,16 +575,21 @@ export function useSafeTx(chainId: number) {
       )
     : undefined
 
-  // An ordinary send settles on its receipt's status alone. A receipt RPC
-  // error leaves it pending/unknown, so the UI never invites a duplicate
-  // submission merely because confirmation could not be read.
+  // Durable ordinary writes settle only after the canonical proof below.
+  // Domain owners retain their own effect checks and recovery policy.
   const receiptReverted = phase === 'pending' && receiptData?.status === 'reverted'
   // A Safe proposal's state is the registry's. Its confirm ends on Done while
   // the signers decide, and when its result can't be proven here; no send of
   // its action goes out until it ends, or the user dismisses an unproven
   // result after its line. One the registry no longer holds (dismissed in
   // another flow) shows nothing.
-  const effectivePhase: TxPhase = shownKey
+  const effectivePhase: TxPhase = held || (recovery && !recovery.record.hash)
+    ? 'submitted'
+    : recovery
+      ? shownKey && proposal && ['awaiting', 'confirming', 'unproven', 'expired', 'replaced'].includes(proposal.phase)
+        ? 'submitted'
+        : 'pending'
+      : shownKey
     ? proposal
       ? SHOWN_AS[proposal.phase]
       : 'idle'
@@ -522,14 +598,14 @@ export function useSafeTx(chainId: number) {
       : receiptReverted
         ? 'error'
         : phase
-  const notice =
+  const notice = recoveryNotice ?? (
     proposal?.phase === 'awaiting'
       ? (proposal.message ?? SAFE_PROPOSAL_AWAITING)
       : proposal?.phase === 'confirming'
         ? SAFE_EXECUTION_CONFIRMING
         : proposal?.phase === 'unproven'
           ? (proposal.message ?? SAFE_PROPOSAL_UNCONFIRMED)
-          : null
+          : null)
   const effectiveError = shownKey
     ? proposal && SHOWN_AS[proposal.phase] === 'error'
       ? proposal.message
@@ -537,19 +613,167 @@ export function useSafeTx(chainId: number) {
     : receiptReverted
       ? `Transaction reverted onchain${hash ? ` (${hash})` : ''}.`
       : phase === 'pending' && receipt.isError && !receiptData
-        ? `Transaction${hash ? ` ${hash}` : ''} was submitted, but confirmation is temporarily unavailable. Check the explorer and do not submit it again yet.`
+        ? WRITE_STILL_PENDING_LINE
         : error
   const awaitingProposal =
     proposal?.phase === 'checking' || proposal?.phase === 'awaiting' ? proposal.proposalHash : null
 
   useEffect(() => {
+    const confirmed = shownKey ? proposal?.receipt : receiptData
+    if (!recovery?.record.hash || !publicClient) return
+    const current = recovery
+    const at = generation.current
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const check = async () => {
+      try {
+        await current.journal.withLock(async () => {
+          // A returned identity remains usable even if its first storage write failed.
+          if (current.journal.read()) current.journal.submitted(current.record.hash!, current.record)
+          let result: 'success' | 'failed'
+          if (confirmed) result = await verifyReviewedWriteReceipt(publicClient, current.record, confirmed)
+          else if (proposal?.phase === 'expired') {
+            await verifyReviewedWriteExpiry(publicClient, current.record)
+            result = 'failed'
+          } else if (proposal?.phase === 'replaced') {
+            // The SDK read the Safe's own events at a finalized block: the nonce went to another
+            // transaction, so this one never ran and may be proposed again.
+            result = 'failed'
+          } else return
+          current.journal.clear(current.record)
+          if (cancelled || generation.current !== at || recoveryRef.current !== current) return
+          if (!shownKey) {
+            setPhase(result === 'success' ? 'success' : 'error')
+            setError(result === 'failed' ? 'Transaction reverted onchain.' : null)
+          }
+          setRecoveryNotice(null)
+          showRecovery(null)
+        }, true)
+      } catch {
+        // A temporary RPC error, held browser lock or nonfinal failure keeps the reservation.
+        if (!cancelled) timer = setTimeout(() => void check(), RECEIPT_POLL_INTERVAL_MS)
+      }
+    }
+    void check()
+    return () => { cancelled = true; if (timer) clearTimeout(timer) }
+  }, [recovery, shownKey, proposal?.receipt, proposal?.phase, receiptData, publicClient, showRecovery])
+
+  useEffect(() => {
     if (effectivePhase === 'success' || effectivePhase === 'error') {
       inFlightRef.current = false
+      // The chain decided it: the tab's own hold has nothing left to guard.
+      if (memoryKeyRef.current) { memoryHolds.delete(memoryKeyRef.current); memoryKeyRef.current = null }
     }
   }, [effectivePhase])
 
   // Product owners verify FUND/INCOME effects and invalidate their exact
   // project queries; a Safe proposal alone never refreshes financial state.
+
+  /** Follow a saved write's returned identity: a Safe proposal, or the transaction itself. */
+  const trackSubmitted = useCallback((record: ReviewedWriteRecoveryRecord, client: FollowClient) => {
+    if (!record.hash) return
+    if (record.safe) {
+      setShownKey(recordProposal({ chainId: record.chainId, safe: record.account,
+        call: { ...record.call, value: BigInt(record.call.value) }, proposalHash: record.hash }, client, true))
+    } else setHash(record.hash)
+  }, [])
+  /** A write the chain has not placed: one plain line, and the user's exit. */
+  const holdWrite = useCallback((journal: ReturnType<typeof createBrowserWriteRecovery>, record: ReviewedWriteRecoveryRecord, action: string) => {
+    inFlightRef.current = false
+    showRecovery({ journal, record })
+    setHeld({ journal, record, action, value: BigInt(record.call.value) })
+    setRecoveryNotice(writeHeldMessage(action))
+    setPhase('submitted')
+  }, [showRecovery])
+
+  // A held write ends on proof: the chain placing its transaction is checked while the line shows.
+  useEffect(() => {
+    if (!held?.journal || !publicClient) return
+    const heldJournal = held.journal
+    let cancelled = false
+    const look = async () => {
+      try {
+        await heldJournal.withLock(async () => {
+          await heldJournal.resolve(publicClient)
+          const now = heldJournal.read()
+          if (cancelled || !mounted.current) return
+          if (!now) {
+            setHeld(null); showRecovery(null); setRecoveryNotice(null); setPhase('idle'); inFlightRef.current = false
+          } else if (now.hash) {
+            setHeld(null); setRecoveryNotice(null)
+            showRecovery({ journal: heldJournal, record: now })
+            trackSubmitted(now, publicClient)
+            setPhase('pending')
+          }
+        })
+      } catch { /* The node cannot answer, or another tab holds the lock; the next look asks again. */ }
+    }
+    const timer = setInterval(() => void look(), HELD_LOOK_INTERVAL_MS)
+    void look()
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [held, publicClient, showRecovery, trackSubmitted])
+
+  /** A returned hash that has shown no result since the receipt watch gave up. */
+  const stalled = !!recovery?.record.hash && !shownKey && phase === 'pending' && receipt.isError && !receiptData
+  // Only proof that the node dropped it offers the exit; a pending hash stays with the wallet.
+  useEffect(() => {
+    if (!stalled || !recovery || !publicClient) { setDroppedId(null); return }
+    let cancelled = false
+    const look = async () => {
+      const dropped = await provenDropped(publicClient, recovery.record).catch(() => false)
+      if (!cancelled) setDroppedId(dropped ? recovery.record.id : null)
+    }
+    const timer = setInterval(() => void look(), HELD_LOOK_INTERVAL_MS)
+    void look()
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [stalled, recovery, publicClient])
+  /**
+   * What the user can end by checking their wallet: a write with no known hash, or one proven dropped.
+   */
+  const exit = useMemo(
+    () => held ?? (stalled && recovery && droppedId === recovery.record.id
+      ? { journal: recovery.journal, record: recovery.record, action: actionRef.current, value: BigInt(recovery.record.call.value) }
+      : null),
+    [held, recovery, stalled, droppedId],
+  )
+  /** The user checked their wallet: end the hold so the action can be sent again. */
+  const release = useCallback(async () => {
+    const target = exit
+    if (!target) return
+    const finish = () => {
+      generation.current += 1
+      inFlightRef.current = false
+      if (target.memory) memoryHolds.delete(target.memory)
+      setHeld(null); showRecovery(null); setRecoveryNotice(null)
+      setHash(null); setShownKey(null); setError(null); setPhase('idle')
+    }
+    if (target.memory) { finish(); return }
+    const { journal, record } = target
+    if (!journal || !record) return
+    try {
+      // Ask the chain again as the exit is taken: a hash another tab recorded, or one that came back, is followed instead.
+      const followed = await journal.withLock(async () => {
+        if (record.hash) {
+          if (!publicClient || !(await provenDropped(publicClient, record))) return record
+        } else {
+          if (publicClient) await journal.resolve(publicClient).catch(() => null)
+          const now = journal.read()
+          if (now?.hash) return now
+        }
+        journal.abandon(record, { checkedWallet: true })
+        return null
+      }, true)
+      if (followed) {
+        setHeld(null); setRecoveryNotice(null)
+        showRecovery({ journal, record: followed })
+        if (publicClient) trackSubmitted(followed, publicClient)
+        setError(WRITE_STILL_PENDING_LINE)
+        setPhase('pending')
+        return
+      }
+      finish()
+    } catch (reason) { setError(friendlyTxError(reason)) }
+  }, [exit, publicClient, showRecovery, trackSubmitted])
 
   const send = useCallback(
     async (
@@ -573,137 +797,292 @@ export function useSafeTx(chainId: number) {
         return null
       }
       inFlightRef.current = true
+      const at = generation.current
+      const assertCurrent = () => {
+        if (!mounted.current || generation.current !== at) throw new Error('This review closed. Open the action again before sending.')
+      }
       setError(null)
       setHash(null)
       setShownKey(null)
       setPolledReceipt(null)
+      showRecovery(null)
+      setRecoveryNotice(null)
+      setHeld(null)
       // Read once: the review, the sent gas and the proposal tracking must all
       // agree on whether a Safe proposes this call.
       const viaSafe = isSafeConnection(wagmiConfig)
       const account = options.reviewedAccount
       const connectorUid = getAccount(wagmiConfig).connector?.uid
+      // An unencodable request is reported by the send itself; the hold's key only needs its parts.
+      const baseCall = (() => { try { return callOf(request) } catch { return { to: request.address, data: '0x' as Hex, value: request.value } } })()
+      // Where the browser refuses to store a hold, the tab's memory holds it, and the review says so.
+      const memoryOnly = !options.durableRecovery && storageRefuses()
+      const memKey = `${request.chainId}:${account}:${options.recoveryNamespace ?? `${baseCall.to}:${baseCall.value ?? 0n}:${baseCall.data}`}`.toLowerCase()
+      if (memoryOnly) memoryKeyRef.current = memKey
+      const reviewNotice = [options.reviewNotice, memoryOnly ? STORAGE_REFUSED_LINE : null].filter(Boolean).join('\n\n') || undefined
+      const holdInMemory = () => {
+        inFlightRef.current = false
+        setHeld({ action, value: baseCall.value ?? 0n, memory: memKey })
+        setRecoveryNotice(writeHeldMessage(action))
+        setPhase('submitted')
+      }
+      let journal: ReturnType<typeof createBrowserWriteRecovery> | undefined
+      let walletUncertain = false
+      const action = options.action ?? 'transaction'
+      actionRef.current = action
       try {
         /** The exact call simulated and sent, which a Safe execution must run. */
         let sentCall = callOf(request)
-        if (viaSafe) {
-          // An action the Safe already has, from this session or its own queue,
-          // is shown as it is and never proposed again.
-          const key = proposalKey(request.chainId, account, sentCall)
-          const held = proposals.get(key)
-          let queued: Awaited<ReturnType<typeof findPendingSafeAppProposal>> = null
-          if (!holdsCall(held) && hasSafeService(request.chainId)) {
-            // Reading Safe's queue takes a moment: the flow shows it checking.
-            setPhase('simulating')
-            queued = await findPendingSafeAppProposal(publicClient, request.chainId, account, sentCall)
-          }
-          if (holdsCall(held) || queued) {
-            if (queued) {
-              const { proposalHash, call } = queued
-              recordProposal({ chainId: request.chainId, safe: account, call, proposalHash }, publicClient, false)
-            } else if (held?.phase === 'awaiting') {
-              startFollowingProposal(key, publicClient, false)
-            }
-            const existing = proposals.get(key)!
-            assertReviewedWallet({ account, connectorUid, safe: true })
-            await options.onExistingProposal?.({ proposalHash: existing.proposalHash, call: existing.call })
-            inFlightRef.current = false
-            setShownKey(key)
-            return existing.proposalHash
+        const input = { chainId: request.chainId, account, safe: viaSafe, call: sentCall }
+        const reviewedSnapshot: ReviewedWriteRecoveryRecord = {
+          version: 1, id: 'review', ...input, call: { ...input.call, value: String(input.call.value ?? 0n) },
+        }
+        const assertReviewedRequest = () => {
+          if (!sameReviewedWrite(reviewedSnapshot, { ...input, chainId: request.chainId, call: callOf(request) })) {
+            throw new Error('The reviewed transaction changed. Review it again.')
           }
         }
-        const txHash = await submitReviewedContractWrite({
-          request,
-          expectedAccount: account,
-          review: async reviewed => {
-            // A review notice always opens the review, even where the caller
-            // already rendered the payload — the notice exists precisely
-            // because what was rendered is no longer what will be signed.
-            if (options.reviewedInParent && !options.reviewNotice) return
-            const description = [
-              options.reviewNotice,
-              viaSafe ? SAFE_NONCE_GUIDANCE : null,
-            ]
-              .filter(Boolean)
-              .join('\n\n')
-            const approved = await requestContractTransactionReview(
-              {
-                ...reviewed,
-                account,
-                // A Safe app signs the sent gas as safeTxGas; 0 makes a failed call revert.
-                ...(viaSafe ? { safeTxGas: 0n } : {}),
-              },
-              {
-                label: reviewed.label,
-                ...(description ? { description } : {}),
-                ...(viaSafe
-                  ? { confirmLabel: 'Agree & continue to Safe' }
-                  : {}),
-              },
-            )
-            if (!approved) throw new TransactionReviewCancelledError()
-          },
-          switchChain: async reviewedChainId => {
-            if (getAccount(wagmiConfig).chainId === reviewedChainId) return
-            await switchChainAsync({ chainId: reviewedChainId }).catch(() => {
-              throw new Error(`Switch your wallet to ${chainName(reviewedChainId)} to continue.`)
-            })
-          },
-          currentAccount: () => getAccount(wagmiConfig).address,
-          reverify: options.reverify,
-          beforeWrite: options.beforeWrite,
-          onBeforeWriteAborted: options.onBeforeWriteAborted,
-          onWriteRejected: options.onWriteRejected,
-          // Simulation is the safety gate: the exact reviewed call, args, and
-          // value must succeed before a signature is requested. Only the
-          // simulation result reaches the wallet writer.
-          simulate: async reviewed => {
-            sentCall = callOf(reviewed)
-            const simulationRequest = {
-              address: reviewed.address,
-              abi: reviewed.abi,
-              functionName: reviewed.functionName,
-              args: reviewed.args as unknown[],
-              value: reviewed.value,
-              account,
-              ...(options.simulationBlockNumber !== undefined
-                ? { blockNumber: options.simulationBlockNumber }
-                : {}),
-            }
-            const [{ request: simulated }, estimate] = await Promise.all([
-              publicClient.simulateContract(simulationRequest),
-              publicClient.estimateContractGas(simulationRequest),
-            ])
-            return {
-              ...simulated,
-              gas: viaSafe ? 0n : gasWithHeadroom(estimate),
-            }
-          },
-          beforeSend: () => {
-            // This synchronous SDK gate follows every awaited proof and marker.
-            assertReviewedWallet({ account, connectorUid, chainId: request.chainId, safe: viaSafe })
-          },
-          write: simulated => writeContractAsync({ ...simulated, chainId: request.chainId }),
-          onPhase: setPhase,
+        journal = options.durableRecovery || memoryOnly ? undefined : createBrowserWriteRecovery({
+          ...input, ...(options.recoveryNamespace ? { namespace: options.recoveryNamespace } : {}),
         })
-        if (viaSafe) {
-          // A reply that is not a 32-byte hash names no proposal and no execution.
-          if (!isHash(txHash)) throw new Error(SAFE_REPLY_UNREADABLE)
-          // The registry holds the call from here; this flow only shows it.
-          inFlightRef.current = false
-          setShownKey(
-            recordProposal(
-              { chainId: request.chainId, safe: account, call: sentCall, proposalHash: txHash },
-              publicClient,
-              true,
-            ),
-          )
-        } else {
-          setHash(txHash)
+        const execute = async () => {
+          assertCurrent()
+          const remembered = memoryOnly ? memoryHolds.get(memKey) : undefined
+          if (remembered) {
+            if (!remembered.hash) { holdInMemory(); return null }
+            inFlightRef.current = false
+            if (remembered.safe) setShownKey(recordProposal({ chainId: input.chainId, safe: account, call: sentCall, proposalHash: remembered.hash }, publicClient, true))
+            else setHash(remembered.hash)
+            setPhase('pending')
+            return remembered.hash
+          }
+          if (journal?.read()) {
+            inFlightRef.current = false
+            // The hold ends on proof from the chain; only a write it cannot place stays.
+            await journal.resolve(publicClient).catch(() => null)
+            const previous = journal.read()
+            if (previous?.hash) {
+              showRecovery({ journal, record: previous })
+              trackSubmitted(previous, publicClient)
+              setPhase('pending')
+              return sameReviewedWrite(previous, input) ? previous.hash : null
+            }
+            if (previous) {
+              holdWrite(journal, previous, action)
+              return null
+            }
+            inFlightRef.current = true
+          }
+          if (viaSafe) {
+            // An action the Safe already has, from this session or its own queue,
+            // is shown as it is and never proposed again.
+            const key = proposalKey(request.chainId, account, sentCall)
+            const held = proposals.get(key)
+            let queued: Awaited<ReturnType<typeof findPendingSafeAppProposal>> = null
+            if (!holdsCall(held) && hasSafeService(request.chainId)) {
+              // Reading Safe's queue takes a moment: the flow shows it checking.
+              setPhase('simulating')
+              queued = await findPendingSafeAppProposal(publicClient, request.chainId, account, sentCall)
+            }
+            if (holdsCall(held) || queued) {
+              if (queued) {
+                const { proposalHash, call } = queued
+                recordProposal({ chainId: request.chainId, safe: account, call, proposalHash }, publicClient, false)
+              } else if (held?.phase === 'awaiting') {
+                startFollowingProposal(key, publicClient, false)
+              }
+              const existing = proposals.get(key)!
+              assertCurrent()
+              assertReviewedWallet({ account, connectorUid, safe: true })
+              await options.onExistingProposal?.({ proposalHash: existing.proposalHash, call: existing.call })
+              if (journal) {
+                journal.reserve(existing.call)
+                const record = journal.submitted(existing.proposalHash)
+                if (mounted.current && generation.current === at) {
+                  showRecovery({ journal, record })
+                }
+              }
+              await options.durableRecovery?.submitted(existing.proposalHash, true)
+              assertCurrent()
+              inFlightRef.current = false
+              setShownKey(key)
+              return existing.proposalHash
+            }
+          }
+          const txHash = await submitReviewedContractWrite({
+            request,
+            expectedAccount: account,
+            review: async reviewed => {
+              // A review notice always opens the review, even where the caller
+              // already rendered the payload — the notice exists precisely
+              // because what was rendered is no longer what will be signed.
+              if (options.reviewedInParent && !reviewNotice) return
+              const description = [
+                reviewNotice,
+                viaSafe ? SAFE_NONCE_GUIDANCE : null,
+              ]
+                .filter(Boolean)
+                .join('\n\n')
+              const approved = await requestContractTransactionReview(
+                {
+                  ...reviewed,
+                  account,
+                  // A Safe app signs the sent gas as safeTxGas; 0 makes a failed call revert.
+                  ...(viaSafe ? { safeTxGas: 0n } : {}),
+                },
+                {
+                  label: reviewed.label,
+                  ...(description ? { description } : {}),
+                  ...(viaSafe
+                    ? { confirmLabel: 'Agree & continue to Safe' }
+                    : {}),
+                },
+              )
+              if (!approved) throw new TransactionReviewCancelledError()
+            },
+            switchChain: async reviewedChainId => {
+              if (getAccount(wagmiConfig).chainId === reviewedChainId) return
+              await switchChainAsync({ chainId: reviewedChainId }).catch(() => {
+                throw new Error(`Switch your wallet to ${chainName(reviewedChainId)} to continue.`)
+              })
+            },
+            currentAccount: () => getAccount(wagmiConfig).address,
+            reverify: options.reverify,
+            beforeWrite: async () => {
+              assertCurrent()
+              await options.beforeWrite?.()
+              assertCurrent()
+              assertReviewedRequest()
+              await options.durableRecovery?.reserve()
+              if (memoryOnly) memoryHolds.set(memKey, { safe: viaSafe })
+              if (journal) {
+                // The account's next nonce lets the chain release this hold if the wallet never sent it.
+                const evidence = viaSafe ? undefined : await readReviewedWriteNonce(publicClient, account).catch(() => undefined)
+                showRecovery({ journal, record: journal.reserve(undefined, evidence) })
+              }
+            },
+            onBeforeWriteAborted: async () => {
+              if (memoryOnly) memoryHolds.delete(memKey)
+              journal?.rejected()
+              await options.durableRecovery?.releaseUnsubmitted()
+              await options.onBeforeWriteAborted?.()
+              if (generation.current === at) showRecovery(null)
+            },
+            onWriteRejected: async () => {
+              if (memoryOnly) memoryHolds.delete(memKey)
+              journal?.rejected()
+              await options.durableRecovery?.releaseUnsubmitted()
+              await options.onWriteRejected?.()
+              if (generation.current === at) showRecovery(null)
+            },
+            onWriteUncertain: () => { walletUncertain = true },
+            onWriteSubmitted: async (hash: Hex) => {
+              walletUncertain = true
+              if (!isHash(hash)) throw new Error(SAFE_REPLY_UNREADABLE)
+              if (memoryOnly) memoryHolds.set(memKey, { hash, safe: viaSafe })
+              const record = journal?.submitted(hash)
+              await options.durableRecovery?.submitted(hash, viaSafe)
+              if (record && generation.current === at) showRecovery({ journal: journal!, record })
+            },
+            // Simulation is the safety gate: the exact reviewed call, args, and
+            // value must succeed before a signature is requested. Only the
+            // simulation result reaches the wallet writer.
+            simulate: async reviewed => {
+              sentCall = callOf(reviewed)
+              const simulationRequest = {
+                address: reviewed.address,
+                abi: reviewed.abi,
+                functionName: reviewed.functionName,
+                args: reviewed.args as unknown[],
+                value: reviewed.value,
+                account,
+                ...(options.simulationBlockNumber !== undefined
+                  ? { blockNumber: options.simulationBlockNumber }
+                  : {}),
+              }
+              const [{ request: simulated }, estimate] = await Promise.all([
+                publicClient.simulateContract(simulationRequest),
+                publicClient.estimateContractGas(simulationRequest),
+              ])
+              return {
+                ...simulated,
+                gas: viaSafe ? 0n : gasWithHeadroom(estimate),
+              }
+            },
+            beforeSend: () => {
+              // This synchronous SDK gate follows every awaited proof and marker.
+              assertCurrent()
+              assertReviewedRequest()
+              assertReviewedWallet({ account, connectorUid, chainId: request.chainId, safe: viaSafe })
+            },
+            write: simulated => writeContractAsync({ ...simulated, chainId: request.chainId }),
+            onPhase: next => { if (generation.current === at) setPhase(next) },
+          })
+          if (!mounted.current || generation.current !== at) return txHash
+          if (viaSafe) {
+            // A reply that is not a 32-byte hash names no proposal and no execution.
+            if (!isHash(txHash)) throw new Error(SAFE_REPLY_UNREADABLE)
+            // The registry holds the call from here; this flow only shows it.
+            inFlightRef.current = false
+            setShownKey(
+              recordProposal(
+                { chainId: request.chainId, safe: account, call: sentCall, proposalHash: txHash },
+                publicClient,
+                true,
+              ),
+            )
+          } else {
+            setHash(txHash)
+          }
+          setPhase('pending')
+          return txHash
         }
-        setPhase('pending')
-        return txHash
+        return journal ? await journal.withLock(execute) : await execute()
       } catch (e) {
+        const submitted = e instanceof SubmittedContractWriteError && typeof e.hash === 'string' && isHash(e.hash) ? e : undefined
+        // A failed callback cannot erase the wallet's already-returned identity.
+        // The owner still holds its outer lock and can repair the exact marker.
+        if (!mounted.current || generation.current !== at) return submitted ? submitted.hash as Hex : null
         inFlightRef.current = false
+        if (submitted && !journal) {
+          const hash = submitted.hash as Hex
+          if (viaSafe) setShownKey(recordProposal({ chainId: request.chainId, safe: account,
+            call: callOf(request), proposalHash: hash }, publicClient, true))
+          else setHash(hash)
+          setPhase('pending')
+          return hash
+        }
+        try {
+          const cause = submitted ? submitted.cause : e
+          const kept = cause instanceof SubmittedWritePersistenceError ? cause.record : journal?.read()
+          if (kept) {
+            if (kept.hash) {
+              showRecovery({ journal: journal!, record: kept })
+              trackSubmitted(kept, publicClient)
+              setPhase('pending')
+              return kept.hash
+            }
+            holdWrite(journal!, kept, action)
+            return null
+          }
+          const remembered = memoryOnly ? memoryHolds.get(memKey) : undefined
+          if (remembered?.hash) {
+            if (remembered.safe) setShownKey(recordProposal({ chainId: request.chainId, safe: account, call: callOf(request), proposalHash: remembered.hash }, publicClient, true))
+            else setHash(remembered.hash)
+            setPhase('pending')
+            return remembered.hash
+          }
+          if (remembered) { holdInMemory(); return null }
+          if (walletUncertain) {
+            setRecoveryNotice(writeHeldMessage(action))
+            setPhase('submitted')
+            return submitted ? submitted.hash as Hex : null
+          }
+        } catch {
+          setRecoveryNotice(writeHeldMessage(action))
+          setPhase('submitted')
+          return null
+        }
         if (e instanceof TransactionReviewCancelledError) {
           setPhase('idle')
           return null
@@ -713,7 +1092,7 @@ export function useSafeTx(chainId: number) {
         return null
       }
     },
-    [isConnected, isCenterWallet, publicClient, switchChainAsync, writeContractAsync],
+    [isConnected, isCenterWallet, publicClient, switchChainAsync, writeContractAsync, showRecovery, trackSubmitted, holdWrite],
   )
 
   /**
@@ -722,25 +1101,34 @@ export function useSafeTx(chainId: number) {
    * since the user may not have seen its line.
    */
   const reset = useCallback(() => {
+    generation.current += 1
     inFlightRef.current = false
     setPhase('idle')
     setError(null)
     setHash(null)
     setShownKey(null)
-  }, [])
+    showRecovery(null)
+    setRecoveryNotice(null)
+    setHeld(null)
+  }, [showRecovery])
 
   /**
-   * The user closed the confirm after its line. An unproven Safe result is
-   * released: its call is the user's to send again. A pending proposal stays
-   * followed and held.
+   * Close this confirm and its unproven registry view. A hold the chain has not
+   * released stays, with its exit, until the user takes it.
    */
   const dismiss = useCallback(() => {
-    if (shownKey && proposals.get(shownKey)?.phase === 'unproven') {
+    const shown = shownKey ? proposals.get(shownKey) : undefined
+    // A known execution stays held until its receipt decides it: closing only hides it.
+    if (shownKey && shown?.phase === 'unproven' && !shown.executionHash) {
       proposals.delete(shownKey)
       notifyProposals()
+      // Its line told the user to check their Safe; closing it is their exit.
+      if (recovery) {
+        try { recovery.journal.abandon(recovery.record, { checkedWallet: true }) } catch { /* Another tab's newer write stays held. */ }
+      }
     }
     reset()
-  }, [reset, shownKey])
+  }, [recovery, reset, shownKey])
 
   return {
     phase: effectivePhase,
@@ -757,13 +1145,19 @@ export function useSafeTx(chainId: number) {
     isSafe,
     error: effectiveError,
     hash: shownKey ? (proposal?.executionHash ?? null) : hash,
+    /** The wallet-returned identity, including a Safe proposal before execution. */
+    submissionHash: shownKey ? (proposal?.proposalHash ?? null) : hash,
     safeProposalHash: awaitingProposal,
     safeNonceGuidance: awaitingProposal ? SAFE_NONCE_GUIDANCE : null,
-    receipt: shownKey ? (proposal?.receipt ?? null) : (receiptData ?? null),
+    receipt: recovery ? null : shownKey ? (proposal?.receipt ?? null) : (receiptData ?? null),
     /** The transaction has a hash, but its result could not be confirmed here. */
-    confirmationUncertain: shownKey
+    /** A write the chain has not placed, with the user's one exit; null otherwise. */
+    held: exit
+      ? { line: writeHeldMessage(exit.action), warning: writeExitMessage({ value: exit.value }, exit.action), label: WRITE_EXIT_LABEL, release: () => void release() }
+      : null,
+    confirmationUncertain: !!recoveryNotice || !!(recovery && !recovery.record.hash) || (shownKey
       ? proposal?.phase === 'unproven' || (proposal?.phase === 'awaiting' && !!proposal.message)
-      : phase === 'pending' && receipt.isError && !receiptData,
+      : phase === 'pending' && receipt.isError && !receiptData),
     send,
     reset,
     dismiss,

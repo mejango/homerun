@@ -743,10 +743,10 @@ function persistStickyCreationSubmission(
     );
   const key = stickySessionKey(chainId, projectId, holder),
     pointer = creationPendingKey(chainId, projectId);
-  storage.setItem(pointer, key);
-  if (storage.getItem(pointer) !== key)
-    throw new Error("The browser could not save the Sticky creation lock.");
   try {
+    storage.setItem(pointer, key);
+    if (storage.getItem(pointer) !== key)
+      throw new Error("The browser could not save the Sticky creation lock.");
     if (proposal)
       return adoptStickyProposal(
         storage,

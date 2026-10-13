@@ -2,40 +2,37 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { encodeAbiParameters, encodeEventTopics, encodeFunctionData, parseAbi, zeroAddress, type Address, type Hex } from 'viem'
+import { parseAbi, type Address, type Hex } from 'viem'
+import { WRITE_EXIT_LABEL, writeExitMessage, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
+import { createBrowserWriteRecovery } from '@bananapus/nana-sdk-core/review'
+import { installRecoveryLocks, recoveryRecords } from './runtime/write-recovery-fixture'
+import { noteProjectAdminAccount, projectAdminLockName, projectAdminNamespace } from '@/lib/project-admin-reservation'
 import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
 import type { ProjectAdminTx } from '@/hooks/useProjectAdminTx'
 
+const OWNER = '0x1111111111111111111111111111111111111111' as Address
+const TARGET = '0x2222222222222222222222222222222222222222' as const
+const EXECUTION = `0x${'ab'.repeat(32)}` as Hex
+const BLOCK_HASH = `0x${'ef'.repeat(32)}` as Hex
+const ABI = parseAbi(['function setUriOf(uint256 projectId,string uri)'])
+
 const runtime = vi.hoisted(() => ({
-  account: '0x1111111111111111111111111111111111111111' as Address | undefined,
-  safe: false, phase: 'idle', send: vi.fn(), reset: vi.fn(), reverify: vi.fn(), waitSafe: vi.fn(), viewAs: vi.fn(),
-  client: { getBlock: vi.fn(), getChainId: vi.fn(), getTransaction: vi.fn(), getTransactionReceipt: vi.fn() },
+  account: undefined as Address | undefined,
+  engine: {} as Record<string, unknown>,
+  send: vi.fn(), reset: vi.fn(), dismiss: vi.fn(), reverify: vi.fn(), viewAs: vi.fn(),
+  client: { getBlock: vi.fn() },
 }))
 vi.mock('wagmi', () => ({ usePublicClient: () => runtime.client }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.account }) }))
 vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({
-  phase: runtime.phase, busy: false, error: null, isSafe: runtime.safe, send: runtime.send, reset: runtime.reset, dismiss: runtime.reset, notice: null,
+  phase: 'idle', busy: false, error: null, isSafe: false, notice: null, hash: null, submissionHash: null, receipt: null,
+  held: null, confirmationUncertain: false, settled: false,
+  send: runtime.send, reset: runtime.reset, dismiss: runtime.dismiss, ...runtime.engine,
 }) }))
-vi.mock('@/lib/safe-connector', () => ({ waitForSafeExecutionHash: runtime.waitSafe, SAFE_PROPOSAL_AWAITING: 'Proposed to your Safe. Its other signers can approve it there.' }))
 vi.mock('@/lib/viewAs', () => ({ assertNoViewAs: runtime.viewAs }))
 
 import { useProjectAdminTx } from '@/hooks/useProjectAdminTx'
 import { ProjectAdminTransactionStatus } from '@/components/ProjectAdminTransactionStatus'
-import { projectAdminSessionKey, readProjectAdminPending } from '@/lib/project-admin-session'
-
-const OWNER = '0x1111111111111111111111111111111111111111' as const
-const OTHER_ACCOUNT = '0x3333333333333333333333333333333333333333' as const
-const TARGET = '0x2222222222222222222222222222222222222222' as const
-const EXECUTION = `0x${'ab'.repeat(32)}` as Hex
-const PROPOSAL = `0x${'cd'.repeat(32)}` as Hex
-const BLOCK_HASH = `0x${'ef'.repeat(32)}` as Hex
-const OTHER_HASH = `0x${'12'.repeat(32)}` as Hex
-const KEY = projectAdminSessionKey(8453, 7n)
-const ABI = parseAbi(['function setUriOf(uint256 projectId,string uri)'])
-const SAFE_ABI = parseAbi([
-  'function execTransaction(address to,uint256 value,bytes data,uint8 operation,uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,address gasToken,address refundReceiver,bytes signatures) payable returns (bool success)',
-  'event ExecutionSuccess(bytes32 txHash,uint256 payment)',
-])
 
 function request(label = 'Save project details'): TxRequest {
   return { chainId: 8453, address: TARGET, abi: ABI, functionName: 'setUriOf', args: [7n, 'ipfs://updated-project'], label }
@@ -44,304 +41,215 @@ function request(label = 'Save project details'): TxRequest {
 let host: HTMLDivElement
 let root: Root
 let cache: QueryClient
-const handles = new Map<string, ProjectAdminTx>()
-const callbacks = new Map<string, ReturnType<typeof vi.fn>>()
+let handle: ProjectAdminTx
+const confirmed = vi.fn()
 
-function Panel({ feature, projectId = 7n }: { feature: string; projectId?: bigint }) {
-  const tx = useProjectAdminTx({ chainId: 8453, projectId, onConfirmed: callbacks.get(feature) })
-  handles.set(feature, tx)
-  return <section data-feature={feature}>
-    {/* An editor that read the project's authority for the owner. */}
-    <button disabled={!tx.ready || tx.busy} onClick={() => void tx.send(request(feature), { reviewedAccount: OWNER, reverify: runtime.reverify })}>{feature}</button>
-    <output data-phase>{tx.phase}</output>
+function Panel({ projectId = 7n }: { projectId?: bigint }) {
+  const tx = useProjectAdminTx({ chainId: 8453, projectId, onConfirmed: confirmed })
+  handle = tx
+  return <section>
+    <button disabled={!tx.ready || tx.busy} onClick={() => void tx.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify })}>Save</button>
     <ProjectAdminTransactionStatus tx={tx} />
   </section>
 }
+async function render(projectId = 7n) {
+  await act(async () => root.render(<QueryClientProvider client={cache}><Panel projectId={projectId} /></QueryClientProvider>))
+}
+const button = (text: string) => [...host.querySelectorAll('button')].find(node => node.textContent === text)
 
 beforeEach(() => {
-  localStorage.clear(); handles.clear(); callbacks.clear()
-  runtime.account = OWNER; runtime.safe = false; runtime.phase = 'idle'
-  runtime.reset.mockReset()
+  localStorage.clear(); installRecoveryLocks()
+  runtime.account = OWNER; runtime.engine = {}
+  for (const mock of [runtime.reset, runtime.dismiss, runtime.viewAs, confirmed]) mock.mockReset()
   runtime.reverify.mockReset().mockResolvedValue(undefined)
-  runtime.viewAs.mockReset()
-  runtime.waitSafe.mockReset().mockRejectedValue(new Error('Safe proposal has not executed'))
-  runtime.client.getChainId.mockReset().mockResolvedValue(8453)
   runtime.client.getBlock.mockReset().mockResolvedValue({ number: 100n, hash: BLOCK_HASH })
-  runtime.client.getTransaction.mockReset().mockRejectedValue(new Error('Transaction has not been mined'))
-  runtime.client.getTransactionReceipt.mockReset().mockRejectedValue(new Error('Transaction receipt is not available'))
-  const held = new Set<string>()
-  vi.stubGlobal('navigator', { locks: { request: vi.fn(async (key: string, options: unknown, task: (lock: object | null) => Promise<unknown>) => {
-    expect(options).toEqual({ mode: 'exclusive', ifAvailable: true })
-    if (held.has(key)) return task(null)
-    held.add(key)
-    try { return await task({ name: key }) } finally { held.delete(key) }
-  }) } })
+  for (const name of ['getChainId', 'getTransaction', 'getTransactionReceipt', 'getTransactionCount'] as const) (runtime.client as Record<string, ReturnType<typeof vi.fn>>)[name] = vi.fn(async () => { throw new Error('unknown') })
   runtime.send.mockReset().mockImplementation(async (reviewed: TxRequest, options: TxSendOptions) => {
     await options.reverify?.(reviewed)
     await options.beforeWrite?.()
-    // This is the mocked wallet boundary: the real journal must already exist.
-    expect(readProjectAdminPending(localStorage, KEY)).toMatchObject({
-      holder: OWNER, target: TARGET, data: encodeFunctionData(reviewed), afterBlock: '100', safe: runtime.safe,
-    })
-    return runtime.safe ? PROPOSAL : EXECUTION
+    return EXECUTION
   })
   cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
-afterEach(async () => { await act(async () => root.unmount()); cache.clear(); host.remove(); localStorage.clear() })
+afterEach(async () => { await act(async () => root.unmount()); cache.clear(); host.remove() })
 
-async function render(features = ['Metadata'], projectId = 7n) {
-  await act(async () => root.render(<QueryClientProvider client={cache}>{features.map(feature => <Panel key={`${feature}:${projectId}`} feature={feature} projectId={projectId} />)}</QueryClientProvider>))
-}
-async function settle(assertion: () => void) {
-  await vi.waitFor(async () => { await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) }); assertion() }, { timeout: 5000, interval: 10 })
-}
-function panel(feature = 'Metadata') { return host.querySelector<HTMLElement>(`[data-feature="${feature}"]`)! }
-function button(text: string, feature = 'Metadata') {
-  const found = [...panel(feature).querySelectorAll('button')].find(node => node.textContent === text)
-  if (!found) throw new Error(`Missing ${text}: ${host.textContent}`)
-  return found
-}
-async function click(text: string, feature = 'Metadata') {
-  expect(button(text, feature).disabled).toBe(false)
-  await act(async () => button(text, feature).click())
-}
-async function recover(hash = EXECUTION, feature = 'Metadata') {
-  const field = panel(feature).querySelector('input')!
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, hash)
-    field.dispatchEvent(new Event('input', { bubbles: true }))
-  })
-  await click('Check execution', feature)
-}
-function canonicalExecution({ safe = false, wrongPayload = false, reverted = false, proposal = PROPOSAL }: { safe?: boolean; wrongPayload?: boolean; reverted?: boolean; proposal?: Hex } = {}) {
-  const saved = readProjectAdminPending(localStorage, KEY)!
-  const data = wrongPayload ? '0x12345678' : saved.data
-  runtime.client.getTransaction.mockResolvedValue({
-    hash: EXECUTION, from: OWNER, to: safe ? OWNER : TARGET, value: 0n,
-    input: safe ? encodeFunctionData({ abi: SAFE_ABI, functionName: 'execTransaction', args: [TARGET, 0n, data, 0, 0n, 0n, 0n, zeroAddress, zeroAddress, '0x'] }) : data,
-    blockNumber: 101n, blockHash: BLOCK_HASH,
-  })
-  runtime.client.getTransactionReceipt.mockResolvedValue({
-    transactionHash: EXECUTION, status: reverted ? 'reverted' : 'success', blockNumber: 101n, blockHash: BLOCK_HASH,
-    logs: safe ? [{ address: OWNER, topics: encodeEventTopics({ abi: SAFE_ABI, eventName: 'ExecutionSuccess' }), data: encodeAbiParameters([{ type: 'bytes32' }, { type: 'uint256' }], [proposal, 0n]) }] : [],
-  })
-}
-
-describe('project administrative transaction recovery', () => {
-  it('sends, and records, the account the editor reviewed for, not the one its hook sees connected', async () => {
-    runtime.account = OTHER_ACCOUNT
+describe('project administrative writes', () => {
+  it('hold the whole project under one name and send as the account the editor reviewed for', async () => {
     await render()
-    await click('Metadata')
-    expect(runtime.send.mock.calls[0][1].reviewedAccount).toBe(OWNER)
-    expect(readProjectAdminPending(localStorage, KEY)).toMatchObject({ holder: OWNER })
+    await act(async () => button('Save')!.click())
+    expect(runtime.send).toHaveBeenCalledWith(request(), expect.objectContaining({
+      reviewedAccount: OWNER, recoveryNamespace: 'homerun:project-admin:7', action: 'project update',
+    }))
+    expect(runtime.reverify).toHaveBeenCalledOnce()
+    expect(runtime.viewAs).toHaveBeenCalled()
   })
 
-  it('persists the exact reviewed call before wallet submission and keeps a returned hash pending', async () => {
+  it('refuse a request for another network, and a missing recheck', async () => {
     await render()
-    await click('Metadata')
-    expect(runtime.reverify).toHaveBeenCalledWith(request('Metadata'))
-    // Sent as the account whose update the journal records.
-    expect(runtime.send.mock.calls[0][1].reviewedAccount).toBe(OWNER)
-    const saved = readProjectAdminPending(localStorage, KEY)
-    expect(saved).toMatchObject({ label: 'Metadata', hash: EXECUTION, afterBlock: '100' })
-    expect(localStorage.getItem(KEY)).not.toMatch(/"abi"|"request"|"functionName"|"args"/)
-    expect(button('Metadata').disabled).toBe(true)
-    expect(panel().querySelector('[data-phase]')?.textContent).toBe('pending')
-    expect(panel().textContent).toContain('Metadata is pending.')
-    expect(panel().querySelector(`a[href*="${EXECUTION}"]`)).not.toBeNull()
-    expect(button('Check execution').disabled).toBe(true)
+    await act(async () => { await handle.send({ ...request(), chainId: 10 }, { reviewedAccount: OWNER, reverify: runtime.reverify }) })
+    expect(handle.error).toBe('This update belongs to a different network.')
+    await act(async () => { await handle.send(request(), { reviewedAccount: OWNER } as never) })
+    expect(handle.error).toMatch(/Recheck project permissions/)
+    expect(runtime.send).not.toHaveBeenCalled()
   })
 
-  it('restores an unknown wallet broadcast after remount and blocks every editor for that project', async () => {
-    runtime.send.mockImplementation(async (reviewed: TxRequest, options: TxSendOptions) => {
-      await options.reverify?.(reviewed); await options.beforeWrite?.()
-      throw new Error('Wallet closed without returning a hash')
-    })
-    await render(); await click('Metadata')
-    const original = localStorage.getItem(KEY)
-    expect(readProjectAdminPending(localStorage, KEY)?.hash).toBeUndefined()
-    expect(panel().textContent).toContain('Wallet closed without returning a hash')
-    await act(async () => root.unmount())
-    root = createRoot(host)
-    await render(['Ownership', 'Permissions'])
-    for (const feature of ['Ownership', 'Permissions']) {
-      expect(button(feature, feature).disabled).toBe(true)
-      expect(panel(feature).textContent).toContain('Metadata is pending.')
+  it('wait for the network to reach the last confirmed update before sending another', async () => {
+    cache.setQueryData(['project-admin-confirmed-block', 8453, '7'], 120n)
+    await render()
+    await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })
+    expect(handle.error).toMatch(/has not reached the last confirmed project update/)
+    expect(runtime.reverify).not.toHaveBeenCalled()
+  })
+
+  it('refresh what the editors read once, when the update confirms', async () => {
+    const invalidate = vi.spyOn(cache, 'invalidateQueries')
+    runtime.engine = { phase: 'success', hash: EXECUTION, receipt: { transactionHash: EXECUTION, blockNumber: 105n } }
+    await render()
+    await vi.waitFor(() => expect(confirmed).toHaveBeenCalledOnce())
+    expect(invalidate).toHaveBeenCalled()
+    expect(cache.getQueryData(['project-admin-confirmed-block', 8453, '7'])).toBe(105n)
+    await render()
+    expect(confirmed).toHaveBeenCalledOnce()
+    expect(host.textContent).toContain('Project update confirmed.')
+  })
+
+  it('show a held write with its one line and its exit', async () => {
+    const release = vi.fn()
+    runtime.engine = {
+      phase: 'submitted', notice: writeHeldMessage('project update'), confirmationUncertain: true,
+      held: { line: writeHeldMessage('project update'), warning: writeExitMessage({ to: TARGET, data: '0x', value: 0n }, 'project update'), label: WRITE_EXIT_LABEL, release },
     }
-    await act(async () => { await handles.get('Ownership')!.send(request('Ownership'), { reverify: runtime.reverify }) })
-    expect(runtime.send).toHaveBeenCalledOnce()
-    expect(localStorage.getItem(KEY)).toBe(original)
-    expect(panel('Ownership').textContent).toContain('already be pending')
-
-    await render(['Metadata'], 9n)
-    expect(button('Metadata').disabled).toBe(false)
     await render()
-    expect(button('Metadata').disabled).toBe(true)
+    expect(host.textContent).toContain(writeHeldMessage('project update'))
+    await act(async () => button(WRITE_EXIT_LABEL)!.click())
+    expect(release).toHaveBeenCalledOnce()
   })
 
-  it.each(['onWriteRejected', 'onBeforeWriteAborted'] as const)('releases only explicitly rejected or aborted submissions via %s', async callback => {
-    runtime.send.mockImplementation(async (reviewed: TxRequest, options: TxSendOptions) => {
-      await options.reverify?.(reviewed); await options.beforeWrite?.()
-      expect(readProjectAdminPending(localStorage, KEY)).not.toBeNull()
-      await options[callback]?.()
-      return null
-    })
-    await render(); await click('Metadata')
-    expect(readProjectAdminPending(localStorage, KEY)).toBeNull()
-    expect(button('Metadata').disabled).toBe(false)
-    expect(panel().textContent).not.toContain('is pending')
+  it('keep following a write that is still confirming when its review closes', async () => {
+    runtime.engine = { phase: 'pending', busy: true }
+    await render()
+    await act(async () => handle.dismiss())
+    expect(runtime.dismiss).not.toHaveBeenCalled()
+    runtime.engine = { phase: 'submitted', confirmationUncertain: true }
+    await render()
+    await act(async () => handle.dismiss())
+    expect(runtime.dismiss).toHaveBeenCalledOnce()
   })
 
-  it('uses a canonical matching execution to recover an unknown broadcast and refresh authoritative queries', async () => {
-    const confirmed = vi.fn()
-    const otherConfirmed = vi.fn()
-    callbacks.set('Metadata', confirmed)
-    callbacks.set('Ownership', otherConfirmed)
-    runtime.send.mockImplementation(async (_reviewed: TxRequest, options: TxSendOptions) => { await options.beforeWrite?.(); return null })
-    for (const prefix of ['project-metadata', 'income-operator', 'project-permissions', 'project-ownership', 'project-splits', 'project-admin-custom', 'unrelated']) cache.setQueryData([prefix, 8453, '7'], 'cached')
-    await render(['Metadata', 'Ownership']); await click('Metadata')
-    canonicalExecution({ wrongPayload: true })
-    await recover(EXECUTION, 'Ownership')
-    expect(panel('Ownership').textContent).toContain('does not match the saved project update transaction')
-    expect(readProjectAdminPending(localStorage, KEY)).not.toBeNull()
-    expect(confirmed).not.toHaveBeenCalled()
-    canonicalExecution()
-    await click('Check execution', 'Ownership')
-    await settle(() => expect(confirmed).toHaveBeenCalledOnce())
-    expect(readProjectAdminPending(localStorage, KEY)).toBeNull()
-    expect(button('Metadata').disabled).toBe(false)
-    expect(panel().querySelector('[data-phase]')?.textContent).toBe('success')
-    expect(panel().textContent).toContain('Metadata confirmed.')
-    expect(panel('Ownership').textContent).toContain('Metadata confirmed.')
-    expect(otherConfirmed).not.toHaveBeenCalled()
-    expect(cache.getQueryData(['project-admin-confirmed-block', 8453, '7'])).toBe(101n)
-    expect(cache.getQueryState(['project-admin-confirmed-block', 8453, '7'])?.isInvalidated).toBe(false)
-    for (const prefix of ['project-metadata', 'income-operator', 'project-permissions', 'project-ownership', 'project-splits', 'project-admin-custom']) expect(cache.getQueryState([prefix, 8453, '7'])?.isInvalidated).toBe(true)
-    expect(cache.getQueryState(['unrelated', 8453, '7'])?.isInvalidated).toBe(false)
+  it('adopt an editor record from before the SDK journal before any write is enabled', async () => {
+    localStorage.setItem('homerun:project-admin:pending:v1:8453:7', JSON.stringify({
+      version: 1, id: '11111111-1111-4111-8111-111111111111', chainId: 8453, projectId: '7', holder: OWNER, target: TARGET,
+      data: '0x12345678', value: '0', label: 'Save', safe: false, submittedAt: 1, afterBlock: '5', hash: EXECUTION,
+    }))
+    await render()
+    await vi.waitFor(() => expect(handle.ready).toBe(true))
+    expect(recoveryRecords()).toEqual([expect.objectContaining({ account: OWNER, hash: EXECUTION, call: { to: TARGET, data: '0x12345678', value: '0' } })])
+    expect(localStorage.getItem('homerun:project-admin:pending:v1:8453:7')).toBeNull()
+  })
+
+  it('stay unready, with the reason, while an old record cannot be read', async () => {
+    localStorage.setItem('homerun:project-admin:pending:v1:8453:7', '{not json')
+    await render()
+    await vi.waitFor(() => expect(handle.error).toMatch(/could not be read/))
+    expect(handle.ready).toBe(false)
+    await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })
+    expect(runtime.send).not.toHaveBeenCalled()
+  })
+
+  it('hold a second authorized wallet while the first wallet’s update is unresolved, until its exit', async () => {
+    const first = '0x3333333333333333333333333333333333333333' as Address
+    const journal = createBrowserWriteRecovery({ chainId: 8453, account: first, safe: false, namespace: projectAdminNamespace(7n),
+      call: { to: TARGET, data: '0x12345678', value: 0n } })
+    await journal.withLock(async () => { journal.reserve() })
+    noteProjectAdminAccount(localStorage, 8453, 7n, first)
+    await render()
+    await vi.waitFor(() => expect(handle.ready).toBe(true))
+    await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })
+    expect(runtime.send).not.toHaveBeenCalled()
+    expect(handle.phase).toBe('submitted')
+    expect(handle.held).toMatchObject({ label: expect.stringContaining('I checked my wallet') })
+    await act(async () => handle.held!.release())
+    expect(handle.held).toBeNull()
+    await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })
     expect(runtime.send).toHaveBeenCalledOnce()
   })
 
-  it('shares the review lock across independently mounted feature hooks before any pending record exists', async () => {
+  it('never offers the exit for another wallet’s update whose hash is still pending', async () => {
+    const first = '0x3333333333333333333333333333333333333333' as Address
+    const journal = createBrowserWriteRecovery({ chainId: 8453, account: first, safe: false, namespace: projectAdminNamespace(7n),
+      call: { to: TARGET, data: '0x12345678', value: 0n } })
+    await journal.withLock(async () => { journal.reserve(undefined, { nonce: 5, blockNumber: 90n }); journal.submitted(EXECUTION) })
+    noteProjectAdminAccount(localStorage, 8453, 7n, first)
+    ;(runtime.client as Record<string, unknown>).getTransaction = vi.fn(async () => ({ hash: EXECUTION }))
+    await render()
+    await vi.waitFor(() => expect(handle.ready).toBe(true))
+    await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })
+    expect(runtime.send).not.toHaveBeenCalled()
+    expect(handle.notice).toBe('Still pending in your wallet. Speed it up or cancel it there.')
+    expect(handle.held).toBeNull()
+  })
+
+  async function foreignHold() {
+    const first = '0x3333333333333333333333333333333333333333' as Address
+    const journal = createBrowserWriteRecovery({ chainId: 8453, account: first, safe: false, namespace: projectAdminNamespace(7n), call: { to: TARGET, data: '0x12345678', value: 0n } })
+    await journal.withLock(async () => { journal.reserve() })
+    noteProjectAdminAccount(localStorage, 8453, 7n, first)
+    return { journal, first }
+  }
+
+  it('check the project and reserve under one lock per chain and project', async () => {
+    await render()
+    await vi.waitFor(() => expect(handle.ready).toBe(true))
     let release!: () => void
-    const review = new Promise<void>(resolve => { release = resolve })
-    runtime.send.mockImplementation(async (_reviewed: TxRequest, options: TxSendOptions) => { await review; await options.beforeWrite?.(); return EXECUTION })
-    await render(['Metadata', 'Permissions'])
-    await act(async () => button('Metadata').click())
-    expect(localStorage.getItem(KEY)).toBeNull()
-    await click('Permissions', 'Permissions')
-    expect(panel('Permissions').textContent).toContain('being reviewed or submitted in another tab')
+    const held = new Promise<void>(resolve => { release = resolve })
+    const taking = navigator.locks.request(projectAdminLockName(8453, 7n), { mode: 'exclusive' }, () => held)
+    await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })
+    expect(runtime.send).not.toHaveBeenCalled()
+    expect(handle.error).toMatch(/another tab/i)
+    release(); await taking
+    await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })
     expect(runtime.send).toHaveBeenCalledOnce()
-    await act(async () => release())
-    await settle(() => expect(button('Permissions', 'Permissions').disabled).toBe(true))
-    expect(panel('Permissions').textContent).toContain('Metadata is pending.')
   })
 
-  it('keeps Safe proposals submitted despite a provider success phase and verifies the exact executed proposal', async () => {
-    runtime.safe = true
-    await render(); await click('Metadata')
-    await settle(() => expect(runtime.waitSafe).toHaveBeenCalledWith(8453, PROPOSAL, expect.objectContaining({ signal: expect.any(AbortSignal) })))
-    runtime.phase = 'success'
+  it('check the project again right before the wallet opens', async () => {
     await render()
-    expect(panel().querySelector('[data-phase]')?.textContent).toBe('submitted')
-    expect(panel().textContent).toContain('Waiting for the saved project update to confirm.')
-    expect(panel().querySelector(`a[href*="${PROPOSAL}"]`)).toBeNull()
-    expect(runtime.client.getTransactionReceipt).not.toHaveBeenCalled()
-
-    canonicalExecution({ safe: true, proposal: OTHER_HASH })
-    await recover()
-    expect(panel().textContent).toContain('does not match the saved proposal hash')
-    expect(readProjectAdminPending(localStorage, KEY)?.hash).toBe(PROPOSAL)
-    canonicalExecution({ safe: true })
-    await click('Check execution')
-    await settle(() => expect(panel().textContent).toContain('Metadata confirmed.'))
-    expect(readProjectAdminPending(localStorage, KEY)).toBeNull()
-    expect(panel().querySelector(`a[href*="${EXECUTION}"]`)).not.toBeNull()
-  })
-
-  it('releases a verified direct revert without reporting success or calling completion callbacks', async () => {
-    const confirmed = vi.fn(); callbacks.set('Metadata', confirmed)
-    await render(); await click('Metadata')
-    canonicalExecution({ reverted: true })
-    await recover()
-    expect(readProjectAdminPending(localStorage, KEY)).toBeNull()
-    expect(panel().textContent).toContain('Metadata reverted onchain.')
-    expect(panel().querySelector('[data-phase]')?.textContent).toBe('error')
-    expect(confirmed).not.toHaveBeenCalled()
-    expect(cache.getQueryData(['project-admin-confirmed-block', 8453, '7'])).toBeUndefined()
-    expect(button('Metadata').disabled).toBe(false)
-  })
-
-  it('fails before a wallet write when reviewed calldata changes or recovery storage is corrupt', async () => {
-    runtime.reverify.mockImplementation(async (reviewed: TxRequest) => { reviewed.args = [7n, 'ipfs://unreviewed'] })
-    await render(); await click('Metadata')
-    expect(panel().textContent).toContain('changed during review')
-    expect(localStorage.getItem(KEY)).toBeNull()
-    expect(runtime.client.getBlock).toHaveBeenCalledOnce()
-    localStorage.setItem(KEY, '{broken')
-    await act(async () => window.dispatchEvent(new StorageEvent('storage', { key: KEY, newValue: '{broken' })))
-    expect(button('Metadata').disabled).toBe(true)
-    expect(panel().textContent).toContain('recovery data is unreadable')
-    expect(runtime.send).toHaveBeenCalledOnce()
-  })
-
-  it.each([
-    { scenario: 'the RPC is already behind the last confirmed update', floor: 101n, beforeWrite: 100n, advanceFloor: false, reverifications: 0 },
-    { scenario: 'the RPC regresses after revalidation', floor: 100n, beforeWrite: 99n, advanceFloor: false, reverifications: 1 },
-    { scenario: 'another update confirms during revalidation', floor: 100n, beforeWrite: 100n, advanceFloor: true, reverifications: 1 },
-  ])('stops before persisting or signing when $scenario', async ({ floor, beforeWrite, advanceFloor, reverifications }) => {
-    const walletWrite = vi.fn(async () => EXECUTION)
-    cache.setQueryData(['project-admin-confirmed-block', 8453, '7'], floor)
-    runtime.client.getBlock.mockResolvedValueOnce({ number: 100n, hash: BLOCK_HASH }).mockResolvedValue({ number: beforeWrite, hash: BLOCK_HASH })
-    if (advanceFloor) runtime.reverify.mockImplementation(async () => { cache.setQueryData(['project-admin-confirmed-block', 8453, '7'], 101n) })
+    await vi.waitFor(() => expect(handle.ready).toBe(true))
     runtime.send.mockImplementation(async (reviewed: TxRequest, options: TxSendOptions) => {
       await options.reverify?.(reviewed)
+      await foreignHold()
       await options.beforeWrite?.()
-      return walletWrite()
+      return EXECUTION
     })
-    await render(); await click('Metadata')
-    expect(panel().textContent).toContain('The network has not reached the last confirmed project update. Wait for it to catch up before submitting another update.')
-    expect(runtime.reverify).toHaveBeenCalledTimes(reverifications)
-    expect(walletWrite).not.toHaveBeenCalled()
-    expect(readProjectAdminPending(localStorage, KEY)).toBeNull()
-    expect(button('Metadata').disabled).toBe(false)
-    expect(panel().textContent).not.toContain('Metadata is pending.')
+    await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })
+    expect(handle.error).toMatch(/another wallet/i)
+  })
+
+  it('watch the displayed hold and clear it when its chain proof changes', async () => {
+    vi.useFakeTimers()
+    try {
+      const { journal } = await foreignHold()
+      await render()
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })
+      expect(handle.held).not.toBeNull()
+      await act(async () => { journal.abandon(journal.read()!, { checkedWallet: true }) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
+      expect(handle.held).toBeNull()
+      expect(handle.phase).toBe('idle')
+    } finally { vi.useRealTimers() }
+  })
+
+  it('register the account when an existing Safe proposal is adopted, under the project lock', async () => {
+    await render()
+    await vi.waitFor(() => expect(handle.ready).toBe(true))
+    runtime.send.mockImplementation(async (reviewed: TxRequest, options: TxSendOptions) => {
+      await options.reverify?.(reviewed)
+      await options.onExistingProposal?.({ proposalHash: EXECUTION, call: { to: TARGET, data: '0x12345678', value: 0n } })
+      return EXECUTION
+    })
+    await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })
+    expect(JSON.parse(localStorage.getItem('homerun:project-admin:accounts:v1:8453:7')!)).toEqual([OWNER.toLowerCase()])
   })
 })
 
- it('persists an existing Safe proposal without a new submission marker, including after reload', async () => {
-  runtime.safe = true
-  runtime.send.mockImplementation(async (reviewed: TxRequest, options: TxSendOptions) => {
-    await options.onExistingProposal?.({ proposalHash: PROPOSAL, call: { to: reviewed.address, data: encodeFunctionData(reviewed), value: reviewed.value } })
-    return PROPOSAL
-  })
-  await render()
-  await click('Metadata')
-  expect(runtime.reverify).not.toHaveBeenCalled()
-  const pending = readProjectAdminPending(localStorage, KEY)
-  expect(pending).toMatchObject({ safe: true, hash: PROPOSAL, target: TARGET, data: encodeFunctionData(request()), afterBlock: '0' })
-  expect(handles.get('Metadata')!.phase).toBe('submitted')
-  await act(async () => root.unmount())
-  root = createRoot(host)
-  await render(['Ownership'])
-  expect(readProjectAdminPending(localStorage, KEY)).toEqual(pending)
-  expect(handles.get('Ownership')!.phase).toBe('submitted')
-  await click('Ownership', 'Ownership')
-  expect(runtime.send).toHaveBeenCalledOnce()
-})
-
- it('never exposes engine success while the durable product proof is still unresolved', async () => {
-  runtime.safe = true
-  let finish!: (hash: Hex) => void
-  runtime.send.mockImplementation(async (_reviewed: TxRequest, options: TxSendOptions) => {
-    runtime.phase = 'success'
-    await options.beforeWrite?.()
-    return new Promise<Hex>(resolve => { finish = resolve })
-  })
-  await render()
-  await click('Metadata')
-  expect(handles.get('Metadata')!.phase).toBe('pending')
-  expect(readProjectAdminPending(localStorage, KEY)).not.toBeNull()
-  await act(async () => finish(PROPOSAL))
-  expect(handles.get('Metadata')!.phase).toBe('submitted')
-})

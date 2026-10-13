@@ -13,6 +13,7 @@ import { buildFundUseAllowance, FUND_CASH_OUTS_DISABLED, parseAmount, type FundT
 import { assertFundStateForWrite, readFundProjectState, readLinkedFundProjects, type FundAccountingContext, type FundProjectState } from '@/lib/fund-state'
 import { wagmiConfig } from '@/providers/Providers'
 import { readableError } from '@/lib/readable-error'
+import { HeldNotice } from '@/components/ui/HeldWriteExit'
 
 export type FundAssetAllowanceConfiguration = { amount: bigint; currency: number; contextIndex: number }
 
@@ -270,7 +271,7 @@ export function FundAssetWithdrawals({ state, client, contextIndex, onConfigureA
     </> : <p className="text-sm">Select a verified treasury currency to configure or use a purchase allowance.</p>}
     {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
     <div role="status" aria-live="polite" className="break-words text-sm">
-      {tx.phase === 'submitted' ? <p>{tx.notice}</p>
+      {tx.phase === 'submitted' ? <HeldNotice tx={tx} />
         : confirmedNet !== null && intent ? <p>Asset withdrawal confirmed. The purchase recipient received {formatUnits(confirmedNet, intent.decimals)} {intent.symbol}.</p>
           : tx.phase === 'pending' ? <p>Submitted. Waiting for the withdrawal receipt…</p> : null}
       {tx.error && <p className="text-red-800">{tx.error}</p>}

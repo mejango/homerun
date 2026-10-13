@@ -18,6 +18,7 @@ import {
   type TxSendOptions,
 } from "@/hooks/useSafeTx";
 import { TxConfirmDialog } from "@/components/ui/TxConfirmDialog";
+import { HeldNotice } from "@/components/ui/HeldWriteExit";
 import { useWallet } from "@/hooks/useWallet";
 import {
   displayChainName,
@@ -37,6 +38,7 @@ import {
   buildProjectBridgeClaim,
   readProjectBridgeMovements,
   readProjectBridgeSendValue,
+  verifyProjectBridgeDestinationMint,
   type ProjectBridgeRoute,
   type ProjectBridgeMovement,
 } from "@/lib/project-bridge";
@@ -85,11 +87,9 @@ function useBridgeTransaction(chainId: JBChainId) {
   const [verificationError, setVerificationError] = useState<string | null>(
     null,
   );
-  const [unknownSubmission, setUnknownSubmission] = useState(false);
   const [checking, setChecking] = useState(false);
   const [verificationAttempt, setVerificationAttempt] = useState(0);
   const checked = useRef<string | null>(null);
-  const admitted = useRef(false);
   useEffect(() => {
     if (
       !active ||
@@ -112,8 +112,6 @@ function useBridgeTransaction(chainId: JBChainId) {
         checked.current = tx.receipt!.transactionHash;
         setVerified(result);
         setVerificationError(null);
-        setUnknownSubmission(false);
-        admitted.current = false;
         void cache.invalidateQueries({ queryKey: ["fund-bridge"] });
         void cache.invalidateQueries({ queryKey: ["fund-project"] });
         void cache.invalidateQueries({ queryKey: ["income-project"] });
@@ -130,50 +128,23 @@ function useBridgeTransaction(chainId: JBChainId) {
     };
   }, [active, cache, chainId, tx.phase, tx.receipt, verificationAttempt]);
   async function send(request: TxRequest, options: TxSendOptions) {
-    if (!address || admitted.current || unknownSubmission) return;
-    admitted.current = true;
+    // The write's hold is the SDK's: an unplaced write is held with its exit, never locked until reload.
+    if (!address || tx.busy) return;
     checked.current = null;
     setVerified(null);
     setVerificationError(null);
     setActive({ request, account: options.reviewedAccount, safe: tx.isSafe });
-    let attemptedWrite = false;
-    try {
-      await tx.send(request, {
-        ...options,
-        onExistingProposal: async (proposal) => {
-          const decoded = decodeFunctionData({ abi: request.abi, data: proposal.call.data });
-          if (decoded.functionName !== request.functionName) throw new Error("The saved Safe bridge call changed.");
-          await options.onExistingProposal?.(proposal);
-          setActive({ request: { ...request, address: proposal.call.to, args: decoded.args ?? [], value: proposal.call.value }, account: options.reviewedAccount, safe: true });
-          attemptedWrite = true;
-          setUnknownSubmission(true);
-        },
-        beforeWrite: () => {
-          attemptedWrite = true;
-          setUnknownSubmission(true);
-        },
-        onWriteRejected: () => {
-          attemptedWrite = false;
-          setUnknownSubmission(false);
-        },
-        // Nothing reached the wallet, so the submission is not unknown.
-        onBeforeWriteAborted: () => {
-          attemptedWrite = false;
-          setUnknownSubmission(false);
-        },
-      });
-    } finally {
-      if (!attemptedWrite) admitted.current = false;
-    }
+    await tx.send(request, {
+      ...options,
+      action: "bridge step",
+      onExistingProposal: async (proposal) => {
+        const decoded = decodeFunctionData({ abi: request.abi, data: proposal.call.data });
+        if (decoded.functionName !== request.functionName) throw new Error("The saved Safe bridge call changed.");
+        await options.onExistingProposal?.(proposal);
+        setActive({ request: { ...request, address: proposal.call.to, args: decoded.args ?? [], value: proposal.call.value }, account: options.reviewedAccount, safe: true });
+      },
+    });
   }
-  // Only a terminal failure judged by the engine releases this attempt. An
-  // outer Safe revert can leave its proposal executable and stays submitted.
-  useEffect(() => {
-    if (tx.receipt && tx.phase === "error" && !(active?.safe && tx.receipt.status === "reverted")) {
-      setUnknownSubmission(false);
-      admitted.current = false;
-    }
-  }, [active?.safe, tx.receipt, tx.phase]);
   const safeOuterRevert = !!active?.safe && tx.receipt?.status === "reverted";
   return {
     ...tx,
@@ -186,7 +157,7 @@ function useBridgeTransaction(chainId: JBChainId) {
     checking,
     verificationError,
     retryVerification: () => setVerificationAttempt((value) => value + 1),
-    locked: tx.busy || tx.phase === "review" || checking || unknownSubmission || safeOuterRevert,
+    locked: tx.busy || tx.phase === "review" || checking || safeOuterRevert,
   };
 }
 type BridgeTx = ReturnType<typeof useBridgeTransaction>;
@@ -205,7 +176,7 @@ function BridgeStatus({ tx, chainId }: { tx: BridgeTx; chainId: number }) {
       ) : tx.checking ? (
         <p>Verifying the exact confirmed bridge action…</p>
       ) : tx.phase === "submitted" ? (
-        <p>{tx.notice}</p>
+        <HeldNotice tx={tx} />
       ) : tx.phase === "pending" ? (
         <p>
           Submitted. Waiting for confirmation on {displayChainName(chainId)}.
@@ -518,6 +489,11 @@ function BridgePreparation<State extends BridgeProjectState>({
         fresh,
         count,
       );
+      await verifyProjectBridgeDestinationMint(
+        clientFor(fresh.destination.chainId),
+        fresh,
+        { amount: count, beneficiary },
+      );
       if (nextQuote.allowance < count) {
         const request = adapter.approval(fresh, count);
         await approval.send(
@@ -592,6 +568,11 @@ function BridgePreparation<State extends BridgeProjectState>({
               throw new Error(
                 "The bridge route, approval or minimum backing changed during review.",
               );
+            await verifyProjectBridgeDestinationMint(
+              clientFor(latest.destination.chainId),
+              latest,
+              { amount: count, beneficiary },
+            );
             adapter.prepare(latest, {
               amount: count,
               beneficiary,

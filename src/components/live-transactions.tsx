@@ -14,6 +14,7 @@ import { readFundWriteState, type FundProjectState } from '@/lib/fund-state'
 import { buildFundAllowlistChange, buildFundAllowlistOpen, parseAmount } from '@/lib/fund-contracts'
 import { readableError } from '@/lib/readable-error'
 import { refreshIndexedProject } from '@/lib/refresh-indexed'
+import { HeldNotice } from '@/components/ui/HeldWriteExit'
 
 /** Reject rounded, negative, exponent and over-precise financial inputs. */
 function positiveAmount(value: string, decimals: number): bigint {
@@ -35,7 +36,7 @@ type Tx = ReturnType<typeof useSafeTx>
 function TransactionStatus({ tx, chainId }: { tx: Tx; chainId: number }) {
   const explorer = tx.hash && !tx.safeProposalHash ? explorerTxUrl(chainId, tx.hash) : null
   return <div role="status" aria-live="polite" className="mt-4 text-sm break-words">
-    {tx.phase === 'submitted' ? <p>{tx.notice}</p>
+    {tx.phase === 'submitted' ? <HeldNotice tx={tx} />
       : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p>
         : tx.phase === 'success' ? <p>Confirmed onchain.</p>
           : tx.phase === 'review' ? <p>Review the exact transaction before continuing.</p> : null}
@@ -211,6 +212,7 @@ export function CashOutPanel({ state, client, contextIndex }: { state: FundProje
       busy={confirm.busy}
       complete={tx.phase === 'success'}
       settled={tx.phase === 'submitted'}
+      held={tx.held}
       status={confirm.preparing ? 'Getting a fresh cash-out quote…' : confirmStatus(tx, state.chainId)}
       error={confirm.error ?? tx.error}
       onClose={() => confirm.close(() => setAmount(''))}
@@ -269,6 +271,7 @@ export function HolderActions({ state, client }: { state: FundProjectState; clie
       busy={confirm.busy}
       complete={tx.phase === 'success'}
       settled={tx.phase === 'submitted'}
+      held={tx.held}
       status={confirmStatus(tx, state.chainId)}
       error={confirm.error ?? tx.error}
       onClose={() => confirm.close(() => { setAmount(''); setRecipient('') })}

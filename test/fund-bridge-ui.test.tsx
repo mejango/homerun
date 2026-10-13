@@ -3,6 +3,7 @@ import { act, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 import { encodeFunctionData, parseAbi, type Address } from 'viem'
+import { WRITE_EXIT_LABEL, writeExitMessage, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
 import type { TxRequest, TxSendOptions } from '../src/hooks/useSafeTx'
 import type { FundBridgeRoute } from '../src/lib/fund-bridge'
 
@@ -19,14 +20,24 @@ const runtime = vi.hoisted(() => ({
   safe: false,
   quote: undefined as unknown,
   send: vi.fn(),
+  verifyDestinationMint: vi.fn(),
+  sourceClient: { chain: { id: 8453 } },
+  destinationClient: { chain: { id: 10 } },
   engine: null as null | { phase: string; notice?: string; receipt: { status: string; transactionHash: string; blockNumber: bigint } | null },
+}))
+vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
+  ...await importOriginal<typeof import('@bananapus/nana-sdk-core/v6')>(),
+  verifySuckerDestinationMint: runtime.verifyDestinationMint,
+}))
+vi.mock('@/lib/jbcenter-rpc', () => ({
+  jbCenterPublicClient: (chainId: number) => chainId === 10 ? runtime.destinationClient : runtime.sourceClient,
 }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address, isConnected: !!runtime.address }) }))
 vi.mock('@/hooks/useSafeTx', () => ({
   txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,
   useSafeTx: () => {
     useEffect(() => { runtime.mounted++; return () => { runtime.unmounted++ } }, [])
-    if (runtime.engine) return { ...runtime.engine, busy: false, error: null, hash: runtime.engine.receipt?.transactionHash ?? null, safeProposalHash: null, isSafe: runtime.safe, send: runtime.send, reset: vi.fn() }
+    if (runtime.engine) return { held: null, ...runtime.engine, busy: ['pending', 'simulating', 'signing'].includes(runtime.engine.phase), error: null, hash: runtime.engine.receipt?.transactionHash ?? null, safeProposalHash: null, isSafe: runtime.safe, send: runtime.send, reset: vi.fn() }
     return runtime.idle
       ? { phase: 'idle', busy: false, error: null, hash: null, safeProposalHash: null, receipt: null, isSafe: runtime.safe, send: runtime.send, reset: vi.fn() }
       : { phase: 'pending', busy: true, error: null, hash: null, safeProposalHash: null, receipt: null, isSafe: false, send: vi.fn(), reset: vi.fn() }
@@ -60,7 +71,7 @@ import { FundBridgeActions } from '../src/components/FundBridgeActions'
 let host: HTMLDivElement
 let root: Root
 function makeRoute(): FundBridgeRoute {
-  const source = { chainId: 8453, projectId: 17n, account: runtime.address, blockNumber: 10n, creditBalance: 5n, erc20Balance: 0n, linkedPeers: [{ chainId: 10 }] }
+  const source = { chainId: 8453, projectId: 17n, account: runtime.address, blockNumber: 10n, creditBalance: 5n, erc20Balance: 0n, linkedPeers: [{ chainId: 10 }], tokenAddress: '0x6666666666666666666666666666666666666666', supportedController: true, knownOwnerWrapper: true, supportedTerminals: true, ruleset: { id: 1 } }
   const destination = { ...source, chainId: 10, projectId: 9n }
   return { source, destination, sourceSucker: '0x2222222222222222222222222222222222222222', destinationSucker: '0x3333333333333333333333333333333333333333', sourceToken: '0x4444444444444444444444444444444444444444', destinationToken: '0x5555555555555555555555555555555555555555', sourceContext: { symbol: 'USDC', decimals: 6 }, destinationContext: { symbol: 'USDC', decimals: 6 }, canPrepare: false, prepareIssue: 'Claim FUND credits as ERC20 tokens before bridging.', transport: 'ccip', baseFee: 1n } as unknown as FundBridgeRoute
 }
@@ -70,6 +81,7 @@ beforeEach(() => {
   runtime.route = makeRoute(); runtime.routeAvailable = true; runtime.routeError = false; runtime.historyError = false
   runtime.mounted = 0; runtime.unmounted = 0; runtime.enabled = []
   runtime.idle = false; runtime.safe = false; runtime.quote = undefined; runtime.engine = null; runtime.send.mockReset()
+  runtime.verifyDestinationMint.mockReset().mockResolvedValue(undefined)
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
 afterEach(async () => { await act(async () => { root.unmount() }); host.remove() })
@@ -129,11 +141,11 @@ it('reviews a move in the confirm dialog, listing its approval before any prompt
 })
 
 
-async function reviewApproval() {
+async function reviewApproval(allowance = 0n) {
   runtime.idle = true
   const route = makeRoute()
   runtime.route = { ...route, canPrepare: true, prepareIssue: undefined, source: { ...route.source, erc20Balance: 10n * 10n ** 18n } } as unknown as FundBridgeRoute
-  runtime.quote = { allowance: 0n, minTokensReclaimed: 5_000_000n, netReclaimAmount: 5_100_000n }
+  runtime.quote = { allowance, minTokensReclaimed: 5_000_000n, netReclaimAmount: 5_100_000n }
   await render()
   const input = [...host.querySelectorAll('label')].find(label => label.textContent?.startsWith('FUND to move'))!.querySelector('input')!
   await act(async () => {
@@ -143,14 +155,51 @@ async function reviewApproval() {
   await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Review move')!.click())
 }
 const approve = () => [...host.querySelectorAll<HTMLButtonElement>('[data-tx-confirm] button')].find(button => button.textContent === 'Approve FUND')!
+const prepare = () => [...host.querySelectorAll<HTMLButtonElement>('[data-tx-confirm] button')].find(button => button.textContent === 'Confirm & prepare')!
+
+it('rejects a destination mint denial before offering the source preparation to the wallet', async () => {
+  await reviewApproval(2n * 10n ** 18n)
+  runtime.verifyDestinationMint.mockRejectedValue(new Error('Destination peer cannot mint project tokens.'))
+  await act(async () => prepare().click())
+  expect(runtime.send).not.toHaveBeenCalled()
+  expect(runtime.verifyDestinationMint).toHaveBeenCalledWith(runtime.destinationClient, {
+    chainId: 10, projectId: 9n, sucker: runtime.route!.destinationSucker,
+    beneficiary: runtime.address, tokenCount: 2n * 10n ** 18n,
+  })
+  expect(host.textContent).toContain('Destination peer cannot mint project tokens.')
+  expect(host.textContent).toContain('Incoming FUND')
+  expect(runtime.unmounted).toBe(0)
+  expect(prepare().disabled).toBe(false)
+})
+
+it('rechecks destination mint authority before source submission and permits retry after a pre-wallet denial', async () => {
+  await reviewApproval(2n * 10n ** 18n)
+  const write = vi.fn()
+  runtime.send.mockImplementation(async (request: TxRequest, options: TxSendOptions) => {
+    await options.reverify?.()
+    options.beforeWrite?.()
+    write(request)
+  })
+  runtime.verifyDestinationMint.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('Destination peer cannot mint project tokens.'))
+  await act(async () => prepare().click())
+  expect(write).not.toHaveBeenCalled()
+  expect(runtime.verifyDestinationMint).toHaveBeenCalledTimes(2)
+  for (const call of runtime.verifyDestinationMint.mock.calls) expect(call).toEqual([
+    runtime.destinationClient,
+    { chainId: 10, projectId: 9n, sucker: runtime.route!.destinationSucker,
+      beneficiary: runtime.address, tokenCount: 2n * 10n ** 18n },
+  ])
+  expect(host.textContent).toContain('Destination peer cannot mint project tokens.')
+  expect(prepare().disabled).toBe(false)
+  await act(async () => prepare().click())
+  expect(write).toHaveBeenCalledOnce()
+  expect(runtime.verifyDestinationMint).toHaveBeenCalledTimes(4)
+})
 
 it('closes an unproven Safe outer revert without counting its approval or releasing the bridge lock', async () => {
   runtime.safe = true
   await reviewApproval()
-  runtime.send.mockImplementation(async (_request: unknown, options: { beforeWrite: () => void }) => {
-    options.beforeWrite()
-    return `0x${'ab'.repeat(32)}`
-  })
+  runtime.send.mockImplementation(async () => `0x${'ab'.repeat(32)}`)
   await act(async () => approve().click())
   runtime.engine = { phase: 'error', receipt: { status: 'reverted', transactionHash: `0x${'cd'.repeat(32)}`, blockNumber: 100n } }
   await render()
@@ -171,37 +220,34 @@ it('closes an unproven Safe outer revert without counting its approval or releas
 
 it('frees the move when its approval stops before the wallet', async () => {
   await reviewApproval()
-  runtime.send.mockImplementation(async (_request: unknown, options: { beforeWrite: () => void; onBeforeWriteAborted: () => void }) => {
-    options.beforeWrite()
-    // A Safe connection that changes at the write: nothing reaches the wallet.
-    options.onBeforeWriteAborted()
-    return null
-  })
+  runtime.send.mockImplementation(async () => null)
   await act(async () => approve().click())
   expect(runtime.send).toHaveBeenCalledOnce()
   expect(runtime.send.mock.calls[0][1].reviewedAccount).toBe(runtime.address)
   expect(approve().disabled).toBe(false)
 })
 
-it('keeps an adopted proposal locked when no new wallet attempt was made', async () => {
+it('leaves a held approval to the engine: its one line and its exit, never a lock until reload', async () => {
   await reviewApproval()
-  runtime.send.mockImplementation(async (request: TxRequest, options: TxSendOptions) => {
-    await options.onExistingProposal?.({ proposalHash: `0x${'ab'.repeat(32)}`, call: { to: request.address, data: encodeFunctionData(request), value: request.value ?? 0n } })
-    return `0x${'ab'.repeat(32)}`
-  })
+  const release = vi.fn()
+  runtime.send.mockImplementation(async () => null)
   await act(async () => approve().click())
-  expect(approve().disabled).toBe(true)
-  await act(async () => approve().click())
-  expect(runtime.send).toHaveBeenCalledOnce()
+  runtime.engine = { phase: 'submitted', notice: writeHeldMessage('bridge step'), receipt: null,
+    held: { line: writeHeldMessage('bridge step'), warning: writeExitMessage({ to: '0x', data: '0x', value: 0n }, 'bridge step'), label: WRITE_EXIT_LABEL, release } } as never
+  await render()
+  const dialog = host.querySelector('[data-tx-confirm]')!
+  expect(dialog.textContent).toContain(writeHeldMessage('bridge step'))
+  const exit = [...dialog.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === WRITE_EXIT_LABEL)!
+  await act(async () => exit.click())
+  expect(release).toHaveBeenCalledOnce()
 })
 
 it('frees the move once the engine reads its Safe execution as failed', async () => {
   await reviewApproval()
-  runtime.send.mockImplementation(async (_request: unknown, options: { beforeWrite: () => void }) => {
-    options.beforeWrite()
-    return `0x${'ab'.repeat(32)}`
-  })
+  runtime.send.mockImplementation(async () => `0x${'ab'.repeat(32)}`)
   await act(async () => approve().click())
+  runtime.engine = { phase: 'pending', receipt: null }
+  await render()
   expect(approve().disabled).toBe(true)
   // The receipt succeeds, but the Safe logged ExecutionFailure: useSafeTx reports an error.
   runtime.engine = { phase: 'error', receipt: { status: 'success', transactionHash: `0x${'cd'.repeat(32)}`, blockNumber: 11n } }
