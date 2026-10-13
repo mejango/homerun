@@ -1,5 +1,5 @@
 import { provenDropped } from './write-hold'
-import { lookAtSafeProposal, waitForSafeExecutionHash } from '@bananapus/nana-sdk-core/safe-service'
+import { lookAtSafeProposal, reportedSafeExecution, waitForSafeExecutionHash } from '@bananapus/nana-sdk-core/safe-service'
 import { isAddress, zeroAddress, zeroHash, type Address, type Hex, type PublicClient } from 'viem'
 import {
   createBrowserWriteRecovery, parseReviewedWriteRecoveryRecord, readBrowserWriteRecovery, sameReviewedWrite, verifyReviewedWriteExpiry, verifyReviewedWriteReceipt,
@@ -81,6 +81,18 @@ export async function adoptLegacyProjectAdminRecord(storage: Store, chainId: num
 }
 
 /** `exit`: the hold may be ended by the user: it has no known hash, or its hash is proven dropped. */
+/**
+ * Drop accounts that hold nothing from the list as it is now, keeping `account`. Call it under the
+ * project lock: a scan reads the list and waits on the chain, so it never writes one back.
+ */
+export function pruneProjectAdminAccounts(storage: Store, chainId: number, projectId: bigint, account: Address): void {
+  const namespace = projectAdminNamespace(projectId)
+  const accounts = accountsOf(storage, chainId, projectId)
+  const keep = accounts.filter(other => other.toLowerCase() === account.toLowerCase()
+    || !!readBrowserWriteRecovery({ chainId, account: other, namespace }, { storage: storage as Storage }))
+  if (keep.length !== accounts.length) writeAccounts(storage, chainId, projectId, keep)
+}
+
 export type ProjectAdminHold = { journal: ReturnType<typeof createBrowserWriteRecovery>; record: ReviewedWriteRecoveryRecord; exit: boolean }
 
 /**
@@ -91,13 +103,10 @@ export async function otherProjectAdminHolds(storage: Store, client: PublicClien
   const namespace = projectAdminNamespace(projectId)
   const accounts = accountsOf(storage, chainId, projectId)
   const holds: ProjectAdminHold[] = []
-  const keep: Address[] = []
   for (const other of accounts) {
     const mine = other.toLowerCase() === account.toLowerCase()
     const found = readBrowserWriteRecovery({ chainId, account: other, namespace }, { storage: storage as Storage })
-    if (!found) { if (mine) keep.push(other); continue }
-    keep.push(other)
-    if (mine) continue
+    if (!found || mine) continue
     const record = parseReviewedWriteRecoveryRecord(found)
     const journal = createBrowserWriteRecovery({ chainId, account: record.account, safe: record.safe, namespace, call: record.call }, { storage: storage as Storage })
     try {
@@ -114,7 +123,14 @@ export async function otherProjectAdminHolds(storage: Store, client: PublicClien
           if (look === 'replaced') journal.clear(current)
           else if (look === 'expired') { await verifyReviewedWriteExpiry(client, current); journal.clear(current) }
           else {
-            const execution = await waitForSafeExecutionHash(chainId, current.hash, { client, signal: AbortSignal.timeout(5_000) })
+            const proposal = current.hash
+            // A proposal that ran and failed makes the waiter throw; the service's record still names its execution.
+            const execution = await waitForSafeExecutionHash(chainId, proposal, { client, signal: AbortSignal.timeout(5_000) })
+              .catch(async (reason: unknown) => {
+                const reported = await reportedSafeExecution(reason, chainId, current.account, proposal)
+                if (!reported) throw reason
+                return reported
+              })
             const receipt = await client.getTransactionReceipt({ hash: execution })
             await verifyReviewedWriteReceipt(client, current, receipt)
             journal.clear(current)
@@ -125,6 +141,5 @@ export async function otherProjectAdminHolds(storage: Store, client: PublicClien
     const current = journal.read()
     if (current) holds.push({ journal, record: current, exit: !current.hash || await provenDropped(client, current).catch(() => false) })
   }
-  if (keep.length !== accounts.length) writeAccounts(storage, chainId, projectId, keep)
   return holds
 }

@@ -239,5 +239,17 @@ describe('project administrative writes', () => {
       expect(handle.phase).toBe('idle')
     } finally { vi.useRealTimers() }
   })
+
+  it('register the account when an existing Safe proposal is adopted, under the project lock', async () => {
+    await render()
+    await vi.waitFor(() => expect(handle.ready).toBe(true))
+    runtime.send.mockImplementation(async (reviewed: TxRequest, options: TxSendOptions) => {
+      await options.reverify?.(reviewed)
+      await options.onExistingProposal?.({ proposalHash: EXECUTION, call: { to: TARGET, data: '0x12345678', value: 0n } })
+      return EXECUTION
+    })
+    await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })
+    expect(JSON.parse(localStorage.getItem('homerun:project-admin:accounts:v1:8453:7')!)).toEqual([OWNER.toLowerCase()])
+  })
 })
 

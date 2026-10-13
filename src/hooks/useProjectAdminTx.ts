@@ -10,7 +10,7 @@ import { assertNoViewAs } from '@/lib/viewAs'
 import { WRITE_STILL_PENDING_LINE, provenDropped } from '@/lib/write-hold'
 import { WRITE_EXIT_LABEL, browserLocks, writeExitMessage, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
 import {
-  adoptLegacyProjectAdminRecord, noteProjectAdminAccount, otherProjectAdminHolds, projectAdminLockName, projectAdminNamespace, type ProjectAdminHold,
+  adoptLegacyProjectAdminRecord, noteProjectAdminAccount, otherProjectAdminHolds, projectAdminLockName, projectAdminNamespace, pruneProjectAdminAccounts, type ProjectAdminHold,
 } from '@/lib/project-admin-reservation'
 
 const INVALIDATE_PREFIXES = ['project-admin', 'project-authority', 'project-metadata', 'fund-project-metadata', 'fund-project', 'income-project', 'income-operator', 'income-reserved', 'income-sticky-binding', 'sticky-project', 'sticky-rewards', 'project-operator-profile', 'project-shop-write', 'project-permissions', 'project-ownership', 'project-splits', 'project-splits-edit', 'account-projects', 'account-tokens']
@@ -112,6 +112,7 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
         const holds = await otherProjectAdminHolds(localStorage, client, chainId, projectId, options.reviewedAccount)
         if (holds.length) { setOtherHold(holds[0]); return null }
         setOtherHold(null)
+        pruneProjectAdminAccounts(localStorage, chainId, projectId, options.reviewedAccount)
           setLabel(captured.label ?? 'Project update')
           handled.current = null
           resetTx()
@@ -119,6 +120,8 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
             reviewedAccount: options.reviewedAccount,
             reviewNotice: options.reviewNotice,
             recoveryNamespace: projectAdminNamespace(projectId),
+        // Adopting a proposal the Safe already has skips the wallet, so the account is registered here, still under the lock.
+        onExistingProposal: () => { noteProjectAdminAccount(localStorage, chainId, projectId, options.reviewedAccount) },
             action: 'project update',
             reverify: async reviewed => {
               await latestConfirmedBlock()
@@ -150,6 +153,9 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
       try {
         const holds = await otherProjectAdminHolds(localStorage, client, chainId, projectId, account)
         if (cancelled) return
+        await browserLocks().request(projectAdminLockName(chainId, projectId), { mode: 'exclusive', ifAvailable: true }, async lock => {
+          if (lock) pruneProjectAdminAccounts(localStorage, chainId, projectId, account)
+        })
         if (!holds.length) setOtherHold(null)
         else if (JSON.stringify(holds[0].record) !== JSON.stringify(otherHold.record) || holds[0].exit !== otherHold.exit) setOtherHold(holds[0])
       } catch { /* The next look asks again. */ }
