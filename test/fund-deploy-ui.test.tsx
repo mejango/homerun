@@ -11,8 +11,9 @@ import { safeExecutionLog } from './support/safe-logs'
 import type { TxRequest, TxSendOptions } from '../src/hooks/useSafeTx'
 import { multisigDeploymentRequest, predictMultisig, type CreateMultisig } from '../src/lib/create-multisig'
 import { failReservationReadback } from './support/reservation-storage'
+import { WRITE_EXIT_LABEL, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
 
-const runtime = vi.hoisted(() => ({ txError: '' as string, submissionHash: undefined as Hex | undefined, safe: false, send: vi.fn(), readContract: vi.fn(), getBlock: vi.fn(), getTransaction: vi.fn(), getTransactionReceipt: vi.fn(), waitReceipt: vi.fn(), waitSafe: vi.fn(), checkMultisigs: vi.fn(), verifyMultisigs: vi.fn(), publish: vi.fn(), checkDeployment: vi.fn(), relayr: vi.fn(), requestsDead: vi.fn() }))
+const runtime = vi.hoisted(() => ({ txError: '' as string, submissionHash: undefined as Hex | undefined, safe: false, send: vi.fn(), readContract: vi.fn(), getBlock: vi.fn(), getTransaction: vi.fn(), getTransactionReceipt: vi.fn(), waitReceipt: vi.fn(), waitSafe: vi.fn(), checkMultisigs: vi.fn(), verifyMultisigs: vi.fn(), publish: vi.fn(), checkDeployment: vi.fn(), relayr: vi.fn(), requestsDead: vi.fn(), prove: vi.fn(), evidence: vi.fn() }))
 const navigate = vi.hoisted(() => ({ replace: vi.fn() }))
 vi.mock('next/navigation', () => ({ useRouter: () => navigate }))
 const owner = '0x1111111111111111111111111111111111111111' as const
@@ -25,6 +26,7 @@ vi.mock('@/components/CreateFlow', () => ({ default: () => null }))
 vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => runtime.safe, useSafeConnection: () => false, waitForSafeExecutionHash: runtime.waitSafe }))
 vi.mock('@/lib/create-multisig', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/create-multisig')>(), checkCreateMultisigs: runtime.checkMultisigs, verifyCreatedMultisigs: runtime.verifyMultisigs }))
 vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({ phase: 'idle', busy: false, error: runtime.txError, submissionHash: runtime.submissionHash, send: runtime.send, reset: vi.fn() }) }))
+vi.mock('@/lib/fund-launch-recovery', () => ({ proveLostLaunchWrite: runtime.prove, readLaunchNonceEvidence: runtime.evidence }))
 vi.mock('@/lib/publish-fund-project-metadata', () => ({ publishFundProjectMetadata: runtime.publish }))
 vi.mock('@/lib/fund-launch-verification', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/fund-launch-verification')>(), checkLaunchDeployment: runtime.checkDeployment }))
 vi.mock('@/lib/fund-launch-relayr', () => ({ runRelayrLaunch: runtime.relayr, launchRequestsDead: runtime.requestsDead }))
@@ -59,6 +61,8 @@ describe('Create submission recovery', () => {
     runtime.submissionHash = undefined
     runtime.safe = false
     runtime.send.mockReset()
+    runtime.evidence.mockReset().mockResolvedValue({})
+    runtime.prove.mockReset().mockImplementation(async (_client: unknown, _input: unknown, effect?: (chainId: number) => Promise<boolean>) => effect && await effect(8453) ? { status: 'ran' } : { status: 'pending' })
     runtime.waitSafe.mockReset(); runtime.waitReceipt.mockReset(); runtime.checkMultisigs.mockReset().mockResolvedValue(undefined); runtime.verifyMultisigs.mockReset().mockResolvedValue(true)
     runtime.getTransaction.mockReset(); runtime.getTransactionReceipt.mockReset()
     runtime.readContract.mockResolvedValue(0n); runtime.getBlock.mockReset().mockResolvedValue({ timestamp: 1000n }); runtime.publish.mockResolvedValue({ cid: 'bafkreimetadata' }); runtime.checkDeployment.mockResolvedValue(undefined)
@@ -72,6 +76,85 @@ describe('Create submission recovery', () => {
     const button = [...host.querySelectorAll('button')].find(item => item.textContent === 'Review and deploy FUND')!
     await act(async () => button.click())
   }
+
+  describe('a wallet reply lost before its hash was saved', () => {
+    const ATTEMPT = '11111111-1111-4111-8111-111111111111'
+    const FOUND = `0x${'cd'.repeat(32)}` as Hex
+    const exit = () => [...host.querySelectorAll('button')].find(item => item.textContent === WRITE_EXIT_LABEL)
+    const holdSigning = () => updateLaunchStatus(salt, 8453, { phase: 'signing', safe: false, attemptId: ATTEMPT, nonce: '5', fromBlock: '90' })
+    const render = () => act(async () => root.render(<FundDeploy values={{} as CreateValues} />))
+
+    it('saves the account’s next nonce with the pre-wallet marker', async () => {
+      runtime.evidence.mockResolvedValue({ nonce: '5', fromBlock: '90' })
+      runtime.send.mockImplementation(async (_request: unknown, options: Callbacks) => { await options.durableRecovery.reserve(); return null })
+      await launch()
+      expect(saved().statuses[8453]).toMatchObject({ phase: 'signing', nonce: '5', fromBlock: '90' })
+    })
+
+    it('finds the exact deployment from the chain, records its hash and verifies it, with nothing to paste', async () => {
+      holdSigning()
+      runtime.prove.mockResolvedValue({ status: 'sent', hash: FOUND })
+      runtime.getTransactionReceipt.mockRejectedValue(new Error('receipt unavailable'))
+      await render()
+      await vi.waitFor(() => expect(saved().statuses[8453]).toMatchObject({ phase: 'pending', hash: FOUND, walletReturned: true }))
+      await vi.waitFor(() => expect(runtime.getTransactionReceipt).toHaveBeenCalledWith({ hash: FOUND }))
+      expect(runtime.prove.mock.calls[0][1]).toMatchObject({ sender: owner, attemptId: ATTEMPT, nonce: '5', fromBlock: '90' })
+      expect(runtime.send).not.toHaveBeenCalled()
+    })
+
+    it('stays held when the chain cannot place it, with one line and the exit', async () => {
+      holdSigning()
+      await render()
+      await vi.waitFor(() => expect(host.textContent).toContain(writeHeldMessage('launch')))
+      expect(saved().statuses[8453].phase).toBe('signing')
+      expect(runtime.send).not.toHaveBeenCalled()
+      await act(async () => exit()!.click())
+      expect(saved().statuses[8453]).toEqual({ phase: 'ready' })
+    })
+
+    it('offers a pasted hash only as the fallback, and records nothing unless it verifies', async () => {
+      holdSigning()
+      runtime.getTransactionReceipt.mockRejectedValue(new Error('receipt unavailable'))
+      await render()
+      await vi.waitFor(() => expect(exit()).toBeTruthy())
+      const input = host.querySelector<HTMLInputElement>('input[name="launch-hash"]')!
+      const check = [...host.querySelectorAll('button')].find(item => item.textContent === 'Check transaction')!
+      expect(check.disabled).toBe(true)
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, FOUND)
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      await act(async () => check.click())
+      expect(runtime.getTransactionReceipt).toHaveBeenCalledWith({ hash: FOUND })
+      expect(saved().statuses[8453].hash).toBeUndefined()
+      expect(saved().statuses[8453].phase).toBe('signing')
+    })
+
+    it('ends a hashless multisig setup the chain shows created, then lets the launch continue', async () => {
+      const policy = { owners: [owner, '0x2222222222222222222222222222222222222222' as const], threshold: 2, saltNonce: salt, proxyCreationCode: '0x6000' as Hex }
+      const plan: CreateMultisig = { ...policy, role: 'operator', address: predictMultisig(policy) }
+      const current = saved()
+      localStorage.clear()
+      saveLaunch({ ...current, input: { ...current.input, operator: plan.address, multisigs: [plan] }, statuses: { 8453: { phase: 'ready', multisigSetup: { safe: false, attemptId: ATTEMPT } } } })
+      runtime.verifyMultisigs.mockResolvedValue(true)
+      await render()
+      await vi.waitFor(() => expect(saved().statuses[8453].multisigSetup).toBeUndefined())
+      expect(runtime.verifyMultisigs).toHaveBeenCalledWith(expect.anything(), [plan], true)
+    })
+
+    it('holds a hashless multisig setup the chain cannot place, with the exit', async () => {
+      const policy = { owners: [owner, '0x2222222222222222222222222222222222222222' as const], threshold: 2, saltNonce: salt, proxyCreationCode: '0x6000' as Hex }
+      const plan: CreateMultisig = { ...policy, role: 'operator', address: predictMultisig(policy) }
+      const current = saved()
+      localStorage.clear()
+      saveLaunch({ ...current, input: { ...current.input, operator: plan.address, multisigs: [plan] }, statuses: { 8453: { phase: 'ready', multisigSetup: { safe: false, attemptId: ATTEMPT } } } })
+      runtime.verifyMultisigs.mockResolvedValue(false)
+      await render()
+      await vi.waitFor(() => expect(host.textContent).toContain(writeHeldMessage('multisig setup')))
+      await act(async () => exit()!.click())
+      expect(saved().statuses[8453]).toEqual({ phase: 'ready' })
+    })
+  })
 
   it.each(['launch', 'setup'])('cleans failed %s reservation persistence before the wallet without a runtime cleanup callback', async kind => {
     if (kind === 'setup') {

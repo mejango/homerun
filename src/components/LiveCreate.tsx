@@ -16,7 +16,8 @@ import { checkLaunchDeployment, fundLaunchFailed, verifyFundLaunch, verifyFailed
 import { publishFundProjectMetadata } from '@/lib/publish-fund-project-metadata'
 import { resolveCreateMultisigs, checkCreateMultisigs, verifyCreatedMultisigs, multisigDeploymentRequest, multisigReview } from '@/lib/create-multisig'
 import { readableError } from '@/lib/readable-error'
-import { transactionMessage } from '@bananapus/nana-sdk-core/review'
+import { WRITE_EXIT_LABEL, transactionMessage, writeExitMessage, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
+import { proveLostLaunchWrite, readLaunchNonceEvidence } from '@/lib/fund-launch-recovery'
 import { launchRequestsDead, runRelayrLaunch } from '@/lib/fund-launch-relayr'
 import { displayChainName } from '@/lib/chainDisplay'
 import { SUPPORTED_CHAINS } from '@/lib/chains'
@@ -68,6 +69,71 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
     finally { verifyLock.current = false; setVerifying(false) }
   }
 
+  // A wallet reply lost before its hash was saved: the chain is asked first, quietly, and only what it can't place stays held.
+  const [lostChecked, setLostChecked] = useState(false)
+  const [pastedHash, setPastedHash] = useState('')
+  const recovering = useRef(false)
+  const lostLaunch = status.phase === 'signing' && !status.hash && !!status.attemptId
+  const lostSetup = !lostLaunch && !!status.multisigSetup && !status.multisigSetup.hash && !!status.multisigSetup.attemptId
+  const lostBusy = tx.busy || setupTx.busy || tx.phase === 'review' || setupTx.phase === 'review' || verifying
+  const recoverLost = async () => {
+    if (recovering.current) return
+    recovering.current = true
+    try {
+      const saved = loadLaunchSession()
+      const current = saved?.statuses[request.chainId]
+      if (saved?.input.salt !== session.input.salt || !current) return
+      const client = publicClient(request.chainId)
+      const sender = session.input.sender
+      if (current.phase === 'signing' && !current.hash && current.attemptId) {
+        const found = await proveLostLaunchWrite(client, { request, sender, safe: current.safe ?? false, attemptId: current.attemptId, nonce: current.nonce, fromBlock: current.fromBlock })
+        if (found.status === 'sent') {
+          update({ ...current, phase: 'pending', hash: found.hash, walletReturned: true }, undefined, current)
+          await verify(found.hash, current.safe ?? false)
+        }
+      } else if (current.multisigSetup && !current.multisigSetup.hash && current.multisigSetup.attemptId) {
+        const plans = session.input.multisigs ?? []
+        const setup = current.multisigSetup
+        const found = await proveLostLaunchWrite(client, { request: multisigDeploymentRequest(request.chainId, plans), sender, safe: setup.safe, attemptId: setup.attemptId!, nonce: setup.nonce, fromBlock: setup.fromBlock },
+          () => verifyCreatedMultisigs(client, plans, true))
+        if (found.status === 'ran') update({ ...current, multisigSetup: undefined }, undefined, current)
+        else if (found.status === 'sent') update({ ...current, multisigSetup: { ...setup, hash: found.hash, walletReturned: true } }, undefined, current)
+      }
+    } catch { /* The node can't answer: it stays held, and the next look asks again. */ }
+    finally { recovering.current = false; setLostChecked(true) }
+  }
+  useEffect(() => {
+    if (!(lostLaunch || lostSetup) || lostBusy) return
+    void recoverLost()
+    const timer = setInterval(() => void recoverLost(), 15_000)
+    return () => clearInterval(timer)
+  // The saved marker and the flow's busy state decide when to look; the look reads what is saved.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lostLaunch, lostSetup, lostBusy, status.attemptId, status.multisigSetup?.attemptId])
+  const releaseLost = () => {
+    const current = loadLaunchSession()?.statuses[request.chainId]
+    if (!current) return
+    try {
+      if (lostLaunch) update({ phase: 'ready', ...(current.multisigSetup ? { multisigSetup: current.multisigSetup } : {}) }, 'signing', current)
+      else update({ ...current, multisigSetup: undefined }, undefined, current)
+      setLostChecked(false); setError('')
+    } catch (cause) { setError(message(cause)) }
+  }
+  const pastedValid = /^0x[\da-f]{64}$/i.test(pastedHash.trim())
+  const checkPasted = async () => {
+    const hash = pastedHash.trim() as Hex
+    setError('')
+    try {
+      const client = publicClient(request.chainId)
+      const saved = loadLaunchSession()
+      const current = saved?.statuses[request.chainId]
+      if (saved?.input.salt !== session.input.salt || !current || current.phase !== 'signing' || current.hash || current.safe) throw new Error('The saved launch changed. Reload its progress before checking this transaction.')
+      const receipt = await client.getTransactionReceipt({ hash })
+      const projectId = await verifyFundLaunch(client, request, session.input, receipt, false)
+      update({ ...current, phase: 'confirmed', hash, executionHash: hash, walletReturned: true, projectId: projectId.toString() }, undefined, current)
+    } catch (cause) { setError(`That transaction could not be verified as this deployment. ${message(cause)}`) }
+  }
+
   async function ensureMultisigs(safe: boolean) {
     const plans = session.input.multisigs ?? []
     if (!plans.length) return
@@ -99,11 +165,12 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
           update(attemptedStatus, undefined, previous)
         },
         durableRecovery: {
-          reserve: () => {
+          reserve: async () => {
             if (isSafeConnection(wagmiConfig) !== safe) throw new Error('Wallet connection changed. Review the transaction again.')
+            const evidence = await readLaunchNonceEvidence(client, session.input.sender, safe)
             const previous = loadLaunchSession()!.statuses[request.chainId]
             if (previous.multisigSetup) throw new Error('A multisig setup is already saved. Recover it before another submission.')
-            attemptedStatus = { ...previous, multisigSetup: { safe, attemptId: globalThis.crypto.randomUUID() } }
+            attemptedStatus = { ...previous, multisigSetup: { safe, attemptId: globalThis.crypto.randomUUID(), ...evidence } }
             update(attemptedStatus, undefined, previous, true)
           },
           releaseUnsubmitted: () => {
@@ -172,10 +239,11 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
           submissionAttempted = true
         },
         durableRecovery: {
-          reserve: () => {
+          reserve: async () => {
             if (isSafeConnection(wagmiConfig) !== safe) throw new Error('Wallet connection changed. Review the transaction again.')
+            const evidence = await readLaunchNonceEvidence(publicClient(request.chainId), session.input.sender, safe)
             unsubmittedStatus = loadLaunchSession()!.statuses[request.chainId]
-            const next: LaunchStatus = { phase: 'signing', safe, attemptId: globalThis.crypto.randomUUID(), ...(unsubmittedStatus.multisigSetup ? { multisigSetup: unsubmittedStatus.multisigSetup } : {}) }
+            const next: LaunchStatus = { phase: 'signing', safe, attemptId: globalThis.crypto.randomUUID(), ...evidence, ...(unsubmittedStatus.multisigSetup ? { multisigSetup: unsubmittedStatus.multisigSetup } : {}) }
             update(next, status.phase, unsubmittedStatus, true)
             attemptedStatus = next
             submissionAttempted = true
@@ -222,9 +290,19 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
     {(status.phase === 'ready' || (status.phase === 'reverted' && !legacyFailure)) && <button type="button" disabled={tx.busy || tx.phase === 'review' || verifying || Object.values(session.statuses).some(row => row.phase === 'signing')} onClick={() => void launch()}>Review and deploy FUND</button>}
     {(status.phase === 'pending' || legacyFailure) && status.hash && <button type="button" disabled={verifying} onClick={() => void verify(status.hash!, status.safe ?? false, status.executionHash)}>{verifying ? 'Checking execution…' : 'Check confirmation'}</button>}
     {legacyFailure && <p>This saved failure has no recorded wallet-returned hash. Keep the launch saved and check your wallet activity; its transaction cannot authorize a retry.</p>}
-    {status.phase === 'signing' && !tx.busy && <p>This launch stopped before a transaction hash was saved. Check your wallet history. Keep this launch saved; an older or pasted transaction cannot prove this attempt is safe to retry.</p>}
+    {status.multisigSetup && !status.multisigSetup.hash && !status.multisigSetup.attemptId && <p>This multisig setup stopped before its transaction hash was saved. Check your wallet activity and keep this launch saved; an older or pasted transaction cannot release this attempt.</p>}
+    {status.phase === 'signing' && !status.attemptId && !tx.busy && <p>This launch stopped before a transaction hash was saved. Check your wallet history. Keep this launch saved; an older or pasted transaction cannot prove this attempt is safe to retry.</p>}
+    {(lostLaunch || lostSetup) && !lostBusy && lostChecked && <div role="status" className="space-y-2">
+      <p>{writeHeldMessage(lostLaunch ? 'launch' : 'multisig setup')}</p>
+      <p>{writeExitMessage({ value: lostLaunch ? request.value ?? 0n : 0n }, lostLaunch ? 'launch' : 'multisig setup')}</p>
+      <button type="button" onClick={releaseLost}>{WRITE_EXIT_LABEL}</button>
+      {lostLaunch && !status.safe && <details>
+        <summary>Paste the transaction instead</summary>
+        <label>Transaction hash <input name="launch-hash" value={pastedHash} onChange={event => setPastedHash(event.target.value)} placeholder="0x…" autoComplete="off" spellCheck={false} /></label>
+        <button type="button" disabled={!pastedValid} onClick={() => void checkPasted()}>Check transaction</button>
+      </details>}
+    </div>}
     {['ready', 'reverted'].includes(status.phase) && <button type="button" disabled={tx.busy || tx.phase === 'review'} onClick={() => void publicClient(request.chainId).readContract({ address: v6Address('JBProjects', request.chainId as JBChainId), abi: jbProjectsAbi, functionName: 'creationFee' }).then(refreshFee).catch(cause => setError(message(cause)))}>Refresh deployment fee</button>}
-    {status.multisigSetup && !status.multisigSetup.hash && <p>This multisig setup stopped before its transaction hash was saved. Check your wallet activity and keep this launch saved; an older or pasted transaction cannot release this attempt.</p>}
     {(error || tx.error || setupTx.error) && <p role="alert">{transactionMessage(error || tx.error || setupTx.error || '')}</p>}
     {!status.hash && tx.submissionHash && <p className="break-all">{status.safe ? 'Safe proposal' : 'Submitted transaction'}: <code>{tx.submissionHash}</code></p>}
     {status.multisigSetup && !status.multisigSetup.hash && setupTx.submissionHash && <p className="break-all">{status.multisigSetup.safe ? 'Safe setup proposal' : 'Submitted setup transaction'}: <code>{setupTx.submissionHash}</code></p>}

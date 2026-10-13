@@ -7,12 +7,15 @@ import { withPrewalletReservation } from './prewallet-reservation'
 export const FUND_LAUNCH_KEY = 'homerun:fund-launch:v1'
 export type LaunchStatus = {
   /** Direct Safe-wallet setup is idempotent, but a pending proposal must be resumed. */
-  multisigSetup?: { hash?: Hex; safe: boolean; walletReturned?: true; attemptId?: string }
+  multisigSetup?: { hash?: Hex; safe: boolean; walletReturned?: true; attemptId?: string; nonce?: string; fromBlock?: string }
   phase: 'ready' | 'signing' | 'pending' | 'confirmed' | 'reverted' | 'authorized' | 'unresolved' | 'expired'
   error?: string
   hash?: Hex
   /** Unique reservation identity, even when the same immutable call is retried. */
   attemptId?: string
+  /** The account's next nonce and the block it was read at, saved before the wallet opened so the chain can place a lost reply. */
+  nonce?: string
+  fromBlock?: string
   /** Recorded by the wallet submission callback or authenticated Safe adoption. */
   walletReturned?: true
   safe?: boolean
@@ -102,6 +105,7 @@ export function decodeLaunchSession(raw: string): FundLaunchSession {
       || (status.safe !== undefined && typeof status.safe !== 'boolean')
       || (status.attemptId !== undefined && (typeof status.attemptId !== 'string' || !UUID.test(status.attemptId)))
       || (status.walletReturned !== undefined && (status.walletReturned !== true || !status.hash))
+      || [status.nonce, status.fromBlock].some(value => value !== undefined && (typeof value !== 'string' || !DECIMAL.test(value)))
       || (status.phase === 'ready' && (status.hash !== undefined || status.executionHash !== undefined || status.projectId !== undefined))
       || (status.phase === 'pending' && !status.hash)
       || (status.phase === 'reverted' && !status.hash)
@@ -109,6 +113,7 @@ export function decodeLaunchSession(raw: string): FundLaunchSession {
     if (status.multisigSetup && (typeof status.multisigSetup.safe !== 'boolean'
       || (status.multisigSetup.attemptId !== undefined && (typeof status.multisigSetup.attemptId !== 'string' || !UUID.test(status.multisigSetup.attemptId)))
       || (status.multisigSetup.hash !== undefined && !/^0x[\da-f]{64}$/i.test(status.multisigSetup.hash))
+      || [status.multisigSetup.nonce, status.multisigSetup.fromBlock].some(value => value !== undefined && (typeof value !== 'string' || !DECIMAL.test(value)))
       || (status.multisigSetup.walletReturned !== undefined && (status.multisigSetup.walletReturned !== true || !status.multisigSetup.hash)))) throw new Error('Invalid multisig setup transaction.')
     if (status.projectId !== undefined && (typeof status.projectId !== 'string' || !/^[1-9]\d*$/.test(status.projectId) || BigInt(status.projectId) >= 1n << 256n)) throw new Error('Saved project ID is invalid.')
   }
