@@ -4,6 +4,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { parseAbi, type Address, type Hex } from 'viem'
 import { WRITE_EXIT_LABEL, writeExitMessage, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
+import { createBrowserWriteRecovery } from '@bananapus/nana-sdk-core/review'
+import { installRecoveryLocks, recoveryRecords } from './runtime/write-recovery-fixture'
+import { noteProjectAdminAccount, projectAdminNamespace } from '@/lib/project-admin-reservation'
 import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
 import type { ProjectAdminTx } from '@/hooks/useProjectAdminTx'
 
@@ -55,10 +58,12 @@ async function render(projectId = 7n) {
 const button = (text: string) => [...host.querySelectorAll('button')].find(node => node.textContent === text)
 
 beforeEach(() => {
+  localStorage.clear(); installRecoveryLocks()
   runtime.account = OWNER; runtime.engine = {}
   for (const mock of [runtime.reset, runtime.dismiss, runtime.viewAs, confirmed]) mock.mockReset()
   runtime.reverify.mockReset().mockResolvedValue(undefined)
   runtime.client.getBlock.mockReset().mockResolvedValue({ number: 100n, hash: BLOCK_HASH })
+  for (const name of ['getChainId', 'getTransaction', 'getTransactionReceipt', 'getTransactionCount'] as const) (runtime.client as Record<string, ReturnType<typeof vi.fn>>)[name] = vi.fn(async () => { throw new Error('unknown') })
   runtime.send.mockReset().mockImplementation(async (reviewed: TxRequest, options: TxSendOptions) => {
     await options.reverify?.(reviewed)
     await options.beforeWrite?.()
@@ -131,4 +136,43 @@ describe('project administrative writes', () => {
     await act(async () => handle.dismiss())
     expect(runtime.dismiss).toHaveBeenCalledOnce()
   })
+
+  it('adopt an editor record from before the SDK journal before any write is enabled', async () => {
+    localStorage.setItem('homerun:project-admin:pending:v1:8453:7', JSON.stringify({
+      version: 1, id: '11111111-1111-4111-8111-111111111111', chainId: 8453, projectId: '7', holder: OWNER, target: TARGET,
+      data: '0x12345678', value: '0', label: 'Save', safe: false, submittedAt: 1, afterBlock: '5', hash: EXECUTION,
+    }))
+    await render()
+    await vi.waitFor(() => expect(handle.ready).toBe(true))
+    expect(recoveryRecords()).toEqual([expect.objectContaining({ account: OWNER, hash: EXECUTION, call: { to: TARGET, data: '0x12345678', value: '0' } })])
+    expect(localStorage.getItem('homerun:project-admin:pending:v1:8453:7')).toBeNull()
+  })
+
+  it('stay unready, with the reason, while an old record cannot be read', async () => {
+    localStorage.setItem('homerun:project-admin:pending:v1:8453:7', '{not json')
+    await render()
+    await vi.waitFor(() => expect(handle.error).toMatch(/could not be read/))
+    expect(handle.ready).toBe(false)
+    await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })
+    expect(runtime.send).not.toHaveBeenCalled()
+  })
+
+  it('hold a second authorized wallet while the first wallet’s update is unresolved, until its exit', async () => {
+    const first = '0x3333333333333333333333333333333333333333' as Address
+    const journal = createBrowserWriteRecovery({ chainId: 8453, account: first, safe: false, namespace: projectAdminNamespace(7n),
+      call: { to: TARGET, data: '0x12345678', value: 0n } })
+    await journal.withLock(async () => { journal.reserve() })
+    noteProjectAdminAccount(localStorage, 8453, 7n, first)
+    await render()
+    await vi.waitFor(() => expect(handle.ready).toBe(true))
+    await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })
+    expect(runtime.send).not.toHaveBeenCalled()
+    expect(handle.phase).toBe('submitted')
+    expect(handle.held).toMatchObject({ label: expect.stringContaining('I checked my wallet') })
+    await act(async () => handle.held!.release())
+    expect(handle.held).toBeNull()
+    await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })
+    expect(runtime.send).toHaveBeenCalledOnce()
+  })
 })
+

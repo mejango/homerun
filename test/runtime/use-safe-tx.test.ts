@@ -703,6 +703,23 @@ describe('useSafeTx', () => {
     expect(reopened.ref.current!.phase).toBe('pending')
   })
 
+  it('does not send a project update again after an upgrade moved its old record into the journal', async () => {
+    const { adoptLegacyProjectAdminRecord, projectAdminNamespace } = await import('@/lib/project-admin-reservation')
+    for (const hash of [HASH, undefined]) {
+      localStorage.clear()
+      localStorage.setItem('homerun:project-admin:pending:v1:10:7', JSON.stringify({
+        version: 1, id: '11111111-1111-4111-8111-111111111111', chainId: 10, projectId: '7', holder: ALICE, target: BOB,
+        data: '0x12345678', value: '0', label: 'Save', safe: false, submittedAt: 1, afterBlock: '5', ...(hash ? { hash } : {}),
+      }))
+      await adoptLegacyProjectAdminRecord(localStorage, 10, 7n)
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.send(request, { ...reviewedByAlice, recoveryNamespace: projectAdminNamespace(7n) }) })
+      expect(mocks.writeContract).not.toHaveBeenCalled()
+      expect(hook.ref.current!.phase).toBe(hash ? 'pending' : 'submitted')
+      await act(async () => { hook.renderer.unmount() })
+    }
+  })
+
   it('sends a changed amount as its own write while another amount is held', async () => {
     mocks.writeContract.mockRejectedValueOnce(new Error('Wallet reply was lost after broadcast'))
     const first = await renderHook()

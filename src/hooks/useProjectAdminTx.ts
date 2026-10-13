@@ -7,6 +7,10 @@ import { usePublicClient } from 'wagmi'
 import { useSafeTx, type TxRequest } from './useSafeTx'
 import { useWallet } from './useWallet'
 import { assertNoViewAs } from '@/lib/viewAs'
+import { WRITE_EXIT_LABEL, writeExitMessage, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
+import {
+  adoptLegacyProjectAdminRecord, noteProjectAdminAccount, otherProjectAdminHolds, projectAdminNamespace, type ProjectAdminHold,
+} from '@/lib/project-admin-reservation'
 
 const INVALIDATE_PREFIXES = ['project-admin', 'project-authority', 'project-metadata', 'fund-project-metadata', 'fund-project', 'income-project', 'income-operator', 'income-reserved', 'income-sticky-binding', 'sticky-project', 'sticky-rewards', 'project-operator-profile', 'project-shop-write', 'project-permissions', 'project-ownership', 'project-splits', 'project-splits-edit', 'account-projects', 'account-tokens']
 const errorMessage = (reason: unknown) => reason instanceof Error ? reason.message : 'The project update could not be completed.'
@@ -41,11 +45,23 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
   const [error, setError] = useState<string | null>(null)
   const [label, setLabel] = useState('Project update')
   const [working, setWorking] = useState(false)
+  /** Saved updates from before the SDK's journal are moved into it before any write. */
+  const [adopted, setAdopted] = useState(false)
+  /** Another wallet's unresolved update on this project. */
+  const [otherHold, setOtherHold] = useState<ProjectAdminHold | null>(null)
   const inFlight = useRef(false)
   const handled = useRef<string | null>(null)
   const onConfirmedRef = useRef(onConfirmed)
   useEffect(() => { onConfirmedRef.current = onConfirmed }, [onConfirmed])
-  useEffect(() => { resetTx(); setError(null); handled.current = null }, [chainId, projectId, resetTx])
+  useEffect(() => { resetTx(); setError(null); handled.current = null; setOtherHold(null) }, [chainId, projectId, resetTx])
+  useEffect(() => {
+    let cancelled = false
+    setAdopted(false)
+    adoptLegacyProjectAdminRecord(localStorage, chainId, projectId)
+      .then(() => { if (!cancelled) setAdopted(true) })
+      .catch(reason => { if (!cancelled) setError(errorMessage(reason)) })
+    return () => { cancelled = true }
+  }, [chainId, projectId])
 
   const invalidate = useCallback(async () => {
     const filters = { predicate: (query: { queryKey: readonly unknown[] }) => {
@@ -76,6 +92,7 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
       assertNoViewAs()
       if (!client || !address) throw new Error('Connect a wallet first.')
       if (request.chainId !== chainId) throw new Error('This update belongs to a different network.')
+      if (!adopted) throw new Error('Wait for saved project updates to load.')
       if (typeof options?.reverify !== 'function') throw new Error('Recheck project permissions before submitting this update.')
       // Editors retain their own mutable drafts. Only this captured request reaches review.
       const captured = structuredClone(request)
@@ -86,6 +103,10 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
         const minimumBlock = cache.getQueryData<bigint>(['project-admin-confirmed-block', chainId, projectId.toString()])
         if (minimumBlock !== undefined && block.number < minimumBlock) throw new Error('The network has not reached the last confirmed project update. Wait for it to catch up before submitting another update.')
       }
+      // One reservation covers the project, whichever authorized wallet made the update.
+      const holds = await otherProjectAdminHolds(localStorage, client, chainId, projectId, options.reviewedAccount)
+      if (holds.length) { setOtherHold(holds[0]); return null }
+      setOtherHold(null)
       setLabel(captured.label ?? 'Project update')
       handled.current = null
       resetTx()
@@ -102,14 +123,24 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
         beforeWrite: async () => {
           assertNoViewAs()
           if (requestIdentity(captured) !== identity) throw new Error('The project update changed during review. Review it again.')
+          noteProjectAdminAccount(localStorage, chainId, projectId, options.reviewedAccount)
           await latestConfirmedBlock()
         },
       })
     } catch (reason) { setError(errorMessage(reason)); return null }
     finally { inFlight.current = false; setWorking(false) }
-  }, [address, cache, chainId, client, projectId, resetTx, tx])
+  }, [address, adopted, cache, chainId, client, projectId, resetTx, tx])
 
-  const phase = tx.phase
+  const phase = otherHold ? 'submitted' as const : tx.phase
+  const exitOther = useCallback(() => {
+    if (!otherHold) return
+    try { otherHold.journal.abandon(otherHold.record, { checkedWallet: true }); setOtherHold(null); setError(null) }
+    catch (reason) { setError(errorMessage(reason)) }
+  }, [otherHold])
+  const held = tx.held ?? (otherHold ? {
+    line: writeHeldMessage('project update'), warning: writeExitMessage(otherHold.record.call, 'project update'),
+    label: WRITE_EXIT_LABEL, release: exitOther,
+  } : null)
   const pending = phase === 'pending' || phase === 'submitted'
   /** Clears a settled result before the next review. A write still being followed is never cleared. */
   const reset = useCallback(() => {
@@ -123,13 +154,13 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
     tx.dismiss(); setError(null)
   }, [phase, tx])
   return {
-    send, reset, dismiss, ready: true,
+    send, reset, dismiss, ready: adopted,
     busy: working || tx.busy || phase === 'review', pending,
-    phase, settled: tx.settled, notice: phase === 'submitted' ? tx.notice : null,
+    phase, settled: tx.settled || !!otherHold, notice: otherHold ? writeHeldMessage('project update') : phase === 'submitted' ? tx.notice : null,
     error: error ?? tx.error, status: phase === 'success' ? `${label} confirmed.` : null,
     hash: tx.hash, submissionHash: tx.submissionHash,
     safe: tx.isSafe, chainId, pendingLabel: pending ? label : null,
-    held: tx.held,
+    held,
   }
 }
 export type ProjectAdminTx = ReturnType<typeof useProjectAdminTx>
