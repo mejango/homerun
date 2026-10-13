@@ -1,3 +1,4 @@
+import { provenDropped } from './write-hold'
 import { isAddress, zeroAddress, zeroHash, type Address, type Hex, type PublicClient } from 'viem'
 import {
   createBrowserWriteRecovery, parseReviewedWriteRecoveryRecord, readBrowserWriteRecovery, sameReviewedWrite, verifyReviewedWriteReceipt,
@@ -70,7 +71,8 @@ export async function adoptLegacyProjectAdminRecord(storage: Store, chainId: num
   storage.removeItem(key)
 }
 
-export type ProjectAdminHold = { journal: ReturnType<typeof createBrowserWriteRecovery>; record: ReviewedWriteRecoveryRecord }
+/** `exit`: the hold may be ended by the user: it has no known hash, or its hash is proven dropped. */
+export type ProjectAdminHold = { journal: ReturnType<typeof createBrowserWriteRecovery>; record: ReviewedWriteRecoveryRecord; exit: boolean }
 
 /**
  * Unresolved updates this project holds for accounts other than `account`. The chain is asked
@@ -101,7 +103,7 @@ export async function otherProjectAdminHolds(storage: Store, client: PublicClien
       })
     } catch { /* The chain can't place it yet: it stays held. */ }
     const current = journal.read()
-    if (current) holds.push({ journal, record: current })
+    if (current) holds.push({ journal, record: current, exit: !current.hash || await provenDropped(client, current).catch(() => false) })
   }
   if (keep.length !== accounts.length) writeAccounts(storage, chainId, projectId, keep)
   return holds

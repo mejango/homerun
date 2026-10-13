@@ -7,6 +7,7 @@ import { usePublicClient } from 'wagmi'
 import { useSafeTx, type TxRequest } from './useSafeTx'
 import { useWallet } from './useWallet'
 import { assertNoViewAs } from '@/lib/viewAs'
+import { WRITE_STILL_PENDING_LINE, provenDropped } from '@/lib/write-hold'
 import { WRITE_EXIT_LABEL, writeExitMessage, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
 import {
   adoptLegacyProjectAdminRecord, noteProjectAdminAccount, otherProjectAdminHolds, projectAdminNamespace, type ProjectAdminHold,
@@ -132,14 +133,17 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
   }, [address, adopted, cache, chainId, client, projectId, resetTx, tx])
 
   const phase = otherHold ? 'submitted' as const : tx.phase
-  const exitOther = useCallback(() => {
+  const exitOther = useCallback(async () => {
     if (!otherHold) return
-    try { otherHold.journal.abandon(otherHold.record, { checkedWallet: true }); setOtherHold(null); setError(null) }
-    catch (reason) { setError(errorMessage(reason)) }
-  }, [otherHold])
-  const held = tx.held ?? (otherHold ? {
+    try {
+      // Ask again as the exit is taken, and hand the abandon the record the user saw.
+      if (otherHold.record.hash && !(client && await provenDropped(client, otherHold.record))) { setError(WRITE_STILL_PENDING_LINE); return }
+      otherHold.journal.abandon(otherHold.record, { checkedWallet: true }); setOtherHold(null); setError(null)
+    } catch (reason) { setError(errorMessage(reason)) }
+  }, [client, otherHold])
+  const held = tx.held ?? (otherHold?.exit ? {
     line: writeHeldMessage('project update'), warning: writeExitMessage(otherHold.record.call, 'project update'),
-    label: WRITE_EXIT_LABEL, release: exitOther,
+    label: WRITE_EXIT_LABEL, release: () => void exitOther(),
   } : null)
   const pending = phase === 'pending' || phase === 'submitted'
   /** Clears a settled result before the next review. A write still being followed is never cleared. */
@@ -156,7 +160,7 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
   return {
     send, reset, dismiss, ready: adopted,
     busy: working || tx.busy || phase === 'review', pending,
-    phase, settled: tx.settled || !!otherHold, notice: otherHold ? writeHeldMessage('project update') : phase === 'submitted' ? tx.notice : null,
+    phase, settled: tx.settled || !!otherHold, notice: otherHold ? (otherHold.record.hash ? WRITE_STILL_PENDING_LINE : writeHeldMessage('project update')) : phase === 'submitted' ? tx.notice : null,
     error: error ?? tx.error, status: phase === 'success' ? `${label} confirmed.` : null,
     hash: tx.hash, submissionHash: tx.submissionHash,
     safe: tx.isSafe, chainId, pendingLabel: pending ? label : null,

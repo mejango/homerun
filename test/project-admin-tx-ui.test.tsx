@@ -174,5 +174,20 @@ describe('project administrative writes', () => {
     await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })
     expect(runtime.send).toHaveBeenCalledOnce()
   })
+
+  it('never offers the exit for another wallet’s update whose hash is still pending', async () => {
+    const first = '0x3333333333333333333333333333333333333333' as Address
+    const journal = createBrowserWriteRecovery({ chainId: 8453, account: first, safe: false, namespace: projectAdminNamespace(7n),
+      call: { to: TARGET, data: '0x12345678', value: 0n } })
+    await journal.withLock(async () => { journal.reserve(undefined, { nonce: 5, blockNumber: 90n }); journal.submitted(EXECUTION) })
+    noteProjectAdminAccount(localStorage, 8453, 7n, first)
+    ;(runtime.client as Record<string, unknown>).getTransaction = vi.fn(async () => ({ hash: EXECUTION }))
+    await render()
+    await vi.waitFor(() => expect(handle.ready).toBe(true))
+    await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })
+    expect(runtime.send).not.toHaveBeenCalled()
+    expect(handle.notice).toBe('Still pending in your wallet. Speed it up or cancel it there.')
+    expect(handle.held).toBeNull()
+  })
 })
 

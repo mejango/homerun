@@ -2,6 +2,7 @@ import { QueryClient } from '@tanstack/react-query'
 import { createElement, createRef, forwardRef, useImperativeHandle } from 'react'
 import TestRenderer, { act } from 'react-test-renderer'
 import {
+  TransactionNotFoundError,
   encodeFunctionData,
   parseAbi,
   UserRejectedRequestError,
@@ -10,7 +11,7 @@ import {
   type Hex,
 } from 'viem'
 import { SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
-import { WRITE_EXIT_LABEL, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
+import { WRITE_EXIT_LABEL, createBrowserWriteRecovery, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { installRecoveryLocks, recoveryRecords } from './write-recovery-fixture'
 
@@ -398,7 +399,7 @@ describe('useSafeTx', () => {
       busy: true,
       confirmationUncertain: true,
     })
-    expect(hook.ref.current!.error).toMatch(/do not submit it again/i)
+    expect(hook.ref.current!.error).toBe('Still pending in your wallet. Speed it up or cancel it there.')
     await act(async () => {
       await expect(hook.ref.current!.send(request, reviewedByAlice)).resolves.toBeNull()
     })
@@ -749,26 +750,90 @@ describe('useSafeTx', () => {
     expect(recoveryRecords()).toHaveLength(1)
   })
 
-  it('refuses a wallet write if the durable marker cannot be retained', async () => {
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('Storage unavailable') })
+  it('never opens the wallet with no hold at all: a marker that cannot be retained after the storage probe refuses the write', async () => {
+    const original = Storage.prototype.setItem
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key: string, value: string) {
+      if (key.startsWith('nana-sdk:reviewed-write')) throw new Error('Storage unavailable')
+      original.call(this, key, value)
+    })
     const hook = await renderHook()
     await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
     expect(mocks.writeContract).not.toHaveBeenCalled()
     expect(hook.ref.current!.phase).toBe('error')
   })
 
-  it('offers the exit for a returned hash whose result stays unreadable', async () => {
+  const PENDING = 'Still pending in your wallet. Speed it up or cancel it there.'
+  it('never offers the exit for a returned hash that is still pending, only for one proven dropped, rechecked as it is taken', async () => {
+    vi.useFakeTimers()
     const hook = await renderHook()
     await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
-    expect(hook.ref.current!.held).toBeNull()
     mocks.receipt = { data: undefined, isError: true }
+    mocks.publicClient.getTransaction.mockResolvedValue({ hash: HASH })
     await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
+    expect(hook.ref.current!.held).toBeNull()
+    expect(hook.ref.current!.error).toBe(PENDING)
+    // The node no longer knows it and the account's nonce moved on at a finalized block.
+    mocks.publicClient.getTransaction.mockRejectedValue(new TransactionNotFoundError({ hash: HASH }))
+    mocks.publicClient.getTransactionCount.mockResolvedValue(6)
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
     expect(hook.ref.current!.held).toMatchObject({ label: WRITE_EXIT_LABEL })
-    await act(async () => { hook.ref.current!.held!.release() })
+    // It reappears before the exit is accepted: the hold stays.
+    mocks.publicClient.getTransaction.mockResolvedValue({ hash: HASH })
+    await act(async () => { await hook.ref.current!.held!.release() })
+    expect(hook.ref.current!.error).toBe(PENDING)
+    expect(recoveryRecords()).toHaveLength(1)
+    mocks.publicClient.getTransaction.mockRejectedValue(new TransactionNotFoundError({ hash: HASH }))
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
+    await act(async () => { await hook.ref.current!.held!.release() })
     expect(hook.ref.current).toMatchObject({ phase: 'idle', held: null })
     mocks.receipt = { data: undefined, isError: false }
     await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
     expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+    vi.useRealTimers()
+  })
+
+  it('passes the exit the record the user saw, and follows a hash another tab recorded instead of releasing', async () => {
+    mocks.writeContract.mockRejectedValueOnce(new Error('Wallet reply was lost after broadcast'))
+    const hook = await renderHook()
+    await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+    expect(hook.ref.current!.held).not.toBeNull()
+    const other = createBrowserWriteRecovery({ chainId: 10, account: ALICE, safe: false, call: { to: BOB, data: encodeFunctionData({ abi: ABI, functionName: 'transfer', args: [BOB, 5n] }), value: 7n } })
+    await other.withLock(async () => { other.submitted(HASH, other.read()!) })
+    await act(async () => { await hook.ref.current!.held!.release() })
+    expect(recoveryRecords()).toEqual([expect.objectContaining({ hash: HASH })])
+    expect(hook.ref.current).toMatchObject({ phase: 'pending', held: null })
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+  })
+
+  describe('when the browser refuses to store a hold', () => {
+    const STORAGE = "This browser can't remember pending transactions. Check your wallet before repeating one."
+    it('holds in the tab, says so in the review, and never opens the wallet with no hold', async () => {
+      vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('Storage unavailable') })
+      mocks.writeContract.mockRejectedValueOnce(new Error('Wallet reply was lost after broadcast'))
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.send(request, { ...reviewedByAlice, recoveryNamespace: 'memory-a' }) })
+      expect(mocks.requestReview.mock.calls[0][1].description).toContain(STORAGE)
+      expect(mocks.writeContract).toHaveBeenCalledOnce()
+      expect(hook.ref.current).toMatchObject({ phase: 'submitted', notice: writeHeldMessage('transaction') })
+      await act(async () => { hook.ref.current!.reset() })
+      await act(async () => { await hook.ref.current!.send(request, { ...reviewedByAlice, recoveryNamespace: 'memory-a' }) })
+      expect(mocks.writeContract).toHaveBeenCalledOnce()
+      expect(hook.ref.current!.held).toMatchObject({ label: WRITE_EXIT_LABEL })
+      await act(async () => { await hook.ref.current!.held!.release() })
+      await act(async () => { await hook.ref.current!.send(request, { ...reviewedByAlice, recoveryNamespace: 'memory-a' }) })
+      expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+    })
+
+    it('tracks a hash the wallet returned and keeps the hold until its receipt', async () => {
+      vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('Storage unavailable') })
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.send(request, { ...reviewedByAlice, recoveryNamespace: 'memory-b' }) })
+      expect(hook.ref.current).toMatchObject({ phase: 'pending', hash: HASH })
+      await act(async () => { hook.ref.current!.reset() })
+      await act(async () => { await hook.ref.current!.send(request, { ...reviewedByAlice, recoveryNamespace: 'memory-b' }) })
+      expect(mocks.writeContract).toHaveBeenCalledOnce()
+      expect(hook.ref.current).toMatchObject({ phase: 'pending', hash: HASH })
+    })
   })
 
   it('sends without Web Locks, holding within the tab instead of refusing', async () => {
