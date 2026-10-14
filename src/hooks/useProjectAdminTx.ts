@@ -6,8 +6,9 @@ import { encodeFunctionData, type Address, type Hex } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { useSafeTx, type TxRequest } from './useSafeTx'
 import { useWallet } from './useWallet'
+import { useWriteHoldWatch } from './useWriteHoldWatch'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { WRITE_EXIT_LABEL, browserLocks, writeExitMessage } from '@bananapus/nana-sdk-core/review'
+import { WRITE_EXIT_LABEL, browserLocks, writeExitMessage, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
 import {
   adoptLegacyProjectAdminRecord, noteProjectAdminAccount, otherProjectAdminHolds, projectAdminLockName, projectAdminNamespace, pruneProjectAdminAccounts, type ProjectAdminHold,
 } from '@/lib/project-admin-reservation'
@@ -141,32 +142,35 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
     finally { inFlight.current = false; setWorking(false) }
   }, [address, adopted, cache, chainId, client, projectId, resetTx, tx])
 
-  // The displayed hold follows its chain proof: it refreshes when the proof changes and clears when it ends.
+  // The displayed hold follows its chain proof and other tabs: it refreshes when its state changes,
+  // and once it ends the project is looked at again for another wallet's update.
   const watched = useRef<Address | null>(null)
-  useEffect(() => {
-    if (!otherHold || !client) return
-    let cancelled = false
-    const look = async () => {
-      const account = watched.current ?? otherHold.state.record.account
-      try {
-        const holds = await otherProjectAdminHolds(localStorage, client, chainId, projectId, account)
-        if (cancelled) return
-        await browserLocks().request(projectAdminLockName(chainId, projectId), { mode: 'exclusive', ifAvailable: true }, async lock => {
-          if (lock) pruneProjectAdminAccounts(localStorage, chainId, projectId, account)
-        })
-        if (!holds.length) setOtherHold(null)
-        else if (JSON.stringify(holds[0].state.record) !== JSON.stringify(otherHold.state.record) || holds[0].state.status !== otherHold.state.status) setOtherHold(holds[0])
-      } catch { /* The next look asks again. */ }
-    }
-    const timer = setInterval(() => void look(), 15_000)
-    return () => { cancelled = true; clearInterval(timer) }
-  }, [chainId, client, otherHold, projectId])
+  /** The hold whose exit the user accepted: its answer, not what it reports meanwhile, decides. */
+  const exiting = useRef<ProjectAdminHold['hold'] | null>(null)
+  const rescan = useCallback(async (shown: ProjectAdminHold) => {
+    if (!client) return
+    const account = watched.current ?? shown.state.record.account
+    try {
+      const holds = await otherProjectAdminHolds(localStorage, client, chainId, projectId, account)
+      await browserLocks().request(projectAdminLockName(chainId, projectId), { mode: 'exclusive', ifAvailable: true }, async lock => {
+        if (lock) pruneProjectAdminAccounts(localStorage, chainId, projectId, account)
+      })
+      setOtherHold(current => current?.hold !== shown.hold ? current : holds[0] ?? null)
+    } catch { /* The next look asks again. */ }
+  }, [chainId, client, projectId])
+  useWriteHoldWatch(otherHold?.hold, client as WriteHoldClient | undefined, state => {
+    if (!otherHold || exiting.current === otherHold.hold) return
+    if (state.status === 'clear') void rescan(otherHold)
+    else if (JSON.stringify(state.record) !== JSON.stringify(otherHold.state.record) || state.status !== otherHold.state.status) setOtherHold({ hold: otherHold.hold, state })
+  })
   const phase = otherHold ? 'submitted' as const : tx.phase
   const exitOther = useCallback(async () => {
     if (!otherHold || !client) return
     try {
       // The hold asks the chain again as the exit is taken, for the state the user saw.
+      exiting.current = otherHold.hold
       const { released, state } = await otherHold.hold.exit(otherHold.state, { checkedWallet: true }, client)
+        .finally(() => { exiting.current = null })
       if (released || state.status === 'clear') { setOtherHold(null); setError(null) }
       else setOtherHold({ hold: otherHold.hold, state })
     } catch (reason) { setError(errorMessage(reason)) }

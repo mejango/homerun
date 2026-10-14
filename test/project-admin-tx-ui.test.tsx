@@ -240,6 +240,25 @@ describe('project administrative writes', () => {
     } finally { vi.useRealTimers() }
   })
 
+  it('show another tab ending the displayed hold at once, without waiting for the next look', async () => {
+    vi.useFakeTimers()
+    try {
+      const { journal } = await foreignHold()
+      await render()
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })
+      expect(handle.held).not.toBeNull()
+      // Another tab takes the exit: the browser tells this one through a storage event.
+      await act(async () => {
+        journal.abandon(journal.read()!, { checkedWallet: true })
+        window.dispatchEvent(new StorageEvent('storage', { key: 'nana-sdk:reviewed-write:other-tab' }))
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(handle.held).toBeNull()
+      expect(handle.phase).toBe('idle')
+    } finally { vi.useRealTimers() }
+  })
+
   it('register the account when an existing Safe proposal is adopted, under the project lock', async () => {
     await render()
     await vi.waitFor(() => expect(handle.ready).toBe(true))
