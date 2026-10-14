@@ -489,6 +489,8 @@ export function useSafeTx(chainId: number) {
   const exiting = useRef(false)
   /** A write with a durable domain journal has no generic hold; its wallet may still have lost the reply. */
   const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null)
+  /** The receipt of a write the hold settled where this flow didn't follow it (adopted, or another tab's). */
+  const [settledReceipt, setSettledReceipt] = useState<TransactionReceipt | null>(null)
   useEffect(() => {
     mounted.current = true
     return () => { mounted.current = false; generation.current += 1 }
@@ -623,6 +625,11 @@ export function useSafeTx(chainId: number) {
         // This flow's call settled on evidence it didn't follow itself: only its verified result shows.
         if ('hash' in ended) {
           tracked.current = ended.hash
+          // Its verified receipt reaches the flow's own settlement, as a followed send's does.
+          const settledHash = ended.hash
+          void client.getTransactionReceipt({ hash: settledHash }).then(found => {
+            if (mounted.current && tracked.current === settledHash && found) setSettledReceipt(found as TransactionReceipt)
+          }, () => undefined)
           if (ended.result === 'success') setPhase('success')
           else { setError(WRITE_HOLD_REVERTED_LINE); setPhase('error') }
         } else { setError(SAFE_PROPOSAL_EXPIRED); setPhase('error') }
@@ -733,6 +740,7 @@ export function useSafeTx(chainId: number) {
       setHold(null)
       setHeld(null)
       setRecoveryNotice(null)
+      setSettledReceipt(null)
       // Read once: the review, the sent gas and the proposal tracking must all
       // agree on whether a Safe proposes this call.
       const viaSafe = isSafeConnection(wagmiConfig)
@@ -1007,6 +1015,7 @@ export function useSafeTx(chainId: number) {
     setHash(null)
     setShownKey(null)
     setRecoveryNotice(null)
+    setSettledReceipt(null)
     setHold(null)
     setHeld(null)
   }, [])
@@ -1045,7 +1054,7 @@ export function useSafeTx(chainId: number) {
     submissionHash: shownKey ? (proposal?.proposalHash ?? null) : hash,
     safeProposalHash: awaitingProposal,
     safeNonceGuidance: awaitingProposal ? SAFE_NONCE_GUIDANCE : null,
-    receipt: held ? null : shownKey ? (proposal?.receipt ?? null) : (receiptData ?? null),
+    receipt: held ? null : shownKey ? (proposal?.receipt ?? null) : (receiptData ?? settledReceipt ?? null),
     /** A write the chain has not placed, with the user's one exit; null otherwise. */
     held: held?.exit
       ? { line: held.line, warning: 'warning' in held && held.warning ? held.warning : writeExitMessage(held.record.call), label: WRITE_EXIT_LABEL, release }

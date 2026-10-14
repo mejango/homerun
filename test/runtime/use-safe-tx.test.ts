@@ -932,6 +932,21 @@ describe('useSafeTx', () => {
       expect(mocks.writeContract).toHaveBeenCalledOnce()
     })
 
+    it('is adopted already mined: tracking it delivers its verified receipt to the flow', async () => {
+      const { adoptLegacyWrite } = await import('@/lib/write-hold')
+      // The saved hash is this exact call, mined successfully before the reload.
+      mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => ({ hash, from: ALICE, to: BOB, nonce: 5, chainId: 10,
+        input: call().data, value: 7n, blockHash: BLOCK_HASH, blockNumber: 77n, transactionIndex: 0 }))
+      mocks.receipt = { data: canonicalReceipt('success'), isError: false }
+      const adopted = await adoptLegacyWrite({ chainId: 10, account: ALICE, safe: false, namespace: intentKey, call: call() }, { hash: HASH, submittedAt: Date.now() }, mocks.publicClient as never)
+      expect(adopted).toMatchObject({ status: 'clear', settled: { result: 'success', hash: HASH } })
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.track(request, { ...reviewedByAlice, recoveryNamespace: intentKey }) })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(hook.ref.current).toMatchObject({ phase: 'success' })
+      expect(hook.ref.current!.receipt?.transactionHash).toBe(HASH)
+    })
+
     it('is adopted once: a second adoption leaves the first hold as it is', async () => {
       const { adoptLegacyWrite } = await import('@/lib/write-hold')
       const input = { chainId: 10, account: ALICE, safe: false, namespace: intentKey, call: call() }
