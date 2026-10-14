@@ -216,6 +216,10 @@ const SHOWN_AS: Record<ProposalPhase, TxPhase> = {
 
 /** A hold that ended on its own while its exit was open: the earlier write is not sent again. */
 const WENT_THROUGH_LINE = 'Your earlier transaction went through.'
+/** A hold that ended with no settlement known (another tab's exit, say): nothing proves it ran. */
+const NO_LONGER_HELD_LINE = 'This transaction is no longer held here. Check your wallet before sending it again.'
+/** The line for a settled write: success only from its verified success. */
+const settledLine = (settled: { result: 'success' | 'failed' }) => settled.result === 'success' ? WENT_THROUGH_LINE : WRITE_HOLD_REVERTED_LINE
 const SAFE_EXECUTION_CONFIRMING = 'Executed by your Safe. Confirming it onchain.'
 /** What a Safe app replied in place of a proposal or execution hash. */
 const SAFE_REPLY_UNREADABLE = 'Safe did not return a proposal hash. Check Safe before sending this again.'
@@ -496,8 +500,8 @@ export function useSafeTx(chainId: number) {
   const tracked = useRef<Hex | null>(null)
   /** An exit is on screen: a clear that arrives meanwhile ends the attempt without a send. */
   const exitShown = useRef(false)
-  /** The settled write this flow already showed: sending that call again is then a new action. */
-  const shownSettled = useRef<Hex | null>(null)
+  /** How the call's earlier write settled where this flow didn't see it: a notice that blocks nothing. */
+  const [settledNotice, setSettledNotice] = useState<string | null>(null)
   const exiting = useRef(false)
   /** A write with a durable domain journal has no generic hold; its wallet may still have lost the reply. */
   const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null)
@@ -589,7 +593,7 @@ export function useSafeTx(chainId: number) {
         ? SAFE_EXECUTION_CONFIRMING
         : proposal?.phase === 'unproven'
           ? (proposal.message ?? SAFE_PROPOSAL_UNCONFIRMED)
-          : null)
+          : settledNotice)
   const effectiveError = shownKey
     ? proposal && SHOWN_AS[proposal.phase] === 'error'
       ? proposal.message
@@ -625,14 +629,17 @@ export function useSafeTx(chainId: number) {
     if (state.status === 'clear') {
       setHeld(null)
       const ended = state.settled
-      if (exitShown.current && !exiting.current && !ended) { setRecoveryNotice(WENT_THROUGH_LINE); setPhase('submitted') }
+      if (exitShown.current && !exiting.current && !ended) { setRecoveryNotice(NO_LONGER_HELD_LINE); setPhase('submitted') }
       exitShown.current = false
       if (ended && !tracked.current) {
-        if ('hash' in ended) { tracked.current = ended.hash; setHash(ended.hash) }
-        else { setError(SAFE_PROPOSAL_EXPIRED); setPhase('error') }
+        // This flow's call settled on evidence it didn't follow itself: only its verified result shows.
+        if ('hash' in ended) {
+          tracked.current = ended.hash
+          if (ended.result === 'success') setPhase('success')
+          else { setError(WRITE_HOLD_REVERTED_LINE); setPhase('error') }
+        } else { setError(SAFE_PROPOSAL_EXPIRED); setPhase('error') }
       } else if (ended && 'hash' in ended && tracked.current?.toLowerCase() === ended.hash) {
         // The hold verified this flow's own hash and let go: its result shows here.
-        shownSettled.current = ended.hash
         if (ended.result === 'success') setPhase('success')
         else { setError(WRITE_HOLD_REVERTED_LINE); setPhase('error') }
       }
@@ -687,7 +694,7 @@ export function useSafeTx(chainId: number) {
       // The hold asks the chain again as the exit is taken, and shows what it finds instead of releasing.
       const { released, state } = await hold.exit(held, { checkedWallet: true }, publicClient)
       if (!released && (state.status !== 'clear' || state.settled)) return
-      if (!released) { setRecoveryNotice(WENT_THROUGH_LINE); setPhase('submitted'); return }
+      if (!released) { setRecoveryNotice(NO_LONGER_HELD_LINE); setPhase('submitted'); return }
       // The registry's view of the proposal goes with it, so the next send asks Safe's queue again.
       const { record } = held
       if (record.safe && proposals.delete(proposalKey(record.chainId, record.account, { ...record.call, value: BigInt(record.call.value) }))) notifyProposals()
@@ -730,6 +737,7 @@ export function useSafeTx(chainId: number) {
       setShownKey(null)
       setPolledReceipt(null)
       tracked.current = null
+      setSettledNotice(null)
       // No exit is on screen for the send that starts now.
       exitShown.current = false
       setHold(null)
@@ -764,18 +772,9 @@ export function useSafeTx(chainId: number) {
           holdAt.current = at
           setHold(current)
           // The call's last write settled where this flow didn't see it (another tab, or before a
-          // reload): its result shows, and only sending again after that is a new action.
+          // reload): a settled write is finished, so its result is only a notice, and this send goes out.
           const before = current.peek()
-          const settled = before.status === 'clear' && before.settled && 'hash' in before.settled ? before.settled : null
-          if (settled && shownSettled.current !== settled.hash) {
-            shownSettled.current = settled.hash
-            tracked.current = settled.hash
-            inFlightRef.current = false
-            setHash(settled.hash)
-            if (settled.result === 'success') setPhase('success')
-            else { setError(WRITE_HOLD_REVERTED_LINE); setPhase('error') }
-            return settled.hash
-          }
+          if (before.status === 'clear' && before.settled && 'hash' in before.settled) setSettledNotice(settledLine(before.settled))
         }
         const execute = async (gate?: WriteHoldGate) => {
           assertCurrent()
@@ -995,6 +994,7 @@ export function useSafeTx(chainId: number) {
     inFlightRef.current = false
     tracked.current = null
     exitShown.current = false
+    setSettledNotice(null)
     setPhase('idle')
     setError(null)
     setHash(null)

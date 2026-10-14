@@ -898,7 +898,8 @@ describe('useSafeTx', () => {
     const other = createBrowserWriteRecovery({ chainId: 10, account: ALICE, safe: false, call: { to: BOB, data: encodeFunctionData({ abi: ABI, functionName: 'transfer', args: [BOB, 5n] }), value: 7n } })
     await other.withLock(async () => { other.abandon(other.read()!, { checkedWallet: true }) })
     await act(async () => { await hook.ref.current!.held!.release() })
-    expect(hook.ref.current).toMatchObject({ phase: 'submitted', notice: 'Your earlier transaction went through.', held: null })
+    // Another tab took the exit: nothing proves it ran, so nothing says it went through.
+    expect(hook.ref.current).toMatchObject({ phase: 'submitted', notice: 'This transaction is no longer held here. Check your wallet before sending it again.', held: null })
     expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 
@@ -911,7 +912,7 @@ describe('useSafeTx', () => {
       const other = createBrowserWriteRecovery({ chainId: 10, account: ALICE, safe: false, call: { to: BOB, data: encodeFunctionData({ abi: ABI, functionName: 'transfer', args: [BOB, 5n] }), value: 7n } })
       await other.withLock(async () => { other.abandon(other.read()!, { checkedWallet: true }) })
       await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
-      expect(hook.ref.current).toMatchObject({ notice: 'Your earlier transaction went through.', held: null })
+      expect(hook.ref.current).toMatchObject({ notice: 'This transaction is no longer held here. Check your wallet before sending it again.', held: null })
       expect(mocks.writeContract).toHaveBeenCalledOnce()
     } finally { vi.useRealTimers() }
   })
@@ -1013,7 +1014,7 @@ describe('useSafeTx', () => {
     expect(recoveryRecords()).toHaveLength(1)
   })
 
-  it('shows the result of a write that settled while its tab was closed, and sends nothing when it is opened again after a reload', async () => {
+  it('shows a write that settled while its tab was closed as a notice after a reload, and sends the next one at once as one new write', async () => {
     const first = await renderHook()
     await act(async () => { await first.ref.current!.send(request, reviewedByAlice) })
     expect(recoveryRecords()).toHaveLength(1)
@@ -1036,9 +1037,12 @@ describe('useSafeTx', () => {
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => { renderer = TestRenderer.create(createElement(Reloaded, { ref })) })
     renderers.push(renderer)
-    await act(async () => { await expect(ref.current!.send(request, reviewedByAlice)).resolves.toBe(HASH) })
-    expect(mocks.writeContract).toHaveBeenCalledOnce()
-    expect(ref.current).toMatchObject({ phase: 'success', hash: HASH, error: null, held: null })
+    mocks.writeContract.mockResolvedValueOnce(EXECUTION_HASH)
+    await act(async () => { await expect(ref.current!.send(request, reviewedByAlice)).resolves.toBe(EXECUTION_HASH) })
+    // A settled write is finished: the new send is a new write, and the earlier result is only a notice.
+    expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+    expect(recoveryRecords()).toEqual([expect.objectContaining({ hash: EXECUTION_HASH })])
+    expect(ref.current).toMatchObject({ phase: 'pending', hash: EXECUTION_HASH, notice: 'Your earlier transaction went through.', confirmationUncertain: false })
   })
 
   it('keeps a noncanonical receipt pending and retains its durable record', async () => {
