@@ -6,16 +6,18 @@
 import './dialog-shim'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Address, Hex } from 'viem'
 import { installRecoveryLocks } from './runtime/write-recovery-fixture'
 
 vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fixtures/homerun-deployer')).withHomerunDeployer(await importOriginal()))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ replace: vi.fn(), push: vi.fn() }) }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
+/** The chain the wallet is on. */
+const connected = vi.hoisted(() => ({ chainId: 8453 }))
 vi.mock('@wagmi/core', async importOriginal => {
   const { wallet } = await import('./support/fake-wallet')
-  return { ...(await importOriginal<typeof import('@wagmi/core')>()), getAccount: () => ({ address: wallet.account, chainId: 8453 }), getPublicClient: () => wallet.client }
+  return { ...(await importOriginal<typeof import('@wagmi/core')>()), getAccount: () => ({ address: wallet.account, chainId: connected.chainId }), getPublicClient: () => wallet.client }
 })
 vi.mock('wagmi', async importOriginal => {
   const { walletHooks } = await import('./support/fake-wallet')
@@ -65,6 +67,7 @@ const saved = () => decodeLaunchSession(localStorage.getItem(FUND_LAUNCH_KEY)!).
 beforeEach(() => {
   localStorage.clear(); installRecoveryLocks()
   wallet.reset(); wallet.connect(OWNER)
+  connected.chainId = 8453
   wallet.client.getChainId.mockImplementation(async () => 8453)
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
@@ -130,5 +133,39 @@ it('does not confirm a launch from a mined receipt until its hold settles', asyn
   await act(async () => { wallet.confirm(`0x${'1'.padStart(64, '0')}` as Hex) })
   await settle(); await settle(); await settle()
   expect(saved()).toMatchObject({ phase: 'confirmed', projectId: '42' })
+})
+
+describe('a two-chain direct launch', () => {
+  const twoChains = () => saveLaunch({ version: 1, name: 'Test asset', transport: 'direct', input: { owner: OWNER, sender: OWNER, chainIds: [8453, 10], projectUri: 'ipfs://bafkreimetadata', tokenName: 'House FUND', ticker: 'HOUSE', salt: SALT, mustStartAtOrAfter: 1_000, creationFees: { 8453: 0n, 10: 0n } }, statuses: { 8453: { phase: 'ready' }, 10: { phase: 'ready' } } })
+  const first = `0x${'1'.padStart(64, '0')}` as Hex
+
+  it('sends the next chain on its own once the first hold settles with success', async () => {
+    twoChains()
+    verification.launch = async () => 42n
+    await render()
+    // The wallet and the node follow the chain the wallet was last switched to.
+    wallet.client.getChainId.mockImplementation(async () => connected.chainId)
+    wallet.switchChain.mockImplementation(async ({ chainId }: { chainId: number }) => { connected.chainId = chainId })
+    await click('Continue creation')
+    expect(wallet.writeContract).toHaveBeenCalledOnce()
+    await act(async () => { wallet.confirm(first) })
+    await settle(); await settle(); await settle()
+    expect(decodeLaunchSession(localStorage.getItem(FUND_LAUNCH_KEY)!).statuses[8453].phase).toBe('confirmed')
+    // No press: the second chain's send follows the first's settlement.
+    await vi.waitFor(() => expect(wallet.writeContract, host.textContent ?? '').toHaveBeenCalledTimes(2))
+    expect(wallet.writeContract.mock.calls[1][0]).toMatchObject({ chainId: 10 })
+  })
+
+  it('stops when the first settles without success', async () => {
+    twoChains()
+    verification.launch = async () => 42n
+    await render()
+    await click('Continue creation')
+    expect(wallet.writeContract).toHaveBeenCalledOnce()
+    await act(async () => { wallet.confirm(first, 10n, 'reverted') })
+    await settle(); await settle(); await settle()
+    expect(decodeLaunchSession(localStorage.getItem(FUND_LAUNCH_KEY)!).statuses[8453].phase).not.toBe('confirmed')
+    expect(wallet.writeContract).toHaveBeenCalledOnce()
+  })
 })
 

@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react'
 import { encodeFunctionData, type Abi, type Address, type Hex } from 'viem'
 import { vi } from 'vitest'
 
-type Receipt = { status: 'success'; blockNumber: bigint; blockHash: Hex; transactionHash: Hex; transactionIndex: number; from: Address; to: Address; logs: [] }
+type Receipt = { status: 'success' | 'reverted'; blockNumber: bigint; blockHash: Hex; transactionHash: Hex; transactionIndex: number; from: Address; to: Address; logs: [] }
 type WrittenTransaction = { hash: Hex; chainId: number; from: Address; to: Address; input: Hex; blockHash: Hex | null; blockNumber: bigint | null; transactionIndex: number | null }
 
 /** The hash the fake wallet answers its `n`th write (from 1) with. */
@@ -82,13 +82,13 @@ function createFakeWallet() {
       account = next
       notify()
     },
-    /** The chain reports `hash` as confirmed. */
-    confirm(hash: Hex, blockNumber = 10n) {
+    /** The chain reports `hash` as confirmed (or, with `status`, reverted). */
+    confirm(hash: Hex, blockNumber = 10n, status: Receipt['status'] = 'success') {
       const key = hash.toLowerCase()
       const transaction = transactions.get(key)!
       const blockHash = sentHash(Number(blockNumber))
       Object.assign(transaction, { blockNumber, blockHash, transactionIndex: 0 })
-      const receipt: Receipt = { status: 'success', blockNumber, blockHash, transactionHash: hash,
+      const receipt: Receipt = { status, blockNumber, blockHash, transactionHash: hash,
         transactionIndex: 0, from: transaction.from, to: transaction.to, logs: [] }
       receipts.set(key, receipt)
       for (const resolve of awaiting.get(key) ?? []) resolve(receipt)

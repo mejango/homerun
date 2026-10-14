@@ -251,6 +251,8 @@ export function FundDeploy({ values, onLockChange, importedRecord, onRecordUsed 
   const [progress, setProgress] = useState('')
   const [runId, setRunId] = useState(0)
   const busyRef = useRef(false)
+  /** A direct launch started on this page continues chain by chain as each hold settles with success. */
+  const autoContinue = useRef(false)
   useEffect(() => {
     try { const saved = localStorage.getItem(FUND_LAUNCH_KEY); if (saved) setSession(decodeLaunchSession(saved)) }
     catch (cause) { setError(message(cause)) }
@@ -297,6 +299,8 @@ export function FundDeploy({ values, onLockChange, importedRecord, onRecordUsed 
         setProgress('Your project is created on every selected chain.')
       } else {
         setProgress('Confirm the deployment in your wallet.')
+        // While this page stays open, each chain's settled success starts the next.
+        autoContinue.current = true
         directStarted = true
         setRunId(value => value + 1)
         return
@@ -377,6 +381,19 @@ export function FundDeploy({ values, onLockChange, importedRecord, onRecordUsed 
   const signingChain = running ? session?.input.chainIds.find(id => session.statuses[id].phase === 'signing') : undefined
   const activeChain = session?.input.chainIds.find(id => session.statuses[id].phase !== 'confirmed')
   useEffect(() => { if (complete) { busyRef.current = false; setRunning(false); router.replace('/create/success') } }, [complete, router])
+  // A chain confirmed by its hold's settlement starts the next chain, as Continue would; anything else stops the run.
+  const confirmedChains = session ? session.input.chainIds.filter(id => session.statuses[id].phase === 'confirmed').length : 0
+  const revertedChain = !!session && session.input.chainIds.some(id => session.statuses[id].phase === 'reverted')
+  const lastConfirmed = useRef(confirmedChains)
+  useEffect(() => {
+    const before = lastConfirmed.current
+    lastConfirmed.current = confirmedChains
+    if (revertedChain) { autoContinue.current = false; return }
+    if (!session || complete || !autoContinue.current || confirmedChains <= before || session.transport === 'relayr' || session.transport === 'intent') return
+    void run(session)
+  // The confirmed count decides; the run reads the saved launch.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirmedChains, revertedChain])
   return <div className="fund-launch">
     <h2 className="text-xl">Create your project</h2>
     <p>Create your multisigs and the FUND raise on your selected chains. INCOME and the Owner’s success allocation are separate later actions.</p>
