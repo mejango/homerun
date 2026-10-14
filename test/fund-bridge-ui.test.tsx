@@ -24,6 +24,7 @@ const runtime = vi.hoisted(() => ({
   verifyDestinationMint: vi.fn(),
   sourceClient: { chain: { id: 8453 } },
   destinationClient: { chain: { id: 10 } },
+  movements: [] as unknown[], relayValue: 0n,
   engine: null as null | { phase: string; notice?: string; receipt: { status: string; transactionHash: string; blockNumber: bigint } | null },
 }))
 vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
@@ -51,7 +52,7 @@ vi.mock('@tanstack/react-query', () => ({
       runtime.enabled.push(!!options.enabled)
       return { data: options.enabled && runtime.routeAvailable ? runtime.route : undefined, isError: runtime.routeError, isFetching: false, error: new Error('Route unavailable'), refetch: vi.fn() }
     }
-    if (options.queryKey[1] === 'movements') return { data: runtime.historyError ? undefined : { route: runtime.route, movements: [] }, isError: runtime.historyError, error: new Error('Missing destination root proof'), isPending: false, isFetching: false, refetch: vi.fn() }
+    if (options.queryKey[1] === 'movements') return { data: runtime.historyError ? undefined : { route: runtime.route, movements: runtime.movements }, isError: runtime.historyError, error: new Error('Missing destination root proof'), isPending: false, isFetching: false, refetch: vi.fn() }
     if (options.queryKey[1] === 'quote') return { data: runtime.quote, isError: false, isFetching: false }
     return { data: undefined, isError: false, isFetching: false }
   },
@@ -67,7 +68,17 @@ vi.mock('@/lib/fund-bridge', async importOriginal => ({
   }),
 }))
 
+// A movement's live state, and the relay's fee value, read fresh each attempt.
+vi.mock('@/lib/project-bridge', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/lib/project-bridge')>(),
+  readProjectBridgeMovements: async () => runtime.movements,
+  readProjectBridgeSendValue: async () => runtime.relayValue,
+  buildProjectBridgeSend: (route: FundBridgeRoute, value: bigint) => ({ chainId: route.source.chainId, address: route.sourceSucker,
+    abi: parseAbi(['function toRemote(address token) payable']), functionName: 'toRemote', args: [route.sourceToken], value }),
+}))
+
 import { FundBridgeActions } from '../src/components/FundBridgeActions'
+import { expectRetryHeldByIntent } from './support/intent-retry'
 
 let host: HTMLDivElement
 let root: Root
@@ -82,6 +93,7 @@ beforeEach(() => {
   runtime.route = makeRoute(); runtime.routeAvailable = true; runtime.routeError = false; runtime.historyError = false
   runtime.mounted = 0; runtime.unmounted = 0; runtime.enabled = []
   runtime.idle = false; runtime.safe = false; runtime.quote = undefined; runtime.engine = null; runtime.send.mockReset()
+  runtime.movements = []; runtime.relayValue = 0n
   runtime.verifyDestinationMint.mockReset().mockResolvedValue(undefined)
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
@@ -257,4 +269,21 @@ it('frees the move once the engine reads its Safe execution as failed', async ()
   runtime.engine = { phase: 'error', receipt: { status: 'success', transactionHash: `0x${'cd'.repeat(32)}`, blockNumber: 11n } }
   await render()
   expect(approve().disabled).toBe(false)
+})
+
+it('relays a prepared movement under its batch, and a retry with a fresh fee is held by the first', async () => {
+  runtime.idle = true
+  const route = runtime.route!
+  runtime.movements = [{ sourceSucker: route.sourceSucker, destinationSucker: route.destinationSucker, beneficiary: runtime.address,
+    leaf: { index: 3n, projectTokenCount: 2n * 10n ** 18n }, leafHash: `0x${'12'.repeat(32)}`, status: 'pending', canExecute: true }]
+  runtime.send.mockImplementation(async (request: TxRequest, options: TxSendOptions) => { await options.reverify?.(request); return null })
+  await render()
+  const relay = () => [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Review relay fee and send')!
+  runtime.relayValue = 2n
+  await act(async () => relay().click())
+  runtime.relayValue = 3n
+  await act(async () => relay().click())
+  const relays = runtime.send.mock.calls.filter(([request]) => (request as TxRequest).functionName === 'toRemote').map(([request, options]) => ({ request, options }))
+  expect(relays).toHaveLength(2)
+  await expectRetryHeldByIntent(relays[0], relays[1], writeIntent('bridge-relay', { sucker: route.sourceSucker, token: route.sourceToken }))
 })

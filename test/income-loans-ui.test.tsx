@@ -21,6 +21,7 @@ const runtime = vi.hoisted(() => ({
   handles: [] as Handle[], next: 0,
   permitted: false, loans: [] as unknown[], loan: undefined as unknown,
   sends: [] as { request: TxRequest; options: TxSendOptions }[],
+  allowance: 0n, reallocation: undefined as unknown, partial: undefined as unknown,
 }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: WALLET }) }))
 vi.mock('@/hooks/useSafeTx', () => ({
@@ -42,8 +43,17 @@ vi.mock('@/lib/income-state', async importOriginal => ({
   readIncomeLoan: async () => runtime.loan,
 }))
 vi.mock('@/lib/loans-queries', () => ({ getLoans: async () => ({ items: runtime.loans, totalCount: runtime.loans.length }) }))
+// The loan tools' quotes, as a fresh quote returns them each attempt.
+vi.mock('@/lib/income-loan-tools', async importOriginal => ({
+  ...await importOriginal<typeof import('@/lib/income-loan-tools')>(),
+  prepareIncomeLoanReallocation: async () => runtime.reallocation,
+  prepareIncomePartialRepayment: async () => runtime.partial,
+}))
 
 import { IncomeBorrow, IncomeLoansList } from '@/components/IncomeProject'
+import { IncomeLoanTools } from '@/components/IncomeLoanTools'
+import { buildReallocateCollateralTx, MIN_PREPAID_FEE_PERCENT } from '@bananapus/nana-sdk-core/v6'
+import { expectRetryHeldByIntent } from './support/intent-retry'
 
 const context = { token: USDC, terminal: TERMINAL, decimals: 6, currency: 1, symbol: 'USDC', isPrimary: true, balance: 0n }
 const state = {
@@ -64,6 +74,8 @@ async function type(label: string, value: string) {
 
 beforeEach(() => {
   runtime.next = 0; runtime.permitted = false; runtime.loans = []; runtime.loan = undefined; runtime.sends = []
+  runtime.allowance = 0n; runtime.reallocation = undefined; runtime.partial = undefined
+  client.readContract.mockReset().mockImplementation(async ({ functionName }: { functionName: string }) => functionName === 'hasPermission' ? true : runtime.allowance)
   runtime.handles = Array.from({ length: 4 }, () => ({
     notice: null, dismiss: vi.fn(), phase: 'idle', busy: false, isSafe: false, error: null, hash: null, safeProposalHash: null, receipt: null, reset: vi.fn(),
     send: vi.fn(async (request: TxRequest, options: TxSendOptions = {}) => { await options.reverify?.(request); runtime.sends.push({ request, options }); return HASH }),
@@ -139,5 +151,81 @@ describe('INCOME loans like Juicebox Money', () => {
     // Its ceiling accrues with time: a retry is held by the loan the user chose to repay.
     expect(runtime.sends[0].options.recoveryNamespace).toBe(writeIntent('loan-repay', { project: state.projectId, loan: 41n }))
     expect(runtime.sends[0].request.value).toBe(4n * UNIT / 10n + 4n * UNIT / 10_000n)
+  })
+
+  /** An open USDC loan this wallet owns, whose repay ceiling is `ceiling` now. */
+  const usdcLoan = (ceiling: bigint) => ({ blockNumber: 200n, chainId: 8453, projectId: 9n, loanId: 41n, owner: WALLET, loan: { amount: 400_000n, collateral: 5n * UNIT, sourceToken: USDC },
+    sourceContext: context, accruedFee: ceiling - 400_400n, repayCeiling: ceiling })
+  /** Every send stops after it is handed over, as a Safe proposal or a lost reply does: nothing follows it. */
+  const stopAfterEachSend = () => { for (const handle of runtime.handles) handle.send.mockImplementation(async (request: TxRequest, options: TxSendOptions = {}) => { await options.reverify?.(request); runtime.sends.push({ request, options }); return null }) }
+
+  it('approves a full repayment under its loan, and a retry with a ceiling that accrued is held by the first', async () => {
+    runtime.loans = [{ id: '41', owner: WALLET, collateral: String(5n * UNIT), borrowAmount: '400000', token: USDC, createdAt: 1_800_000_000, chainId: 8453 }]
+    runtime.loan = usdcLoan(400_400n)
+    stopAfterEachSend()
+    await act(async () => root.render(<QueryClientProvider client={cache}><IncomeLoansList state={state} client={client as never} /></QueryClientProvider>))
+    await settle()
+    await act(async () => button('Repay').click()); await settle()
+    await act(async () => button('Confirm & repay').click()); await settle()
+    runtime.loan = usdcLoan(400_500n)
+    await act(async () => button('Confirm & repay').click()); await settle()
+    expect(runtime.sends.map(sent => sent.request.functionName)).toEqual(['approve', 'approve'])
+    await expectRetryHeldByIntent(runtime.sends[0], runtime.sends[1], writeIntent('loan-repay-approve', { project: state.projectId, loan: 41n, token: USDC }))
+  })
+
+  async function loanTools(action: 'reallocate' | 'partialRepay', collateral: string) {
+    await act(async () => root.render(<QueryClientProvider client={cache}><IncomeLoanTools state={state} client={client as never} /></QueryClientProvider>))
+    await type('Loan NFT ID', '41'); await settle()
+    await act(async () => {
+      const select = host.querySelector('select')!
+      select.value = action
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    await type(action === 'reallocate' ? 'INCOME collateral to move' : 'INCOME collateral to return', collateral); await settle()
+  }
+  const reviewLoanChange = async () => { await act(async () => button('Review loan change').click()); await settle() }
+
+  it('refinances under the chosen move, and a retry with a fresh minimum is held by the first', async () => {
+    runtime.loan = usdcLoan(400_400n)
+    const quoteWith = (minimum: bigint) => ({
+      loan: runtime.loan, grossBorrowAmount: minimum + 1n, minimumBorrowAmount: minimum, remainingCollateral: 3n * UNIT, newCollateral: 2n * UNIT,
+      transaction: buildReallocateCollateralTx({ chainId: 8453, loanId: 41n, collateralCountToTransfer: 2n * UNIT, token: USDC, minBorrowAmount: minimum,
+        collateralCountToAdd: 0n, beneficiary: WALLET, prepaidFeePercent: MIN_PREPAID_FEE_PERCENT }),
+    })
+    await loanTools('reallocate', '2')
+    runtime.reallocation = quoteWith(100_000n)
+    await reviewLoanChange()
+    runtime.reallocation = quoteWith(99_000n)
+    await reviewLoanChange()
+    expect(runtime.sends.map(sent => sent.request.functionName)).toEqual(['reallocateCollateralFromLoan', 'reallocateCollateralFromLoan'])
+    await expectRetryHeldByIntent(runtime.sends[0], runtime.sends[1], writeIntent('loan-reallocate', { project: state.projectId, loan: 41n, collateral: 2n * UNIT, added: 0n }))
+  })
+
+  /** A partial repayment's quote whose ceiling is `ceiling` now. */
+  const partialWith = (ceiling: bigint) => ({ loan: runtime.loan, principal: 200_000n, fee: 1_000n, owed: 201_000n, ceiling,
+    collateralToReturn: 2n * UNIT, remainingPrincipal: 200_000n, remainingCollateral: 3n * UNIT })
+
+  it('approves a partial repayment under its loan, and a retry with a ceiling that accrued is held by the first', async () => {
+    runtime.loan = usdcLoan(400_400n)
+    stopAfterEachSend()
+    await loanTools('partialRepay', '2')
+    runtime.partial = partialWith(201_300n)
+    await reviewLoanChange()
+    runtime.partial = partialWith(201_400n)
+    await reviewLoanChange()
+    expect(runtime.sends.map(sent => sent.request.functionName)).toEqual(['approve', 'approve'])
+    await expectRetryHeldByIntent(runtime.sends[0], runtime.sends[1], writeIntent('loan-repay-approve', { project: state.projectId, loan: 41n, token: USDC }))
+  })
+
+  it('repays part of a loan under the chosen collateral, and a retry with a ceiling that accrued is held by the first', async () => {
+    runtime.loan = usdcLoan(400_400n)
+    runtime.allowance = 10n ** 30n
+    await loanTools('partialRepay', '2')
+    runtime.partial = partialWith(201_300n)
+    await reviewLoanChange()
+    runtime.partial = partialWith(201_400n)
+    await reviewLoanChange()
+    expect(runtime.sends.map(sent => sent.request.functionName)).toEqual(['repayLoan', 'repayLoan'])
+    await expectRetryHeldByIntent(runtime.sends[0], runtime.sends[1], writeIntent('loan-partial-repay', { project: state.projectId, loan: 41n, collateral: 2n * UNIT }))
   })
 })
