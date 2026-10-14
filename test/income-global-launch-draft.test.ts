@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('../src/lib/income-contracts', async original => ({ ...await original<typeof import('../src/lib/income-contracts')>(), registeredHomerunDeployer: () => '0x2222222222222222222222222222222222222222' }))
-import { beginIncomeLaunchSubmission, incomeLaunchSessionKey } from '../src/lib/income-launch-session'
+import { incomeLaunchRecord } from '../src/lib/income-launch-session'
 import { INCOME_GLOBAL_DRAFT_KEY, parseIncomeGlobalDraft, readIncomeGlobalDraft, saveIncomeGlobalDraft, serializeIncomeGlobalDraft, verifyIncomeGlobalDraftManifest, withIncomeGlobalDraftLock } from '../src/lib/income-global-launch-draft'
 import { globalDraft, globalManifest, hashFor, launchInput, launchPlan, OWNER } from './fixtures/income-global-launch'
 
@@ -28,7 +28,7 @@ describe('frozen global INCOME launch descriptor', () => {
   it('merges execution evidence without stale tabs erasing another chain’s progress', () => {
     const storage = memory(), initial = saveIncomeGlobalDraft(storage, globalDraft())
     const evidence = (chainId: number) => {
-      const record = beginIncomeLaunchSubmission(localStorage, incomeLaunchSessionKey(chainId, BigInt(initial.chains.find(local => local.chainId === chainId)!.fundProjectId)), launchPlan(launchInput(initial, chainId as 1)).request, BigInt(initial.chains.find(local => local.chainId === chainId)!.fundProjectId), OWNER, false, 200n)
+      const record = incomeLaunchRecord(launchPlan(launchInput(initial, chainId as 1)).request, BigInt(initial.chains.find(local => local.chainId === chainId)!.fundProjectId), OWNER, false, 200n)
       return { hash: hashFor(chainId), record }
     }
     saveIncomeGlobalDraft(storage, { ...initial, chains: initial.chains.map(local => local.chainId === 1 ? { ...local, execution: evidence(1) } : local) })
@@ -38,7 +38,7 @@ describe('frozen global INCOME launch descriptor', () => {
   })
   it('binds execution evidence to the frozen ticker and reserved percent', () => {
     const draft = globalDraft()
-    const record = beginIncomeLaunchSubmission(localStorage, incomeLaunchSessionKey(8453, 7n), launchPlan(launchInput(draft)).request, 7n, OWNER, false, 200n)
+    const record = incomeLaunchRecord(launchPlan(launchInput(draft)).request, 7n, OWNER, false, 200n)
     draft.chains[2].execution = { hash: hashFor(8453), record }
     expect(parseIncomeGlobalDraft(draft).ticker).toBe('RENT')
     expect(() => parseIncomeGlobalDraft({ ...draft, ticker: 'OTHER' })).toThrow(/invalid/)
@@ -46,7 +46,7 @@ describe('frozen global INCOME launch descriptor', () => {
   })
   it('stores receipt evidence without a trusted success flag and rejects evidence for different economics', () => {
     const draft = globalDraft()
-    const input = launchInput(draft), record = beginIncomeLaunchSubmission(localStorage, incomeLaunchSessionKey(8453, 7n), launchPlan(input).request, 7n, OWNER, false, 200n)
+    const input = launchInput(draft), record = incomeLaunchRecord(launchPlan(input).request, 7n, OWNER, false, 200n)
     draft.chains[2].execution = { hash: hashFor(8453), record }
     const parsed = parseIncomeGlobalDraft(JSON.parse(serializeIncomeGlobalDraft(draft)))
     expect(parsed.chains[2].execution?.record).toEqual(record)
@@ -76,7 +76,7 @@ describe('frozen global INCOME launch descriptor', () => {
     await Promise.all([1, 8453].map(chainId => withIncomeGlobalDraftLock(() => {
       const current = readIncomeGlobalDraft(storage, 8453, 7n)!
       const fundProjectId = BigInt(initial.chains.find(local => local.chainId === chainId)!.fundProjectId)
-      const record = beginIncomeLaunchSubmission(localStorage, incomeLaunchSessionKey(chainId, fundProjectId), launchPlan(launchInput(initial, chainId as 1)).request, fundProjectId, OWNER, false, 200n)
+      const record = incomeLaunchRecord(launchPlan(launchInput(initial, chainId as 1)).request, fundProjectId, OWNER, false, 200n)
       return saveIncomeGlobalDraft(storage, { ...current, chains: current.chains.map(local => local.chainId === chainId ? { ...local, execution: { hash: hashFor(chainId), record } } : local) })
     })))
     const updated = readIncomeGlobalDraft(storage, 8453, 7n)!

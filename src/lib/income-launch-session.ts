@@ -1,10 +1,11 @@
-/** INCOME launch recovery is duplicate protection, never evidence of execution. */
+/** An INCOME launch record is what a settled launch is verified against, never evidence of execution. */
 import { MappableAsset, parseSuckerDeployerConfig, type JBChainId } from '@bananapus/nana-sdk-core'
 import { decodeFunctionData, encodeFunctionData, getAddress, isAddress, isAddressEqual, zeroAddress, zeroHash, type Address, type Hex, type PublicClient } from 'viem'
 import { FUND_CHAIN_IDS, type FundTransaction } from './fund-contracts'
 import { homerunDeployerAbi, INITIAL_INCOME_SUPPLY, registeredHomerunDeployer } from './income-contracts'
-import { assertSafeProposalCall, verifyStickyExecution, type ExistingSafeProposal, type StickyPending, type StickyStorage } from './sticky-session'
-import { withPrewalletReservation } from './prewallet-reservation'
+import { writeIntentKey, type ReviewedWriteRecoveryInput } from '@bananapus/nana-sdk-core/review'
+import { verifyStickyExecution, type StickyPending, type StickyStorage } from './sticky-session'
+import type { LegacyWriteEvidence } from './write-hold'
 
 export type IncomeLaunchPending = StickyPending & {
   kind: 'income-launch'
@@ -116,78 +117,42 @@ export function readIncomeLaunchPending(storage: IncomeLaunchStorage, key: strin
   return saved === null ? null : parseRecord(saved, key)
 }
 
-function persist(storage: IncomeLaunchStorage, key: string, record: IncomeLaunchPending, previousRaw?: string | null): IncomeLaunchPending {
-  const validated = parseRecord(JSON.stringify(record), key)
-  const encoded = JSON.stringify(validated)
-  const write = () => {
-    storage.setItem(key, encoded)
-    if (storage.getItem(key) !== encoded) throw new Error('The browser could not save INCOME launch recovery data. Do not submit another launch until the saved record is restored.')
-    return validated
-  }
-  return previousRaw === undefined ? write() : withPrewalletReservation(storage, key, previousRaw, encoded, write)
-}
-
-/** Call from beforeWrite, while holding withIncomeLaunchLock across review and wallet submission. */
-function persistIncomeLaunchSubmission(storage: IncomeLaunchStorage, key: string, request: FundTransaction, projectId: bigint, holder: Address, safe: boolean, afterBlock: bigint, proposal?: ExistingSafeProposal): IncomeLaunchPending {
-  if (readIncomeLaunchPending(storage, key)) throw new Error('An INCOME launch may already be pending for this FUND. Verify its execution before submitting another.')
-  if (typeof afterBlock !== 'bigint' || afterBlock < 0n || afterBlock >= UINT256_LIMIT || typeof request.value !== 'undefined' && typeof request.value !== 'bigint') throw invalid()
-  if (typeof globalThis.crypto?.randomUUID !== 'function') throw new Error('Secure browser transaction recovery is unavailable. Use a supported secure browser before launching INCOME.')
-  const record: IncomeLaunchPending = {
-    version: 1, kind: 'income-launch', sessionId: globalThis.crypto.randomUUID(), phase: 'unknown',
-    chainId: request.chainId, projectId: projectId.toString(), holder, target: request.address,
-    data: encodeFunctionData({ abi: request.abi, functionName: request.functionName, args: request.args }),
-    value: (request.value ?? 0n).toString(), label: 'Deploy INCOME', safe, submittedAt: Date.now(), afterBlock: afterBlock.toString(),
-    ...(proposal ? { phase: 'pending' as const, hash: proposal.proposalHash } : {}),
-  }
-  return persist(storage, key, record, proposal ? undefined : null)
-}
-
-export function beginIncomeLaunchSubmission(storage: IncomeLaunchStorage, key: string, request: FundTransaction, projectId: bigint, holder: Address, safe: boolean, afterBlock: bigint): IncomeLaunchPending {
-  return persistIncomeLaunchSubmission(storage, key, request, projectId, holder, safe, afterBlock)
-}
-/** The original call's embedded local snapshot bounds historical receipt recovery. */
-export function adoptIncomeLaunchProposal(storage: IncomeLaunchStorage, key: string, request: FundTransaction, projectId: bigint, holder: Address, proposal: ExistingSafeProposal): IncomeLaunchPending {
-  assertSafeProposalCall(request, proposal)
-  const decoded = decodeFunctionData({ abi: homerunDeployerAbi, data: proposal.call.data })
-  if (decoded.functionName !== 'deployIncome') throw invalid()
-  const local = decoded.args[1].allocations.find(entry => entry.chainId === request.chainId)
-  if (!local) throw invalid()
-  return persistIncomeLaunchSubmission(storage, key, request, projectId, holder, true, local.snapshotBlockNumber, proposal)
-}
-
-function matchingCurrent(storage: IncomeLaunchStorage, key: string, record: IncomeLaunchPending): IncomeLaunchPending {
-  const expected = parseRecord(JSON.stringify(record), key)
-  const current = readIncomeLaunchPending(storage, key)
-  if (!current || JSON.stringify(current) !== JSON.stringify(expected)) throw new Error('INCOME launch recovery changed in another tab. Reload the pending record before changing its progress.')
-  return current
-}
-
-export function recordIncomeLaunchHash(storage: IncomeLaunchStorage, key: string, record: IncomeLaunchPending, hash: Hex): IncomeLaunchPending {
-  if (!nonzeroHash(hash)) throw new Error('Invalid INCOME transaction or Safe proposal hash.')
-  const persisted = readIncomeLaunchPending(storage, key)
-  if (persisted && JSON.stringify(persisted) === JSON.stringify(parseRecord(JSON.stringify({ ...record, phase: 'pending', hash }), key))) return persisted
-  const current = matchingCurrent(storage, key, record)
-  if (current.hash && current.hash.toLowerCase() !== hash.toLowerCase()) throw new Error('A different INCOME transaction is already pending. Verify that execution before recording another hash.')
-  return persist(storage, key, { ...current, phase: 'pending', hash })
-}
-
-/** Only after an explicit wallet rejection or an exact confirmed/reverted execution; never after timeout or an RPC error. */
-export function clearIncomeLaunchPending(storage: IncomeLaunchStorage, key: string, record: IncomeLaunchPending): void {
-  matchingCurrent(storage, key, record)
+/** The SDK holds the write; a pre-hold journal record is adopted into that hold, then removed. */
+export function clearIncomeLaunchPending(storage: IncomeLaunchStorage, key: string): void {
+  validateKey(key)
   storage.removeItem(key)
   if (storage.getItem(key) !== null) throw new Error('The browser could not clear the resolved INCOME launch record.')
 }
 
-export function exportIncomeLaunchPending(record: IncomeLaunchPending): string {
-  return JSON.stringify(parseRecord(JSON.stringify(record), incomeLaunchSessionKey(record.chainId, BigInt(record.projectId))), null, 2)
+// TODO(SDK 2.38): switch to the SDK's launchIntent.
+export function incomeLaunchIntent(projectId: bigint): string {
+  return writeIntentKey('income-launch', { fund: projectId })
 }
 
-/** Imported data can only restore a pending attempt. It never establishes successful deployment. */
-export function importIncomeLaunchPending(storage: IncomeLaunchStorage, key: string, raw: string): IncomeLaunchPending {
-  const record = parseRecord(raw, key)
-  const existing = readIncomeLaunchPending(storage, key)
-  if (existing && JSON.stringify(existing) !== JSON.stringify(record)) throw new Error('Another INCOME launch record is already saved. Verify that attempt before importing a different record.')
-  return persist(storage, key, record)
+/** The launch as sent: what its settled execution is verified against and the plan saves. */
+export function incomeLaunchRecord(request: FundTransaction, projectId: bigint, holder: Address, safe: boolean, afterBlock: bigint, hash?: Hex): IncomeLaunchPending {
+  return parseRecord(JSON.stringify({
+    version: 1, kind: 'income-launch', sessionId: globalThis.crypto.randomUUID(), phase: hash ? 'pending' : 'unknown',
+    chainId: request.chainId, projectId: projectId.toString(), holder, target: request.address,
+    data: encodeFunctionData({ abi: request.abi, functionName: request.functionName, args: request.args }),
+    value: (request.value ?? 0n).toString(), label: 'Deploy INCOME', safe, submittedAt: Date.now(), afterBlock: afterBlock.toString(),
+    ...(hash ? { hash } : {}),
+  }), incomeLaunchSessionKey(request.chainId, projectId))
+}
+
+/** A journal record from before SDK holds, as the hold it is adopted into. */
+export function incomeLaunchHold(record: IncomeLaunchPending): { request: FundTransaction; input: ReviewedWriteRecoveryInput; evidence: LegacyWriteEvidence } {
+  const { functionName, args } = decodeFunctionData({ abi: homerunDeployerAbi, data: record.data })
+  const value = BigInt(record.value)
+  return {
+    request: { chainId: record.chainId, address: record.target, abi: homerunDeployerAbi, functionName, args, value } as FundTransaction,
+    input: { chainId: record.chainId, account: record.holder, safe: record.safe, namespace: incomeLaunchIntent(BigInt(record.projectId)), call: { to: record.target, data: record.data, value } },
+    evidence: { submittedAt: record.submittedAt, ...(record.hash ? record.safe ? { safe: { safeTxHash: record.hash } } : { hash: record.hash } : {}) },
+  }
+}
+
+export function exportIncomeLaunchPending(record: IncomeLaunchPending): string {
+  return JSON.stringify(parseRecord(JSON.stringify(record), incomeLaunchSessionKey(record.chainId, BigInt(record.projectId))), null, 2)
 }
 
 /** Use the same exact EOA/Safe payload and canonical receipt verification as the native Sticky flow. */
@@ -195,14 +160,4 @@ export async function verifyIncomeLaunchExecution(client: PublicClient, record: 
   const validated = parseRecord(JSON.stringify(record), incomeLaunchSessionKey(record.chainId, BigInt(record.projectId)))
   if (!validated.safe && validated.hash && validated.hash.toLowerCase() !== hash.toLowerCase()) throw new Error('Use the saved INCOME transaction hash. Another transaction cannot resolve this pending submission.')
   return verifyStickyExecution(client, validated, hash)
-}
-
-/** Hold this lock for the entire review and write, including beforeWrite persistence. No timeout releases uncertain attempts. */
-export async function withIncomeLaunchLock<T>(key: string, task: () => Promise<T>): Promise<T> {
-  validateKey(key)
-  if (typeof navigator === 'undefined' || typeof navigator.locks?.request !== 'function') throw new Error('This browser cannot safely coordinate INCOME launches across tabs. Use a browser with Web Locks support.')
-  return navigator.locks.request(key, { mode: 'exclusive', ifAvailable: true }, async lock => {
-    if (!lock) throw new Error('This FUND’s INCOME launch is being reviewed or submitted in another tab.')
-    return task()
-  })
 }

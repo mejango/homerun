@@ -5,12 +5,10 @@ import { encodeAbiParameters, encodeEventTopics, encodeFunctionData, parseAbi, z
 import { homerunDeployerAbi, INITIAL_INCOME_SUPPLY } from '../src/lib/income-contracts'
 import type { FundTransaction } from '../src/lib/fund-contracts'
 import {
-  adoptIncomeLaunchProposal, beginIncomeLaunchSubmission, clearIncomeLaunchPending, exportIncomeLaunchPending, importIncomeLaunchPending,
-  incomeLaunchSessionKey, readIncomeLaunchPending, recordIncomeLaunchHash, verifyIncomeLaunchExecution,
-  withIncomeLaunchLock, type IncomeLaunchPending, type IncomeLaunchStorage,
+  clearIncomeLaunchPending, exportIncomeLaunchPending, incomeLaunchHold, incomeLaunchIntent, incomeLaunchRecord,
+  incomeLaunchSessionKey, readIncomeLaunchPending, verifyIncomeLaunchExecution, type IncomeLaunchPending, type IncomeLaunchStorage,
 } from '../src/lib/income-launch-session'
 import { safeExecutionLog } from './support/safe-logs'
-import { failReservationReadback } from './support/reservation-storage'
 
 const { registered } = vi.hoisted(() => ({ registered: vi.fn() }))
 vi.mock('../src/lib/income-contracts', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/income-contracts')>(), registeredHomerunDeployer: registered }))
@@ -34,7 +32,10 @@ function memory(): IncomeLaunchStorage {
   const items = new Map<string, string>()
   return { getItem: key => items.get(key) ?? null, setItem: (key, value) => { items.set(key, value) }, removeItem: key => { items.delete(key) } }
 }
-function begin(storage = memory(), safe = false) { return beginIncomeLaunchSubmission(storage, key, request, 9n, HOLDER, safe, 100n) }
+/** A launch as the journal saved it before SDK holds. */
+function begin(storage = memory(), safe = false, hash?: Hex) { const record = incomeLaunchRecord(request, 9n, HOLDER, safe, 100n, hash); storage.setItem(key, JSON.stringify(record)); return record }
+/** A saved journal record, read back through its validation. */
+function readSaved(raw: string) { const storage = memory(); storage.setItem(key, raw); return readIncomeLaunchPending(storage, key) }
 function clientFor(record: IncomeLaunchPending, options: { payload?: Hex; sender?: typeof OTHER; target?: typeof OTHER; value?: bigint; chain?: number; block?: bigint; reorg?: boolean; failed?: boolean; safeFailure?: boolean; missingEvent?: boolean; proposal?: Hex; operation?: number; logs?: ReturnType<typeof safeExecutionLog>[] } = {}) {
   const input = record.safe
     ? encodeFunctionData({ abi: safeAbi, functionName: 'execTransaction', args: [options.target ?? TARGET, options.value ?? 100n, options.payload ?? record.data, options.operation ?? 0, 0n, 0n, 0n, zeroAddress, zeroAddress, '0x'] })
@@ -46,20 +47,13 @@ function clientFor(record: IncomeLaunchPending, options: { payload?: Hex; sender
   return { getChainId: async () => options.chain ?? 1, getTransaction: async () => transaction, getTransactionReceipt: async () => receipt, getBlock: async ({ blockNumber }: { blockNumber?: bigint }) => ({ hash: options.reorg ? HASH : BLOCK_HASH, number: blockNumber ?? 200n, timestamp: 1_000n }) } as unknown as PublicClient
 }
 beforeEach(() => { registered.mockReturnValue(TARGET) })
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); Reflect.deleteProperty(navigator, 'locks') })
+afterEach(() => { vi.restoreAllMocks() })
 
-describe('INCOME launch journal identity and persistence', () => {
-  it.each([undefined, 'replacement'])('cleans only its exact failed pre-wallet reservation (%s)', replacement => {
-    const storage = memory(), broken = failReservationReadback(storage, key, { replacement })
-    expect(() => begin(broken)).toThrow()
-    expect(storage.getItem(key)).toBe(replacement ?? null)
-  })
-  it('saves an unknown submission before a hash exists and blocks duplicates after remount or owner change', () => {
+describe('INCOME launch journal identity', () => {
+  it('reads a saved hashless launch back as unknown', () => {
     const storage = memory(), record = begin(storage)
     expect(record.phase).toBe('unknown')
     expect(record.hash).toBeUndefined()
-    expect(readIncomeLaunchPending(storage, key)).toEqual(record)
-    expect(() => beginIncomeLaunchSubmission(storage, key, request, 9n, OTHER, false, 100n)).toThrow(/already be pending/)
     expect(readIncomeLaunchPending(storage, key)).toEqual(record)
   })
   it('keeps a separate namespace from holder Sticky transactions and other FUNDs/chains', () => {
@@ -71,51 +65,16 @@ describe('INCOME launch journal identity and persistence', () => {
   it.each([[0, 9n], [137, 9n], [1, 0n], [1, -1n], [1, 1n << 256n]])('rejects unsupported identities %s/%s', (chain, project) => {
     expect(() => incomeLaunchSessionKey(Number(chain), BigInt(project))).toThrow()
   })
-  it('uses a unique submission ID even if two resolved attempts begin in the same millisecond', () => {
+  it('gives each launch record its own session ID', () => {
     vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000)
-    const storage = memory(), first = begin(storage)
-    clearIncomeLaunchPending(storage, key, first)
-    const second = begin(storage)
-    expect(second.sessionId).not.toBe(first.sessionId)
-    expect(() => clearIncomeLaunchPending(storage, key, first)).toThrow(/changed in another tab/)
-    expect(readIncomeLaunchPending(storage, key)).toEqual(second)
+    expect(begin().sessionId).not.toBe(begin().sessionId)
   })
-  it('fails closed if storage refuses or mutates the write', () => {
-    const silent = memory(); silent.setItem = () => {}
-    expect(() => begin(silent)).toThrow(/could not save/)
-    const wrong = memory(), original = wrong.setItem
-    wrong.setItem = (key, value) => original(key, value.replace('unknown', 'confirmed'))
-    expect(() => begin(wrong)).toThrow(/could not save/)
-  })
-  it('fails closed if secure session IDs are unavailable', () => {
-    vi.stubGlobal('crypto', {})
-    expect(() => begin()).toThrow(/Secure browser/)
-  })
-  it('records a hash only for the exact current attempt and cannot replace an existing hash', () => {
-    const storage = memory(), first = begin(storage)
-    const pending = recordIncomeLaunchHash(storage, key, first, HASH)
-    expect(readIncomeLaunchPending(storage, key)).toEqual(pending)
-    expect(pending.phase).toBe('pending')
-    expect(recordIncomeLaunchHash(storage, key, first, HASH)).toEqual(pending)
-    expect(() => recordIncomeLaunchHash(storage, key, { ...first, afterBlock: '101' }, HASH)).toThrow(/changed in another tab/)
-    expect(() => recordIncomeLaunchHash(storage, key, pending, EXECUTION_HASH)).toThrow(/different INCOME transaction/)
-    expect(recordIncomeLaunchHash(storage, key, pending, HASH)).toEqual(pending)
-    expect(() => clearIncomeLaunchPending(storage, key, first)).toThrow(/changed in another tab/)
-    clearIncomeLaunchPending(storage, key, pending)
+  it('verifies record removal', () => {
+    const storage = memory(); begin(storage)
+    clearIncomeLaunchPending(storage, key)
     expect(readIncomeLaunchPending(storage, key)).toBeNull()
-  })
-  it('does not overwrite another tab’s newer record while recording a hash', () => {
-    const storage = memory(), record = begin(storage)
-    storage.setItem(key, JSON.stringify({ ...record, sessionId: crypto.randomUUID() }))
-    expect(() => recordIncomeLaunchHash(storage, key, record, HASH)).toThrow(/changed in another tab/)
-    expect(readIncomeLaunchPending(storage, key)?.hash).toBeUndefined()
-  })
-  it('verifies hash writes and record removal', () => {
-    const storage = memory(), record = begin(storage)
-    storage.setItem = () => {}
-    expect(() => recordIncomeLaunchHash(storage, key, record, HASH)).toThrow(/could not save/)
-    storage.removeItem = () => {}
-    expect(() => clearIncomeLaunchPending(storage, key, record)).toThrow(/could not clear/)
+    begin(storage); storage.removeItem = () => {}
+    expect(() => clearIncomeLaunchPending(storage, key)).toThrow(/could not clear/)
   })
 })
 
@@ -124,29 +83,20 @@ describe('strict INCOME launch recovery imports', () => {
     const storage = memory()
     const record = begin(storage)
     expect(record.holder).toBe(HOLDER)
-    expect(importIncomeLaunchPending(memory(), key, exportIncomeLaunchPending(record))).toEqual(record)
+    expect(readSaved(exportIncomeLaunchPending(record))).toEqual(record)
     for (const bad of [
       [args[0], args[1], args[2], 10_001, args[4], args[5]],
       [args[0], args[1], { ...args[2], ticker: '' }, args[3], args[4], args[5]],
     ] as const) {
       const invalidData = encodeFunctionData({ abi: homerunDeployerAbi, functionName: 'deployIncome', args: bad as unknown as typeof args })
-      expect(() => importIncomeLaunchPending(memory(), key, JSON.stringify({ ...record, data: invalidData }))).toThrow()
+      expect(() => readSaved(JSON.stringify({ ...record, data: invalidData }))).toThrow()
     }
   })
   it('round-trips unknown and pending records without asserting execution', () => {
-    const storage = memory(), unknown = begin(storage), restored = memory()
-    expect(importIncomeLaunchPending(restored, key, exportIncomeLaunchPending(unknown))).toEqual(unknown)
-    expect(() => begin(restored)).toThrow(/already be pending/)
-    const pending = recordIncomeLaunchHash(storage, key, unknown, HASH)
-    const target = memory()
-    expect(importIncomeLaunchPending(target, key, exportIncomeLaunchPending(pending))).toEqual(pending)
-    expect(importIncomeLaunchPending(target, key, exportIncomeLaunchPending(pending))).toEqual(pending)
-    expect(() => importIncomeLaunchPending(target, key, exportIncomeLaunchPending(unknown))).toThrow(/already saved/)
-  })
-  it('does not overwrite corrupt existing recovery state with a different import', () => {
-    const record = begin(), storage = memory(); storage.setItem(key, '{broken')
-    expect(() => importIncomeLaunchPending(storage, key, exportIncomeLaunchPending(record))).toThrow(/unreadable/)
-    expect(storage.getItem(key)).toBe('{broken')
+    const unknown = begin(), pending = begin(memory(), false, HASH)
+    expect(pending.phase).toBe('pending')
+    expect(readSaved(exportIncomeLaunchPending(unknown))).toEqual(unknown)
+    expect(readSaved(exportIncomeLaunchPending(pending))).toEqual(pending)
   })
   it.each([
     { version: 2 }, { kind: 'sticky' }, { sessionId: 'not-unique' }, { phase: 'confirmed' }, { phase: 'reverted' },
@@ -156,12 +106,11 @@ describe('strict INCOME launch recovery imports', () => {
     { afterBlock: '89' }, { submittedAt: 0 }, { submittedAt: 1.5 }, { hash: HASH },
     { phase: 'pending' }, { phase: 'pending', hash: zeroHash }, { label: 'Send everything' }, { executionHash: HASH },
   ])('rejects malformed, complete-looking or foreign data %j', changes => {
-    const storage = memory(), record = begin()
-    expect(() => importIncomeLaunchPending(storage, key, JSON.stringify({ ...record, ...changes }))).toThrow()
-    expect(storage.getItem(key)).toBeNull()
+    const record = begin()
+    expect(() => readSaved(JSON.stringify({ ...record, ...changes }))).toThrow()
   })
   it.each(['null', '[]', '42', '{broken', ' '.repeat(32_769)])('rejects non-record JSON safely', raw => {
-    expect(() => importIncomeLaunchPending(memory(), key, raw)).toThrow()
+    expect(() => readSaved(raw)).toThrow()
   })
   it('rejects the wrong selector, truncated or trailing calldata, and mismatched first project argument', () => {
     const record = begin()
@@ -170,7 +119,7 @@ describe('strict INCOME launch recovery imports', () => {
       '0x12345678', record.data.slice(0, -2), `${record.data}00`,
       encodeFunctionData({ abi: homerunDeployerAbi, functionName: 'deployIncome', args: [10n, ...args.slice(1)] as unknown as typeof args }),
     ]
-    for (const data of invalid) expect(() => importIncomeLaunchPending(memory(), key, JSON.stringify({ ...record, data }))).toThrow()
+    for (const data of invalid) expect(() => readSaved(JSON.stringify({ ...record, data }))).toThrow()
   })
   it('validates the entire snapshot, INCOME description, reserved percent and start', () => {
     const record = begin()
@@ -197,7 +146,7 @@ describe('strict INCOME launch recovery imports', () => {
     ]
     for (const [index, values] of invalidArgs.entries()) {
       const data = encodeFunctionData({ abi: homerunDeployerAbi, functionName: 'deployIncome', args: values as unknown as typeof args })
-      expect(() => importIncomeLaunchPending(memory(), key, JSON.stringify({ ...record, data })), `case ${index}`).toThrow()
+      expect(() => readSaved(JSON.stringify({ ...record, data })), `case ${index}`).toThrow()
     }
   })
   it('restores chain-specific attempts with a zero local allocation and retains the complete global commitment', () => {
@@ -206,9 +155,8 @@ describe('strict INCOME launch recovery imports', () => {
       const remote = { ...allocation, chainId: 10, fundProjectId: 44n, snapshotBlockNumber: 500n }
       const linkedArgs = [9n, { ...snapshot, allocations: [local, remote] }, ...args.slice(2, 5), suckersFor(1, [1, 10])] as unknown as typeof args
       const linkedRequest = { ...request, args: linkedArgs }
-      const storage = memory()
-      const saved = beginIncomeLaunchSubmission(storage, key, linkedRequest, 9n, HOLDER, false, 100n)
-      expect(importIncomeLaunchPending(memory(), key, exportIncomeLaunchPending(saved))).toEqual(saved)
+      const saved = incomeLaunchRecord(linkedRequest, 9n, HOLDER, false, 100n)
+      expect(readSaved(exportIncomeLaunchPending(saved))).toEqual(saved)
       expect(saved.data).toBe(encodeFunctionData({ abi: homerunDeployerAbi, functionName: 'deployIncome', args: linkedArgs }).toLowerCase())
     }
   })
@@ -229,7 +177,7 @@ describe('strict INCOME launch recovery imports', () => {
     ]
     for (const values of invalidArgs) {
       const data = encodeFunctionData({ abi: homerunDeployerAbi, functionName: 'deployIncome', args: values as unknown as typeof args })
-      expect(() => importIncomeLaunchPending(memory(), key, JSON.stringify({ ...record, data }))).toThrow()
+      expect(() => readSaved(JSON.stringify({ ...record, data }))).toThrow()
     }
   })
   it('requires the current registered launcher both when starting and reading a saved launch', () => {
@@ -248,15 +196,13 @@ describe('exact INCOME EOA and Safe execution recovery', () => {
     const storage = memory(), record = begin(storage)
     await expect(verifyIncomeLaunchExecution(clientFor(record), record, EXECUTION_HASH)).resolves.toBe('confirmed')
     expect(readIncomeLaunchPending(storage, key)).toEqual(record)
-    clearIncomeLaunchPending(storage, key, record)
-    expect(readIncomeLaunchPending(storage, key)).toBeNull()
   })
   it('keeps an unknown attempt held despite an exact reverted EOA execution', async () => {
     const record = begin()
     await expect(verifyIncomeLaunchExecution(clientFor(record, { failed: true }), record, EXECUTION_HASH)).rejects.toThrow(/historical failure/)
   })
   it('does not use another identical EOA transaction to resolve a known pending transaction', async () => {
-    const storage = memory(), record = recordIncomeLaunchHash(storage, key, begin(storage), HASH)
+    const storage = memory(), record = begin(storage, false, HASH)
     await expect(verifyIncomeLaunchExecution(clientFor(record), record, EXECUTION_HASH)).rejects.toThrow(/saved INCOME transaction hash/)
     expect(readIncomeLaunchPending(storage, key)).toEqual(record)
   })
@@ -265,7 +211,7 @@ describe('exact INCOME EOA and Safe execution recovery', () => {
     await expect(verifyIncomeLaunchExecution(clientFor(record, options), record, EXECUTION_HASH)).rejects.toThrow()
   })
   it('keeps the Safe proposal separate and accepts only the exact executed call and matching proposal event', async () => {
-    const storage = memory(), record = recordIncomeLaunchHash(storage, key, begin(storage, true), HASH)
+    const storage = memory(), record = begin(storage, true, HASH)
     await expect(verifyIncomeLaunchExecution(clientFor(record), record, EXECUTION_HASH)).resolves.toBe('confirmed')
     await expect(verifyIncomeLaunchExecution(clientFor(record, { safeFailure: true }), record, EXECUTION_HASH)).resolves.toBe('reverted')
     for (const options of [{ proposal: BLOCK_HASH }, { missingEvent: true }, { operation: 1 }, { payload: '0x1234' as Hex }, { value: 0n }]) {
@@ -275,7 +221,7 @@ describe('exact INCOME EOA and Safe execution recovery', () => {
   })
   describe('Safe execution events', () => {
     const verify = (logs: ReturnType<typeof safeExecutionLog>[]) => {
-      const storage = memory(), record = recordIncomeLaunchHash(storage, key, begin(storage, true), HASH)
+      const storage = memory(), record = begin(storage, true, HASH)
       return verifyIncomeLaunchExecution(clientFor(record, { logs }), record, EXECUTION_HASH)
     }
     it('confirms a Safe 1.4.1 execution, whose txHash is indexed', async () => {
@@ -288,7 +234,7 @@ describe('exact INCOME EOA and Safe execution recovery', () => {
       await expect(verify([safeExecutionLog(HOLDER, HASH, { version: '1.3' })])).resolves.toBe('confirmed')
     })
     it('keeps the launch pending when the Safe’s execution transaction reverted, since its proposal can still execute', async () => {
-      const storage = memory(), record = recordIncomeLaunchHash(storage, key, begin(storage, true), HASH)
+      const storage = memory(), record = begin(storage, true, HASH)
       await expect(verifyIncomeLaunchExecution(clientFor(record, { failed: true, logs: [] }), record, EXECUTION_HASH)).rejects.toThrow('before resolving its proposal')
     })
     it('ignores another Safe’s failure in the same receipt', async () => {
@@ -300,66 +246,16 @@ describe('exact INCOME EOA and Safe execution recovery', () => {
     const client = clientFor(record); client.getTransactionReceipt = vi.fn().mockRejectedValue(new Error('RPC timeout'))
     await expect(verifyIncomeLaunchExecution(client, record, EXECUTION_HASH)).rejects.toThrow(/RPC timeout/)
     expect(readIncomeLaunchPending(storage, key)).toEqual(record)
-    expect(() => begin(storage)).toThrow(/already be pending/)
   })
 })
 
-describe('INCOME cross-tab review and submission lock', () => {
-  function installLocks() {
-    const active = new Set<string>()
-    const request = vi.fn(async (name: string, _options: unknown, callback: (lock: object | null) => Promise<unknown>) => {
-      if (active.has(name)) return callback(null)
-      active.add(name)
-      try { return await callback({ name }) } finally { active.delete(name) }
-    })
-    Object.defineProperty(navigator, 'locks', { value: { request }, configurable: true })
-    return request
-  }
-  it('fails closed when Web Locks are unavailable', async () => {
-    const task = vi.fn()
-    await expect(withIncomeLaunchLock(key, task)).rejects.toThrow(/Web Locks/)
-    expect(task).not.toHaveBeenCalled()
-  })
-  it('holds the same project lock through review and wallet write while allowing other project reviews', async () => {
-    const lockRequest = installLocks()
-    let finish!: () => void
-    const review = new Promise<void>(resolve => { finish = resolve })
-    const running = withIncomeLaunchLock(key, async () => { await review; return 'submitted' })
-    const duplicate = vi.fn()
-    await expect(withIncomeLaunchLock(key, duplicate)).rejects.toThrow(/another tab/)
-    expect(duplicate).not.toHaveBeenCalled()
-    await expect(withIncomeLaunchLock(incomeLaunchSessionKey(1, 10n), async () => 'other')).resolves.toBe('other')
-    finish()
-    await expect(running).resolves.toBe('submitted')
-    expect(lockRequest).toHaveBeenCalledWith(key, { mode: 'exclusive', ifAvailable: true }, expect.any(Function))
-    await expect(withIncomeLaunchLock(key, async () => 'reopened')).resolves.toBe('reopened')
-  })
-  it('releases a failed review lock but retains an unknown submitted attempt', async () => {
-    installLocks()
-    const storage = memory()
-    await expect(withIncomeLaunchLock(key, async () => { begin(storage); throw new Error('Wallet disconnected') })).rejects.toThrow(/Wallet disconnected/)
-    await expect(withIncomeLaunchLock(key, async () => begin(storage))).rejects.toThrow(/already be pending/)
-    expect(readIncomeLaunchPending(storage, key)?.phase).toBe('unknown')
-  })
-})
-
-
-describe('existing INCOME Safe proposal adoption', () => {
-  it('uses the original embedded snapshot and exact proposal hash for historical recovery', async () => {
-    const storage = memory()
-    const record = adoptIncomeLaunchProposal(storage, key, request, 9n, HOLDER, { proposalHash: HASH, call: { to: request.address, data: encodeFunctionData(request), value: request.value } })
-    expect(readIncomeLaunchPending(storage, key)).toEqual(record)
-    expect(record).toMatchObject({ phase: 'pending', safe: true, hash: HASH, afterBlock: '90' })
-    await expect(verifyIncomeLaunchExecution(clientFor(record, { block: 91n }), record, EXECUTION_HASH)).resolves.toBe('confirmed')
-    await expect(verifyIncomeLaunchExecution(clientFor(record, { block: 90n }), record, EXECUTION_HASH)).rejects.toThrow('new confirmed')
-    await expect(verifyIncomeLaunchExecution(clientFor(record, { block: 91n, proposal: BLOCK_HASH }), record, EXECUTION_HASH)).rejects.toThrow('proposal hash')
-  })
-  it('refuses changed calls before persisting or replacing pending records', () => {
-    const storage = memory(), proposal = { proposalHash: HASH, call: { to: request.address, data: encodeFunctionData(request), value: request.value } }
-    expect(() => adoptIncomeLaunchProposal(storage, key, request, 9n, HOLDER, { ...proposal, call: { ...proposal.call, value: 1n } })).toThrow('does not match')
-    expect(readIncomeLaunchPending(storage, key)).toBeNull()
-    const record = adoptIncomeLaunchProposal(storage, key, request, 9n, HOLDER, proposal)
-    expect(() => adoptIncomeLaunchProposal(storage, key, request, 9n, HOLDER, proposal)).toThrow('already be pending')
-    expect(readIncomeLaunchPending(storage, key)).toEqual(record)
+describe('a journal launch as its SDK hold', () => {
+  it('holds the call under the FUND intent with the saved send time and the evidence it has', () => {
+    const unknown = begin(), held = incomeLaunchHold(unknown)
+    expect(held.input).toEqual({ chainId: 1, account: HOLDER, safe: false, namespace: incomeLaunchIntent(9n), call: { to: TARGET, data: unknown.data, value: 100n } })
+    expect(held.evidence).toEqual({ submittedAt: unknown.submittedAt })
+    expect(encodeFunctionData(held.request)).toBe(unknown.data)
+    expect(incomeLaunchHold(begin(memory(), false, HASH)).evidence).toEqual({ submittedAt: expect.any(Number), hash: HASH })
+    expect(incomeLaunchHold(begin(memory(), true, HASH)).evidence).toEqual({ submittedAt: expect.any(Number), safe: { safeTxHash: HASH } })
   })
 })
