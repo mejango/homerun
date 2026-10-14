@@ -14,6 +14,7 @@ import type { FundProjectState } from "@/lib/fund-state";
 import { type StickyPending } from "@/lib/sticky-session";
 import { adoptLegacyWrite, recoverFromHold } from "@/lib/write-hold";
 import { HeldNotice } from "@/components/ui/HeldWriteExit";
+import { CheckRequired } from "@/components/ui/CheckRequired";
 import { useLegacyAdoption } from "@/hooks/useLegacyAdoption";
 import {
   clearStickyCreationPending,
@@ -183,7 +184,8 @@ export function StickyCreate({
       async (settledHash) => { await recover(record, settledHash ?? hash, completed.projectId); return true; },
     )
       .then((result) => {
-        if (result === "held") throw new Error("Its transaction is still pending. It shows once it settles.");
+        if (result.status === "held") throw new Error("Its transaction is still pending. It shows once it settles.");
+        if (result.status === "check") throw new Error(result.reason);
       })
       .catch((reason) => {
         if (!cancelled)
@@ -218,20 +220,15 @@ export function StickyCreate({
         const held = await track({ chainId: state.chainId, call: { to: zeroAddress, data: "0x" } }, { reviewedAccount: address, recoveryNamespace: intent.namespace, heldOnly: true });
         if (!cancelled && held && held.status !== "clear") { sent.current = stickyCreationFromHold(held.record, state.projectId); return; }
         if (readStickyCreated(localStorage, state.chainId, state.projectId)) return;
-        // A creation the hold settled with success is recorded from its own transaction before creation reopens.
-        let settled = false;
-        try {
-          await recoverFromHold(intent, async (settledHash) => {
-            if (!settledHash) return null;
-            settled = true;
-            const transaction = await client.getTransaction({ hash: settledHash });
-            await recover(stickyCreationFromTransaction(transaction, state.chainId, state.projectId), settledHash);
-            return true;
-          });
-        } catch {
-          // Settled but not shown here (a Safe's execution, or an unanswered read): creation waits for the user's check.
-          if (settled && !cancelled) setUnchecked(true);
-        }
+        // A creation the hold settled with success is recorded from its own transaction before creation reopens;
+        // one not shown here (a Safe's execution, or an unanswered read) waits for the user's check.
+        const result = await recoverFromHold(intent, async (settledHash) => {
+          if (!settledHash) return null;
+          const transaction = await client.getTransaction({ hash: settledHash });
+          await recover(stickyCreationFromTransaction(transaction, state.chainId, state.projectId), settledHash);
+          return true;
+        });
+        if (result.status === "check" && !cancelled) setUnchecked(true);
         return;
       }
       const { request, input, evidence } = stickyCreationHold(record);
@@ -439,10 +436,7 @@ export function StickyCreate({
           <p>Rechecking the saved Sticky creation.</p>
         </div>
       ) : tx.phase === "submitted" ? null : unchecked ? (
-        <div className="mt-4 grid gap-3 text-sm">
-          <p role="status">Check this FUND’s Sticky creation before creating again.</p>
-          <button type="button" className="w-fit underline" onClick={() => setUnchecked(false)}>I checked it. Create again</button>
-        </div>
+        <CheckRequired line="Check this FUND’s Sticky creation before creating again." action="I checked it. Create again" onChecked={() => setUnchecked(false)} />
       ) : tx.phase === "pending" || tx.phase === "success" ? (
         <p role="status" className="mt-4 text-sm">
           Submitted. Waiting for onchain confirmation…

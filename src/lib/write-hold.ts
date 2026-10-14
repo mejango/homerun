@@ -70,15 +70,28 @@ export async function holdOutcome(intent: { chainId: number; account: Address; n
   return settled ? { status: 'settled', hash: settled } : { status: 'none' }
 }
 
+/** How a hold-first recovery ended: still held, done, needing the user's check, or nothing to recover. */
+export type HoldRecovery<T> = { status: 'held' } | { status: 'done'; value: T } | { status: 'check'; reason: string } | { status: 'none' }
+
 /**
- * Recover a saved completion through its intent's hold: while the hold holds the write, nothing is
- * counted (`held`); once it settled with success, `verify` runs the domain checks on that settled
- * transaction (falling back to the saved one); with no hold record, `verify` checks the exact saved
- * call on chain. `verify` returns null when its evidence can't show the completion.
+ * Recover a completion through its intent's hold, the one rule every flow uses: while the hold holds
+ * the write nothing is counted (`held`); once it settled with success, `verify` checks that settled
+ * transaction (then the saved one); with no hold record, `verify` checks the exact saved call (or
+ * returns null when nothing is saved: `none`). A settlement `verify` can't show, or any check that
+ * throws, is `check`: completion is withheld until the user says they checked it. It never aborts.
  */
-export async function recoverFromHold<T>(intent: { chainId: number; account: Address; namespace: string }, verify: (settledHash?: `0x${string}`) => Promise<T | null>): Promise<T | 'held' | null> {
+export async function recoverFromHold<T>(intent: { chainId: number; account: Address; namespace: string }, verify: (settledHash?: `0x${string}`) => Promise<T | null>): Promise<HoldRecovery<T>> {
   const outcome = await holdOutcome(intent)
-  if (outcome.status === 'held') return 'held'
-  if (outcome.status === 'settled') return await verify(outcome.hash) ?? await verify()
-  return verify()
+  if (outcome.status === 'held') return { status: 'held' }
+  let reason: string | null = null
+  const attempt = async (hash?: `0x${string}`): Promise<T | null> => {
+    try { return await verify(hash) } catch (failure) { reason = failure instanceof Error ? failure.message : String(failure); return null }
+  }
+  if (outcome.status === 'settled') {
+    const value = await attempt(outcome.hash) ?? await attempt()
+    return value !== null ? { status: 'done', value } : { status: 'check', reason: reason ?? 'Its settled transaction could not be shown here.' }
+  }
+  const value = await attempt()
+  if (value !== null) return { status: 'done', value }
+  return reason !== null ? { status: 'check', reason } : { status: 'none' }
 }

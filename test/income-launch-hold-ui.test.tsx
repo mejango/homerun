@@ -43,7 +43,7 @@ vi.mock('@/lib/income-launch', async importOriginal => {
 
 import { wallet } from './support/fake-wallet'
 import { IncomeLaunch } from '@/components/IncomeLaunch'
-import { incomeLaunchSessionKey } from '@/lib/income-launch-session'
+import { incomeLaunchIntent, incomeLaunchSessionKey } from '@/lib/income-launch-session'
 import { saveIncomeGlobalDraft } from '@/lib/income-global-launch-draft'
 
 const EXIT = 'I checked my wallet. Send again'
@@ -115,5 +115,26 @@ it('shows a held launch and its exit after a reload while the published snapshot
   await render()
   expect(button('Prepare Base INCOME')).toBeUndefined()
   expect(button(EXIT), host.textContent ?? '').toBeDefined()
+})
+
+it('asks for a check, never dead-ending, when a launch settled while away can only be shown as a Safe execution', async () => {
+  await render()
+  await review()
+  expect(wallet.writeContract).toHaveBeenCalledOnce()
+  await act(async () => root.unmount()); root = createRoot(host)
+  const hash = `0x${'1'.padStart(64, '0')}` as `0x${string}`
+  await act(async () => { wallet.confirm(hash) })
+  const { holds } = await import('@/lib/write-hold')
+  const hold = holds.open({ chainId: 8453, account: OWNER, safe: false, namespace: incomeLaunchIntent(7n), call: { to: HELPER, data: '0x' } })
+  expect(await hold.onReceipt(await wallet.client.getTransactionReceipt({ hash }) as never, wallet.client as never)).toMatchObject({ status: 'clear', settled: { result: 'success' } })
+  // Read now, the settled transaction is a Safe's execTransaction, not the launcher call itself.
+  const sent = await wallet.client.getTransaction({ hash })
+  wallet.client.getTransaction.mockImplementation(async () => ({ ...sent!, to: OWNER, input: '0x6a761202' }) as never)
+  await render()
+  expect(host.textContent).toContain('Check this network’s INCOME launch before launching again.')
+  expect(button('Prepare Base INCOME'), host.textContent ?? '').toBeUndefined()
+  await click('I checked it. Launch again')
+  expect(button('Prepare Base INCOME')?.closest('fieldset')?.disabled).toBe(false)
+  expect(wallet.writeContract).toHaveBeenCalledOnce()
 })
 

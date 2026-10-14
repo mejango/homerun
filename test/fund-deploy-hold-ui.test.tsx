@@ -44,7 +44,7 @@ vi.mock('@/lib/fund-launch-relayr', () => ({ runRelayrLaunch: vi.fn(), launchReq
 import { wallet } from './support/fake-wallet'
 import { FundDeploy } from '../src/components/LiveCreate'
 import type { CreateValues } from '../src/components/CreateFlow'
-import { FUND_LAUNCH_KEY, decodeLaunchSession, encodeLaunchSession, saveLaunch, updateLaunchStatus, type LaunchStatus } from '../src/lib/fund-launch-session'
+import { FUND_LAUNCH_KEY, decodeLaunchSession, encodeLaunchSession, launchIntent, saveLaunch, updateLaunchStatus, type LaunchStatus } from '../src/lib/fund-launch-session'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as Address
 const SALT = `0x${'12'.repeat(32)}` as Hex
@@ -183,5 +183,27 @@ describe('a two-chain direct launch', () => {
     expect(decodeLaunchSession(localStorage.getItem(FUND_LAUNCH_KEY)!).statuses[8453].phase).not.toBe('confirmed')
     expect(wallet.writeContract).toHaveBeenCalledOnce()
   })
+})
+
+it('records a FUND its hold settled while the page was away, and never offers that deployment again', async () => {
+  save({ phase: 'ready' })
+  verification.launch = async () => 42n
+  await render()
+  await click('Review and deploy FUND')
+  expect(wallet.writeContract).toHaveBeenCalledOnce()
+  const hash = `0x${'1'.padStart(64, '0')}` as Hex
+  // The launch reads as ready again (its wallet reply was lost), and the page is left.
+  const pending = decodeLaunchSession(localStorage.getItem(FUND_LAUNCH_KEY)!).statuses[8453]
+  updateLaunchStatus(SALT, 8453, { phase: 'ready' }, 'pending', pending)
+  await act(async () => root.unmount()); root = createRoot(host)
+  // The chain places it and the SDK settles it meanwhile.
+  await act(async () => { wallet.confirm(hash) })
+  const { holds } = await import('@/lib/write-hold')
+  const hold = holds.open({ chainId: 8453, account: OWNER, safe: false, namespace: launchIntent(SALT), call: { to: OWNER, data: '0x' } })
+  expect(await hold.onReceipt(await wallet.client.getTransactionReceipt({ hash }) as never, wallet.client as never)).toMatchObject({ status: 'clear', settled: { result: 'success' } })
+  await render()
+  expect(saved()).toMatchObject({ phase: 'confirmed', projectId: '42' })
+  expect(button('Review and deploy FUND')).toBeUndefined()
+  expect(wallet.writeContract).toHaveBeenCalledOnce()
 })
 

@@ -27,6 +27,7 @@ import { readableError } from '@/lib/readable-error'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
 import { useLegacyAdoption } from '@/hooks/useLegacyAdoption'
 import { HeldIntents } from '@/components/ui/HeldIntents'
+import { CheckRequired } from '@/components/ui/CheckRequired'
 import { adoptLegacyWrite, callOf, holdOutcome, recoverFromHold } from '@/lib/write-hold'
 import type { WriteHoldClient } from '@bananapus/nana-sdk-core/review'
 
@@ -236,6 +237,23 @@ async function verifyRulesetSubmissionReceipt(plan: RulesetPlan, chainId: number
 
 /** A Safe proposal not executed by then can't be shown on chain here. */
 const SAFE_CHECK_MS = 10_000
+/** A chain's saved call's own execution, authenticated on chain: its receipt, exact call and ruleset event. */
+async function authenticateChain(plan: RulesetPlan, submission: Exclude<RulesetSubmission, { kind: 'submission-unknown' }>, project: PlanProject, signal?: AbortSignal, settledHash?: Hex): Promise<RulesetCompletion | null> {
+  const client = chainClient(project.chainId)
+  let hash = settledHash ?? submission.hash
+  if (!settledHash && submission.kind === 'safe-proposal') {
+    try { hash = await waitForSafeExecutionHash(project.chainId, hash, { signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(SAFE_CHECK_MS)]) }) } catch (reason) { if (signal?.aborted) throw reason; return null }
+  }
+  let receipt: TransactionReceipt
+  try { receipt = await client.getTransactionReceipt({ hash }) } catch { return null }
+  if (signal?.aborted) throw new DOMException('Recovery checks paused.', 'AbortError')
+  if (receipt.status !== 'success' || safeExecutionResult(receipt, plan.account, submission.hash).status === 'failed') return null
+  const rulesetId = validateRulesetRecoveryReceipt(receipt, project.projectId, project.rulesetSnapshot.controller, `Homerun: ${plan.action}`)
+  if (await verifyRulesetSubmissionReceipt(plan, project.chainId, submission, receipt) !== 'success') throw new Error('The saved ruleset submission has not been proven successful.')
+  return { rulesetId, receipt, submission }
+}
+
+const CHAIN_CHECK_LINE = 'Check this chain’s ruleset before running it again.'
 /** Recovered progress: chains done, and chains whose saved transaction can't be shown, which are only run again by explicit choice. */
 type Recovered = { completed: Map<number, RulesetCompletion>; checkFirst: Set<number> }
 
@@ -249,37 +267,21 @@ function RecoveryPanel({ plan, submissions, onResume }: {
   const abort = useRef<AbortController | null>(null)
   useEffect(() => () => abort.current?.abort(), [])
 
-  /** The saved call's own execution, authenticated on chain: its receipt, exact call and ruleset event. */
-  async function onChain(chainId: number, submission: Exclude<RulesetSubmission, { kind: 'submission-unknown' }>, project: PlanProject, signal: AbortSignal, settledHash?: Hex): Promise<RulesetCompletion | null> {
-    const client = chainClient(project.chainId)
-    let hash = settledHash ?? submission.hash
-    if (!settledHash && submission.kind === 'safe-proposal') {
-      try { hash = await waitForSafeExecutionHash(chainId, hash, { signal: AbortSignal.any([signal, AbortSignal.timeout(SAFE_CHECK_MS)]) }) } catch (reason) { if (signal.aborted) throw reason; return null }
-    }
-    let receipt: TransactionReceipt
-    try { receipt = await client.getTransactionReceipt({ hash }) } catch { return null }
-    if (signal.aborted) throw new DOMException('Recovery checks paused.', 'AbortError')
-    if (receipt.status !== 'success' || safeExecutionResult(receipt, plan.account, submission.hash).status === 'failed') return null
-    const rulesetId = validateRulesetRecoveryReceipt(receipt, project.projectId, project.rulesetSnapshot.controller, `Homerun: ${plan.action}`)
-    if (await verifyRulesetSubmissionReceipt(plan, chainId, submission, receipt) !== 'success') throw new Error('The saved ruleset submission has not been proven successful.')
-    return { rulesetId, receipt, submission }
-  }
-
   /**
-   * A saved submission's chain: done, held (its hold settles it), or to be checked before running again.
-   * A hold that holds the write decides by its settlement alone; one with no record leaves it to the exact
-   * saved call's authenticated execution on chain, which never lets a completed chain run twice.
+   * One chain through its hold: done, held (its hold settles it), to be checked before running again, or
+   * nothing sent. A hold that holds the write decides by its settlement; a settled write is authenticated
+   * by its own transaction; with no hold record, a saved call's execution is authenticated on chain.
    */
-  async function execution(chainId: number, submission: RulesetSubmission, signal: AbortSignal): Promise<RulesetCompletion | 'held' | 'check'> {
-    const index = plan.states.findIndex(project => project.chainId === chainId)
-    if (index < 0) throw new Error('This transaction is not part of the linked plan.')
-    const project = plan.states[index]
-    setNotice(`Checking ${displayChainName(chainId)}'s transaction.`)
-    const intent = { chainId, account: plan.account, namespace: planIntent(plan, project.projectId) }
-    // A hashless saved attempt has no call of its own to show on chain: its hold, if any, decides.
-    if (submission.kind === 'submission-unknown') return (await holdOutcome(intent)).status === 'held' ? 'held' : 'check'
-    const result = await recoverFromHold(intent, settledHash => onChain(chainId, submission, project, signal, settledHash))
-    return result ?? 'check'
+  async function chainOutcome(project: PlanProject, submission: RulesetSubmission | undefined, signal: AbortSignal): Promise<RulesetCompletion | 'held' | 'check' | 'none'> {
+    setNotice(`Checking ${displayChainName(project.chainId)}'s transaction.`)
+    const result = await recoverFromHold({ chainId: project.chainId, account: plan.account, namespace: planIntent(plan, project.projectId) }, settledHash => {
+      if (submission && submission.kind !== 'submission-unknown') return authenticateChain(plan, submission, project, signal, settledHash)
+      return settledHash ? authenticateChain(plan, { kind: 'transaction', hash: settledHash }, project, signal, settledHash) : Promise.resolve(null)
+    })
+    if (result.status === 'done') return result.value
+    if (result.status === 'held' || result.status === 'check') return result.status
+    // A saved attempt nothing can show (a hashless one, or a hash the chain doesn't know) is the user's to check.
+    return submission ? 'check' : 'none'
   }
 
   async function recover() {
@@ -288,21 +290,12 @@ function RecoveryPanel({ plan, submissions, onResume }: {
     setChecking(true); setError(null); setNotice('Checking the saved transaction hashes against chain receipts…')
     try {
       const completed = new Map<number, RulesetCompletion>(), unsettled = new Set<number>(), checkFirst = new Set<number>()
-      for (const [chainId, submission] of submissions) {
-        const result = await execution(chainId, submission, controller.signal)
-        if (result === 'held') unsettled.add(chainId)
-        else if (result === 'check') { unsettled.add(chainId); checkFirst.add(chainId) }
-        else completed.set(chainId, result)
-      }
-      // A chain with nothing saved may still have been sent: its hold holding it, or having settled it while the page was away.
+      // Every chain, saved or not: a chain with nothing saved may still have been sent and settled while the page was away.
       for (const project of plan.states) {
-        if (submissions.has(project.chainId)) continue
-        const outcome = await holdOutcome({ chainId: project.chainId, account: plan.account, namespace: planIntent(plan, project.projectId) })
-        if (outcome.status === 'held') unsettled.add(project.chainId)
-        else if (outcome.status === 'settled') {
-          const result = await onChain(project.chainId, { kind: 'transaction', hash: outcome.hash }, project, controller.signal, outcome.hash)
-          if (result) completed.set(project.chainId, result); else { unsettled.add(project.chainId); checkFirst.add(project.chainId) }
-        }
+        const result = await chainOutcome(project, submissions.get(project.chainId), controller.signal)
+        if (result === 'held') unsettled.add(project.chainId)
+        else if (result === 'check') { unsettled.add(project.chainId); checkFirst.add(project.chainId) }
+        else if (result !== 'none') completed.set(project.chainId, result)
       }
       const seed = plan.states[0]
       const current = await readLinkedFundProjects(chainClient, await readFundProjectState(chainClient(seed.chainId), { chainId: seed.chainId, projectId: seed.projectId, account: plan.account }))
@@ -340,8 +333,10 @@ function RecoveryPanel({ plan, submissions, onResume }: {
  * is adopted (and dropped from the plan once the hold has it), whatever the hold holds now is shown
  * from its intent alone, and a settled write is verified and recorded against its exact call.
  */
-function usePlanChainHold(plan: RulesetPlan, index: number, { submission, onAdopted, onConfirmed, setError }: {
+function usePlanChainHold(plan: RulesetPlan, index: number, { submission, done = false, onAdopted, onConfirmed, setError }: {
   submission?: RulesetSubmission
+  /** The plan counts this chain done: a settlement found here is already recorded. */
+  done?: boolean
   onAdopted: (chainId: number, submission: RulesetSubmission) => Promise<void>
   onConfirmed: (chainId: number, result: RulesetCompletion) => Promise<void>
   setError: (error: string | null) => void
@@ -352,6 +347,8 @@ function usePlanChainHold(plan: RulesetPlan, index: number, { submission, onAdop
   useConfirmedRefresh(tx, state)
   const adoption = useLegacyAdoption()
   const delivered = useRef(false)
+  /** A settlement found here that couldn't be authenticated: the chain runs again only by explicit choice. */
+  const [checkRequired, setCheckRequired] = useState(false)
   const namespace = planIntent(plan, state.projectId)
   const label = `${RULESET_LABELS[plan.action]} on ${displayChainName(state.chainId)}`
   const { track, isSafe } = tx
@@ -365,7 +362,13 @@ function usePlanChainHold(plan: RulesetPlan, index: number, { submission, onAdop
     let stopped = false
     void adopt(async () => {
       if (!submission) {
-        await track({ ...request, label }, { reviewedAccount: plan.account, recoveryNamespace: namespace, heldOnly: true })
+        const held = await track({ ...request, label }, { reviewedAccount: plan.account, recoveryNamespace: namespace, heldOnly: true })
+        if (stopped || done || held?.status !== 'clear') return
+        // A write its hold settled where no screen followed it is authenticated and recorded, never left to be sent again.
+        const result = await recoverFromHold({ chainId: state.chainId, account: plan.account, namespace }, settledHash => settledHash ? authenticateChain(plan, { kind: 'transaction', hash: settledHash }, state, undefined, settledHash) : Promise.resolve(null))
+        if (stopped) return
+        if (result.status === 'done') await confirmed(state.chainId, result.value)
+        else if (result.status === 'check') setCheckRequired(true)
         return
       }
       const safe = submission.kind === 'safe-proposal' || (submission.kind === 'submission-unknown' && isSafe)
@@ -377,7 +380,7 @@ function usePlanChainHold(plan: RulesetPlan, index: number, { submission, onAdop
       if (result.adopted) await adopted(state.chainId, submission)
     }).catch(reason => { if (!stopped) failed(reason) })
     return () => { stopped = true }
-  }, [adopt, isSafe, label, namespace, plan.account, request, state.chainId, submission, track])
+  }, [adopt, done, isSafe, label, namespace, plan, request, state, submission, track])
 
   // The SDK's hold settled this chain's write: its exact call and ruleset event are verified before it counts.
   const settled = tx.phase === 'success' ? tx.receipt : null, sentHash = tx.submissionHash ?? tx.hash ?? settled?.transactionHash
@@ -396,21 +399,22 @@ function usePlanChainHold(plan: RulesetPlan, index: number, { submission, onAdop
     })()
     return () => { stopped = true }
   }, [plan, sentHash, settled, state.chainId, state.rulesetSnapshot.controller, state.projectId])
-  return { state, request, tx, adoption, namespace, label }
+  return { state, request, tx, adoption, namespace, label, checkRequired }
 }
 
 /** A linked chain's held write while the plan is being verified: shown with its exit, whatever the plan's deadline or state. */
-function PlanChainHold({ plan, index, submission, onAdopted, onConfirmed }: {
-  plan: RulesetPlan; index: number; submission?: RulesetSubmission
+function PlanChainHold({ plan, index, submission, done, onAdopted, onConfirmed }: {
+  plan: RulesetPlan; index: number; submission?: RulesetSubmission; done: boolean
   onAdopted: (chainId: number, submission: RulesetSubmission) => Promise<void>
   onConfirmed: (chainId: number, result: RulesetCompletion) => Promise<void>
 }) {
   const [error, setError] = useState<string | null>(null)
-  const { state, tx } = usePlanChainHold(plan, index, { submission, onAdopted, onConfirmed, setError })
-  if (tx.phase === 'idle' && !error) return null
+  const { state, tx, checkRequired } = usePlanChainHold(plan, index, { submission, done, onAdopted, onConfirmed, setError })
+  if (tx.phase === 'idle' && !error && !checkRequired) return null
   return <div className="grid gap-2">
     <p className="text-sm">{displayChainName(state.chainId)}, project {state.projectId.toString()}:</p>
     {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
+    {checkRequired && <p role="status" className="text-sm">{CHAIN_CHECK_LINE}</p>}
     <Status tx={tx.phase === 'success' ? { ...tx, phase: 'pending' } : tx} chainId={state.chainId} />
   </div>
 }
@@ -429,7 +433,8 @@ function LinkedRulesetStep({ plan, index, completed, onConfirmed, onCancel, onAd
   const [preparing, setPreparing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [checked, setChecked] = useState(false)
-  const { state, request, tx, adoption, namespace, label } = usePlanChainHold(plan, index, { submission, onAdopted, onConfirmed, setError })
+  const { state, request, tx, adoption, namespace, label, checkRequired } = usePlanChainHold(plan, index, { submission, onAdopted, onConfirmed, setError })
+  const mustCheck = (checkFirst || checkRequired) && !checked
   const busy = preparing || tx.busy || tx.phase === 'review' || !adoption.ready
 
   async function reverify() {
@@ -471,8 +476,8 @@ function LinkedRulesetStep({ plan, index, completed, onConfirmed, onCancel, onAd
   const sending = !!submission || tx.phase === 'submitted' || tx.phase === 'pending' || tx.phase === 'success'
   return <div className="grid gap-3">
     <p className="text-sm">Next: {displayChainName(state.chainId)}, project {state.projectId.toString()}.</p>
-    {checkFirst && !checked && <p role="status" className="text-sm">Check this chain’s ruleset before running it again.</p>}
-    <div className="flex flex-wrap gap-3">{checkFirst && !checked ? <button type="button" className="btn-secondary min-h-10 px-4" onClick={() => setChecked(true)}>I checked it. Review it again</button>
+    {mustCheck && <CheckRequired line={CHAIN_CHECK_LINE} action="I checked it. Review it again" onChecked={() => setChecked(true)} />}
+    <div className="flex flex-wrap gap-3">{mustCheck ? null
       : <button type="button" className="btn-primary min-h-11 px-5" disabled={busy || sending} onClick={() => void submit()}>{preparing ? 'Verifying every chain…' : txPhaseLabel(tx.phase, { idle: `Review transaction ${index + 1} of ${plan.requests.length}`, pending: 'Confirming onchain…' })}</button>}
     {completed.size === 0 && !busy && !sending && !tx.hash && <button type="button" className="btn-secondary min-h-10 px-4" onClick={onCancel}>Cancel plan</button>}</div>
     {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
@@ -935,7 +940,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
         })}
       />
       {/* Every chain's hold is shown with its exit, while the plan is verified and after it resumes, except the chain its step shows. */}
-      {plan.states.map((peer, index) => (recovering || peer.chainId !== plan.states.find(next => !completed.has(next.chainId))?.chainId) && <PlanChainHold key={`${plan.startsAt}:${peer.chainId}`} plan={plan} index={index} submission={submissions.get(peer.chainId)} onConfirmed={(chainId, result) => withSubmissionLock(async () => { if (planRef.current !== plan) throw new Error('The linked plan changed during confirmation.'); recordSubmission(chainId, result.submission); setCompleted(previous => new Map(previous).set(chainId, result)) })} onAdopted={(chainId, submission) => withSubmissionLock(async () => { assertSubmission(chainId, submission); removeSubmission(chainId) })} />)}
+      {plan.states.map((peer, index) => (recovering || peer.chainId !== plan.states.find(next => !completed.has(next.chainId))?.chainId) && <PlanChainHold key={`${plan.startsAt}:${peer.chainId}`} plan={plan} index={index} submission={submissions.get(peer.chainId)} onConfirmed={(chainId, result) => withSubmissionLock(async () => { if (planRef.current !== plan) throw new Error('The linked plan changed during confirmation.'); recordSubmission(chainId, result.submission); setCompleted(previous => new Map(previous).set(chainId, result)) })} done={completed.has(peer.chainId)} onAdopted={(chainId, submission) => withSubmissionLock(async () => { assertSubmission(chainId, submission); removeSubmission(chainId) })} />)}
       {recovering ? <RecoveryPanel plan={plan} submissions={submissions} onResume={recovered => withSubmissionLock(async () => { if (planRef.current !== plan) throw new Error('The linked plan changed during recovery.'); for (const [chainId, submission] of submissions) assertSubmission(chainId, submission); if (submissionsRef.current.size !== submissions.size) throw new Error('A linked submission changed during recovery.'); setCompleted(recovered.completed); setCheckFirst(recovered.checkFirst); setRecovering(false) })} />
         : completed.size < plan.states.length ? <LinkedRulesetStep key={`${plan.startsAt}:${completed.size}`} plan={plan} index={plan.states.findIndex(peer => !completed.has(peer.chainId))} submission={submissions.get(plan.states.find(peer => !completed.has(peer.chainId))!.chainId)} checkFirst={checkFirst.has(plan.states.find(peer => !completed.has(peer.chainId))!.chainId)} completed={completed} onConfirmed={(chainId, result) => withSubmissionLock(async () => { if (planRef.current !== plan) throw new Error('The linked plan changed during confirmation.'); recordSubmission(chainId, result.submission); setCompleted(previous => new Map(previous).set(chainId, result)) })} onCancel={closePlan} onAdopted={(chainId, submission) => withSubmissionLock(async () => { assertSubmission(chainId, submission); removeSubmission(chainId) })} />
           : <><p role="status" className="text-sm">Every ruleset transaction is confirmed. The new rules take effect at the shared activation time.</p><button type="button" className="btn-secondary min-h-10 w-fit px-4" onClick={closePlan}>Done</button></>}

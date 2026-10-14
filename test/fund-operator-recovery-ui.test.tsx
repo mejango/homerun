@@ -32,8 +32,15 @@ vi.mock('@/lib/write-hold', async importOriginal => ({ ...await importOriginal<t
   // The shared rule, over this suite's hold outcomes.
   recoverFromHold: async (intent: unknown, verify: (hash?: Hex) => Promise<unknown>) => {
     const outcome = await runtime.outcome(intent)
-    if (outcome.status === 'held') return 'held'
-    return outcome.status === 'settled' ? await verify(outcome.hash) ?? await verify() : verify()
+    if (outcome.status === 'held') return { status: 'held' }
+    let reason: string | null = null
+    const attempt = async (hash?: Hex) => { try { return await verify(hash) } catch (failure) { reason = (failure as Error).message; return null } }
+    if (outcome.status === 'settled') {
+      const value = await attempt(outcome.hash) ?? await attempt()
+      return value !== null ? { status: 'done', value } : { status: 'check', reason: reason ?? 'unshown' }
+    }
+    const value = await attempt()
+    return value !== null ? { status: 'done', value } : reason !== null ? { status: 'check', reason } : { status: 'none' }
   },
 }))
 vi.mock('@wagmi/core', async importOriginal => ({
@@ -263,6 +270,19 @@ describe('linked ruleset recovery of a Safe execution', () => {
     await verify()
     expect(button('Review transaction 2 of 2'), host.textContent ?? '').toBeDefined()
     expect(runtime.send).not.toHaveBeenCalled()
+  })
+
+  it('asks for a check, never aborting, when a settled chain shows no ruleset event', async () => {
+    const saved = savedChain({ kind: 'transaction', hash: EXECUTION })
+    const { receipt } = successReceipt(saved)
+    // The settled transaction ran, but its receipt carries no QueueRulesets event for this plan.
+    runtime.receipt.mockResolvedValue({ ...receipt, logs: [] })
+    runtime.outcome.mockImplementation(async ({ chainId }: { chainId: number }) => chainId === 8453 ? { status: 'settled', hash: EXECUTION } : { status: 'none' })
+    await verify()
+    expect(host.querySelector('[role="alert"]')?.textContent ?? '').not.toContain('ruleset event')
+    expect(host.textContent).toContain('Check this chain’s ruleset before running it again.')
+    await act(async () => button('I checked it. Review it again')!.click())
+    expect(button('Review transaction 1 of 2')).toBeDefined()
   })
 
   it('asks for a check before running a chain again when neither its hold nor the chain can show its saved transaction', async () => {

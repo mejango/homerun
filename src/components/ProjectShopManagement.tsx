@@ -19,9 +19,10 @@ import {
   shopWriteSessionKey, startShopWriteSession, restoreShopWritePermissions, shopWriteRequestIndex, shopWriteRequestIndices,
   verifyShopWriteProgress, withShopWriteLock, type ShopWriteSession,
 } from '@/lib/project-shop-session'
-import { adoptLegacyWrite } from '@/lib/write-hold'
+import { adoptLegacyWrite, recoverFromHold } from '@/lib/write-hold'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
 import { useLegacyAdoption } from '@/hooks/useLegacyAdoption'
+import { CheckRequired } from '@/components/ui/CheckRequired'
 import { ShopItemEditor, type ShopItemEditorState } from '@/components/ShopItemEditor'
 import { ModalShell } from '@/components/ui/ModalShell'
 
@@ -84,6 +85,8 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
     return () => { cancelled = true }
   }, [client, session])
 
+  /** A step its hold settled that couldn't be authenticated here: it runs again only by the user's check. */
+  const [stepCheck, setStepCheck] = useState(false)
   /** The step this screen sent or adopted: what its settled execution is recorded against. */
   const sent = useRef<{ session: string; step: number; safe: boolean; afterBlock: bigint } | null>(null)
   const track = tx.track
@@ -101,9 +104,19 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
         const step = shopWriteRequestIndex(captured)
         // A step this screen already follows is shown already.
         if (step === null || sent.current) return
-        const held = await track(projectShopWriteRequest(captured.plan, step), { reviewedAccount: captured.plan.snapshot.account, recoveryNamespace: shopStepIntent(captured, step), heldOnly: true })
+        const intent = { chainId: captured.plan.snapshot.chainId, account: captured.plan.snapshot.account, namespace: shopStepIntent(captured, step) }
+        const held = await track(projectShopWriteRequest(captured.plan, step), { reviewedAccount: intent.account, recoveryNamespace: intent.namespace, heldOnly: true })
         // The step it holds is the one its settlement is recorded against; its prerequisites bound the receipt.
-        if (!cancelled && held && held.status !== 'clear' && !sent.current) sent.current = { session: captured.id, step, safe: held.record.safe, afterBlock: 0n }
+        if (!cancelled && held && held.status !== 'clear' && !sent.current) { sent.current = { session: captured.id, step, safe: held.record.safe, afterBlock: 0n }; return }
+        if (held?.status !== 'clear') return
+        // A step its hold settled while the page was away is verified and recorded before the next one; one not shown here waits for the user's check.
+        const result = await recoverFromHold(intent, settledHash => !settledHash ? Promise.resolve(null) : withShopWriteLock(key, async () => {
+          const confirm = (safe: boolean) => confirmShopWriteStep(client, localStorage, key, captured, { safe, hash: settledHash, afterBlock: 0n }, settledHash)
+          return confirm(false).catch(() => confirm(true))
+        }))
+        if (cancelled) return
+        if (result.status === 'done') { setSession(result.value.session); setCheckedProgress(`${result.value.session.id}:${result.value.session.completed.length}`); window.dispatchEvent(new Event(SESSION_EVENT)); await invalidate() }
+        else if (result.status === 'check') setStepCheck(true)
         return
       }
       await withShopWriteLock(key, async () => {
@@ -119,7 +132,7 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
       })
     }).catch(reason => { if (!cancelled) setStorageError(message(reason)) })
     return () => { cancelled = true }
-  }, [adopt, client, key, ready, session, track])
+  }, [adopt, client, invalidate, key, ready, session, track])
 
   // The SDK's hold settled the step: its exact execution is verified and recorded before the next one.
   const settledReceipt = tx.phase === 'success' ? tx.receipt : null
@@ -253,7 +266,8 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
         : session ? <>
           {!stepActive && session.completed.length === 0 && <button type="button" className="ds-button ds-button-secondary" disabled={busy} onClick={() => void finish()}>Cancel update</button>}
           {!stepActive && !session.restoring && session.completed.length === 1 && session.plan.requestKinds.join(',') === 'grant,create,restore' && <button type="button" className="ds-button ds-button-secondary" disabled={busy || !accountMatches} onClick={() => void restore()}>Cancel creation and restore permissions</button>}
-          {(!stepActive || tx.phase === 'submitted') && <button type="button" className="ds-button ds-button-primary" disabled={busy || !accountMatches || checkedProgress !== progressKey || !!storageError} onClick={() => void submit()}>{txPhaseLabel(tx.phase, { idle: 'Review transaction', pending: 'Waiting for confirmation…' })}</button>}
+          {stepCheck && <CheckRequired line="Check this shop step before running it again." action="I checked it. Review it again" onChecked={() => setStepCheck(false)} />}
+          {(!stepActive || tx.phase === 'submitted') && !stepCheck && <button type="button" className="ds-button ds-button-primary" disabled={busy || !accountMatches || checkedProgress !== progressKey || !!storageError} onClick={() => void submit()}>{txPhaseLabel(tx.phase, { idle: 'Review transaction', pending: 'Waiting for confirmation…' })}</button>}
         </> : !working && <button type="button" className="ds-button ds-button-secondary" onClick={() => { setOpen(false); if (retryDraft) setEditor(retryDraft) }}>{retryDraft ? 'Back to items' : 'Close'}</button>}
     </div>}>
       <div className="grid gap-4 text-sm">

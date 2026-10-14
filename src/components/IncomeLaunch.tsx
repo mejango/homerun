@@ -21,6 +21,7 @@ import { incomeLaunchBlockers, prepareIncomeLaunch, readIncomeLaunchBinding, typ
 import { clearIncomeLaunchPending, incomeLaunchFromHold, incomeLaunchHold, incomeLaunchIntent, incomeLaunchRecord, incomeLaunchSessionKey, readIncomeLaunchPending, verifyIncomeLaunchExecution, type IncomeLaunchPending } from '@/lib/income-launch-session'
 import { adoptLegacyWrite, recoverFromHold } from '@/lib/write-hold'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
+import { CheckRequired } from '@/components/ui/CheckRequired'
 import { useLegacyAdoption } from '@/hooks/useLegacyAdoption'
 import { parseIncomeGlobalDraft, readIncomeGlobalDraft, saveIncomeGlobalDraft, serializeIncomeGlobalDraft, verifyIncomeGlobalDraftManifest, withIncomeGlobalDraftLock, type IncomeGlobalChainDraft, type IncomeGlobalLaunchDraft } from '@/lib/income-global-launch-draft'
 import { jbCenterIpfs } from '@/lib/jbcenter-ipfs'
@@ -30,6 +31,7 @@ import { readableError } from '@/lib/readable-error'
 import { projectPath } from '@/lib/urn'
 
 const JOURNAL_EVENT = 'homerun-income-launch-recovery'
+const INCOME_CHECK_LINE = 'Check this network’s INCOME launch before launching again.'
 const inputClass = 'min-h-11 w-full rounded border border-[#bfc9b5] bg-white px-3 text-base'
 type LaunchInput = Parameters<typeof prepareIncomeLaunch>[1]
 type Review = { plan: PreparedIncomeLaunch; input: LaunchInput }
@@ -150,14 +152,14 @@ function GlobalIncomeLaunch({ state, client, name = 'Homerun INCOME', launchUnav
  * (its record goes once the hold has it); with none, whatever the hold holds for this FUND is shown.
  */
 function useIncomeLaunchHold(chainId: JBChainId, projectId: bigint, client: PublicClient, tx: ReturnType<typeof useSafeTx>, setSent: (record: IncomeLaunchPending) => void, setError: (error: string) => void,
-  /** With no completion saved, records a launch the hold settled while the page was away. */
-  settledAway?: { saved: boolean; record: (record: IncomeLaunchPending, hash: Hex) => Promise<void> }) {
+  /** Records a launch the hold settled while the page was away (once, with no completion saved), or asks for the user's check. */
+  settledAway: { saved: boolean; record?: (record: IncomeLaunchPending, hash: Hex) => Promise<void>; check: (reason: string) => void }) {
   const { address } = useWallet()
   const adoption = useLegacyAdoption()
   const { track } = tx, adopt = adoption.run
   const onSent = useEffectEvent(setSent), onError = useEffectEvent(setError)
-  const recordAway = useEffectEvent((record: IncomeLaunchPending, hash: Hex) => settledAway && !settledAway.saved ? settledAway.record(record, hash) : Promise.resolve())
-  const recovers = !!settledAway
+  const recordAway = useEffectEvent((record: IncomeLaunchPending, hash: Hex) => !settledAway.saved && settledAway.record ? settledAway.record(record, hash) : Promise.resolve())
+  const onCheck = useEffectEvent((reason: string) => settledAway.check(reason))
   useEffect(() => {
     let cancelled = false
     const key = incomeLaunchSessionKey(chainId, projectId)
@@ -169,9 +171,9 @@ function useIncomeLaunchHold(chainId: JBChainId, projectId: bigint, client: Publ
         // Asking the hold lets it settle what the chain placed while this page was away.
         const held = await track({ chainId, call: { to: zeroAddress, data: '0x' } }, { reviewedAccount: address, recoveryNamespace: intent.namespace, heldOnly: true })
         if (!cancelled && held && held.status !== 'clear') { onSent(incomeLaunchFromHold(held.record, projectId)); return }
-        if (!recovers) return
-        // A launch the hold settled with success is recorded from its own transaction (an account's direct call).
-        await recoverFromHold(intent, async settledHash => {
+        // A launch the hold settled with success is recorded from its own transaction (an account's direct call);
+        // one that can't be shown here waits for the user's check.
+        const result = await recoverFromHold(intent, async settledHash => {
           if (!settledHash) return null
           const transaction = await client.getTransaction({ hash: settledHash })
           if (!transaction.to) throw new Error('The settled launch has no launcher call.')
@@ -179,6 +181,7 @@ function useIncomeLaunchHold(chainId: JBChainId, projectId: bigint, client: Publ
           await recordAway({ ...record, phase: 'pending', hash: settledHash }, settledHash)
           return true
         })
+        if (!cancelled && result.status === 'check') onCheck(result.reason)
         return
       }
       const { request, input, evidence } = incomeLaunchHold(record)
@@ -190,15 +193,16 @@ function useIncomeLaunchHold(chainId: JBChainId, projectId: bigint, client: Publ
       await track({ ...request, label: `Deploy INCOME on ${displayChainName(chainId)}` }, { reviewedAccount: record.holder, recoveryNamespace: input.namespace, safe: record.safe })
     }).catch(reason => { if (!cancelled) onError(message(reason)) })
     return () => { cancelled = true }
-  }, [address, adopt, chainId, client, projectId, recovers, track])
+  }, [address, adopt, chainId, client, projectId, track])
   return adoption
 }
 
 /** A network's held launch while its plan's snapshot can't load: shown with its exit. */
 function IncomeChainHold({ chainId, projectId, client }: { chainId: JBChainId; projectId: bigint; client: PublicClient }) {
   const tx = useSafeTx(chainId)
-  const [error, setError] = useState<string | null>(null)
-  useIncomeLaunchHold(chainId, projectId, client, tx, () => undefined, setError)
+  const [error, setError] = useState<string | null>(null), [check, setCheck] = useState<string | null>(null)
+  useIncomeLaunchHold(chainId, projectId, client, tx, () => undefined, setError, { saved: false, check: setCheck })
+  if (check) return <CheckRequired line={`${displayChainName(chainId)}: ${INCOME_CHECK_LINE}`} action="I checked it. Launch again" onChecked={() => setCheck(null)} />
   if (tx.phase !== 'submitted' && tx.phase !== 'pending' && !error) return null
   return <div role="status" className="grid gap-2 text-sm"><p>{displayChainName(chainId)}</p>{tx.phase === 'submitted' ? <HeldNotice tx={tx} /> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : null}{error && <p role="alert">{error}</p>}</div>
 }
@@ -219,7 +223,8 @@ function IncomeChainActions({ local, draft, manifest, clients, client, rootState
   useEffect(() => { unavailableRef.current = launchUnavailable }, [launchUnavailable])
   const fund = useQuery({ queryKey: ['income-launch-fund', chainId, local.fundProjectId], queryFn: () => readFundProjectState(client, { chainId, projectId, account: address }), initialData: rootState.chainId === chainId && rootState.projectId === projectId ? rootState : undefined, placeholderData: keepPreviousData, retry: false })
   const binding = useQuery({ queryKey: ['income-binding', chainId, local.fundProjectId], queryFn: () => readIncomeLaunchBinding(client, chainId, projectId), staleTime: 300_000, retry: false })
-  const adoption = useIncomeLaunchHold(chainId, projectId, client, tx, setSent, setJournalError, { saved: !!local.execution, record: (record, hash) => confirm(record, hash) })
+  const [checkRequired, setCheckRequired] = useState<string | null>(null)
+  const adoption = useIncomeLaunchHold(chainId, projectId, client, tx, setSent, setJournalError, { saved: !!local.execution, record: (record, hash) => confirm(record, hash), check: setCheckRequired })
   const confirm = useCallback(async (record: IncomeLaunchPending, hash: Hex) => {
     const decoded = decodeFunctionData({ abi: homerunDeployerAbi, data: record.data })
     if (decoded.functionName !== 'deployIncome' || JSON.stringify(canonicalSnapshotJson(decoded.args[1])) !== JSON.stringify(canonicalSnapshotJson(globalIncomeSnapshotParameters(manifest, draft.manifestUri)))) throw new Error('The recovered transaction uses a different global allocation.')
@@ -252,14 +257,15 @@ function IncomeChainActions({ local, draft, manifest, clients, client, rootState
         const result = saved
           ? await recoverFromHold({ chainId, account: target!.record.holder, namespace: incomeLaunchIntent(projectId) }, async settledHash => { await confirm(target!.record, settledHash ?? target!.hash); return true })
           : await confirm(target!.record, target!.hash)
-        if (result === 'held') throw new Error('This network’s launch is still pending. It counts once it settles.')
+        if (typeof result === 'object' && result.status === 'held') throw new Error('This network’s launch is still pending. It counts once it settles.')
+        if (typeof result === 'object' && result.status === 'check') throw new Error(result.reason)
       } catch (reason) { if (cancelled) return; setNotice(`Not confirmed yet. ${message(reason)}`); timer = setTimeout(() => void check(), 10_000) }
     }
     void check(); return () => { cancelled = true; if (timer) clearTimeout(timer) }
   }, [chainId, confirm, local.execution, projectId, sent, settled, submissionHash, verifiedId])
   const state = fund.data, owner = !!state && !!address && isAddressEqual(address, state.owner), blockers = state ? incomeLaunchBlockers(state) : []
   /** The launch is with the wallet, the chain or a Safe: no other is prepared meanwhile. */
-  const launching = tx.busy || tx.phase === 'submitted' || tx.phase === 'success' || !adoption.ready
+  const launching = tx.busy || tx.phase === 'submitted' || tx.phase === 'success' || !adoption.ready || !!checkRequired
   const unavailable = launchUnavailable || !owner || !state || fund.isError || binding.isError || binding.isPending || !!binding.data || !!journalError || !!local.execution || launching || blockers.length > 0
   async function run(task: () => Promise<void>) { if (action.current) return; action.current = true; setWorking(true); setError(null); try { await task() } catch (reason) { setError(message(reason)) } finally { action.current = false; setWorking(false) } }
   async function prepare() { await run(async () => { if (unavailable || !address) throw new Error('Connect this network’s FUND owner first.'); sameFrozenPlan(draft); setReview(null); setAttested(false); const input: LaunchInput = { chainId, fundProjectId: projectId, account: address, manifest, manifestUri: draft.manifestUri, name: draft.name, ticker: draft.ticker, projectUri: draft.metadataUri, salt: draft.launchSalt, reservedBps: draft.reservedBps, startsAtOrAfter: draft.startsAtOrAfter, clients }; setReview({ input, plan: await prepareIncomeLaunch(client, input) }) }) }
@@ -280,9 +286,10 @@ function IncomeChainActions({ local, draft, manifest, clients, client, rootState
     <div><h3 className="text-[15px] font-medium">{displayChainName(chainId)}</h3><p className="text-sm">{formatUnits(BigInt(local.initialIncomeAmount), 18)} initial INCOME allocated here.</p></div>
     {BigInt(local.initialIncomeAmount) === 0n && <p className="text-xs text-[var(--muted)]">This network still needs INCOME even though its initial allocation is zero.</p>}
     {fund.isError && <p role="alert" className="text-sm">Live FUND state could not be refreshed. Pending confirmations remain saved.</p>}
+    {checkRequired && <CheckRequired line={INCOME_CHECK_LINE} action="I checked it. Launch again" onChecked={() => setCheckRequired(null)} />}
     {tx.phase === 'submitted' ? <div className="grid gap-3 text-sm"><HeldNotice tx={tx} /></div>
       : tx.phase === 'pending' || tx.phase === 'success' && !verifiedId ? <p role="status" className="text-sm">Submitted. Waiting for onchain confirmation…</p>
-      : !binding.data && !local.execution && <fieldset disabled={working || tx.busy || tx.phase === 'review' || unavailable} className="grid min-w-0 gap-4">
+      : !binding.data && !local.execution && !checkRequired && <fieldset disabled={working || tx.busy || tx.phase === 'review' || unavailable} className="grid min-w-0 gap-4">
       {blockers.length > 0 && <ul className="list-disc space-y-1 pl-5 text-sm">{blockers.map(blocker => <li key={blocker}>{blocker}</li>)}</ul>}
       <button type="button" className="btn-secondary min-h-10 justify-self-start px-4" onClick={() => void prepare()}>Prepare {displayChainName(chainId)} INCOME</button>
       {review && <><p className="text-sm">This transaction records {formatUnits(BigInt(local.initialIncomeAmount), 18)} INCOME as this network’s initial allocation to the FUND owner. Creation fee: {formatUnits(review.plan.creationFee, 18)} ETH.</p><label className="flex items-start gap-3 text-sm"><input type="checkbox" className="mt-1 size-4 shrink-0" checked={attested} onChange={event => setAttested(event.target.checked)} /><span>I have reviewed the published global snapshot and attest that it includes all FUND holders, credits, bridge entitlements, and completed operator allocations. The contract does not prove historical completeness.</span></label><button type="button" className="btn-primary min-h-11 justify-self-start px-5" disabled={!attested} onClick={() => void submit()}>{txPhaseLabel(tx.phase, { idle: `Review ${displayChainName(chainId)} deployment`, pending: 'Confirming onchain…' })}</button></>}
