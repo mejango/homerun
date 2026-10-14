@@ -147,11 +147,13 @@ export function PaymentPanel({ state, client, contextIndex, chainSelector, onBus
   }} />
 }
 
-type CashOutPlan = { count: bigint; minimum: bigint; request: TxRequest; reviewNotice?: string }
+type CashOutPlan = { count: bigint; minimum: bigint; request: TxRequest; reviewNotice?: string; max: boolean }
 
 export function CashOutPanel({ state, client, contextIndex }: { state: FundProjectState; client: PublicClient; contextIndex: number }) {
   const { address } = useWallet()
   const [amount, setAmount] = useState('')
+  /** The user chose their full balance, not a typed amount: the hold keeps that choice. */
+  const [max, setMax] = useState(false)
   const tx = useProjectTransaction(state)
   const confirm = useConfirmPlan<CashOutPlan>(tx)
   const context = state.accountingContexts[contextIndex] ?? state.accountingContexts[0]
@@ -171,7 +173,7 @@ export function CashOutPanel({ state, client, contextIndex }: { state: FundProje
     if (prepared.route.minimumReturn <= 0n) throw new Error('No positive protected return is available for this amount.')
     const minimum = prepared.route.minimumReturn
     return {
-      count, minimum,
+      count, minimum, max,
       request: { ...prepared.transaction, label: `Cash out ${units(count)} FUND for at least ${units(minimum, context.decimals)} ${context.symbol}` },
       reviewNotice: minimum < quote.data!.minimumReturn ? `The quote changed. You will receive at least ${units(minimum, context.decimals)} ${context.symbol}, down from ${units(quote.data!.minimumReturn, context.decimals)} ${context.symbol}.` : undefined,
     }
@@ -179,8 +181,9 @@ export function CashOutPanel({ state, client, contextIndex }: { state: FundProje
   const send = () => confirm.run((plan, account) => tx.send(plan.request, {
     reviewedAccount: account,
     reviewNotice: plan.reviewNotice,
-    // Its minimum comes from a fresh quote: a retry is held by the cash out the user chose.
-    recoveryNamespace: writeIntentKey('cash-out', { project: state.projectId, token: intent.address(context.token), count: plan.count }),
+    // Its minimum comes from a fresh quote: a retry is held by the cash out the user chose, all of
+    // the balance when they chose that, whatever it is by the retry.
+    recoveryNamespace: writeIntentKey('cash-out', { project: state.projectId, token: intent.address(context.token), ...(plan.max ? { max: true } : { count: plan.count }) }),
     reverify: async () => {
       const latest = await freshState(client, state, account)
       if (latest.metadata.cashOutTaxRate >= 10_000 || plan.count > latest.creditBalance + latest.erc20Balance) throw new Error('Cash-out conditions changed during review. Refresh and try again.')
@@ -195,8 +198,8 @@ export function CashOutPanel({ state, client, contextIndex }: { state: FundProje
   ] : []
   return <ActionSection title="Cash out FUND">
     <p className="mb-5 text-sm">Burn FUND for its share of available treasury funds. This is also how onchain refunds and asset-sale proceeds are claimed. A quote includes the current cash-out rules and protocol fees.</p>
-    <Input label="FUND to cash out" value={amount} onChange={setAmount} />
-    {address && <button className="mt-2 text-sm underline" type="button" onClick={() => setAmount(units(total))}>Use full balance</button>}
+    <Input label="FUND to cash out" value={amount} onChange={value => { setMax(false); setAmount(value) }} />
+    {address && <button className="mt-2 text-sm underline" type="button" onClick={() => { setAmount(units(total)); setMax(true) }}>Use full balance</button>}
     {state.metadata.cashOutTaxRate >= 10_000 ? <p className="mt-4">Cash-outs are disabled by the current ruleset.</p> : quote.data ? <p className="mt-4 text-sm">At least {units(quote.data.minimumReturn, context.decimals)} {context.symbol} at 1% maximum slippage.</p> : <p className="mt-4 text-sm">{quote.isFetching ? 'Reading a protected cash-out quote…' : 'Enter an amount to see the available return.'}</p>}
     {count > total && <p className="mt-3 text-sm">This exceeds your FUND balance.</p>}
     {quote.isError && <p className="mt-3 text-sm" role="alert">A protected cash-out quote is unavailable. {errorMessage(quote.error)}</p>}

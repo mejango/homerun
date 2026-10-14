@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FundProjectState } from '@/lib/fund-state'
 import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
 import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
+import { expectRetryHeldByIntent } from './support/intent-retry'
 
 const WALLET = '0x1111111111111111111111111111111111111111' as Address
 const OTHER_WALLET = '0x6666666666666666666666666666666666666666' as Address
@@ -100,6 +101,26 @@ describe('FUND holder actions confirm like Juicebox Money', () => {
     expect(runtime.tx.dismiss).toHaveBeenCalledOnce()
     expect(document.querySelector('[data-tx-confirm]')).toBeNull()
     expect(host.querySelector('input')!.value).toBe('')
+  })
+
+  it("holds a full-balance cash out by the choice of all, so a retry after the balance moved is held by the first", async () => {
+    const cashOutAbi = parseAbi(['function cashOutTokensOf(address holder,uint256 projectId,uint256 cashOutCount,address tokenToReclaim,uint256 minTokensReclaimed,address beneficiary,bytes metadata) returns (uint256 reclaimAmount)'])
+    runtime.prepare.mockImplementation(async (_client: unknown, { cashOutCount }: { cashOutCount: bigint }) => ({ route: { minimumReturn: 8_900_000n },
+      transaction: { chainId: 1, address: TERMINAL, abi: cashOutAbi, functionName: 'cashOutTokensOf', args: [WALLET, 7n, cashOutCount, USDC, 8_900_000n, WALLET, '0x'] } }))
+    const fullBalance = async (balance: bigint) => {
+      const current = { ...state, erc20Balance: balance } as FundProjectState
+      runtime.fresh = current
+      await render(<CashOutPanel state={current} client={{} as never} contextIndex={0} />)
+      await click('Use full balance'); await settle()
+      await click('Review cash-out'); await settle()
+      await click('Confirm & cash out'); await settle()
+      await click('Cancel'); await settle()
+    }
+    await fullBalance(100n * UNIT)
+    // The balance moved (credits claimed, a transfer in) while the first attempt is unresolved.
+    await fullBalance(101n * UNIT)
+    const [first, retry] = runtime.tx.send.mock.calls.map(([request, options]) => ({ request, options }))
+    await expectRetryHeldByIntent(first, retry, writeIntentKey('cash-out', { project: state.projectId, token: intent.address(USDC), max: true }))
   })
 
   it('ends a Safe review on Done without claiming the cash out is confirmed', async () => {

@@ -274,6 +274,8 @@ function IncomePayment({ state, client, context }: { state: IncomeProjectState; 
 function IncomeCashOut({ state, client, context }: { state: IncomeProjectState; client: PublicClient; context: IncomeAccountingContext }) {
   const { address } = useWallet()
   const [input, setInput] = useState('')
+  /** The user chose their full balance, not a typed amount: the hold keeps that choice. */
+  const [max, setMax] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [preparing, setPreparing] = useState(false)
   const tx = useIncomeTx(state)
@@ -295,8 +297,9 @@ function IncomeCashOut({ state, client, context }: { state: IncomeProjectState; 
       if (prepared.route.minimumReturn <= 0n) throw new Error('No positive protected cash-out return is available.')
       await tx.send({ ...prepared.transaction, label: `Cash out ${units(count)} INCOME for at least ${units(prepared.route.minimumReturn, context.decimals)} ${context.symbol}` }, {
         reviewedAccount: address,
-        // Its minimum comes from a fresh quote: a retry is held by the cash out the user chose.
-        recoveryNamespace: writeIntentKey('cash-out', { project: state.projectId, token: intent.address(context.token), count }),
+        // Its minimum comes from a fresh quote: a retry is held by the cash out the user chose, all of
+        // the balance when they chose that, whatever it is by the retry.
+        recoveryNamespace: writeIntentKey('cash-out', { project: state.projectId, token: intent.address(context.token), ...(max ? { max: true } : { count }) }),
         reviewNotice: prepared.route.minimumReturn < quote.data.minimumReturn ? `The quote decreased. Your new protected minimum is ${units(prepared.route.minimumReturn, context.decimals)} ${context.symbol}.` : undefined,
         reverify: async () => { const latest = await fresh(client, state, address); matchingContext(latest, context); if (!latest.cashOutsAvailable || count > latest.totalBalance) throw new Error('Cash-out conditions changed during review.') },
       })
@@ -304,8 +307,8 @@ function IncomeCashOut({ state, client, context }: { state: IncomeProjectState; 
   }
   return <Panel title="Cash out INCOME">
     <p className="mb-5">Burn INCOME for revenue reserves. The quote includes hooks and fees.</p>
-    <Field label="INCOME to cash out" value={input} onChange={setInput} />
-    <button type="button" className="quiet-button mt-2" onClick={() => setInput(units(state.totalBalance))}>Use full balance</button>
+    <Field label="INCOME to cash out" value={input} onChange={value => { setMax(false); setInput(value) }} />
+    <button type="button" className="quiet-button mt-2" onClick={() => { setInput(units(state.totalBalance)); setMax(true) }}>Use full balance</button>
     {quote.data && <p className="mt-4 text-xs text-[var(--muted)]">At least {units(quote.data.minimumReturn, context.decimals)} {context.symbol} with 1% maximum slippage.</p>}
     {quote.isError && <p role="alert" className="mt-3 text-sm">{message(quote.error)}</p>}
     <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={!address || preparing || tx.busy || tx.phase === 'review' || !state.cashOutsAvailable || count <= 0n || count > state.totalBalance || !quote.data || quote.data.minimumReturn <= 0n} onClick={() => void submit()}>{preparing ? 'Preparing…' : txPhaseLabel(tx.phase, { idle: 'Review cash-out', pending: 'Confirming onchain…' })}</button>

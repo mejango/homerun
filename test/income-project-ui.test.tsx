@@ -153,6 +153,29 @@ describe('INCOME transaction surfaces', () => {
     await expectRetryHeldByIntent(first, retry, writeIntentKey('cash-out', { project: 7n, token: intent.address(token), count: 2n * 10n ** 18n }))
   })
 
+  it('holds a full-balance INCOME cash out by the choice of all, so a retry after the balance moved is held by the first', async () => {
+    const token = '0x000000000000000000000000000000000000EEEe'
+    const cashOutAbi = parseAbi(['function cashOutTokensOf(address holder,uint256 projectId,uint256 cashOutCount,address tokenToReclaim,uint256 minTokensReclaimed,address beneficiary,bytes metadata) returns (uint256 reclaimAmount)'])
+    runtime.prepareCashOut.mockImplementation(async (_client: unknown, { cashOutCount }: { cashOutCount: bigint }) => ({ route: { minimumReturn: 50n }, transaction: { chainId: 1,
+      address: '0x3333333333333333333333333333333333333333', abi: cashOutAbi, functionName: 'cashOutTokensOf', args: [runtime.address, 7n, cashOutCount, token, 50n, runtime.address, '0x'] } }))
+    runtime.cashOutQuote = { minimumReturn: 50n }
+    runtime.send.mockImplementation(async (request, options) => { await options?.reverify?.(request); return null })
+    const fullBalance = async (balance: bigint) => {
+      runtime.query = { ...runtime.query, data: { ...state(), totalBalance: balance, erc20Balance: balance } }
+      await render()
+      await tab('Owners')
+      await tab('Accounts')
+      const panel = section('Cash out INCOME')
+      await act(async () => [...panel.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Use full balance')!.click())
+      await act(async () => [...section('Cash out INCOME').querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Review cash-out')!.click())
+    }
+    await fullBalance(10n * 10n ** 18n)
+    await fullBalance(11n * 10n ** 18n)
+    expect(runtime.send).toHaveBeenCalledTimes(2)
+    const [first, retry] = runtime.send.mock.calls.map(([request, options]) => ({ request, options }))
+    await expectRetryHeldByIntent(first, retry, writeIntentKey('cash-out', { project: 7n, token: intent.address(token), max: true }))
+  })
+
   function section(title: string) { return [...host.querySelectorAll('section')].find(element => element.querySelector('h2, h3')?.textContent === title)! }
   function pendingReserved() {
     const current = state()
