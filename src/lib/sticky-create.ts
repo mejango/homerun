@@ -11,6 +11,7 @@ import { v6Address } from "@bananapus/nana-sdk-core/v6";
 import {
   decodeEventLog,
   decodeFunctionData,
+  encodeFunctionData,
   erc20Abi,
   getContractAddress,
   isAddressEqual,
@@ -46,10 +47,6 @@ import {
   type StickyProjectState,
 } from "./sticky-state";
 import {
-  adoptStickyProposal,
-  assertSafeProposalCall,
-  type ExistingSafeProposal,
-  beginStickySubmission,
   clearStickyPending,
   readStickyPending,
   stickySessionKey,
@@ -57,6 +54,8 @@ import {
   type StickyPending,
   type StickyStorage,
 } from "./sticky-session";
+import { writeIntentKey, type ReviewedWriteRecoveryInput } from "@bananapus/nana-sdk-core/review";
+import type { LegacyWriteEvidence } from "./write-hold";
 
 export const stickyCreateAbi = parseAbi([
   "function deployStickyFor(address stakedToken,string name,string symbol,string projectUri,uint256 cashOutTaxRate,address[] granters,bool soulbound) payable returns (uint256 projectId)",
@@ -725,85 +724,52 @@ export function readStickyCreationPending(
     throw new Error("The saved Sticky creation belongs to a different FUND.");
   return pending;
 }
-function persistStickyCreationSubmission(
-  storage: StickyStorage,
-  prepared: PreparedStickyCreate,
-  holder: Address,
-  safe: boolean,
-  afterBlock: bigint,
-  proposal?: ExistingSafeProposal,
-): StickyPending {
-  const { chainId, projectId } = prepared.fund;
-  if (
-    readStickyCreated(storage, chainId, projectId) ||
-    readStickyCreationPending(storage, chainId, projectId, holder)
-  )
-    throw new Error(
-      "This FUND already has a saved Sticky creation. Verify it before taking another action.",
-    );
-  const key = stickySessionKey(chainId, projectId, holder),
-    pointer = creationPendingKey(chainId, projectId);
-  try {
-    storage.setItem(pointer, key);
-    if (storage.getItem(pointer) !== key)
-      throw new Error("The browser could not save the Sticky creation lock.");
-    if (proposal)
-      return adoptStickyProposal(
-        storage,
-        key,
-        prepared.request,
-        projectId,
-        holder,
-        "Create the FUND Sticky project and SHARE token",
-        proposal,
-        afterBlock,
-      );
-    return beginStickySubmission(
-      storage,
-      key,
-      prepared.request,
-      projectId,
-      holder,
-      safe,
-      "Create the FUND Sticky project and SHARE token",
-      afterBlock,
-    );
-  } catch (reason) {
-    if (storage.getItem(pointer) === key && storage.getItem(key) === null)
-      storage.removeItem(pointer);
-    throw reason;
-  }
+/** A Sticky creation's hold: the FUND project it creates SHARE for, one at a time. TODO(SDK 2.38): the SDK's shared builder. */
+export function stickyCreateIntent(fundProjectId: bigint): string {
+  return writeIntentKey("sticky-create", { fund: fundProjectId });
 }
-export function beginStickyCreationSubmission(
-  storage: StickyStorage,
+
+/** The creation a reviewed call makes, as its execution is verified: the call, its sender and the snapshot block. */
+export function stickyCreationRecord(
   prepared: PreparedStickyCreate,
   holder: Address,
   safe: boolean,
-  afterBlock: bigint,
+  hash?: Hex,
 ): StickyPending {
-  return persistStickyCreationSubmission(
-    storage,
-    prepared,
+  const { request, fund } = prepared;
+  return {
+    version: 1,
+    chainId: request.chainId,
+    projectId: fund.projectId.toString(),
     holder,
+    target: request.address,
+    data: encodeFunctionData({ abi: request.abi, functionName: request.functionName, args: request.args }),
+    value: (request.value ?? 0n).toString(),
+    label: "Create the FUND Sticky project and SHARE token",
     safe,
-    afterBlock,
-  );
+    submittedAt: Date.now(),
+    afterBlock: fund.blockNumber.toString(),
+    ...(hash ? { hash } : {}),
+  };
 }
-export function adoptStickyCreationProposal(
-  storage: StickyStorage,
-  prepared: PreparedStickyCreate,
-  holder: Address,
-  proposal: ExistingSafeProposal,
-): StickyPending {
-  assertSafeProposalCall(prepared.request, proposal);
-  return persistStickyCreationSubmission(
-    storage,
-    prepared,
-    holder,
-    true,
-    prepared.fund.blockNumber,
-    proposal,
-  );
+
+/** A creation the journal saved before SDK holds: the request it was, and the hold it is adopted into. */
+export function stickyCreationHold(record: StickyPending): {
+  request: FundTransaction;
+  input: ReviewedWriteRecoveryInput;
+  evidence: LegacyWriteEvidence;
+} {
+  const { functionName, args } = decodeFunctionData({ abi: stickyCreateAbi, data: record.data });
+  const value = BigInt(record.value);
+  return {
+    request: { chainId: record.chainId, address: record.target, abi: stickyCreateAbi, functionName, args, value },
+    input: {
+      chainId: record.chainId, account: record.holder, safe: record.safe,
+      namespace: stickyCreateIntent(BigInt(record.projectId)),
+      call: { to: record.target, data: record.data, value },
+    },
+    evidence: { submittedAt: record.submittedAt, ...(record.hash ? record.safe ? { safe: { safeTxHash: record.hash } } : { hash: record.hash } : {}) },
+  };
 }
 export function clearStickyCreationPending(
   storage: StickyStorage,
