@@ -394,16 +394,69 @@ describe('useSafeTx', () => {
       hook.renderer.update(createElement(Harness, { ref: hook.ref }))
     })
 
+    // Nothing is in flight to hold the dialog open for: Done closes it, with the hold's line.
     expect(hook.ref.current).toMatchObject({
-      phase: 'pending',
-      busy: true,
+      phase: 'submitted',
+      busy: false,
+      settled: true,
       confirmationUncertain: true,
+      notice: 'Still pending in your wallet. Speed it up or cancel it there.',
+      held: null,
     })
-    expect(hook.ref.current!.error).toBe('Still pending in your wallet. Speed it up or cancel it there.')
     await act(async () => {
       await expect(hook.ref.current!.send(request, reviewedByAlice)).resolves.toBeNull()
     })
     expect(mocks.requestReview).toHaveBeenCalledTimes(1)
+  })
+
+  it("keeps a timed-out send held and watched through Done, so the SDK's time-based exit appears, and accepting it sends exactly once more", async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+    try {
+      // The wallet's hash never reaches the network.
+      mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => { throw new TransactionNotFoundError({ hash }) })
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+      mocks.receipt = { data: undefined, isError: true }
+      await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
+      expect(hook.ref.current).toMatchObject({ phase: 'submitted', settled: true, held: null })
+      // Done and reopening keep it held, and it is still asked.
+      await act(async () => hook.ref.current!.dismiss())
+      await act(async () => hook.ref.current!.reset())
+      vi.setSystemTime(Date.now() + 31 * 60_000)
+      await act(async () => { vi.advanceTimersByTime(15_000) })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(hook.ref.current).toMatchObject({ phase: 'submitted', confirmationUncertain: true })
+      expect(hook.ref.current!.held).toMatchObject({ label: WRITE_EXIT_LABEL })
+      mocks.receipt = { data: undefined, isError: false }
+      await act(async () => { await hook.ref.current!.held!.release() })
+      await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+      expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows the result of a timed-out send whose receipt lands only after its own receipt lookups stopped', async () => {
+    vi.useFakeTimers()
+    try {
+      mocks.publicClient.getTransactionReceipt.mockResolvedValue(undefined)
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+      mocks.receipt = { data: undefined, isError: true }
+      await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
+      // Past the flow's ten minutes of direct lookups.
+      await act(async () => { await vi.advanceTimersByTimeAsync(601_000) })
+      expect(hook.ref.current!.phase).toBe('submitted')
+      // It mines now: only the hold's own look at the chain sees it.
+      const mined = mocks.publicClient.getTransaction.getMockImplementation()!
+      mocks.publicClient.getTransaction.mockImplementation(async (query: { hash: Hex }) => ({ ...(await mined(query)), nonce: 5 }))
+      mocks.publicClient.getTransactionReceipt.mockResolvedValue(canonicalReceipt('success'))
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
+      expect(recoveryRecords()).toHaveLength(0)
+      expect(hook.ref.current).toMatchObject({ phase: 'success', error: null, held: null })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it.each([
@@ -786,7 +839,7 @@ describe('useSafeTx', () => {
     await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
     await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
     expect(hook.ref.current!.held).toBeNull()
-    expect(hook.ref.current!.error).toBe(PENDING)
+    expect(hook.ref.current!.notice).toBe(PENDING)
     // The node no longer knows it and another transaction used its nonce at a finalized block.
     const dropped = () => {
       mocks.publicClient.getTransaction.mockRejectedValue(new TransactionNotFoundError({ hash: HASH }))
@@ -803,7 +856,7 @@ describe('useSafeTx', () => {
     mocks.publicClient.getTransaction.mockResolvedValue(known)
     await act(async () => { await hook.ref.current!.held!.release() })
     expect(hook.ref.current!.held).toBeNull()
-    expect(hook.ref.current!.error).toBe(PENDING)
+    expect(hook.ref.current!.notice).toBe(PENDING)
     expect(recoveryRecords()).toHaveLength(1)
     dropped()
     await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })

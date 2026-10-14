@@ -551,6 +551,16 @@ export function useSafeTx(chainId: number) {
     : undefined
 
   const receiptReverted = phase === 'pending' && receiptData?.status === 'reverted'
+  // The receipt watch gave up on a transaction that has a hash. It may still
+  // land, so it stays held and followed, but nothing is in flight to hold a
+  // dialog open for: Done closes it, with the hold's line.
+  const watchGaveUp = !shownKey && phase === 'pending' && receipt.isError && !receiptData
+  /** A timed-out send is still followed: closing keeps it shown, so its receipt or exit lands here. */
+  const following = useRef(false)
+  following.current = watchGaveUp
+  /** This flow already shows its own receipt: a hold that clears on it changes nothing here. */
+  const receiptShown = useRef(false)
+  receiptShown.current = !!receiptData
   // A Safe proposal's state is the registry's. Its confirm ends on Done while
   // the signers decide, and when its result can't be proven here; no send of
   // its action goes out until it ends, or the user dismisses an unproven
@@ -564,10 +574,13 @@ export function useSafeTx(chainId: number) {
       ? 'success'
       : receiptReverted
         ? 'error'
-        : phase
+        : watchGaveUp
+          ? 'submitted'
+          : phase
   // A success settles only once the hold has verified it and let go.
   const effectivePhase: TxPhase = held?.exit ? 'submitted' : held && shownPhase === 'success' ? 'pending' : shownPhase
-  const notice = held && held.status !== 'pending-known-hash' ? held.line : recoveryNotice ?? (
+  const notice = held && held.status !== 'pending-known-hash' ? held.line
+    : watchGaveUp ? (held?.line ?? WRITE_HOLD_PENDING_LINE) : recoveryNotice ?? (
     proposal?.phase === 'awaiting'
       ? (proposal.message ?? SAFE_PROPOSAL_AWAITING)
       : proposal?.phase === 'confirming'
@@ -581,9 +594,7 @@ export function useSafeTx(chainId: number) {
       : null
     : receiptReverted
       ? hold ? WRITE_HOLD_REVERTED_LINE : `Transaction reverted onchain${hash ? ` (${hash})` : ''}.`
-      : phase === 'pending' && receipt.isError && !receiptData
-        ? (held?.line ?? WRITE_HOLD_PENDING_LINE)
-        : error
+      : error
   const awaitingProposal =
     proposal?.phase === 'checking' || proposal?.phase === 'awaiting' ? proposal.proposalHash : null
 
@@ -617,6 +628,10 @@ export function useSafeTx(chainId: number) {
       if (ended && !tracked.current) {
         if ('hash' in ended) { tracked.current = ended.hash; setHash(ended.hash) }
         else { setError(SAFE_PROPOSAL_EXPIRED); setPhase('error') }
+      } else if (ended && 'hash' in ended && !receiptShown.current && tracked.current?.toLowerCase() === ended.hash) {
+        // The hold verified this flow's own hash after its receipt lookups stopped: its result shows here.
+        if (ended.result === 'success') setPhase('success')
+        else { setError(WRITE_HOLD_REVERTED_LINE); setPhase('error') }
       }
       return
     }
@@ -962,6 +977,7 @@ export function useSafeTx(chainId: number) {
    * since the user may not have seen its line. A hold stays saved.
    */
   const reset = useCallback(() => {
+    if (following.current) return
     generation.current += 1
     inFlightRef.current = false
     unsubscribe.current?.()
@@ -981,6 +997,7 @@ export function useSafeTx(chainId: number) {
    * released stays, with its exit, until the user takes it.
    */
   const dismiss = useCallback(() => {
+    if (following.current) return
     const shown = shownKey ? proposals.get(shownKey) : undefined
     // A known execution stays held until its receipt decides it: closing only hides it.
     if (shownKey && shown?.phase === 'unproven' && !shown.executionHash) {
@@ -1017,7 +1034,7 @@ export function useSafeTx(chainId: number) {
     /** The transaction has a hash, but its result could not be confirmed here. */
     confirmationUncertain: !!recoveryNotice || !!held?.exit || (shownKey
       ? proposal?.phase === 'unproven' || (proposal?.phase === 'awaiting' && !!proposal.message)
-      : phase === 'pending' && receipt.isError && !receiptData),
+      : watchGaveUp),
     send,
     reset,
     dismiss,
