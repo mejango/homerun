@@ -756,14 +756,9 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
       await withSubmissionLock(async () => {
         if (planRef.current !== active) throw new Error('The linked plan changed while closing. Keep its current submissions pending.')
         // A chain whose write its hold still holds keeps the plan, and its exit, until it settles or the user takes that exit;
-        // one that settled keeps it until its result is recorded.
-        // Each recorded chain's settlement is followed now, as its plan closes.
-        for (const [chainId, result] of completedRef.current) {
-          const index = active.states.findIndex(peer => peer.chainId === chainId)
-          if (index >= 0) await attempts.retire(chainScope(active, index, result.submission), { by: 'settled', hash: result.receipt.transactionHash })
-        }
-        for (const index of active.states.keys()) {
-          if (!attempts.canDiscard(chainScope(active, index))) throw new Error('Finish or exit the pending update first.')
+        // one that settled keeps it until its result is recorded. A recorded chain is checked once it is followed, below.
+        for (const [index, peer] of active.states.entries()) {
+          if (!completedRef.current.has(peer.chainId) && !attempts.canDiscard(chainScope(active, index))) throw new Error('Finish or exit the pending update first.')
         }
         const records = submissionsRef.current
         if (!checked && (records.size || completed.size)) {
@@ -773,6 +768,13 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
             if (!result) throw new Error('A linked submission is not yet verified.')
             assertSubmission(project.chainId, result.submission)
           }
+        }
+        // Every check passed: each recorded chain's settlement is followed now, as its plan closes, and nothing else holds it.
+        for (const [chainId, result] of completedRef.current) {
+          const index = active.states.findIndex(peer => peer.chainId === chainId)
+          if (index < 0) continue
+          await attempts.retire(chainScope(active, index, result.submission), { by: 'settled', hash: result.receipt.transactionHash })
+          if (!attempts.canDiscard(chainScope(active, index, result.submission))) throw new Error('Finish or exit the pending update first.')
         }
         const key = recoveryKey(active.account)
         window.localStorage.removeItem(key)

@@ -311,6 +311,10 @@ describe('linked ruleset recovery of a Safe execution', () => {
       await act(async () => button('Close this plan')!.click()); await settle()
       expect(host.textContent).toContain('Finish or exit the pending update first.')
       expect(localStorage.getItem(key)).not.toBeNull()
+      // The refused close followed nothing: a reload still proves the confirmed chain.
+      await act(async () => root.unmount()); root = createRoot(host)
+      await verify()
+      expect(host.textContent).toContain('Execution confirmed.')
       // The user takes that chain's exit: nothing holds the plan now.
       const shown = await hold.state(client)
       expect((await hold.exit(shown, { checkedWallet: true }, client)).released).toBe(true)
