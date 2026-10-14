@@ -136,7 +136,6 @@ function useBridgeTransaction(chainId: JBChainId) {
     setActive({ request, account: options.reviewedAccount, safe: tx.isSafe });
     await tx.send(request, {
       ...options,
-      action: "bridge step",
       onExistingProposal: async (proposal) => {
         const decoded = decodeFunctionData({ abi: request.abi, data: proposal.call.data });
         if (decoded.functionName !== request.functionName) throw new Error("The saved Safe bridge call changed.");

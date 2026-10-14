@@ -79,7 +79,7 @@ describe('project administrative writes', () => {
     await render()
     await act(async () => button('Save')!.click())
     expect(runtime.send).toHaveBeenCalledWith(request(), expect.objectContaining({
-      reviewedAccount: OWNER, recoveryNamespace: 'homerun:project-admin:7', action: 'project update',
+      reviewedAccount: OWNER, recoveryNamespace: 'homerun:project-admin:7',
     }))
     expect(runtime.reverify).toHaveBeenCalledOnce()
     expect(runtime.viewAs).toHaveBeenCalled()
@@ -117,11 +117,11 @@ describe('project administrative writes', () => {
   it('show a held write with its one line and its exit', async () => {
     const release = vi.fn()
     runtime.engine = {
-      phase: 'submitted', notice: writeHeldMessage('project update'), confirmationUncertain: true,
-      held: { line: writeHeldMessage('project update'), warning: writeExitMessage({ to: TARGET, data: '0x', value: 0n }, 'project update'), label: WRITE_EXIT_LABEL, release },
+      phase: 'submitted', notice: writeHeldMessage(), confirmationUncertain: true,
+      held: { line: writeHeldMessage(), warning: writeExitMessage({ to: TARGET, data: '0x', value: 0n }), label: WRITE_EXIT_LABEL, release },
     }
     await render()
-    expect(host.textContent).toContain(writeHeldMessage('project update'))
+    expect(host.textContent).toContain(writeHeldMessage())
     await act(async () => button(WRITE_EXIT_LABEL)!.click())
     expect(release).toHaveBeenCalledOnce()
   })

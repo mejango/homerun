@@ -7,8 +7,7 @@ import { usePublicClient } from 'wagmi'
 import { useSafeTx, type TxRequest } from './useSafeTx'
 import { useWallet } from './useWallet'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { WRITE_STILL_PENDING_LINE, provenDropped } from '@/lib/write-hold'
-import { WRITE_EXIT_LABEL, browserLocks, writeExitMessage, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
+import { WRITE_EXIT_LABEL, browserLocks, writeExitMessage } from '@bananapus/nana-sdk-core/review'
 import {
   adoptLegacyProjectAdminRecord, noteProjectAdminAccount, otherProjectAdminHolds, projectAdminLockName, projectAdminNamespace, pruneProjectAdminAccounts, type ProjectAdminHold,
 } from '@/lib/project-admin-reservation'
@@ -122,7 +121,6 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
             recoveryNamespace: projectAdminNamespace(projectId),
         // Adopting a proposal the Safe already has skips the wallet, so the account is registered here, still under the lock.
         onExistingProposal: () => { noteProjectAdminAccount(localStorage, chainId, projectId, options.reviewedAccount) },
-            action: 'project update',
             reverify: async reviewed => {
               await latestConfirmedBlock()
               await options.reverify(reviewed)
@@ -149,7 +147,7 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
     if (!otherHold || !client) return
     let cancelled = false
     const look = async () => {
-      const account = watched.current ?? otherHold.record.account
+      const account = watched.current ?? otherHold.state.record.account
       try {
         const holds = await otherProjectAdminHolds(localStorage, client, chainId, projectId, account)
         if (cancelled) return
@@ -157,7 +155,7 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
           if (lock) pruneProjectAdminAccounts(localStorage, chainId, projectId, account)
         })
         if (!holds.length) setOtherHold(null)
-        else if (JSON.stringify(holds[0].record) !== JSON.stringify(otherHold.record) || holds[0].exit !== otherHold.exit) setOtherHold(holds[0])
+        else if (JSON.stringify(holds[0].state.record) !== JSON.stringify(otherHold.state.record) || holds[0].state.status !== otherHold.state.status) setOtherHold(holds[0])
       } catch { /* The next look asks again. */ }
     }
     const timer = setInterval(() => void look(), 15_000)
@@ -165,16 +163,17 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
   }, [chainId, client, otherHold, projectId])
   const phase = otherHold ? 'submitted' as const : tx.phase
   const exitOther = useCallback(async () => {
-    if (!otherHold) return
+    if (!otherHold || !client) return
     try {
-      // Ask again as the exit is taken, and hand the abandon the record the user saw.
-      if (otherHold.record.hash && !(client && await provenDropped(client, otherHold.record))) { setError(WRITE_STILL_PENDING_LINE); return }
-      otherHold.journal.abandon(otherHold.record, { checkedWallet: true }); setOtherHold(null); setError(null)
+      // The hold asks the chain again as the exit is taken, for the state the user saw.
+      const { released, state } = await otherHold.hold.exit(otherHold.state, { checkedWallet: true }, client)
+      if (released || state.status === 'clear') { setOtherHold(null); setError(null) }
+      else setOtherHold({ hold: otherHold.hold, state })
     } catch (reason) { setError(errorMessage(reason)) }
   }, [client, otherHold])
-  const held = tx.held ?? (otherHold?.exit ? {
-    line: writeHeldMessage('project update'), warning: writeExitMessage(otherHold.record.call, 'project update'),
-    label: WRITE_EXIT_LABEL, release: () => void exitOther(),
+  const held = tx.held ?? (otherHold?.state.exit ? {
+    line: otherHold.state.line, warning: 'warning' in otherHold.state && otherHold.state.warning ? otherHold.state.warning : writeExitMessage(otherHold.state.record.call),
+    label: WRITE_EXIT_LABEL, release: exitOther,
   } : null)
   const pending = phase === 'pending' || phase === 'submitted'
   /** Clears a settled result before the next review. A write still being followed is never cleared. */
@@ -191,7 +190,7 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
   return {
     send, reset, dismiss, ready: adopted,
     busy: working || tx.busy || phase === 'review', pending,
-    phase, settled: tx.settled || !!otherHold, notice: otherHold ? (otherHold.record.hash ? WRITE_STILL_PENDING_LINE : writeHeldMessage('project update')) : phase === 'submitted' ? tx.notice : null,
+    phase, settled: tx.settled || !!otherHold, notice: otherHold ? otherHold.state.line : phase === 'submitted' ? tx.notice : null,
     error: error ?? tx.error, status: phase === 'success' ? `${label} confirmed.` : null,
     hash: tx.hash, submissionHash: tx.submissionHash,
     safe: tx.isSafe, chainId, pendingLabel: pending ? label : null,

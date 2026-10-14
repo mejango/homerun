@@ -11,7 +11,7 @@ import {
   type Hex,
 } from 'viem'
 import { SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
-import { WRITE_EXIT_LABEL, createBrowserWriteRecovery, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
+import { WRITE_EXIT_LABEL, WRITE_HOLD_NONCE_LINE, WRITE_HOLD_PENDING_LINE, WRITE_HOLD_REVERTED_LINE, createBrowserWriteRecovery, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { installRecoveryLocks, recoveryRecords } from './write-recovery-fixture'
 
@@ -408,7 +408,7 @@ describe('useSafeTx', () => {
 
   it.each([
     ['success', 'success', null],
-    ['reverted', 'error', /reverted onchain/i],
+    ['reverted', 'error', /failed onchain/i],
   ] as const)(
     'treats a %s receipt as a terminal state',
     async (status, phase, error) => {
@@ -680,15 +680,15 @@ describe('useSafeTx', () => {
       throw new Error('Wallet reply was lost after broadcast')
     })
     const first = await renderHook()
-    await act(async () => { await first.ref.current!.send(request, { ...reviewedByAlice, beforeWrite, action: 'payment' }) })
-    expect(first.ref.current).toMatchObject({ phase: 'submitted', confirmationUncertain: true, notice: writeHeldMessage('payment') })
-    expect(first.ref.current!.held).toMatchObject({ line: writeHeldMessage('payment'), label: WRITE_EXIT_LABEL })
+    await act(async () => { await first.ref.current!.send(request, { ...reviewedByAlice, beforeWrite }) })
+    expect(first.ref.current).toMatchObject({ phase: 'submitted', confirmationUncertain: true, notice: writeHeldMessage() })
+    expect(first.ref.current!.held).toMatchObject({ line: writeHeldMessage(), label: WRITE_EXIT_LABEL })
     expect(beforeWrite).toHaveBeenCalledOnce()
     // The account's next nonce is saved before the wallet opens, so the chain can release it.
     expect(recoveryRecords()[0]).toMatchObject({ nonce: '5', fromBlock: '90' })
     expect(recoveryRecords()[0].hash).toBeUndefined()
     await act(async () => { first.ref.current!.reset() })
-    await act(async () => { await first.ref.current!.send(request, { ...reviewedByAlice, action: 'payment' }) })
+    await act(async () => { await first.ref.current!.send(request, reviewedByAlice) })
     expect(first.ref.current!.phase).toBe('submitted')
     await act(async () => { first.renderer.unmount() })
     const reopened = await renderHook()
@@ -750,39 +750,62 @@ describe('useSafeTx', () => {
     expect(recoveryRecords()).toHaveLength(1)
   })
 
-  it('never opens the wallet with no hold at all: a marker that cannot be retained after the storage probe refuses the write', async () => {
+  it('never opens the wallet with no hold at all: a hold the storage refuses is kept in the tab', async () => {
     const original = Storage.prototype.setItem
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key: string, value: string) {
       if (key.startsWith('nana-sdk:reviewed-write')) throw new Error('Storage unavailable')
       original.call(this, key, value)
     })
+    mocks.writeContract.mockRejectedValueOnce(new Error('Wallet reply was lost after broadcast'))
+    const hook = await renderHook()
+    await act(async () => { await hook.ref.current!.send(request, { ...reviewedByAlice, recoveryNamespace: 'memory-c' }) })
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    expect(hook.ref.current).toMatchObject({ phase: 'submitted', confirmationUncertain: true })
+    await act(async () => { hook.ref.current!.reset() })
+    await act(async () => { await hook.ref.current!.send(request, { ...reviewedByAlice, recoveryNamespace: 'memory-c' }) })
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+  })
+
+  it('never opens the wallet when the account’s nonce cannot be read, and says so', async () => {
+    mocks.publicClient.getTransactionCount.mockRejectedValue(new Error('rpc down'))
     const hook = await renderHook()
     await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
     expect(mocks.writeContract).not.toHaveBeenCalled()
-    expect(hook.ref.current!.phase).toBe('error')
+    expect(hook.ref.current).toMatchObject({ phase: 'error', error: WRITE_HOLD_NONCE_LINE, held: null })
+    expect(recoveryRecords()).toHaveLength(0)
   })
 
-  const PENDING = 'Still pending in your wallet. Speed it up or cancel it there.'
+  const PENDING = WRITE_HOLD_PENDING_LINE
   it('never offers the exit for a returned hash that is still pending, only for one proven dropped, rechecked as it is taken', async () => {
     vi.useFakeTimers()
+    const known = { hash: HASH, from: ALICE, nonce: 5, blockNumber: null, chainId: 10 }
     const hook = await renderHook()
     await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
     mocks.receipt = { data: undefined, isError: true }
-    mocks.publicClient.getTransaction.mockResolvedValue({ hash: HASH })
+    mocks.publicClient.getTransaction.mockResolvedValue(known)
     await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
     expect(hook.ref.current!.held).toBeNull()
     expect(hook.ref.current!.error).toBe(PENDING)
-    // The node no longer knows it and the account's nonce moved on at a finalized block.
-    mocks.publicClient.getTransaction.mockRejectedValue(new TransactionNotFoundError({ hash: HASH }))
-    mocks.publicClient.getTransactionCount.mockResolvedValue(6)
+    // The node no longer knows it and another transaction used its nonce at a finalized block.
+    const dropped = () => {
+      mocks.publicClient.getTransaction.mockRejectedValue(new TransactionNotFoundError({ hash: HASH }))
+      mocks.publicClient.getTransactionCount.mockImplementation(async ({ blockNumber }: { blockNumber?: bigint }) => (blockNumber ?? 100n) >= 95n ? 6 : 5)
+      mocks.publicClient.getBlock.mockImplementation(async ({ blockNumber, includeTransactions }: { blockNumber?: bigint; includeTransactions?: boolean }) => ({
+        number: blockNumber ?? 100n, hash: BLOCK_HASH, timestamp: 1_000n,
+        transactions: includeTransactions ? [{ from: ALICE, nonce: 5, hash: EXECUTION_HASH, to: BOB, input: '0x', value: 0n }] : [],
+      }))
+    }
+    dropped()
     await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
     expect(hook.ref.current!.held).toMatchObject({ label: WRITE_EXIT_LABEL })
     // It reappears before the exit is accepted: the hold stays.
-    mocks.publicClient.getTransaction.mockResolvedValue({ hash: HASH })
+    mocks.publicClient.getTransaction.mockResolvedValue(known)
     await act(async () => { await hook.ref.current!.held!.release() })
+    expect(hook.ref.current!.held).toBeNull()
     expect(hook.ref.current!.error).toBe(PENDING)
     expect(recoveryRecords()).toHaveLength(1)
-    mocks.publicClient.getTransaction.mockRejectedValue(new TransactionNotFoundError({ hash: HASH }))
+    dropped()
     await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
     await act(async () => { await hook.ref.current!.held!.release() })
     expect(hook.ref.current).toMatchObject({ phase: 'idle', held: null })
@@ -814,7 +837,7 @@ describe('useSafeTx', () => {
       await act(async () => { await hook.ref.current!.send(request, { ...reviewedByAlice, recoveryNamespace: 'memory-a' }) })
       expect(mocks.requestReview.mock.calls[0][1].description).toContain(STORAGE)
       expect(mocks.writeContract).toHaveBeenCalledOnce()
-      expect(hook.ref.current).toMatchObject({ phase: 'submitted', notice: writeHeldMessage('transaction') })
+      expect(hook.ref.current).toMatchObject({ phase: 'submitted', notice: writeHeldMessage() })
       await act(async () => { hook.ref.current!.reset() })
       await act(async () => { await hook.ref.current!.send(request, { ...reviewedByAlice, recoveryNamespace: 'memory-a' }) })
       expect(mocks.writeContract).toHaveBeenCalledOnce()
@@ -859,7 +882,7 @@ describe('useSafeTx', () => {
       expect(hook.ref.current!.hash).toBe(HASH)
       expect(recoveryRecords()[0].hash).toBeUndefined()
       storageBroken = false
-      await act(async () => { await vi.advanceTimersByTimeAsync(4_100) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_100) })
       expect(recoveryRecords()[0].hash).toBe(HASH)
       await act(async () => { hook.ref.current!.reset() })
       await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
@@ -878,7 +901,7 @@ describe('useSafeTx', () => {
     expect(recoveryRecords()).toHaveLength(1)
   })
 
-  it('holds a reverted write until finality proves its failure', async () => {
+  it('holds a reverted write until finality proves its failure, and never sends it again meanwhile', async () => {
     const hook = await renderHook()
     await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
     mocks.publicClient.getBlock.mockImplementation(async ({ blockNumber }: { blockNumber?: bigint }) => ({
@@ -886,8 +909,12 @@ describe('useSafeTx', () => {
     }))
     mocks.receipt = { data: canonicalReceipt('reverted'), isError: false }
     await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
-    expect(hook.ref.current!.phase).toBe('pending')
+    expect(hook.ref.current).toMatchObject({ phase: 'error', error: WRITE_HOLD_REVERTED_LINE, held: null })
     expect(recoveryRecords()).toHaveLength(1)
+    mocks.receipt = { data: undefined, isError: false }
+    await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    expect(hook.ref.current!.phase).toBe('pending')
   })
 
   it.each(['reset', 'unmount'] as const)('does not write after %s closes an outstanding review', async close => {

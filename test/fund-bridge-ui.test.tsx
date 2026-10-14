@@ -232,11 +232,11 @@ it('leaves a held approval to the engine: its one line and its exit, never a loc
   const release = vi.fn()
   runtime.send.mockImplementation(async () => null)
   await act(async () => approve().click())
-  runtime.engine = { phase: 'submitted', notice: writeHeldMessage('bridge step'), receipt: null,
-    held: { line: writeHeldMessage('bridge step'), warning: writeExitMessage({ to: '0x', data: '0x', value: 0n }, 'bridge step'), label: WRITE_EXIT_LABEL, release } } as never
+  runtime.engine = { phase: 'submitted', notice: writeHeldMessage(), receipt: null,
+    held: { line: writeHeldMessage(), warning: writeExitMessage({ to: '0x', data: '0x', value: 0n }), label: WRITE_EXIT_LABEL, release } } as never
   await render()
   const dialog = host.querySelector('[data-tx-confirm]')!
-  expect(dialog.textContent).toContain(writeHeldMessage('bridge step'))
+  expect(dialog.textContent).toContain(writeHeldMessage())
   const exit = [...dialog.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === WRITE_EXIT_LABEL)!
   await act(async () => exit.click())
   expect(release).toHaveBeenCalledOnce()
