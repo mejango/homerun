@@ -1,4 +1,4 @@
-import { createHeldWriteStorage, createWriteHold, type WriteHoldState } from '@bananapus/nana-sdk-core/review'
+import { createHeldWriteStorage, createWriteHold, type ReviewedWriteRecoveryInput, type WriteHoldClient, type WriteHoldHandle, type WriteHoldState } from '@bananapus/nana-sdk-core/review'
 
 /** The browser's storage with the tab's memory behind it: every read of a held write goes through it. */
 export const heldStorage = createHeldWriteStorage()
@@ -19,4 +19,20 @@ export function sameShownHold(a: WriteHoldState, b: WriteHoldState): boolean {
     }),
   })
   return shown(a) === shown(b)
+}
+
+/** What a journal from before SDK holds saved about its write: the evidence `hold.adopt` takes. */
+export type LegacyWriteEvidence = NonNullable<Parameters<WriteHoldHandle['adopt']>[1]>
+
+/**
+ * Move a journal record from before SDK holds into the write's hold, atomically: the hold for
+ * `input` reserves it with the saved evidence (its hash, or its Safe proposal; else its nonce) and
+ * its saved send time, unless the hold already holds something. From then on the SDK alone holds it,
+ * shows its line, offers its exit and settles it. Returns what the hold says now.
+ */
+export async function adoptLegacyWrite(input: ReviewedWriteRecoveryInput, evidence: LegacyWriteEvidence, client: WriteHoldClient): Promise<WriteHoldState> {
+  const hold = holds.open(input)
+  const snapshot = await hold.state(client)
+  if (snapshot.status !== 'clear') return snapshot
+  return hold.adopt(snapshot, evidence, client)
 }

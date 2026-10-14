@@ -1012,6 +1012,24 @@ export function useSafeTx(chainId: number) {
   )
 
   /**
+   * Show the hold of a write this flow didn't send in this page: one sent before a reload, or a
+   * journal record adopted into its hold. Nothing is sent; the hold's state is shown with its line
+   * and exit, a hash is followed, and a send of the same write is refused while it holds.
+   */
+  const track = useCallback(async (request: TxRequest, options: Pick<TxSendOptions, 'reviewedAccount' | 'recoveryNamespace'> & { safe?: boolean }) => {
+    if (!publicClient || inFlightRef.current) return
+    const at = generation.current
+    const current = holds.open({
+      chainId: request.chainId, account: options.reviewedAccount, safe: options.safe ?? isSafeConnection(wagmiConfig), call: callOf(request),
+      ...(options.recoveryNamespace ? { namespace: options.recoveryNamespace } : {}),
+    })
+    holdAt.current = at
+    setHold(current)
+    const state = await current.state(publicClient).catch(() => null)
+    if (state && generation.current === at) apply(state, publicClient)
+  }, [publicClient, apply])
+
+  /**
    * Clear this flow's state, as a new review opens. A Safe proposal stays in
    * the registry: still followed while pending, and still held when unproven,
    * since the user may not have seen its line. A hold stays saved.
@@ -1078,6 +1096,7 @@ export function useSafeTx(chainId: number) {
       ? proposal?.phase === 'unproven' || (proposal?.phase === 'awaiting' && !!proposal.message)
       : watchGaveUp),
     send,
+    track,
     reset,
     dismiss,
   }
