@@ -181,7 +181,7 @@ describe('project administrative writes', () => {
       call: { to: TARGET, data: '0x12345678', value: 0n } })
     await journal.withLock(async () => { journal.reserve(undefined, { nonce: 5, blockNumber: 90n }); journal.submitted(EXECUTION) })
     noteProjectAdminAccount(localStorage, 8453, 7n, first)
-    ;(runtime.client as Record<string, unknown>).getTransaction = vi.fn(async () => ({ hash: EXECUTION }))
+    ;(runtime.client as Record<string, unknown>).getTransaction = vi.fn(async () => ({ hash: EXECUTION, blockNumber: null }))
     await render()
     await vi.waitFor(() => expect(handle.ready).toBe(true))
     await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })

@@ -871,8 +871,10 @@ describe('useSafeTx', () => {
     dropped()
     await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
     expect(hook.ref.current!.held).toMatchObject({ label: WRITE_EXIT_LABEL })
-    // It reappears before the exit is accepted: the hold stays.
+    // It reappears before the exit is accepted, with its nonce unused after all (a reorg): the hold stays.
+    // A cancellation still proven at its nonce would release, since the SDK treats that proof as final.
     mocks.publicClient.getTransaction.mockResolvedValue(known)
+    mocks.publicClient.getTransactionCount.mockResolvedValue(5)
     await act(async () => { await hook.ref.current!.held!.release() })
     expect(hook.ref.current!.held).toBeNull()
     expect(hook.ref.current!.notice).toBe(PENDING)
@@ -1009,6 +1011,34 @@ describe('useSafeTx', () => {
     expect(phases).not.toContain('success')
     expect(ref.current!.phase).toBe('pending')
     expect(recoveryRecords()).toHaveLength(1)
+  })
+
+  it('shows the result of a write that settled while its tab was closed, and sends nothing when it is opened again after a reload', async () => {
+    const first = await renderHook()
+    await act(async () => { await first.ref.current!.send(request, reviewedByAlice) })
+    expect(recoveryRecords()).toHaveLength(1)
+    await act(async () => first.renderer.unmount())
+    // Another tab verifies its receipt, and the hold settles there.
+    const { createWriteHold, createHeldWriteStorage } = await import('@bananapus/nana-sdk-core/review')
+    const call = { to: BOB, data: encodeFunctionData({ abi: ABI, functionName: 'transfer', args: [BOB, 5n] }), value: 7n }
+    mocks.publicClient.getTransactionReceipt.mockResolvedValue(canonicalReceipt('success'))
+    const otherTab = createWriteHold({ storage: createHeldWriteStorage() }).open({ chainId: 10, account: ALICE, safe: false, call })
+    expect(await otherTab.onReceipt(canonicalReceipt('success'), mocks.publicClient as never)).toMatchObject({ status: 'clear', settled: { result: 'success' } })
+    // The page reloads; the flow is opened again and its action sent.
+    vi.resetModules()
+    const { useSafeTx: reloaded } = await import('@/hooks/useSafeTx')
+    const Reloaded = forwardRef<SafeTxValue>(function Reloaded(_, ref) {
+      const value = reloaded(10)
+      useImperativeHandle(ref, () => value, [value])
+      return null
+    })
+    const ref = createRef<SafeTxValue>()
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => { renderer = TestRenderer.create(createElement(Reloaded, { ref })) })
+    renderers.push(renderer)
+    await act(async () => { await expect(ref.current!.send(request, reviewedByAlice)).resolves.toBe(HASH) })
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    expect(ref.current).toMatchObject({ phase: 'success', hash: HASH, error: null, held: null })
   })
 
   it('keeps a noncanonical receipt pending and retains its durable record', async () => {

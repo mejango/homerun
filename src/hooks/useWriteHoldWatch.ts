@@ -10,16 +10,15 @@ const HOLD_RECHECK_MS = 15_000
  * Keep a shown write hold current: every state it reports (this tab's,
  * another tab's, its own follow's) reaches `onState`, and it is asked again
  * every 15 seconds while `hold` is given, so an exit that becomes due with
- * time appears. Its saved state reaches `onState` once as it subscribes
- * (`replay: false` for a hold handed over with a fresher chain-read state), and
- * `checkNow` also asks the chain at once. Returns a recheck for after a manual
- * check.
+ * time appears. Its latest state reaches `onState` as it subscribes (the SDK
+ * replays it), and `checkNow` also asks the chain at once. Returns a recheck
+ * for after a manual check.
  */
 export function useWriteHoldWatch(
   hold: WriteHoldHandle | undefined,
   client: WriteHoldClient | undefined,
   onState: (state: WriteHoldState) => void,
-  { checkNow = false, replay = true }: { checkNow?: boolean; replay?: boolean } = {},
+  { checkNow = false }: { checkNow?: boolean } = {},
 ): () => void {
   const onStateRef = useRef(onState)
   const clientRef = useRef(client)
@@ -30,9 +29,8 @@ export function useWriteHoldWatch(
   const recheckRef = useRef<() => void>(() => {})
   useEffect(() => {
     if (!hold) return
+    // The SDK replays the hold's latest state as it subscribes, so a state reported before is not missed.
     const stop = hold.subscribe(state => onStateRef.current(state))
-    // What the hold says now, once as it is subscribed: a state it reported before is not missed.
-    if (replay) try { onStateRef.current(hold.peek()) } catch { /* An unreadable record shows at its next state(). */ }
     const check = () => {
       const current = clientRef.current
       if (current) void hold.state(current).catch(() => {})
@@ -44,7 +42,7 @@ export function useWriteHoldWatch(
       clearInterval(timer)
       recheckRef.current = () => {}
     }
-  }, [hold, replay])
+  }, [hold])
   useEffect(() => {
     if (hold && checkNow) recheckRef.current()
   }, [hold, checkNow])

@@ -496,6 +496,8 @@ export function useSafeTx(chainId: number) {
   const tracked = useRef<Hex | null>(null)
   /** An exit is on screen: a clear that arrives meanwhile ends the attempt without a send. */
   const exitShown = useRef(false)
+  /** The settled write this flow already showed: sending that call again is then a new action. */
+  const shownSettled = useRef<Hex | null>(null)
   const exiting = useRef(false)
   /** A write with a durable domain journal has no generic hold; its wallet may still have lost the reply. */
   const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null)
@@ -630,6 +632,7 @@ export function useSafeTx(chainId: number) {
         else { setError(SAFE_PROPOSAL_EXPIRED); setPhase('error') }
       } else if (ended && 'hash' in ended && tracked.current?.toLowerCase() === ended.hash) {
         // The hold verified this flow's own hash and let go: its result shows here.
+        shownSettled.current = ended.hash
         if (ended.result === 'success') setPhase('success')
         else { setError(WRITE_HOLD_REVERTED_LINE); setPhase('error') }
       }
@@ -657,11 +660,8 @@ export function useSafeTx(chainId: number) {
   // A verified receipt releases the hold; a revert only once it is final.
   useEffect(() => {
     const confirmed = shownKey ? proposal?.receipt : receiptData
-    if (!hold || !confirmed || !publicClient) return
-    const at = generation.current
-    void hold.onReceipt(confirmed, publicClient)
-      .then(state => { if (holdAt.current === at && generation.current === at) apply(state, publicClient) }, () => null)
-  }, [hold, shownKey, proposal?.receipt, receiptData, publicClient, apply])
+    if (hold && confirmed && publicClient) void hold.onReceipt(confirmed, publicClient).catch(() => null)
+  }, [hold, shownKey, proposal?.receipt, receiptData, publicClient])
   // The follower's proven Safe execution is kept through a reload until its result settles it. A hash
   // the follower only saw (an execution returned at once, or the service's report) is never saved as one.
   const executionHash = shownKey && proposal?.proven ? proposal.executionHash : null
@@ -763,6 +763,19 @@ export function useSafeTx(chainId: number) {
         if (current) {
           holdAt.current = at
           setHold(current)
+          // The call's last write settled where this flow didn't see it (another tab, or before a
+          // reload): its result shows, and only sending again after that is a new action.
+          const before = current.peek()
+          const settled = before.status === 'clear' && before.settled && 'hash' in before.settled ? before.settled : null
+          if (settled && shownSettled.current !== settled.hash) {
+            shownSettled.current = settled.hash
+            tracked.current = settled.hash
+            inFlightRef.current = false
+            setHash(settled.hash)
+            if (settled.result === 'success') setPhase('success')
+            else { setError(WRITE_HOLD_REVERTED_LINE); setPhase('error') }
+            return settled.hash
+          }
         }
         const execute = async (gate?: WriteHoldGate) => {
           assertCurrent()

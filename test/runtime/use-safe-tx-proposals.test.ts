@@ -1097,26 +1097,35 @@ describe('generic Safe durable recovery', () => {
     expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 
-  it('offers the exit after a reopen for an execution returned at once that ran another call', async () => {
-    // The wallet's reply is a transaction, but its execTransaction runs other calldata.
-    mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => ({
-      hash, from: BOB, to: SAFE, input: execTransaction('0xdeadbeef'), nonce: 3, blockNumber: 9n,
-    }))
-    mocks.publicClient.waitForTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => receiptOf(hash, UNSEEN))
-    mocks.publicClient.getTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => receiptOf(hash, UNSEEN))
-    const flow = await mount(10, undefined, { reviewedAccount: SAFE })
-    await flow.send()
-    await settle()
-    // The unauthenticated hash is never saved as the proposal's execution.
-    expect(recoveryRecords()[0]).not.toHaveProperty('executed')
-    await flow.close()
-    vi.resetModules()
-    ;({ useSafeTx } = await import('@/hooks/useSafeTx'))
-    const reopened = await mount(10, undefined, { reviewedAccount: SAFE })
-    await reopened.send()
-    await settle()
-    expect(mocks.writeContract).toHaveBeenCalledOnce()
-    expect(reopened.tx.held).toMatchObject({ label: WRITE_EXIT_LABEL })
+  it('offers the warned exit after a reopen, 30 minutes after it was mined, for an execution returned at once that ran another call', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+    try {
+      // The wallet's reply is a mined transaction, but its execTransaction runs other calldata.
+      mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => ({
+        hash, from: BOB, to: SAFE, input: execTransaction('0xdeadbeef'), nonce: 3, blockNumber: 9n,
+      }))
+      mocks.publicClient.waitForTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => receiptOf(hash, UNSEEN))
+      mocks.publicClient.getTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => receiptOf(hash, UNSEEN))
+      const flow = await mount(10, undefined, { reviewedAccount: SAFE })
+      await flow.send()
+      await settle()
+      // The unauthenticated hash is never saved as the proposal's execution.
+      expect(recoveryRecords()[0]).not.toHaveProperty('executed')
+      await flow.close()
+      vi.resetModules()
+      ;({ useSafeTx } = await import('@/hooks/useSafeTx'))
+      const reopened = await mount(10, undefined, { reviewedAccount: SAFE })
+      await reopened.send()
+      await settle()
+      // Mined, with a result that can't be read as this proposal's: no resend, and no exit yet.
+      expect(mocks.writeContract).toHaveBeenCalledOnce()
+      expect(reopened.tx.held).toBeNull()
+      vi.setSystemTime(Date.now() + 31 * 60_000)
+      await act(async () => { vi.advanceTimersByTime(15_000) })
+      await settle()
+      expect(mocks.writeContract).toHaveBeenCalledOnce()
+      expect(reopened.tx.held).toMatchObject({ label: WRITE_EXIT_LABEL })
+    } finally { vi.useRealTimers() }
   })
 
   it('saves the adopted proposal’s actual stamped calldata for later proof', async () => {
