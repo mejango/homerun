@@ -362,7 +362,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     /** The original payment's deadline has passed at a canonical finalized block on its chain. */
     const originalPaymentExpired = async (): Promise<boolean> => {
       const client = journal?.paymentChainId === undefined ? undefined : relayrChainClient(journal.paymentChainId)
-      return !!journal?.paymentDeadline && !!client && relayrDeadlinePassed(client, journal.paymentDeadline)
+      // Unknown (an RPC that can't answer) is not expired: only a proven deadline releases.
+      return !!journal?.paymentDeadline && !!client && (await relayrDeadlinePassed(client, journal.paymentDeadline)) === true
     }
     // Another payment may have funded a quote whose own payment reverted: what Relayr ran is reconciled below, never
     // paid again.
