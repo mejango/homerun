@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from '
 import { getAccount } from '@wagmi/core'
 import {
   BaseError,
-  encodeFunctionData,
   isHash,
   type Abi,
   type Address,
@@ -26,7 +25,7 @@ import {
   WriteHeldError, WriteHoldBusyError, WriteHoldNonceError, WriteHoldStaleReviewError,
   type ReviewedWriteRecoveryRecord, type WriteHeldState, type WriteHoldClient, type WriteHoldGate, type WriteHoldHandle, type WriteHoldState,
 } from '@bananapus/nana-sdk-core/review'
-import { holds } from '@/lib/write-hold'
+import { callOf, holds } from '@/lib/write-hold'
 import { hasSafeService } from '@bananapus/nana-sdk-core/safe-service'
 import { getViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import {
@@ -150,19 +149,6 @@ export function txPhaseLabel(
   if (phase === 'signing') return labels.confirm ?? 'Confirm in your wallet…'
   if (phase === 'pending') return labels.pending
   return labels.idle
-}
-
-/** The call a contract write request makes. */
-function callOf(request: Pick<TxRequest, 'address' | 'abi' | 'functionName' | 'args' | 'value'>): SafeAppCall {
-  return {
-    to: request.address,
-    data: encodeFunctionData({
-      abi: request.abi,
-      functionName: request.functionName,
-      args: request.args as unknown[],
-    }),
-    value: request.value,
-  }
 }
 
 /** A friendly one-line message out of a viem/wagmi error. */

@@ -1,11 +1,10 @@
 import { jbDirectoryAbi, jbProjectsAbi, NATIVE_TOKEN, type JBChainId } from '@bananapus/nana-sdk-core'
 import { buildDeployProjectPayerTx, JB_PROJECT_PAYER_DEPLOYER, jbProjectPayerDeployerAbi, v6Address } from '@bananapus/nana-sdk-core/v6'
 import { decodeEventLog, encodeFunctionData, isAddress, isAddressEqual, parseAbi, zeroAddress, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
-import { assertSafeProposalCall, type ExistingSafeProposal } from './sticky-session'
 import { bendystraw } from './bendystraw'
 import { safeExecutionRunsCalls, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
-import { verifyReviewedWriteReceipt } from '@bananapus/nana-sdk-core/review'
-import { withPrewalletReservation } from './prewallet-reservation'
+import { intent, verifyReviewedWriteReceipt, writeIntentKey, type ReviewedWriteRecoveryInput } from '@bananapus/nana-sdk-core/review'
+import { callOf, type LegacyWriteEvidence } from './write-hold'
 
 export type ProjectPayerRow = {
   chainId: number; projectId: number; version: number; address: Address
@@ -51,11 +50,22 @@ export function buildPayerTransaction(settings: PayerSettings) {
   if (!isAddress(settings.beneficiary) || !isAddress(settings.owner) || typeof settings.memo !== 'string' || settings.memo.length > 500 || typeof settings.addToBalance !== 'boolean') throw new Error('Invalid payer address settings.')
   return buildDeployProjectPayerTx({ ...settings, projectId: BigInt(settings.projectId), metadata: '0x' })
 }
+/** Where the payer journal from before SDK holds kept its attempt: read only to adopt it. */
 export function payerAttemptKey(chainId: JBChainId, projectId: bigint) { return `homerun:payer:${chainId}:${projectId}:v1` }
-/** All immutable proof inputs, excluding status and untrusted saved outputs. */
-export function payerAttemptIdentity(attempt: PayerAttempt): string {
-  const { settings } = attempt
-  return JSON.stringify([attempt.version, attempt.id ?? null, settings.chainId, settings.projectId, settings.beneficiary.toLowerCase(), settings.owner.toLowerCase(), settings.memo, settings.addToBalance, attempt.account.toLowerCase(), attempt.safe, attempt.afterBlock, attempt.hash?.toLowerCase() ?? null, attempt.executionHash?.toLowerCase() ?? null])
+
+/** A payer deployment's hold: the project and the settings the user chose. TODO(SDK 2.38): the SDK's shared builder. */
+export function payerIntent(settings: PayerSettings): string {
+  return writeIntentKey('payer-create', { project: BigInt(settings.projectId), beneficiary: intent.address(settings.beneficiary),
+    owner: intent.address(settings.owner), memo: settings.memo, addToBalance: settings.addToBalance })
+}
+
+/** The write hold a saved journal attempt is adopted into, and the evidence it saved. */
+export function payerAttemptHold(attempt: PayerAttempt): { input: ReviewedWriteRecoveryInput; evidence: LegacyWriteEvidence } {
+  const hash = attempt.hash ?? attempt.executionHash
+  return {
+    input: { chainId: attempt.settings.chainId, account: attempt.account, safe: attempt.safe, namespace: payerIntent(attempt.settings), call: callOf(buildPayerTransaction(attempt.settings)) },
+    evidence: !hash ? {} : attempt.safe && attempt.hash ? { safe: { safeTxHash: attempt.hash } } : { hash },
+  }
 }
 export function decodePayerAttempt(raw: string, chainId: JBChainId, projectId: bigint): PayerAttempt {
   const attempt = JSON.parse(raw) as PayerAttempt
@@ -66,41 +76,6 @@ export function decodePayerAttempt(raw: string, chainId: JBChainId, projectId: b
     || (attempt.phase === 'confirmed' && (!attempt.payer || !isAddress(attempt.payer) || isAddressEqual(attempt.payer, zeroAddress)))) throw new Error('The saved payer deployment is invalid. Keep it for recovery and check the original wallet transaction.')
   buildPayerTransaction(attempt.settings)
   return attempt
-}
-
-/** Mutations share the project lock and compare the exact record reviewed by their caller. */
-export function persistPayerAttempt(storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>, chainId: JBChainId, projectId: bigint, next: PayerAttempt | null, expected: string | null, prewallet = false): string | null {
-  const key = payerAttemptKey(chainId, projectId)
-  const raw = next === null ? null : JSON.stringify(decodePayerAttempt(JSON.stringify(next), chainId, projectId))
-  if (raw !== null && storage.getItem(key) === raw) return raw
-  if (storage.getItem(key) !== expected) throw new Error('The saved payer deployment changed in another tab. Reload its recovery before continuing.')
-  const write = () => {
-    if (raw === null) storage.removeItem(key)
-    else storage.setItem(key, raw)
-    if (storage.getItem(key) !== raw) throw new Error('The browser could not save payer recovery. Keep the original transaction before continuing.')
-    return raw
-  }
-  if (!prewallet) return write()
-  if (!raw || !next || next.phase !== 'signing' || next.hash || next.executionHash || !next.id) throw new Error('Only a new pre-wallet payer attempt can reserve recovery.')
-  return withPrewalletReservation(storage, key, expected, raw, write)
-}
-
-export async function withPayerAttemptLock<T>(key: string, task: () => Promise<T>): Promise<T> {
-  if (typeof navigator === 'undefined' || typeof navigator.locks?.request !== 'function') throw new Error('Use a browser with Web Locks support to coordinate payer deployment recovery.')
-  return navigator.locks.request(key, { mode: 'exclusive', ifAvailable: true }, async lock => {
-    if (!lock) throw new Error('This payer deployment is being reviewed or checked in another tab.')
-    return task()
-  })
-}
-
-/** Existing component persistence owns the write; this only creates exact known-proposal recovery facts. */
-export function adoptPayerProposal(attempt: PayerAttempt, proposal: ExistingSafeProposal): PayerAttempt {
-  const current = decodePayerAttempt(JSON.stringify(attempt), attempt.settings.chainId, BigInt(attempt.settings.projectId))
-  if (current.phase !== 'signing' || current.hash || current.executionHash || current.payer)
-    throw new Error('A payer deployment is already recorded. Verify it before adopting another proposal.')
-  assertSafeProposalCall(buildPayerTransaction(current.settings), proposal)
-  // There is no plan snapshot; an exact Safe proposal event, not an older identical call, resolves this attempt.
-  return { ...current, safe: true, afterBlock: '0', phase: 'submitted', hash: proposal.proposalHash }
 }
 
 /** Require the same canonical factory/directory as the reference apps before any wallet write. */

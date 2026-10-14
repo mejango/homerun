@@ -1,4 +1,10 @@
+import { encodeFunctionData, type Abi, type Address } from 'viem'
 import { createHeldWriteStorage, createWriteHold, type ReviewedWriteRecoveryInput, type WriteHoldClient, type WriteHoldHandle, type WriteHoldState } from '@bananapus/nana-sdk-core/review'
+
+/** The call a contract write request makes: what its hold is keyed and checked by. */
+export function callOf(request: { address: Address; abi: Abi; functionName: string; args: readonly unknown[]; value?: bigint }): { to: Address; data: `0x${string}`; value?: bigint } {
+  return { to: request.address, data: encodeFunctionData({ abi: request.abi, functionName: request.functionName, args: request.args as unknown[] }), value: request.value }
+}
 
 /** The browser's storage with the tab's memory behind it: every read of a held write goes through it. */
 export const heldStorage = createHeldWriteStorage()
