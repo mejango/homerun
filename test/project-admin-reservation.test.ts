@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Address, Hex } from 'viem'
 import { createBrowserWriteRecovery } from '@bananapus/nana-sdk-core/review'
 import { adoptLegacyProjectAdminRecord, noteProjectAdminAccount, otherProjectAdminHolds, projectAdminNamespace, pruneProjectAdminAccounts } from '@/lib/project-admin-reservation'
+import { heldStorage } from '@/lib/write-hold'
 import { installRecoveryLocks, recoveryRecords } from './runtime/write-recovery-fixture'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
@@ -115,6 +116,23 @@ describe('the project reservation across accounts', () => {
     expect(await otherProjectAdminHolds(localStorage, client() as never, 8453, 7n, BOB)).toHaveLength(0)
     pruneProjectAdminAccounts(localStorage, 8453, 7n, BOB)
     expect(localStorage.getItem('homerun:project-admin:accounts:v1:8453:7')).toBeNull()
+  })
+
+  it('holds a second account while the first account’s update is kept in memory because storage refuses records', async () => {
+    const original = Storage.prototype.setItem
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key: string, value: string) {
+      if (key.startsWith('nana-sdk:reviewed-write')) throw new Error('Storage unavailable')
+      original.call(this, key, value)
+    })
+    const journal = createBrowserWriteRecovery({ chainId: 8453, account: ALICE, safe: false, namespace: projectAdminNamespace(7n), call: { to: TARGET, data: '0x12345678', value: 0n } }, { storage: heldStorage })
+    await journal.withLock(async () => { journal.reserve() })
+    noteProjectAdminAccount(localStorage, 8453, 7n, ALICE)
+    expect(recoveryRecords()).toHaveLength(0)
+    const found = await otherProjectAdminHolds(localStorage, client() as never, 8453, 7n, BOB)
+    expect(found).toHaveLength(1)
+    expect(found[0].state.record.account).toBe(ALICE)
+    pruneProjectAdminAccounts(localStorage, 8453, 7n, BOB)
+    expect(JSON.parse(localStorage.getItem('homerun:project-admin:accounts:v1:8453:7')!)).toContain(ALICE.toLowerCase())
   })
 
   it('is per project', async () => {

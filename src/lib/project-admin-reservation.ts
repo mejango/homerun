@@ -1,4 +1,4 @@
-import { holds } from './write-hold'
+import { heldStorage, holds } from './write-hold'
 import { isAddress, zeroAddress, zeroHash, type Address, type Hex, type PublicClient } from 'viem'
 import {
   createBrowserWriteRecovery, parseReviewedWriteRecoveryRecord, readBrowserWriteRecovery, sameReviewedWrite,
@@ -87,7 +87,7 @@ export function pruneProjectAdminAccounts(storage: Store, chainId: number, proje
   const namespace = projectAdminNamespace(projectId)
   const accounts = accountsOf(storage, chainId, projectId)
   const keep = accounts.filter(other => other.toLowerCase() === account.toLowerCase()
-    || !!readBrowserWriteRecovery({ chainId, account: other, namespace }, { storage: storage as Storage }))
+    || !!readBrowserWriteRecovery({ chainId, account: other, namespace }, { storage: heldStorage }))
   if (keep.length !== accounts.length) writeAccounts(storage, chainId, projectId, keep)
 }
 
@@ -103,7 +103,7 @@ export async function otherProjectAdminHolds(storage: Store, client: PublicClien
   const found: ProjectAdminHold[] = []
   for (const other of accountsOf(storage, chainId, projectId)) {
     if (other.toLowerCase() === account.toLowerCase()) continue
-    const saved = readBrowserWriteRecovery({ chainId, account: other, namespace }, { storage: storage as Storage })
+    const saved = readBrowserWriteRecovery({ chainId, account: other, namespace }, { storage: heldStorage })
     if (!saved) continue
     const { account: holder, safe, call } = parseReviewedWriteRecoveryRecord(saved)
     const hold = holds.open({ chainId, account: holder, safe, namespace, call })
