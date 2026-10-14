@@ -56,16 +56,29 @@ function sameAttempt(record: { hash?: string; call: { to: string; data: string; 
 }
 
 /**
- * What a hold for this intent says of its write, from either kind of wallet: it still holds one
- * (`held`), it settled one with success (`settled`, with its hash), or it keeps no such record (`none`:
- * never written here, cleared from storage, replaced by a later write, or settled otherwise).
+ * What a hold for this intent says of its write, from storage and either kind of wallet: it still
+ * holds one (`held`), it settled one with success (`settled`, with its hash), or it keeps no such
+ * record (`none`: never written here, cleared from storage, replaced by a later write, or settled otherwise).
  */
-export async function holdOutcome(intent: { chainId: number; account: Address; namespace: string }, client: WriteHoldClient): Promise<{ status: 'held' } | { status: 'settled'; hash: `0x${string}` } | { status: 'none' }> {
+export async function holdOutcome(intent: { chainId: number; account: Address; namespace: string }): Promise<{ status: 'held' } | { status: 'settled'; hash: `0x${string}` } | { status: 'none' }> {
   let settled: `0x${string}` | null = null
   for (const safe of [false, true]) {
-    const state = await holds.open({ ...intent, safe, call: { to: '0x0000000000000000000000000000000000000000', data: '0x' } }).state(client)
+    const state = holds.open({ ...intent, safe, call: { to: '0x0000000000000000000000000000000000000000', data: '0x' } }).peek()
     if (state.status !== 'clear') return { status: 'held' }
     if (!settled && state.settled && 'hash' in state.settled && state.settled.result === 'success') settled = state.settled.hash
   }
   return settled ? { status: 'settled', hash: settled } : { status: 'none' }
+}
+
+/**
+ * Recover a saved completion through its intent's hold: while the hold holds the write, nothing is
+ * counted (`held`); once it settled with success, `verify` runs the domain checks on that settled
+ * transaction (falling back to the saved one); with no hold record, `verify` checks the exact saved
+ * call on chain. `verify` returns null when its evidence can't show the completion.
+ */
+export async function recoverFromHold<T>(intent: { chainId: number; account: Address; namespace: string }, verify: (settledHash?: `0x${string}`) => Promise<T | null>): Promise<T | 'held' | null> {
+  const outcome = await holdOutcome(intent)
+  if (outcome.status === 'held') return 'held'
+  if (outcome.status === 'settled') return await verify(outcome.hash) ?? await verify()
+  return verify()
 }

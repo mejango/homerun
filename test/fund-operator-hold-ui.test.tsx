@@ -194,3 +194,16 @@ it('shows a held purchase-allowance write and its exit after a reload, with allo
   expect(button(EXIT)).toBeUndefined()
 })
 
+it('keeps a later chain’s held write and its exit shown after the plan resumes, and refuses to cancel the plan', async () => {
+  save(new Map([[10, { kind: 'submission-unknown' as const, attemptId: crypto.randomUUID() }]]))
+  await render()
+  await click('Verify and resume queued plan')
+  // The plan resumes on its first chain; the later chain's hold is still shown with its exit.
+  expect(button('Review transaction 1 of 2'), host.textContent ?? '').toBeDefined()
+  expect(button(EXIT), host.textContent ?? '').toBeDefined()
+  await click('Cancel plan')
+  expect(host.textContent).toContain('Finish or exit the pending update first.')
+  expect(localStorage.getItem(KEY)).not.toBeNull()
+  expect(button(EXIT)).toBeDefined()
+})
+

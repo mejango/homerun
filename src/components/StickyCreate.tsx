@@ -12,7 +12,7 @@ import {
 } from "@/lib/fund-global-manifest";
 import type { FundProjectState } from "@/lib/fund-state";
 import { type StickyPending } from "@/lib/sticky-session";
-import { adoptLegacyWrite } from "@/lib/write-hold";
+import { adoptLegacyWrite, recoverFromHold } from "@/lib/write-hold";
 import { HeldNotice } from "@/components/ui/HeldWriteExit";
 import { useLegacyAdoption } from "@/hooks/useLegacyAdoption";
 import {
@@ -175,7 +175,15 @@ export function StickyCreate({
     if (notified.current === `${record.chainId}:${hash}`) return;
     let cancelled = false;
     setVerifying(true);
-    void recover(record, hash, completed.projectId)
+    // A saved creation goes through its hold: it waits while the hold holds a write, is checked on the hold's
+    // settled transaction, and only with no hold record on the saved call itself.
+    void recoverFromHold(
+      { chainId: record.chainId, account: record.holder, namespace: stickyCreateIntent(BigInt(record.projectId)) },
+      async (settledHash) => { await recover(record, settledHash ?? hash, completed.projectId); return true; },
+    )
+      .then((result) => {
+        if (result === "held") throw new Error("Its transaction is still pending. It shows once it settles.");
+      })
       .catch((reason) => {
         if (!cancelled)
           setError(`The saved creation is still unresolved. ${message(reason)}`);

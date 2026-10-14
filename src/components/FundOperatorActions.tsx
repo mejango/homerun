@@ -27,7 +27,7 @@ import { readableError } from '@/lib/readable-error'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
 import { useLegacyAdoption } from '@/hooks/useLegacyAdoption'
 import { HeldIntents } from '@/components/ui/HeldIntents'
-import { adoptLegacyWrite, callOf, holdOutcome } from '@/lib/write-hold'
+import { adoptLegacyWrite, callOf, holdOutcome, recoverFromHold } from '@/lib/write-hold'
 import type { WriteHoldClient } from '@bananapus/nana-sdk-core/review'
 
 type Props = { state: FundProjectState; client: PublicClient; contextIndex: number }
@@ -275,11 +275,11 @@ function RecoveryPanel({ plan, submissions, onResume }: {
     if (index < 0) throw new Error('This transaction is not part of the linked plan.')
     const project = plan.states[index]
     setNotice(`Checking ${displayChainName(chainId)}'s transaction.`)
-    const outcome = await holdOutcome({ chainId, account: plan.account, namespace: planIntent(plan, project.projectId) }, chainClient(project.chainId) as WriteHoldClient)
-    if (outcome.status === 'held') return 'held'
-    if (submission.kind === 'submission-unknown') return 'check'
-    if (outcome.status === 'settled') return await onChain(chainId, submission, project, signal, outcome.hash) ?? await onChain(chainId, submission, project, signal) ?? 'check'
-    return await onChain(chainId, submission, project, signal) ?? 'check'
+    const intent = { chainId, account: plan.account, namespace: planIntent(plan, project.projectId) }
+    // A hashless saved attempt has no call of its own to show on chain: its hold, if any, decides.
+    if (submission.kind === 'submission-unknown') return (await holdOutcome(intent)).status === 'held' ? 'held' : 'check'
+    const result = await recoverFromHold(intent, settledHash => onChain(chainId, submission, project, signal, settledHash))
+    return result ?? 'check'
   }
 
   async function recover() {
@@ -666,6 +666,10 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
     try {
       await withSubmissionLock(async () => {
         if (planRef.current !== active) throw new Error('The linked plan changed while closing. Keep its current submissions pending.')
+        // A chain whose write its hold still holds keeps the plan, and its exit, until it settles or the user takes that exit.
+        for (const peer of active.states) {
+          if ((await holdOutcome({ chainId: peer.chainId, account: active.account, namespace: planIntent(active, peer.projectId) })).status === 'held') throw new Error('Finish or exit the pending update first.')
+        }
         const records = submissionsRef.current
         if (records.size || completed.size) {
           if (completed.size !== active.states.length || records.size !== active.states.length) throw new Error('Every saved submission must be verified before this plan can be closed.')
@@ -920,7 +924,8 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
           }
         })}
       />
-      {recovering && plan.states.map((peer, index) => <PlanChainHold key={`${plan.startsAt}:${peer.chainId}`} plan={plan} index={index} submission={submissions.get(peer.chainId)} onConfirmed={(chainId, result) => withSubmissionLock(async () => { if (planRef.current !== plan) throw new Error('The linked plan changed during confirmation.'); recordSubmission(chainId, result.submission) })} onAdopted={(chainId, submission) => withSubmissionLock(async () => { assertSubmission(chainId, submission); removeSubmission(chainId) })} />)}
+      {/* Every chain's hold is shown with its exit, while the plan is verified and after it resumes, except the chain its step shows. */}
+      {plan.states.map((peer, index) => (recovering || (!completed.has(peer.chainId) && peer.chainId !== plan.states.find(next => !completed.has(next.chainId))?.chainId)) && <PlanChainHold key={`${plan.startsAt}:${peer.chainId}`} plan={plan} index={index} submission={submissions.get(peer.chainId)} onConfirmed={(chainId, result) => withSubmissionLock(async () => { if (planRef.current !== plan) throw new Error('The linked plan changed during confirmation.'); recordSubmission(chainId, result.submission); setCompleted(previous => new Map(previous).set(chainId, result)) })} onAdopted={(chainId, submission) => withSubmissionLock(async () => { assertSubmission(chainId, submission); removeSubmission(chainId) })} />)}
       {recovering ? <RecoveryPanel plan={plan} submissions={submissions} onResume={recovered => withSubmissionLock(async () => { if (planRef.current !== plan) throw new Error('The linked plan changed during recovery.'); for (const [chainId, submission] of submissions) assertSubmission(chainId, submission); if (submissionsRef.current.size !== submissions.size) throw new Error('A linked submission changed during recovery.'); setCompleted(recovered.completed); setCheckFirst(recovered.checkFirst); setRecovering(false) })} />
         : completed.size < plan.states.length ? <LinkedRulesetStep key={`${plan.startsAt}:${completed.size}`} plan={plan} index={plan.states.findIndex(peer => !completed.has(peer.chainId))} submission={submissions.get(plan.states.find(peer => !completed.has(peer.chainId))!.chainId)} checkFirst={checkFirst.has(plan.states.find(peer => !completed.has(peer.chainId))!.chainId)} completed={completed} onConfirmed={(chainId, result) => withSubmissionLock(async () => { if (planRef.current !== plan) throw new Error('The linked plan changed during confirmation.'); recordSubmission(chainId, result.submission); setCompleted(previous => new Map(previous).set(chainId, result)) })} onCancel={closePlan} onAdopted={(chainId, submission) => withSubmissionLock(async () => { assertSubmission(chainId, submission); removeSubmission(chainId) })} />
           : <><p role="status" className="text-sm">Every ruleset transaction is confirmed. The new rules take effect at the shared activation time.</p><button type="button" className="btn-secondary min-h-10 w-fit px-4" onClick={closePlan}>Done</button></>}

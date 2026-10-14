@@ -19,7 +19,7 @@ import { assertInitialIncomeAllocation, readInitialIncomeAllocation } from '@/li
 import { INCOME_START_LEAD_SECONDS } from '@/lib/income-launch'
 import { incomeLaunchBlockers, prepareIncomeLaunch, readIncomeLaunchBinding, type PreparedIncomeLaunch } from '@/lib/income-launch'
 import { clearIncomeLaunchPending, incomeLaunchFromHold, incomeLaunchHold, incomeLaunchIntent, incomeLaunchRecord, incomeLaunchSessionKey, readIncomeLaunchPending, verifyIncomeLaunchExecution, type IncomeLaunchPending } from '@/lib/income-launch-session'
-import { adoptLegacyWrite } from '@/lib/write-hold'
+import { adoptLegacyWrite, recoverFromHold } from '@/lib/write-hold'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
 import { useLegacyAdoption } from '@/hooks/useLegacyAdoption'
 import { parseIncomeGlobalDraft, readIncomeGlobalDraft, saveIncomeGlobalDraft, serializeIncomeGlobalDraft, verifyIncomeGlobalDraftManifest, withIncomeGlobalDraftLock, type IncomeGlobalChainDraft, type IncomeGlobalLaunchDraft } from '@/lib/income-global-launch-draft'
@@ -228,9 +228,19 @@ function IncomeChainActions({ local, draft, manifest, clients, client, rootState
     const target = local.execution ?? (settled && sent ? { hash: settled.transactionHash, record: submissionHash ? { ...sent, phase: 'pending' as const, hash: submissionHash } : sent } : null)
     if (!target || verifiedId) return
     let cancelled = false, timer: ReturnType<typeof setTimeout> | undefined
-    async function check() { try { await confirm(target!.record, target!.hash) } catch (reason) { if (cancelled) return; setNotice(`Not confirmed yet. ${message(reason)}`); timer = setTimeout(() => void check(), 10_000) } }
+    const saved = !!local.execution
+    async function check() {
+      try {
+        // A saved completion goes through its hold: it waits while the hold holds a write, is checked on the
+        // hold's settled transaction, and only with no hold record on the saved call itself.
+        const result = saved
+          ? await recoverFromHold({ chainId, account: target!.record.holder, namespace: incomeLaunchIntent(projectId) }, async settledHash => { await confirm(target!.record, settledHash ?? target!.hash); return true })
+          : await confirm(target!.record, target!.hash)
+        if (result === 'held') throw new Error('This network’s launch is still pending. It counts once it settles.')
+      } catch (reason) { if (cancelled) return; setNotice(`Not confirmed yet. ${message(reason)}`); timer = setTimeout(() => void check(), 10_000) }
+    }
     void check(); return () => { cancelled = true; if (timer) clearTimeout(timer) }
-  }, [confirm, local.execution, sent, settled, submissionHash, verifiedId])
+  }, [chainId, confirm, local.execution, projectId, sent, settled, submissionHash, verifiedId])
   const state = fund.data, owner = !!state && !!address && isAddressEqual(address, state.owner), blockers = state ? incomeLaunchBlockers(state) : []
   /** The launch is with the wallet, the chain or a Safe: no other is prepared meanwhile. */
   const launching = tx.busy || tx.phase === 'submitted' || tx.phase === 'success' || !adoption.ready

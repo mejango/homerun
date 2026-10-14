@@ -28,7 +28,14 @@ vi.mock('@/lib/fund-state', async importOriginal => ({
 }))
 vi.mock('@/components/FundAssetWithdrawals', () => ({ FundAssetWithdrawals: () => null }))
 vi.mock('@/lib/safe-connector', () => ({ waitForSafeExecutionHash: runtime.wait }))
-vi.mock('@/lib/write-hold', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/write-hold')>(), adoptLegacyWrite: runtime.adopt, holdOutcome: runtime.outcome }))
+vi.mock('@/lib/write-hold', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/write-hold')>(), adoptLegacyWrite: runtime.adopt, holdOutcome: runtime.outcome,
+  // The shared rule, over this suite's hold outcomes.
+  recoverFromHold: async (intent: unknown, verify: (hash?: Hex) => Promise<unknown>) => {
+    const outcome = await runtime.outcome(intent)
+    if (outcome.status === 'held') return 'held'
+    return outcome.status === 'settled' ? await verify(outcome.hash) ?? await verify() : verify()
+  },
+}))
 vi.mock('@wagmi/core', async importOriginal => ({
   ...await importOriginal<typeof import('@wagmi/core')>(),
   getAccount: () => ({ address: runtime.account }),
@@ -235,7 +242,7 @@ describe('linked ruleset recovery of a Safe execution', () => {
     await verify()
     // Its hold settles it: the chain is still the next one.
     expect(button('Review transaction 2 of 2')).toBeUndefined()
-    expect(runtime.outcome).toHaveBeenCalledWith(expect.objectContaining({ chainId: 8453, account: ACCOUNT }), expect.anything())
+    expect(runtime.outcome).toHaveBeenCalledWith(expect.objectContaining({ chainId: 8453, account: ACCOUNT }))
     expect(host.textContent).not.toContain('Check this chain')
   })
 

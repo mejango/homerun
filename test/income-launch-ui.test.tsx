@@ -290,6 +290,19 @@ describe('global INCOME launch flow', () => {
     expect(host.textContent).toContain('3 of 4 networks confirmed'); expect(host.textContent).not.toContain('Every network’s deployment'); expect(runtime.verify).toHaveBeenCalled()
   })
 
+  it('does not count a saved completed network while its launch hold still holds a write', async () => {
+    restorePlan(); let shared = draft()
+    for (const chainId of CHAIN_IDS) { const record = savedPending(chainId); shared = { ...shared, chains: shared.chains.map(row => row.chainId === chainId ? { ...row, execution: { hash: hashFor(chainId), record } } : row) } }
+    saveIncomeGlobalDraft(localStorage, shared)
+    // Base's launch is held unresolved: its saved completion waits for the hold.
+    const { adoptLegacyWrite } = await import('../src/lib/write-hold')
+    const base = savedPending(8453)
+    await adoptLegacyWrite({ chainId: 8453, account: OWNER, safe: false, namespace: incomeLaunchIntent(7n), call: { to: base.target, data: base.data, value: BigInt(base.value) } }, {}, runtime.clients.get(8453) as never)
+    await render()
+    expect(host.textContent).toContain('3 of 4 networks confirmed')
+    expect(runtime.verify).not.toHaveBeenCalledWith(runtime.clients.get(8453), expect.anything(), hashFor(8453))
+  })
+
   it('confirms all four recorded allocations, including the empty one, before declaring completion', async () => {
     restorePlan(); let shared = draft()
     for (const chainId of CHAIN_IDS) { const record = savedPending(chainId); shared = { ...shared, chains: shared.chains.map(row => row.chainId === chainId ? { ...row, execution: { hash: hashFor(chainId), record } } : row) } }

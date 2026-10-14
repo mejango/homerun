@@ -434,7 +434,8 @@ const input = () => ({
 });
 beforeEach(() => {
   localStorage.clear();
-  Object.defineProperty(navigator, "locks", { configurable: true, value: { request: vi.fn(async (_name: string, callback: () => unknown) => callback()) } });
+  // Both lock forms: the app's (name, callback) and the SDK hold's (name, options, callback).
+  Object.defineProperty(navigator, "locks", { configurable: true, value: { request: vi.fn(async (name: string, options: unknown, callback?: (lock: unknown) => unknown) => typeof options === "function" ? options({ name }) : callback!({ name })) } });
   connected.address = undefined;
   registry.StickyDeployer = { 1: DEPLOYER };
   registry.JBTokenDistributor = { 1: DISTRIBUTOR };
@@ -1026,6 +1027,31 @@ describe("creation recovery and duplicate protection", () => {
         )?.disabled,
       ).toBe(true);
       expect(readFundGlobalSnapshot).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+  it("does not show a saved creation as confirmed while its hold still holds a write", async () => {
+    const { client, record } = await pendingFixture();
+    saveStickyCreated(localStorage, record, EXECUTION, 9n);
+    const verifiedClient = executionClient(client, record);
+    // The creation's hold holds an unresolved write: the saved completion waits for it.
+    const { adoptLegacyWrite } = await import("../src/lib/write-hold");
+    const adoptedHold = await adoptLegacyWrite({ chainId: 1, account: record.holder, safe: false, namespace: stickyCreateIntent(7n), call: { to: record.target, data: record.data, value: BigInt(record.value) } }, { submittedAt: Date.now() }, {
+      getChainId: async () => 1, getBlockNumber: async () => 90n, getTransactionCount: async () => 5,
+      getBlock: async () => ({ number: 100n, hash: `0x${"ef".repeat(32)}`, timestamp: 1_000n }), getTransaction: async () => null, getTransactionReceipt: async () => null,
+    } as never);
+    expect(adoptedHold.state.status, JSON.stringify(adoptedHold.state, (_k, v) => typeof v === "bigint" ? String(v) : v)).toBe("held-no-hash");
+    const container = document.createElement("div"),
+      root = createRoot(container),
+      onCreated = vi.fn();
+    try {
+      await act(async () => {
+        root.render(createElement(StickyCreate, { state: fundState(), client: verifiedClient, manifest: null, launchUnavailable: true, onCreated }));
+      });
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+      expect(onCreated).not.toHaveBeenCalled();
+      expect(container.textContent).not.toContain("Sticky project 9 is confirmed and verified");
     } finally {
       await act(async () => root.unmount());
     }
