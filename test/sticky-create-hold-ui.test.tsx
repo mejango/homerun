@@ -87,15 +87,15 @@ it('refuses another creation after a lost wallet reply until the user takes the 
   expect(wallet.writeContract).toHaveBeenCalledTimes(2)
 })
 
-it('refuses a resend while the lost reply is held', async () => {
+it('shows the held creation and its exit after a reload, before anything else', async () => {
   wallet.writeContract.mockRejectedValueOnce(new Error('Wallet reply was lost after broadcast'))
   await render()
   await review()
   await act(async () => root.unmount()); root = createRoot(host)
   await render()
-  await review()
-  expect(wallet.writeContract).toHaveBeenCalledOnce()
   expect(button(EXIT)).toBeDefined()
+  expect(button('Review Sticky creation')).toBeUndefined()
+  expect(wallet.writeContract).toHaveBeenCalledOnce()
 })
 
 it('adopts a creation the journal saved before SDK holds: its records go, and only the exit creates again', async () => {

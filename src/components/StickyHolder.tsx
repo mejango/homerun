@@ -10,6 +10,7 @@ import { createContext, useContext, useEffect, useRef, useState } from "react";
 import {
   formatUnits,
   isAddressEqual,
+  zeroAddress,
   type Address,
   type PublicClient,
 } from "viem";
@@ -47,6 +48,7 @@ import {
 } from "@/lib/sticky-session";
 import { adoptLegacyWrite } from "@/lib/write-hold";
 import { HeldNotice } from "@/components/ui/HeldWriteExit";
+import { useLegacyAdoption } from "@/hooks/useLegacyAdoption";
 
 export type StickyHolderProps = {
   chainId: JBChainId;
@@ -86,7 +88,8 @@ type AdoptedSticky = {
   account: Address;
   safe: boolean;
 };
-const StickyAdoption = createContext<AdoptedSticky | null>(null);
+/** The adopted journal action, and the gate every send waits on until adoption has finished. */
+const StickyAdoption = createContext<{ adopted: AdoptedSticky | null; ready: boolean; wait: () => Promise<void> }>({ adopted: null, ready: false, wait: async () => { throw new Error("Saved transactions are still being checked. Try again in a moment."); } });
 /**
  * An action the Sticky journal saved as pending before SDK holds is adopted into its hold, with its
  * hash or Safe proposal and its send time, and the journal record goes.
@@ -99,26 +102,29 @@ function useStickyAdoption(
 ) {
   const [adopted, setAdopted] = useState<AdoptedSticky | null>(null),
     [error, setError] = useState<string | null>(null);
+  const adoption = useLegacyAdoption(),
+    adopt = adoption.run;
   useEffect(() => {
     if (!account || !client) return;
     const key = stickySessionKey(chainId, projectId, account);
     let cancelled = false;
-    void (async () => {
+    void adopt(async () => {
       const record = readStickyPending(localStorage, key);
       if (!record) return;
       const { request, input, evidence } = stickyPendingHold(record);
-      await adoptLegacyWrite(input, evidence, client);
-      clearStickyPending(localStorage, key, record);
+      const result = await adoptLegacyWrite(input, evidence, client);
+      // The journal keeps it until its attempt is the hold's.
+      if (result.adopted) clearStickyPending(localStorage, key, record);
       if (!cancelled)
         setAdopted({ request, namespace: input.namespace!, account: record.holder, safe: record.safe });
-    })().catch((failure) => {
+    }).catch((failure) => {
       if (!cancelled) setError(reason(failure));
     });
     return () => {
       cancelled = true;
     };
-  }, [account, chainId, client, projectId]);
-  return { adopted, error };
+  }, [account, adopt, chainId, client, projectId]);
+  return { adopted, error, ready: adoption.ready, wait: adoption.wait };
 }
 function Status({ tx, chainId }: { tx: StickyTx; chainId: number }) {
   const link =
@@ -147,18 +153,35 @@ function useStickyTx(state: StickyProjectState, actions: readonly string[]) {
     cache = useQueryClient(),
     previous = useRef<string | null>(null),
     prerequisite = useRef<bigint | undefined>(undefined);
-  const adopted = useContext(StickyAdoption),
-    track = tx.track;
-  // An adopted journal record of one of this screen's actions is shown here, with its line and exit.
+  const { adopted, ready, wait } = useContext(StickyAdoption),
+    track = tx.track,
+    { address } = useWallet();
+  // An adopted journal record of one of this screen's actions is shown here, with its line and exit;
+  // with none, whatever one of its actions' holds holds is.
   const shows = !!adopted && actions.includes(adopted.request.functionName);
+  const actionKey = actions.join(",");
   useEffect(() => {
-    if (!adopted || !shows) return;
-    void track(adopted.request, {
-      reviewedAccount: adopted.account,
-      recoveryNamespace: adopted.namespace,
-      safe: adopted.safe,
-    });
-  }, [adopted, shows, track]);
+    if (!ready) return;
+    if (adopted && shows) {
+      void track(adopted.request, {
+        reviewedAccount: adopted.account,
+        recoveryNamespace: adopted.namespace,
+        safe: adopted.safe,
+      });
+      return;
+    }
+    if (!address) return;
+    void (async () => {
+      for (const action of actionKey.split(",")) {
+        const held = await track({ chainId: state.chainId, call: { to: zeroAddress, data: "0x" } }, {
+          reviewedAccount: address,
+          recoveryNamespace: stickyIntent(state.stickyProjectId, action),
+          heldOnly: true,
+        });
+        if (held && held.status !== "clear") return;
+      }
+    })();
+  }, [actionKey, address, adopted, ready, shows, state.chainId, state.stickyProjectId, track]);
   useEffect(() => {
     // The engine settled this receipt: it confirmed, reverted, or holds a Safe
     // execution whose call failed.
@@ -204,9 +227,13 @@ function useStickyTx(state: StickyProjectState, actions: readonly string[]) {
     return tx.send(request, {
       ...options,
       recoveryNamespace: stickyIntent(state.stickyProjectId, request.functionName),
+      beforeWrite: async () => {
+        await wait();
+        await options.beforeWrite?.();
+      },
     });
   }
-  return { tx: { ...tx, send }, prerequisite };
+  return { tx: { ...tx, send, busy: tx.busy || !ready }, prerequisite };
 }
 async function fresh(
   client: PublicClient,
@@ -319,7 +346,7 @@ export function StickyHolder({
         state.fundProjectId === fundProjectId &&
         state.stickyProjectId === stickyProjectId &&
         client && (
-          <StickyAdoption.Provider value={adoption.adopted}>
+          <StickyAdoption.Provider value={adoption}>
           <fieldset
             key={`${chainId}:${fundProjectId}:${stickyProjectId}`}
             className="m-0 min-w-0 border-0 p-0"

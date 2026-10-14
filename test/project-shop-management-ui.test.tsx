@@ -124,7 +124,7 @@ beforeEach(() => {
   runtime.readSession.mockReset().mockImplementation((_storage, key) => runtime.saved.get(key) ?? null)
   runtime.start.mockReset().mockImplementation((_storage, key, prepared) => store(key, session(prepared)))
   runtime.drop.mockReset().mockImplementation((_storage, key, captured) => { const { pending: _pending, ...next } = captured; return store(key, next) })
-  runtime.adoptLegacy.mockReset().mockResolvedValue({ status: 'held-no-hash' })
+  runtime.adoptLegacy.mockReset().mockResolvedValue({ adopted: true, state: { status: 'held-no-hash' } })
   runtime.track.mockReset().mockResolvedValue(undefined)
   runtime.phase = 'idle'; runtime.txReceipt = null
   runtime.confirm.mockReset().mockImplementation(async (_client: PublicClient, _storage: ShopWriteStorage, key: string, captured: ShopWriteSession, submission: { safe: boolean; hash?: Hex; afterBlock: bigint }, executionHash: Hex) => {

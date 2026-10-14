@@ -6,7 +6,9 @@ import { type Address } from 'viem'
 const mocks = vi.hoisted(() => ({ address: '0x1111111111111111111111111111111111111111' as Address | undefined, factory: vi.fn(), rows: vi.fn(), verify: vi.fn(), send: vi.fn(), open: vi.fn(), reset: vi.fn(), track: vi.fn(), safe: false, phase: 'idle', receipt: null as null | { transactionHash: string }, waitSafe: vi.fn(), getReceipt: vi.fn(), getBlockNumber: vi.fn() }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: mocks.address, openSignIn: mocks.open }) }))
 vi.mock('@/hooks/useSafeTx', () => ({ txPhaseLabel: (_: string, labels: { idle: string }) => labels.idle, useSafeTx: () => ({ phase: mocks.phase, receipt: mocks.receipt, hash: mocks.receipt?.transactionHash ?? null, submissionHash: mocks.receipt?.transactionHash ?? null, busy: false, error: null, notice: null, held: null, isSafe: mocks.safe, send: mocks.send, reset: mocks.reset, track: mocks.track }) }))
-vi.mock('wagmi', () => ({ usePublicClient: () => ({ getTransactionReceipt: mocks.getReceipt, getBlockNumber: mocks.getBlockNumber }) }))
+// One client for the page, as wagmi's is.
+const client = vi.hoisted(() => ({}))
+vi.mock('wagmi', () => ({ usePublicClient: () => Object.assign(client, { getTransactionReceipt: mocks.getReceipt, getBlockNumber: mocks.getBlockNumber }) }))
 vi.mock('@/lib/safe-connector', () => ({ waitForSafeExecutionHash: mocks.waitSafe }))
 vi.mock('@/lib/project-payers', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/project-payers')>(), checkPayerFactory: mocks.factory, getProjectPayerAddresses: mocks.rows, verifyPayerReceipt: mocks.verify }))
 import { ProjectPayerAddresses } from '../src/components/ProjectPayerAddresses'

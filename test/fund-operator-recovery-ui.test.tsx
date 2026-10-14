@@ -112,6 +112,7 @@ describe('linked ruleset recovery of a Safe execution', () => {
     placeReceipt(transaction, receipt)
     runtime.receipt.mockResolvedValue(receipt)
     runtime.transaction.mockResolvedValue(transaction)
+    runtime.adopt.mockResolvedValue({ adopted: true, state: { status: 'safe-unproven' } })
     await act(async () => root.render(<FundOperatorActions state={state()} client={{} as PublicClient} contextIndex={0} />))
     await act(async () => button('Verify and resume queued plan')!.click())
     const namespace = writeIntentKey('fund-ruleset', { project: 7n, action: 'pause' })

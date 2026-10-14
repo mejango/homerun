@@ -3,7 +3,7 @@ import { MappableAsset, parseSuckerDeployerConfig, type JBChainId } from '@banan
 import { decodeFunctionData, encodeFunctionData, getAddress, isAddress, isAddressEqual, zeroAddress, zeroHash, type Address, type Hex, type PublicClient } from 'viem'
 import { FUND_CHAIN_IDS, type FundTransaction } from './fund-contracts'
 import { homerunDeployerAbi, INITIAL_INCOME_SUPPLY, registeredHomerunDeployer } from './income-contracts'
-import { writeIntentKey, type ReviewedWriteRecoveryInput } from '@bananapus/nana-sdk-core/review'
+import { writeIntentKey, type ReviewedWriteRecoveryInput, type ReviewedWriteRecoveryRecord } from '@bananapus/nana-sdk-core/review'
 import { verifyStickyExecution, type StickyPending, type StickyStorage } from './sticky-session'
 import type { LegacyWriteEvidence } from './write-hold'
 
@@ -138,6 +138,21 @@ export function incomeLaunchRecord(request: FundTransaction, projectId: bigint, 
     value: (request.value ?? 0n).toString(), label: 'Deploy INCOME', safe, submittedAt: Date.now(), afterBlock: afterBlock.toString(),
     ...(hash ? { hash } : {}),
   }), incomeLaunchSessionKey(request.chainId, projectId))
+}
+
+/** The launch an SDK hold holds, as the record its settled execution is verified against. */
+export function incomeLaunchFromHold(record: ReviewedWriteRecoveryRecord, projectId: bigint): IncomeLaunchPending {
+  const decoded = decodeFunctionData({ abi: homerunDeployerAbi, data: record.call.data })
+  if (decoded.functionName !== 'deployIncome') throw invalid()
+  const local = decoded.args[1].allocations.find(entry => entry.chainId === record.chainId)
+  if (!local) throw invalid()
+  // The call's own snapshot block bounds its receipt, as an adopted Safe proposal's did.
+  return parseRecord(JSON.stringify({
+    version: 1, kind: 'income-launch', sessionId: globalThis.crypto.randomUUID(), phase: record.hash ? 'pending' : 'unknown',
+    chainId: record.chainId, projectId: projectId.toString(), holder: record.account, target: record.call.to, data: record.call.data,
+    value: record.call.value, label: 'Deploy INCOME', safe: record.safe, submittedAt: Number(record.submittedAt ?? Date.now()),
+    afterBlock: local.snapshotBlockNumber.toString(), ...(record.hash ? { hash: record.hash } : {}),
+  }), incomeLaunchSessionKey(record.chainId, projectId))
 }
 
 /** A journal record from before SDK holds, as the hold it is adopted into. */

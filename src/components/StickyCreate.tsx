@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { formatUnits, isAddressEqual, type Hex, type PublicClient } from "viem";
+import { formatUnits, isAddressEqual, zeroAddress, type Hex, type PublicClient } from "viem";
 import { useWallet } from "@/hooks/useWallet";
 import { txPhaseLabel, useSafeTx } from "@/hooks/useSafeTx";
 import { jbCenterIpfs } from "@/lib/jbcenter-ipfs";
@@ -14,11 +14,13 @@ import type { FundProjectState } from "@/lib/fund-state";
 import { type StickyPending } from "@/lib/sticky-session";
 import { adoptLegacyWrite } from "@/lib/write-hold";
 import { HeldNotice } from "@/components/ui/HeldWriteExit";
+import { useLegacyAdoption } from "@/hooks/useLegacyAdoption";
 import {
   clearStickyCreationPending,
   prepareStickyCreate,
   stickyCreateIntent,
   stickyCreationHold,
+  stickyCreationFromHold,
   stickyCreationRecord,
   readStickyCreated,
   readStickyCreationPending,
@@ -189,27 +191,35 @@ export function StickyCreate({
   /** The creation this screen sent or adopted: what its settled execution is verified against. */
   const sent = useRef<StickyPending | null>(null);
   const track = tx.track;
-  // A creation the journal saved as pending before SDK holds is adopted into its hold, then its records go.
+  const adoption = useLegacyAdoption();
+  const adopt = adoption.run;
+  // A creation the journal saved as pending before SDK holds is adopted into its hold, then its records go;
+  // with none, a creation the SDK holds for this FUND is shown, whatever this FUND's state now.
   useEffect(() => {
     if (loadedScope !== walletScope) return;
     let cancelled = false;
-    void (async () => {
+    void adopt(async () => {
       const record = readStickyCreationPending(localStorage, state.chainId, state.projectId, address);
-      if (!record) return;
+      if (!record) {
+        if (!address || sent.current) return;
+        const held = await track({ chainId: state.chainId, call: { to: zeroAddress, data: "0x" } }, { reviewedAccount: address, recoveryNamespace: stickyCreateIntent(state.projectId), heldOnly: true });
+        if (!cancelled && held && held.status !== "clear") sent.current = stickyCreationFromHold(held.record, state.projectId);
+        return;
+      }
       const { request, input, evidence } = stickyCreationHold(record);
-      await adoptLegacyWrite(input, evidence, client);
-      clearStickyCreationPending(localStorage, record);
-      changed();
+      const { adopted } = await adoptLegacyWrite(input, evidence, client);
+      // The records stay until the attempt is the hold's.
+      if (adopted) { clearStickyCreationPending(localStorage, record); changed(); }
       if (cancelled) return;
       sent.current = record;
       await track({ ...request, label: "Create Sticky SHARE for this FUND project" }, { reviewedAccount: record.holder, recoveryNamespace: input.namespace, safe: record.safe });
-    })().catch((reason) => {
+    }).catch((reason) => {
       if (!cancelled) setStorageError(message(reason));
     });
     return () => {
       cancelled = true;
     };
-  }, [address, client, loadedScope, state.chainId, state.projectId, track, walletScope]);
+  }, [address, adopt, client, loadedScope, state.chainId, state.projectId, track, walletScope]);
 
   // The SDK's hold settled the creation: its exact execution and the live project are verified and saved.
   const settled = tx.phase === "success" ? tx.receipt : null,
@@ -236,7 +246,7 @@ export function StickyCreate({
 
   const owner = !!address && isAddressEqual(address, state.owner);
   const blockers = stickyCreateBlockers(state);
-  const busy = preparing || verifying || tx.busy || tx.phase === "review";
+  const busy = preparing || verifying || tx.busy || tx.phase === "review" || !adoption.ready;
   /** The creation is with the wallet, the chain or a Safe: no other is prepared meanwhile. */
   const creating = tx.busy || tx.phase === "submitted" || tx.phase === "success";
   const recoveryLocked =
@@ -358,7 +368,8 @@ export function StickyCreate({
                 "The FUND snapshot, factory or creation fee changed. Prepare a fresh review.",
               );
           },
-          beforeWrite: () => {
+          beforeWrite: async () => {
+            await adoption.wait();
             if (liveUnavailable.current)
               throw new Error(
                 "FUND verification is unavailable. Refresh before creating SHARE.",

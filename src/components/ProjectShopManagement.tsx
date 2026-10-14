@@ -21,6 +21,7 @@ import {
 } from '@/lib/project-shop-session'
 import { adoptLegacyWrite } from '@/lib/write-hold'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
+import { useLegacyAdoption } from '@/hooks/useLegacyAdoption'
 import { ShopItemEditor, type ShopItemEditorState } from '@/components/ShopItemEditor'
 import { ModalShell } from '@/components/ui/ModalShell'
 
@@ -86,23 +87,39 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
   /** The step this screen sent or adopted: what its settled execution is recorded against. */
   const sent = useRef<{ session: string; step: number; safe: boolean; afterBlock: bigint } | null>(null)
   const track = tx.track
-  // A step the journal saved as pending before SDK holds is adopted into its hold, then dropped from the journal.
+  const adoption = useLegacyAdoption()
+  const adopt = adoption.run
+  // A step the journal saved as pending before SDK holds is adopted into its hold, then dropped from the
+  // journal; with none, the next step's hold is shown if it holds a send, whatever the shop's state now.
   useEffect(() => {
-    if (!client || !session?.pending) return
+    if (!client || !ready) return
     const captured = session
     let cancelled = false
-    void withShopWriteLock(key, async () => {
-      const pending = shopPendingHold(captured)
-      if (!pending) return
-      await adoptLegacyWrite(pending.input, pending.evidence, client)
-      const next = dropShopWritePending(localStorage, key, captured)
-      if (cancelled) return
-      sent.current = { session: next.id, step: pending.step, safe: !!pending.input.safe, afterBlock: BigInt(captured.pending!.afterBlock) }
-      setSession(next); window.dispatchEvent(new Event(SESSION_EVENT))
-      await track(projectShopWriteRequest(next.plan, pending.step), { reviewedAccount: next.plan.snapshot.account, recoveryNamespace: pending.input.namespace, safe: pending.input.safe })
+    void adopt(async () => {
+      if (!captured) return
+      if (!captured.pending) {
+        const step = shopWriteRequestIndex(captured)
+        // A step this screen already follows is shown already.
+        if (step === null || sent.current) return
+        const held = await track(projectShopWriteRequest(captured.plan, step), { reviewedAccount: captured.plan.snapshot.account, recoveryNamespace: shopStepIntent(captured, step), heldOnly: true })
+        // The step it holds is the one its settlement is recorded against; its prerequisites bound the receipt.
+        if (!cancelled && held && held.status !== 'clear' && !sent.current) sent.current = { session: captured.id, step, safe: held.record.safe, afterBlock: 0n }
+        return
+      }
+      await withShopWriteLock(key, async () => {
+        const pending = shopPendingHold(captured)
+        if (!pending) return
+        const { adopted } = await adoptLegacyWrite(pending.input, pending.evidence, client)
+        // The journal keeps the step until its attempt is the hold's.
+        const next = adopted ? dropShopWritePending(localStorage, key, captured) : captured
+        if (cancelled) return
+        sent.current = { session: next.id, step: pending.step, safe: !!pending.input.safe, afterBlock: BigInt(captured.pending!.afterBlock) }
+        if (adopted) { setSession(next); window.dispatchEvent(new Event(SESSION_EVENT)) }
+        await track(projectShopWriteRequest(next.plan, pending.step), { reviewedAccount: next.plan.snapshot.account, recoveryNamespace: pending.input.namespace, safe: pending.input.safe })
+      })
     }).catch(reason => { if (!cancelled) setStorageError(message(reason)) })
     return () => { cancelled = true }
-  }, [client, key, session, track])
+  }, [adopt, client, key, ready, session, track])
 
   // The SDK's hold settled the step: its exact execution is verified and recorded before the next one.
   const settledReceipt = tx.phase === 'success' ? tx.receipt : null
@@ -129,7 +146,7 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
 
   const snapshot = state.data
   const canStart = ready && !storageError && !session && !unavailable && !state.isError && !!snapshot && !!address && isAddressEqual(snapshot.account, address)
-  const busy = working || tx.busy || tx.phase === 'review'
+  const busy = working || tx.busy || tx.phase === 'review' || !adoption.ready
   /** A step is with the wallet, the chain or a Safe: nothing else is reviewed meanwhile. */
   const stepActive = tx.busy || tx.phase === 'review' || tx.phase === 'submitted' || tx.phase === 'success'
   const indices = session ? shopWriteRequestIndices(session) : []
@@ -180,6 +197,7 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
             remember()
           },
           beforeWrite: async () => {
+            await adoption.wait()
             const currentBlock = await client.getBlock({ blockTag: 'latest' })
             if (currentBlock.number === null) throw new Error('The latest block could not be read.')
             if (currentBlock.number < prerequisiteBlock) throw new Error('The network has not caught up with the previous shop transaction. Try again shortly.')

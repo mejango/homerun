@@ -134,3 +134,25 @@ it('adopts a hashless submission the plan saved before SDK holds; with no saved 
   await click('Review transaction 1 of 2')
   expect(wallet.writeContract).toHaveBeenCalledOnce()
 })
+
+it('shows a held send and its exit after a reload past the plan deadline, before the plan can resume', async () => {
+  save()
+  wallet.writeContract.mockRejectedValueOnce(new Error('Wallet reply was lost after broadcast'))
+  await render()
+  await click('Verify and resume queued plan')
+  await click('Review transaction 1 of 2')
+  expect(button(EXIT)).toBeDefined()
+  // A reload after the shared start: the plan can no longer resume, but its held send is still shown with its exit.
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 2 * 86_400_000)
+  try {
+    await act(async () => root.unmount()); root = createRoot(host)
+    await render()
+    expect(button(EXIT), host.textContent ?? '').toBeDefined()
+    await click('Verify and resume queued plan')
+    expect(host.textContent).toContain('deadline has passed')
+    expect(button(EXIT)).toBeDefined()
+    await click(EXIT)
+    expect(button(EXIT)).toBeUndefined()
+  } finally { clock.mockRestore() }
+})
+

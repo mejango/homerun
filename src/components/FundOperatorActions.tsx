@@ -25,6 +25,7 @@ import { intent, verifyReviewedWriteReceipt, writeIntentKey } from '@bananapus/n
 import { wagmiConfig } from '@/providers/Providers'
 import { readableError } from '@/lib/readable-error'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
+import { useLegacyAdoption } from '@/hooks/useLegacyAdoption'
 import { adoptLegacyWrite, callOf } from '@/lib/write-hold'
 import type { WriteHoldClient } from '@bananapus/nana-sdk-core/review'
 
@@ -304,46 +305,52 @@ function RecoveryPanel({ plan, submissions, onResume }: {
   </div>
 }
 
-/** A chain-specific hook instance prevents a wallet switch from watching the wrong chain. */
-function LinkedRulesetStep({ plan, index, completed, onConfirmed, onCancel, onAdopted, submission }: {
-  plan: RulesetPlan; index: number; completed: ReadonlyMap<number, RulesetCompletion>
-  onConfirmed: (chainId: number, result: RulesetCompletion) => Promise<void>
-  onCancel: () => void
-  /** The plan drops a submission once this chain's hold has adopted it. */
-  onAdopted: (chainId: number, submission: RulesetSubmission) => Promise<void>
+/**
+ * One chain's write in a linked plan, held by the SDK: a submission the plan saved before SDK holds
+ * is adopted (and dropped from the plan once the hold has it), whatever the hold holds now is shown
+ * from its intent alone, and a settled write is verified and recorded against its exact call.
+ */
+function usePlanChainHold(plan: RulesetPlan, index: number, { submission, onAdopted, onConfirmed, setError }: {
   submission?: RulesetSubmission
+  onAdopted: (chainId: number, submission: RulesetSubmission) => Promise<void>
+  onConfirmed: (chainId: number, result: RulesetCompletion) => Promise<void>
+  setError: (error: string | null) => void
 }) {
   const state = plan.states[index]
   const request = plan.requests[index]
   const tx = useSafeTx(state.chainId)
   useConfirmedRefresh(tx, state)
-  const [preparing, setPreparing] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const adoption = useLegacyAdoption()
   const delivered = useRef(false)
-  const busy = preparing || tx.busy || tx.phase === 'review'
   const namespace = planIntent(plan, state.projectId)
   const label = `${RULESET_LABELS[plan.action]} on ${displayChainName(state.chainId)}`
   const { track, isSafe } = tx
   const adopted = useEffectEvent((chainId: number, saved: RulesetSubmission) => onAdopted(chainId, saved))
   const confirmed = useEffectEvent((chainId: number, result: RulesetCompletion) => onConfirmed(chainId, result))
+  const failed = useEffectEvent((reason: unknown) => setError(message(reason)))
 
-  // A submission the plan saved before SDK holds is adopted into this chain's hold, then the plan drops it.
+  // A saved submission is adopted, then the plan drops it; with none, whatever the intent holds is shown.
+  const adopt = adoption.run
   useEffect(() => {
-    if (!submission) return
     let stopped = false
-    void (async () => {
+    void adopt(async () => {
+      if (!submission) {
+        await track({ ...request, label }, { reviewedAccount: plan.account, recoveryNamespace: namespace, heldOnly: true })
+        return
+      }
       const safe = submission.kind === 'safe-proposal' || (submission.kind === 'submission-unknown' && isSafe)
       const evidence = submission.kind === 'submission-unknown' ? {} : safe ? { safe: { safeTxHash: submission.hash } } : { hash: submission.hash }
-      await adoptLegacyWrite({ chainId: state.chainId, account: plan.account, safe, namespace, call: callOf(request) }, evidence, chainClient(state.chainId) as WriteHoldClient)
+      const result = await adoptLegacyWrite({ chainId: state.chainId, account: plan.account, safe, namespace, call: callOf(request) }, evidence, chainClient(state.chainId) as WriteHoldClient)
       if (stopped) return
       await track({ ...request, label }, { reviewedAccount: plan.account, recoveryNamespace: namespace, safe })
-      await adopted(state.chainId, submission)
-    })().catch(reason => { if (!stopped) setError(message(reason)) })
+      // The plan keeps it until its attempt is the hold's.
+      if (result.adopted) await adopted(state.chainId, submission)
+    }).catch(reason => { if (!stopped) failed(reason) })
     return () => { stopped = true }
-  }, [isSafe, label, namespace, plan.account, request, state.chainId, submission, track])
+  }, [adopt, isSafe, label, namespace, plan.account, request, state.chainId, submission, track])
 
   // The SDK's hold settled this chain's write: its exact call and ruleset event are verified before it counts.
-  const settled = tx.phase === 'success' ? tx.receipt : null, sentHash = tx.submissionHash ?? tx.hash
+  const settled = tx.phase === 'success' ? tx.receipt : null, sentHash = tx.submissionHash ?? tx.hash ?? settled?.transactionHash
   useEffect(() => {
     if (delivered.current || !settled || settled.status !== 'success' || !sentHash) return
     const sent: RulesetSubmission = { kind: sentHash.toLowerCase() === settled.transactionHash.toLowerCase() ? 'transaction' : 'safe-proposal', hash: sentHash }
@@ -355,10 +362,42 @@ function LinkedRulesetStep({ plan, index, completed, onConfirmed, onCancel, onAd
         if (stopped) return
         await confirmed(state.chainId, { rulesetId, receipt: settled, submission: sent })
         delivered.current = true
-      } catch (reason) { if (!stopped) setError(message(reason)) }
+      } catch (reason) { if (!stopped) failed(reason) }
     })()
     return () => { stopped = true }
   }, [plan, sentHash, settled, state.chainId, state.rulesetSnapshot.controller, state.projectId])
+  return { state, request, tx, adoption, namespace, label }
+}
+
+/** A linked chain's held write while the plan is being verified: shown with its exit, whatever the plan's deadline or state. */
+function PlanChainHold({ plan, index, submission, onAdopted, onConfirmed }: {
+  plan: RulesetPlan; index: number; submission?: RulesetSubmission
+  onAdopted: (chainId: number, submission: RulesetSubmission) => Promise<void>
+  onConfirmed: (chainId: number, result: RulesetCompletion) => Promise<void>
+}) {
+  const [error, setError] = useState<string | null>(null)
+  const { state, tx } = usePlanChainHold(plan, index, { submission, onAdopted, onConfirmed, setError })
+  if (tx.phase === 'idle' && !error) return null
+  return <div className="grid gap-2">
+    <p className="text-sm">{displayChainName(state.chainId)}, project {state.projectId.toString()}:</p>
+    {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
+    <Status tx={tx.phase === 'success' ? { ...tx, phase: 'pending' } : tx} chainId={state.chainId} />
+  </div>
+}
+
+/** A chain-specific hook instance prevents a wallet switch from watching the wrong chain. */
+function LinkedRulesetStep({ plan, index, completed, onConfirmed, onCancel, onAdopted, submission }: {
+  plan: RulesetPlan; index: number; completed: ReadonlyMap<number, RulesetCompletion>
+  onConfirmed: (chainId: number, result: RulesetCompletion) => Promise<void>
+  onCancel: () => void
+  /** The plan drops a submission once this chain's hold has adopted it. */
+  onAdopted: (chainId: number, submission: RulesetSubmission) => Promise<void>
+  submission?: RulesetSubmission
+}) {
+  const [preparing, setPreparing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const { state, request, tx, adoption, namespace, label } = usePlanChainHold(plan, index, { submission, onAdopted, onConfirmed, setError })
+  const busy = preparing || tx.busy || tx.phase === 'review' || !adoption.ready
 
   async function reverify() {
     const connected = getAccount(wagmiConfig).address
@@ -390,6 +429,7 @@ function LinkedRulesetStep({ plan, index, completed, onConfirmed, onCancel, onAd
         recoveryNamespace: namespace,
         reviewNotice: [`This is transaction ${index + 1} of ${plan.requests.length}. Every chain must confirm before ${new Date(plan.startsAt * 1000).toLocaleString()}. Changes are separate transactions and are not atomic.`, rulesetNotice(plan.action)].filter(Boolean).join('\n\n'),
         reverify,
+        beforeWrite: adoption.wait,
       })
     } catch (reason) { setError(message(reason)) } finally { setPreparing(false) }
   }
@@ -853,6 +893,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
           }
         })}
       />
+      {recovering && plan.states.map((peer, index) => <PlanChainHold key={`${plan.startsAt}:${peer.chainId}`} plan={plan} index={index} submission={submissions.get(peer.chainId)} onConfirmed={(chainId, result) => withSubmissionLock(async () => { if (planRef.current !== plan) throw new Error('The linked plan changed during confirmation.'); recordSubmission(chainId, result.submission) })} onAdopted={(chainId, submission) => withSubmissionLock(async () => { assertSubmission(chainId, submission); removeSubmission(chainId) })} />)}
       {recovering ? <RecoveryPanel plan={plan} submissions={submissions} onResume={verified => withSubmissionLock(async () => { if (planRef.current !== plan) throw new Error('The linked plan changed during recovery.'); for (const [chainId, submission] of submissions) assertSubmission(chainId, submission); if (submissionsRef.current.size !== submissions.size) throw new Error('A linked submission changed during recovery.'); setCompleted(verified); setRecovering(false) })} />
         : completed.size < plan.states.length ? <LinkedRulesetStep key={`${plan.startsAt}:${completed.size}`} plan={plan} index={plan.states.findIndex(peer => !completed.has(peer.chainId))} submission={submissions.get(plan.states.find(peer => !completed.has(peer.chainId))!.chainId)} completed={completed} onConfirmed={(chainId, result) => withSubmissionLock(async () => { if (planRef.current !== plan) throw new Error('The linked plan changed during confirmation.'); recordSubmission(chainId, result.submission); setCompleted(previous => new Map(previous).set(chainId, result)) })} onCancel={closePlan} onAdopted={(chainId, submission) => withSubmissionLock(async () => { assertSubmission(chainId, submission); removeSubmission(chainId) })} />
           : <><p role="status" className="text-sm">Every ruleset transaction is confirmed. The new rules take effect at the shared activation time.</p><button type="button" className="btn-secondary min-h-10 w-fit px-4" onClick={closePlan}>Done</button></>}

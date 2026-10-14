@@ -54,7 +54,7 @@ import {
   type StickyPending,
   type StickyStorage,
 } from "./sticky-session";
-import { writeIntentKey, type ReviewedWriteRecoveryInput } from "@bananapus/nana-sdk-core/review";
+import { writeIntentKey, type ReviewedWriteRecoveryInput, type ReviewedWriteRecoveryRecord } from "@bananapus/nana-sdk-core/review";
 import type { LegacyWriteEvidence } from "./write-hold";
 
 export const stickyCreateAbi = parseAbi([
@@ -769,6 +769,17 @@ export function stickyCreationHold(record: StickyPending): {
       call: { to: record.target, data: record.data, value },
     },
     evidence: { submittedAt: record.submittedAt, ...(record.hash ? record.safe ? { safe: { safeTxHash: record.hash } } : { hash: record.hash } : {}) },
+  };
+}
+/** The creation an SDK hold holds, as the record its settled execution is verified against. */
+export function stickyCreationFromHold(record: ReviewedWriteRecoveryRecord, fundProjectId: bigint): StickyPending {
+  return {
+    version: 1, chainId: record.chainId, projectId: fundProjectId.toString(), holder: record.account,
+    target: record.call.to, data: record.call.data, value: record.call.value,
+    label: "Create the FUND Sticky project and SHARE token", safe: record.safe,
+    // ponytail: the hold keeps no prerequisite block; the exact call, event and live project still bind it.
+    submittedAt: Number(record.submittedAt ?? Date.now()), afterBlock: "0",
+    ...(record.hash ? { hash: record.hash } : {}),
   };
 }
 export function clearStickyCreationPending(

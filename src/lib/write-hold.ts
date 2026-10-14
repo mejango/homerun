@@ -34,11 +34,23 @@ export type LegacyWriteEvidence = NonNullable<Parameters<WriteHoldHandle['adopt'
  * Move a journal record from before SDK holds into the write's hold, atomically: the hold for
  * `input` reserves it with the saved evidence (its hash, or its Safe proposal; else its nonce) and
  * its saved send time, unless the hold already holds something. From then on the SDK alone holds it,
- * shows its line, offers its exit and settles it. Returns what the hold says now.
+ * shows its line, offers its exit and settles it.
+ *
+ * `adopted` says the journal may go: the hold now holds this attempt (adopted, or found already
+ * held as this same attempt) or settled it on authenticated evidence. Otherwise the journal stays.
  */
-export async function adoptLegacyWrite(input: ReviewedWriteRecoveryInput, evidence: LegacyWriteEvidence, client: WriteHoldClient): Promise<WriteHoldState> {
+export async function adoptLegacyWrite(input: ReviewedWriteRecoveryInput, evidence: LegacyWriteEvidence, client: WriteHoldClient): Promise<{ state: WriteHoldState; adopted: boolean }> {
   const hold = holds.open(input)
   const snapshot = await hold.state(client)
-  if (snapshot.status !== 'clear') return snapshot
-  return hold.adopt(snapshot, evidence, client)
+  if (snapshot.status !== 'clear') return { state: snapshot, adopted: sameAttempt(snapshot.record, input, evidence) }
+  const state = await hold.adopt(snapshot, evidence, client)
+  return { state, adopted: state.status !== 'clear' || !!state.settled }
+}
+
+/** Whether the attempt a hold already holds is the journal's own: its hash, or (with none saved) its exact call. */
+function sameAttempt(record: { hash?: string; call: { to: string; data: string; value: string } }, input: ReviewedWriteRecoveryInput, evidence: LegacyWriteEvidence): boolean {
+  const saved = evidence.hash ?? evidence.safe?.safeTxHash
+  if (saved) return record.hash?.toLowerCase() === saved.toLowerCase()
+  return record.call.to.toLowerCase() === input.call.to.toLowerCase() && record.call.data.toLowerCase() === input.call.data.toLowerCase()
+    && BigInt(record.call.value) === BigInt(input.call.value ?? 0n)
 }

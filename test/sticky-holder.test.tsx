@@ -151,7 +151,7 @@ describe("Sticky holder recovery and independent loading", () => {
       label: "Approve FUND", safe: true, submittedAt: 1_800_000_000_000, afterBlock: "99", hash: `0x${"ab".repeat(32)}`,
     }));
     mocks.client = { getChainId: async () => 1 };
-    mocks.adoptLegacy.mockResolvedValue({ status: "pending-known-hash" });
+    mocks.adoptLegacy.mockResolvedValue({ adopted: true, state: { status: "pending-known-hash" } });
     await mount();
     expect(mocks.adoptLegacy).toHaveBeenCalledWith(
       { chainId: 1, account: HOLDER, safe: true, namespace: stickyIntent(9n, "approve"), call: { to: FUND, data, value: 0n } },
@@ -160,9 +160,11 @@ describe("Sticky holder recovery and independent loading", () => {
     );
     expect(readStickyPending(localStorage, key)).toBeNull();
     expect(element.textContent).not.toContain("Saved transaction");
-    expect(mocks.track).toHaveBeenCalledOnce();
-    expect(mocks.track.mock.calls[0][0]).toMatchObject({ address: FUND, functionName: "approve", args: [getAddress(TERMINAL), 10n ** 18n] });
-    expect(mocks.track.mock.calls[0][1]).toEqual({ reviewedAccount: HOLDER, recoveryNamespace: stickyIntent(9n, "approve"), safe: true });
+    // The adopted action is shown in its panel; the other panels only look for what their own holds hold.
+    const shown = mocks.track.mock.calls.filter(([, options]) => !options.heldOnly);
+    expect(shown).toHaveLength(1);
+    expect(shown[0][0]).toMatchObject({ address: FUND, functionName: "approve", args: [getAddress(TERMINAL), 10n ** 18n] });
+    expect(shown[0][1]).toEqual({ reviewedAccount: HOLDER, recoveryNamespace: stickyIntent(9n, "approve"), safe: true });
     expect(mocks.send).not.toHaveBeenCalled();
   });
   it("renders balances and staking controls while reward history is still loading", async () => {

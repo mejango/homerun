@@ -19,6 +19,7 @@ import { readableError } from '@/lib/readable-error'
 import { transactionMessage, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
 import { adoptLegacyWrite } from '@/lib/write-hold'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
+import { useLegacyAdoption } from '@/hooks/useLegacyAdoption'
 import { launchRequestsDead, runRelayrLaunch } from '@/lib/fund-launch-relayr'
 import { displayChainName } from '@/lib/chainDisplay'
 import { SUPPORTED_CHAINS } from '@/lib/chains'
@@ -54,10 +55,16 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
     try {
       const client = publicClient(request.chainId)
       const saved = loadLaunchSession()
-      const previous = saved?.statuses[request.chainId]
+      let previous = saved?.statuses[request.chainId]
       if (saved?.input.salt !== session.input.salt || !previous || previous.phase === 'confirmed') throw new Error('The saved launch changed. Reload its progress before checking this transaction.')
       const executionHash = knownExecutionHash ?? (safe ? await waitForSafeExecutionHash(request.chainId, hash, { pollingIntervalMs: 5000, signal: AbortSignal.timeout(60_000) }) : hash)
       const receipt = await client.getTransactionReceipt({ hash: executionHash })
+      // A chain still ready or reopened (a recovered hashless attempt the hold settled) records its attempt as pending first.
+      if (previous.phase !== 'pending') {
+        const attempt: LaunchStatus = { phase: 'pending', hash, safe, walletReturned: true }
+        update(attempt, undefined, previous)
+        previous = attempt
+      }
       if (fundLaunchFailed(receipt, session.input, safe, hash)) {
         // A hash the hold settled came from the wallet; a saved one counts only if the wallet returned it.
         await verifyReturnedFundWriteFailure(client, request, session.input, receipt, { hash, safe, walletReturned: previous.hash === hash ? previous.walletReturned : true })
@@ -75,32 +82,39 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
   const { track } = tx, trackSetup = setupTx.track
   const unproven = status.phase === 'reverted' && status.walletReturned !== true
   const legacy = status.phase === 'signing' || unproven || (status.phase === 'pending' && !!status.hash && !status.executionHash) || !!status.multisigSetup
+  const adoption = useLegacyAdoption(), adopt = adoption.run
   useEffect(() => {
-    if (!legacy) return
     let stopped = false
-    void (async () => {
+    void adopt(async () => {
       const client = publicClient(request.chainId) as WriteHoldClient
       const current = loadLaunchSession()?.statuses[request.chainId]
-      if (!current) return
+      if (!current || current.phase === 'confirmed') return
+      const setupRequest = multisigDeploymentRequest(request.chainId, plans)
+      if (!legacy) {
+        // Nothing saved from before SDK holds: whatever the launch's holds hold is shown, whatever the launch's state now.
+        if (plans.length) await trackSetup({ ...setupRequest, label: 'Create project multisigs' }, { reviewedAccount: sender, recoveryNamespace: setupKey, heldOnly: true })
+        await track({ ...request, label: `Launch ${session.name} FUND on ${chain.name}` }, { reviewedAccount: sender, recoveryNamespace: launchKey, heldOnly: true })
+        return
+      }
       let next: LaunchStatus = current
       if (current.multisigSetup) {
-        const setupRequest = multisigDeploymentRequest(request.chainId, plans)
         const held = launchHold(setupKey, sender, setupRequest, current.multisigSetup)
-        await adoptLegacyWrite(held.input, held.evidence, client)
+        const { adopted } = await adoptLegacyWrite(held.input, held.evidence, client)
         if (!stopped) await trackSetup({ ...setupRequest, label: 'Create project multisigs' }, { reviewedAccount: sender, recoveryNamespace: setupKey, safe: held.input.safe })
-        next = { ...next, multisigSetup: undefined }
+        // The record keeps the setup until its attempt is the hold's.
+        if (adopted) next = { ...next, multisigSetup: undefined }
       }
       const reopened = current.phase === 'signing' || (current.phase === 'reverted' && current.walletReturned !== true)
       if (reopened || current.phase === 'pending') {
         // A failure without the wallet's hash says nothing of the attempt itself: it is held without one.
         const held = launchHold(launchKey, sender, request, current.phase === 'reverted' ? { safe: current.safe } : current)
-        await adoptLegacyWrite(held.input, held.evidence, client)
+        const { adopted } = await adoptLegacyWrite(held.input, held.evidence, client)
         if (!stopped) await track({ ...request, label: `Launch ${session.name} FUND on ${chain.name}` }, { reviewedAccount: sender, recoveryNamespace: launchKey, safe: held.input.safe })
-        // An attempt without the wallet's hash is the hold's alone now; a saved hash stays this chain's pending launch.
-        if (reopened) next = { phase: 'ready', ...(next.multisigSetup ? { multisigSetup: next.multisigSetup } : {}) }
+        // An attempt without the wallet's hash is the hold's alone once adopted; a saved hash stays this chain's pending launch.
+        if (reopened && adopted) next = { phase: 'ready', ...(next.multisigSetup ? { multisigSetup: next.multisigSetup } : {}) }
       }
       if (next !== current) update(next, current.phase === 'signing' ? 'signing' : undefined, current)
-    })().catch(cause => { if (!stopped) setError(message(cause)) })
+    }).catch(cause => { if (!stopped) setError(message(cause)) })
     return () => { stopped = true }
   // The saved record decides when there is something to adopt; the adoption reads what is saved.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -135,6 +149,7 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
     const hash = await setupTx.send({ ...setupRequest, label: 'Create project multisigs' }, {
       reviewedAccount: sender,
       recoveryNamespace: setupKey,
+      beforeWrite: adoption.wait,
       reviewNotice: multisigReview(plans),
       reverify: async () => { sameSender(getAccount(wagmiConfig).address, sender); await checkCreateMultisigs(client, plans) },
     })
@@ -163,6 +178,7 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
       const hash = await tx.send({ ...request, label: `Launch ${session.name} FUND on ${chain.name}` }, {
         reviewedAccount: sender,
         recoveryNamespace: launchKey,
+        beforeWrite: adoption.wait,
         reverify: async () => {
           sameSender(getAccount(wagmiConfig).address, sender)
           await checkLaunchDeployment(publicClient(request.chainId), request)
@@ -202,7 +218,7 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
     <p role="status">{status.phase === 'confirmed' ? 'FUND deployment verified onchain.' : status.phase === 'pending' ? status.safe ? 'Safe proposal awaiting execution.' : 'Transaction submitted; confirmation pending.' : status.phase === 'reverted' ? 'The deployment reverted. No project was created by this transaction.' : 'Ready for transaction review.'}</p>
     {status.hash && <p><a target="_blank" rel="noreferrer" href={status.executionHash || !status.safe ? `${chain.blockExplorers.default.url}/tx/${status.executionHash ?? status.hash}` : 'https://app.safe.global/transactions/queue'}>{status.safe && !status.executionHash ? 'View Safe queue' : 'View transaction'}: {status.hash.slice(0, 12)}…</a></p>}
     {status.phase === 'confirmed' && <a className="create-primary" href={projectPath(request.chainId, status.projectId!)}>Open FUND project ↗</a>}
-    {(status.phase === 'ready' || status.phase === 'reverted') && <button type="button" disabled={tx.busy || setupTx.busy || tx.phase === 'review' || setupTx.phase === 'review' || verifying || sending} onClick={() => void launch()}>Review and deploy FUND</button>}
+    {(status.phase === 'ready' || status.phase === 'reverted') && <button type="button" disabled={tx.busy || setupTx.busy || tx.phase === 'review' || setupTx.phase === 'review' || verifying || sending || !adoption.ready} onClick={() => void launch()}>Review and deploy FUND</button>}
     {status.phase === 'pending' && status.hash && <button type="button" disabled={verifying} onClick={() => void verify(status.hash!, status.safe ?? false, status.executionHash)}>{verifying ? 'Checking execution…' : 'Check confirmation'}</button>}
     {setupTx.phase === 'submitted' && <div role="status"><HeldNotice tx={setupTx} /></div>}
     {tx.phase === 'submitted' && <div role="status"><HeldNotice tx={launchHeld} /></div>}

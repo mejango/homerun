@@ -939,7 +939,7 @@ describe('useSafeTx', () => {
         input: call().data, value: 7n, blockHash: BLOCK_HASH, blockNumber: 77n, transactionIndex: 0 }))
       mocks.receipt = { data: canonicalReceipt('success'), isError: false }
       const adopted = await adoptLegacyWrite({ chainId: 10, account: ALICE, safe: false, namespace: intentKey, call: call() }, { hash: HASH, submittedAt: Date.now() }, mocks.publicClient as never)
-      expect(adopted).toMatchObject({ status: 'clear', settled: { result: 'success', hash: HASH } })
+      expect(adopted).toMatchObject({ adopted: true, state: { status: 'clear', settled: { result: 'success', hash: HASH } } })
       const hook = await renderHook()
       await act(async () => { await hook.ref.current!.track(request, { ...reviewedByAlice, recoveryNamespace: intentKey }) })
       await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
@@ -952,7 +952,10 @@ describe('useSafeTx', () => {
       const input = { chainId: 10, account: ALICE, safe: false, namespace: intentKey, call: call() }
       await adoptLegacyWrite(input, { submittedAt: Date.now() }, mocks.publicClient as never)
       const again = await adoptLegacyWrite(input, { hash: HASH, submittedAt: Date.now() }, mocks.publicClient as never)
-      expect(again.status).toBe('held-no-hash')
+      expect(again.state.status).toBe('held-no-hash')
+      // Held without that hash, it is not that attempt: its journal stays.
+      expect(again.adopted).toBe(false)
+      expect((await adoptLegacyWrite(input, { submittedAt: Date.now() }, mocks.publicClient as never)).adopted).toBe(true)
       // One write, and the mirror the SDK keeps at its exact call for older readers.
       expect(recoveryRecords().filter(record => !record.mirrorOf)).toHaveLength(1)
     })

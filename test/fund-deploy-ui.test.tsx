@@ -11,7 +11,7 @@ import { safeExecutionLog } from './support/safe-logs'
 import type { TxRequest } from '../src/hooks/useSafeTx'
 import { multisigDeploymentRequest, predictMultisig, type CreateMultisig } from '../src/lib/create-multisig'
 
-const runtime = vi.hoisted(() => ({ txError: '' as string, submissionHash: undefined as Hex | undefined, safe: false, send: vi.fn(), track: vi.fn(), adopt: vi.fn(), readContract: vi.fn(), getBlock: vi.fn(), getTransaction: vi.fn(), getTransactionReceipt: vi.fn(), waitReceipt: vi.fn(), waitSafe: vi.fn(), checkMultisigs: vi.fn(), verifyMultisigs: vi.fn(), publish: vi.fn(), checkDeployment: vi.fn(), relayr: vi.fn(), requestsDead: vi.fn() }))
+const runtime = vi.hoisted(() => ({ txPhase: 'idle', txReceipt: null as unknown, verifyLaunch: vi.fn(), txError: '' as string, submissionHash: undefined as Hex | undefined, safe: false, send: vi.fn(), track: vi.fn(), adopt: vi.fn(), readContract: vi.fn(), getBlock: vi.fn(), getTransaction: vi.fn(), getTransactionReceipt: vi.fn(), waitReceipt: vi.fn(), waitSafe: vi.fn(), checkMultisigs: vi.fn(), verifyMultisigs: vi.fn(), publish: vi.fn(), checkDeployment: vi.fn(), relayr: vi.fn(), requestsDead: vi.fn() }))
 const navigate = vi.hoisted(() => ({ replace: vi.fn() }))
 vi.mock('next/navigation', () => ({ useRouter: () => navigate }))
 const owner = '0x1111111111111111111111111111111111111111' as const
@@ -23,10 +23,10 @@ vi.mock('@/components/WalletButton', () => ({ WalletButton: () => <span>Wallet</
 vi.mock('@/components/CreateFlow', () => ({ default: () => null }))
 vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => runtime.safe, useSafeConnection: () => false, waitForSafeExecutionHash: runtime.waitSafe }))
 vi.mock('@/lib/create-multisig', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/create-multisig')>(), checkCreateMultisigs: runtime.checkMultisigs, verifyCreatedMultisigs: runtime.verifyMultisigs }))
-vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({ phase: 'idle', busy: false, error: runtime.txError, submissionHash: runtime.submissionHash, send: runtime.send, track: runtime.track, reset: vi.fn() }) }))
+vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({ phase: runtime.txPhase, receipt: runtime.txReceipt, isSafe: false, busy: false, error: runtime.txError, submissionHash: runtime.submissionHash, send: runtime.send, track: runtime.track, reset: vi.fn() }) }))
 vi.mock('@/lib/write-hold', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/write-hold')>(), adoptLegacyWrite: runtime.adopt }))
 vi.mock('@/lib/publish-fund-project-metadata', () => ({ publishFundProjectMetadata: runtime.publish }))
-vi.mock('@/lib/fund-launch-verification', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/fund-launch-verification')>(), checkLaunchDeployment: runtime.checkDeployment }))
+vi.mock('@/lib/fund-launch-verification', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/fund-launch-verification')>(), checkLaunchDeployment: runtime.checkDeployment, verifyFundLaunch: (...args: unknown[]) => runtime.verifyLaunch(...args) }))
 vi.mock('@/lib/fund-launch-relayr', () => ({ runRelayrLaunch: runtime.relayr, launchRequestsDead: runtime.requestsDead }))
 import { FundDeploy } from '../src/components/LiveCreate'
 import CreateSuccess from '../src/components/CreateSuccess'
@@ -54,11 +54,12 @@ describe('Create submission recovery', () => {
   let host: HTMLDivElement
   beforeEach(() => {
     localStorage.clear()
-    runtime.txError = ''
+    runtime.txError = ''; runtime.txPhase = 'idle'; runtime.txReceipt = null
+    runtime.verifyLaunch.mockReset().mockImplementation(async (...args: unknown[]) => (await import('../src/lib/fund-launch-verification')).verifyFundLaunch(...(args as Parameters<typeof import('../src/lib/fund-launch-verification').verifyFundLaunch>)))
     runtime.submissionHash = undefined
     runtime.safe = false
     runtime.send.mockReset()
-    runtime.track.mockReset(); runtime.adopt.mockReset().mockResolvedValue({ status: 'held-no-hash' })
+    runtime.track.mockReset(); runtime.adopt.mockReset().mockResolvedValue({ adopted: true, state: { status: 'held-no-hash' } })
     runtime.waitSafe.mockReset(); runtime.waitReceipt.mockReset(); runtime.checkMultisigs.mockReset().mockResolvedValue(undefined); runtime.verifyMultisigs.mockReset().mockResolvedValue(true)
     runtime.getTransaction.mockReset(); runtime.getTransactionReceipt.mockReset()
     runtime.readContract.mockResolvedValue(0n); runtime.getBlock.mockReset().mockResolvedValue({ timestamp: 1000n }); runtime.publish.mockResolvedValue({ cid: 'bafkreimetadata' }); runtime.checkDeployment.mockResolvedValue(undefined)
@@ -94,6 +95,19 @@ describe('Create submission recovery', () => {
       expect(runtime.adopt).toHaveBeenCalledWith(expect.objectContaining({ chainId: 8453, account: owner, safe: false, namespace: launchIntent(salt), call: expect.objectContaining({ to: request().address }) }), { nonce: 5n, fromBlock: 90n }, expect.anything())
       expect(runtime.track).toHaveBeenCalledWith(expect.objectContaining({ chainId: 8453 }), expect.objectContaining({ reviewedAccount: owner, recoveryNamespace: launchIntent(salt) }))
       expect(runtime.send).not.toHaveBeenCalled()
+    })
+
+    it('records the outcome of a hashless attempt the hold later settles, from ready', async () => {
+      updateLaunchStatus(salt, 8453, { phase: 'signing', safe: false, attemptId: ATTEMPT, nonce: '5', fromBlock: '90' })
+      await render()
+      await vi.waitFor(() => expect(saved().statuses[8453]).toEqual({ phase: 'ready' }))
+      // The SDK found the attempt at its nonce and settled it: its verified receipt reaches the launch.
+      const receipt = { transactionHash: FOUND, blockNumber: 9n, status: 'success', logs: [] }
+      runtime.getTransactionReceipt.mockResolvedValue(receipt)
+      runtime.verifyLaunch.mockResolvedValue(42n)
+      runtime.txPhase = 'success'; runtime.txReceipt = receipt; runtime.submissionHash = FOUND
+      await render()
+      await vi.waitFor(() => expect(saved().statuses[8453]).toMatchObject({ phase: 'confirmed', hash: FOUND, projectId: '42' }))
     })
 
     it('adopts a saved pending hash into the hold and keeps it this chain’s pending launch', async () => {

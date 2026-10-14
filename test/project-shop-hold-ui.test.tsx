@@ -118,3 +118,22 @@ it('adopts a step the journal saved as pending before SDK holds: the journal dro
   await click('Review transaction')
   expect(wallet.writeContract).toHaveBeenCalledOnce()
 })
+
+it('shows a held step and its exit after a reload, even when the shop can no longer be read', async () => {
+  startShopWriteSession(localStorage, KEY, plan())
+  wallet.writeContract.mockRejectedValueOnce(new Error('Wallet reply was lost after broadcast'))
+  await render()
+  await click('Resume shop update')
+  await click('Review transaction')
+  expect(button(EXIT)).toBeDefined()
+  // A reload while the shop's state can't be revalidated: the held step is still found, with its exit.
+  m.read.mockRejectedValue(new Error('Shop unavailable'))
+  await act(async () => root.unmount()); root = createRoot(host)
+  cache.clear()
+  await render()
+  if (button('Resume shop update')) await click('Resume shop update')
+  expect(button(EXIT), host.textContent ?? '').toBeDefined()
+  await click(EXIT)
+  expect(button(EXIT)).toBeUndefined()
+})
+

@@ -983,17 +983,33 @@ export function useSafeTx(chainId: number) {
    * journal record adopted into its hold. Nothing is sent; the hold's state is shown with its line
    * and exit, a hash is followed, and a send of the same write is refused while it holds.
    */
-  const track = useCallback(async (request: TxRequest, options: Pick<TxSendOptions, 'reviewedAccount' | 'recoveryNamespace'> & { safe?: boolean }) => {
-    if (!publicClient || inFlightRef.current) return
+  /**
+   * Show a hold without sending: an adopted journal write, or (with `heldOnly`) whatever the
+   * intent holds now, found from its namespace alone. Returns the hold's state.
+   */
+  const track = useCallback(async (request: TxRequest | { chainId: number; call: { to: Address; data: Hex; value?: bigint } }, options: Pick<TxSendOptions, 'reviewedAccount' | 'recoveryNamespace'> & { safe?: boolean; heldOnly?: boolean }) => {
+    if (!publicClient || inFlightRef.current) return null
     const at = generation.current
-    const current = holds.open({
-      chainId: request.chainId, account: options.reviewedAccount, safe: options.safe ?? isSafeConnection(wagmiConfig), call: callOf(request),
-      ...(options.recoveryNamespace ? { namespace: options.recoveryNamespace } : {}),
-    })
+    // Discovery asks for either kind of wallet when none is named: a Safe's hold is its own.
+    const safes = options.heldOnly && options.safe === undefined ? [false, true] : [options.safe ?? isSafeConnection(wagmiConfig)]
+    let current!: WriteHoldHandle
+    let state: WriteHoldState | null = null
+    for (const safe of safes) {
+      current = holds.open({
+        chainId: request.chainId, account: options.reviewedAccount, safe,
+        call: 'call' in request ? request.call : callOf(request),
+        ...(options.recoveryNamespace ? { namespace: options.recoveryNamespace } : {}),
+      })
+      state = await current.state(publicClient).catch(() => null)
+      if (state?.status !== 'clear') break
+    }
+    // Found nothing held: the flow stays as it is.
+    if (options.heldOnly && state?.status === 'clear') return state
+    if (generation.current !== at) return state
     holdAt.current = at
     setHold(current)
-    const state = await current.state(publicClient).catch(() => null)
-    if (state && generation.current === at) apply(state, publicClient)
+    if (state) apply(state, publicClient)
+    return state
   }, [publicClient, apply])
 
   /**

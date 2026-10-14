@@ -105,3 +105,24 @@ it('adopts a saved submitted attempt with its hash and follows it, never sending
   expect(button('Review payer creation')).toBeUndefined()
   expect(wallet.writeContract).not.toHaveBeenCalled()
 })
+
+it('sends nothing while a saved attempt is still being adopted, and keeps the journal until it is', async () => {
+  const hash = `0x${'ab'.repeat(32)}` as const
+  const request = buildPayerTransaction(legacy().settings)
+  let answer!: () => void
+  const slow = new Promise<void>(resolve => { answer = resolve })
+  // The node is slow to answer for the saved hash, which is this exact call, still pending.
+  wallet.client.getTransaction.mockImplementation(async () => { await slow; return { hash, chainId: 1, from: ALICE, to: request.address, input: encodeFunctionData(request), value: 0n, nonce: 3, blockHash: null, blockNumber: null, transactionIndex: null } as never })
+  localStorage.setItem(KEY, JSON.stringify(legacy({ phase: 'submitted', hash })))
+  await render()
+  // An early review while the adoption waits on the node: nothing reaches the wallet, and the journal stays.
+  if (button('Review payer creation') && !button('Review payer creation')!.disabled) await click('Review payer creation')
+  expect(wallet.writeContract).not.toHaveBeenCalled()
+  expect(localStorage.getItem(KEY)).not.toBeNull()
+  answer()
+  await settle(); await settle()
+  expect(localStorage.getItem(KEY)).toBeNull()
+  expect(host.textContent).toContain('Submitted. Verifying the payer deployment onchain')
+  expect(wallet.writeContract).not.toHaveBeenCalled()
+})
+

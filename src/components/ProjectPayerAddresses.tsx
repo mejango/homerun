@@ -11,6 +11,7 @@ import { displayChainName, explorerAddressUrl, explorerTxUrl } from '@/lib/chain
 import { buildPayerTransaction, checkPayerFactory, decodePayerAttempt, getProjectPayerAddresses, payerAttemptHold, payerAttemptKey, payerIntent, verifyPayerReceipt, type PayerSettings, type ProjectPayerRow } from '@/lib/project-payers'
 import { adoptLegacyWrite } from '@/lib/write-hold'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
+import { useLegacyAdoption } from '@/hooks/useLegacyAdoption'
 
 type Props = { chainId: JBChainId; projectId: bigint; tokenLabel?: string }
 function message(error: unknown) { return error instanceof Error ? error.message : 'The payer address could not be verified.' }
@@ -46,31 +47,34 @@ function ProjectPayerAddressContext({ chainId, projectId, tokenLabel = 'Project 
   const [copied, setCopied] = useState<string | null>(null)
   /** The deployment this screen follows: what its receipt is verified against. */
   const following = useRef<{ settings: PayerSettings; account: Address; safe: boolean } | null>(null)
-  const busy = preparing || tx.busy || tx.phase === 'review'
+  const adoption = useLegacyAdoption()
+  const busy = preparing || tx.busy || tx.phase === 'review' || !adoption.ready
   const rows = useQuery({ queryKey: ['project-payers', chainId, String(projectId)], queryFn: ({ signal }) => getProjectPayerAddresses(chainId, projectId, { signal }), staleTime: 30_000, refetchInterval: 30_000, retry: 1 })
   const factory = useQuery({ queryKey: ['project-payer-factory', chainId, String(projectId)], enabled: !!client, queryFn: () => checkPayerFactory(client!, chainId, projectId), staleTime: 30_000, retry: 1 })
   const track = tx.track
 
   // An attempt the payer journal saved before SDK holds is adopted into its hold, then the journal goes.
+  const adopt = adoption.run
   useEffect(() => {
     if (!client) return
     let cancelled = false
-    void (async () => {
+    void adopt(async () => {
       const key = payerAttemptKey(chainId, projectId)
       const raw = localStorage.getItem(key)
       if (!raw) return
       const saved = decodePayerAttempt(raw, chainId, projectId)
       if (saved.phase === 'signing' || saved.phase === 'submitted') {
         const { input, evidence } = payerAttemptHold(saved)
-        await adoptLegacyWrite(input, evidence, client)
-        if (localStorage.getItem(key) === raw) localStorage.removeItem(key)
+        // The journal stays until its attempt is the hold's.
+        const { adopted } = await adoptLegacyWrite(input, evidence, client)
+        if (adopted && localStorage.getItem(key) === raw) localStorage.removeItem(key)
         if (cancelled) return
         following.current = { settings: saved.settings, account: saved.account, safe: saved.safe }
         await track({ ...buildPayerTransaction(saved.settings), label: `Create ${tokenLabel} payer address` }, { reviewedAccount: saved.account, recoveryNamespace: input.namespace, safe: saved.safe })
       } else if (localStorage.getItem(key) === raw) localStorage.removeItem(key)
-    })().catch(reason => { if (!cancelled) setStorageError(message(reason)) })
+    }).catch(reason => { if (!cancelled) setStorageError(message(reason)) })
     return () => { cancelled = true }
-  }, [chainId, client, projectId, tokenLabel, track])
+  }, [adopt, chainId, client, projectId, tokenLabel, track])
 
   // A deployment the hold settled is verified against its settings before its payer is shown.
   const receipt = tx.phase === 'success' ? tx.receipt : null
@@ -104,6 +108,7 @@ function ProjectPayerAddressContext({ chainId, projectId, tokenLabel = 'Project 
         recoveryNamespace: payerIntent(settings),
         reviewNotice: `Create a dedicated payer address for project #${projectId} on ${displayChainName(chainId)}. ${addToBalance ? 'ETH received adds to the project balance without minting tokens.' : `ETH received pays the project; ${tokenLabel} goes to ${isAddressEqual(selectedBeneficiary, zeroAddress) ? 'the original payer' : selectedBeneficiary}. Direct ETH transfers accept the current minting rate with no minimum token amount.`} ${editable ? `Admin ${selectedOwner} may change the routing and beneficiary later.` : 'Routing is immutable because the admin is the zero address.'} Sending other tokens directly does not forward them. This creates a payer contract and spends only gas; it does not deploy a FUND or INCOME project.`,
         reverify: async () => { await checkPayerFactory(client, chainId, projectId) },
+        beforeWrite: adoption.wait,
       })
     } catch (reason) { setError(message(reason)) } finally { setPreparing(false) }
   }

@@ -82,9 +82,9 @@ it('refuses another launch after a lost wallet reply until the user takes the ex
   expect(button(EXIT)).toBeDefined()
   await act(async () => root.unmount()); root = createRoot(host)
   await render()
-  await review()
-  expect(wallet.writeContract).toHaveBeenCalledOnce()
+  // Reloaded, the held launch shows at once with its exit.
   expect(button(EXIT)).toBeDefined()
+  expect(wallet.writeContract).toHaveBeenCalledOnce()
   await click(EXIT)
   await review()
   expect(wallet.writeContract).toHaveBeenCalledTimes(2)
@@ -104,3 +104,16 @@ it('adopts a hashless launch the journal saved before SDK holds: its record goes
   await review()
   expect(wallet.writeContract).toHaveBeenCalledOnce()
 })
+
+it('shows a held launch and its exit after a reload while the published snapshot cannot load', async () => {
+  wallet.writeContract.mockRejectedValueOnce(new Error('Wallet reply was lost after broadcast'))
+  await render()
+  await review()
+  expect(button(EXIT)).toBeDefined()
+  vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('IPFS unavailable') }))
+  await act(async () => root.unmount()); root = createRoot(host)
+  await render()
+  expect(button('Prepare Base INCOME')).toBeUndefined()
+  expect(button(EXIT), host.textContent ?? '').toBeDefined()
+})
+
