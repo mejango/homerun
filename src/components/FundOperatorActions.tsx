@@ -26,6 +26,7 @@ import { wagmiConfig } from '@/providers/Providers'
 import { readableError } from '@/lib/readable-error'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
 import { useLegacyAdoption } from '@/hooks/useLegacyAdoption'
+import { HeldIntents } from '@/components/ui/HeldIntents'
 import { adoptLegacyWrite, callOf } from '@/lib/write-hold'
 import type { WriteHoldClient } from '@bananapus/nana-sdk-core/review'
 
@@ -899,6 +900,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
           : <><p role="status" className="text-sm">Every ruleset transaction is confirmed. The new rules take effect at the shared activation time.</p><button type="button" className="btn-secondary min-h-10 w-fit px-4" onClick={closePlan}>Done</button></>}
     </section>}
 
+    {!linked && <HeldIntents chainId={state.chainId} account={address} intents={(Object.keys(RULESET_LABELS) as PlanAction[]).filter(action => action !== 'configure-asset-allowance').map(action => ({ namespace: rulesetIntent(state.projectId, action as FundRulesetAction), label: RULESET_LABELS[action] }))} />}
     <section className="grid gap-4 border-t border-[var(--line)] pt-6" aria-labelledby="fund-campaign-controls">
       <h3 id="fund-campaign-controls" className="text-[15px] font-medium">Campaign controls</h3>
       <p className="text-sm">Pausing stops new contributions. Closing also disables FUND cash-outs while the purchase settles.</p>

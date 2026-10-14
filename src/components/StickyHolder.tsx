@@ -10,7 +10,6 @@ import { createContext, useContext, useEffect, useRef, useState } from "react";
 import {
   formatUnits,
   isAddressEqual,
-  zeroAddress,
   type Address,
   type PublicClient,
 } from "viem";
@@ -43,12 +42,14 @@ import {
   clearStickyPending,
   readStickyPending,
   stickyIntent,
+  stickyHeldIntents,
   stickyPendingHold,
   stickySessionKey,
 } from "@/lib/sticky-session";
 import { adoptLegacyWrite } from "@/lib/write-hold";
 import { HeldNotice } from "@/components/ui/HeldWriteExit";
 import { useLegacyAdoption } from "@/hooks/useLegacyAdoption";
+import { HeldIntents } from "@/components/ui/HeldIntents";
 
 export type StickyHolderProps = {
   chainId: JBChainId;
@@ -154,34 +155,17 @@ function useStickyTx(state: StickyProjectState, actions: readonly string[]) {
     previous = useRef<string | null>(null),
     prerequisite = useRef<bigint | undefined>(undefined);
   const { adopted, ready, wait } = useContext(StickyAdoption),
-    track = tx.track,
-    { address } = useWallet();
-  // An adopted journal record of one of this screen's actions is shown here, with its line and exit;
-  // with none, whatever one of its actions' holds holds is.
+    track = tx.track;
+  // An adopted journal record of one of this screen's actions is shown here, with its line and exit.
   const shows = !!adopted && actions.includes(adopted.request.functionName);
-  const actionKey = actions.join(",");
   useEffect(() => {
-    if (!ready) return;
-    if (adopted && shows) {
-      void track(adopted.request, {
-        reviewedAccount: adopted.account,
-        recoveryNamespace: adopted.namespace,
-        safe: adopted.safe,
-      });
-      return;
-    }
-    if (!address) return;
-    void (async () => {
-      for (const action of actionKey.split(",")) {
-        const held = await track({ chainId: state.chainId, call: { to: zeroAddress, data: "0x" } }, {
-          reviewedAccount: address,
-          recoveryNamespace: stickyIntent(state.stickyProjectId, action),
-          heldOnly: true,
-        });
-        if (held && held.status !== "clear") return;
-      }
-    })();
-  }, [actionKey, address, adopted, ready, shows, state.chainId, state.stickyProjectId, track]);
+    if (!ready || !adopted || !shows) return;
+    void track(adopted.request, {
+      reviewedAccount: adopted.account,
+      recoveryNamespace: adopted.namespace,
+      safe: adopted.safe,
+    });
+  }, [adopted, ready, shows, track]);
   useEffect(() => {
     // The engine settled this receipt: it confirmed, reverted, or holds a Safe
     // execution whose call failed.
@@ -323,6 +307,8 @@ export function StickyHolder({
         Stake FUND to receive SHARE for ongoing INCOME rewards. The initial
         INCOME allocation follows all FUND ownership separately.
       </p>
+      {/* Whatever a holder action's hold holds is shown with its exit, whatever the contracts or balances allow now. */}
+      <HeldIntents chainId={chainId} account={address} intents={stickyHeldIntents(stickyProjectId)} />
       {query.isPending && <p role="status">Verifying the Sticky contracts…</p>}
       {query.isError && (
         <div className="rounded border border-[#d8d3bd] p-5" role="alert">

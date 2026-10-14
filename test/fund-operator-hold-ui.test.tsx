@@ -156,3 +156,27 @@ it('shows a held send and its exit after a reload past the plan deadline, before
   } finally { clock.mockRestore() }
 })
 
+it('shows a held owner action and its exit after a reload, while its own button is disabled by the rules now', async () => {
+  // A single-chain project: owner actions are sent directly, held by the project and the action.
+  const single = (pausePay: boolean) => {
+    const current = state()
+    return { ...current, linkedChainIds: [8453], metadata: { ...current.metadata, pausePay }, rulesetSnapshot: { ...current.rulesetSnapshot, linkedChainIds: [8453] } } as unknown as FundProjectState
+  }
+  runtime.states = [single(false)]
+  wallet.writeContract.mockRejectedValueOnce(new Error('Wallet reply was lost after broadcast'))
+  const show = (current: FundProjectState) => act(async () => root.render(<FundOperatorActions state={current} client={wallet.client as unknown as PublicClient} contextIndex={0} />))
+  await show(single(false)); await settle(); await settle()
+  await click('Review pause')
+  await act(async () => [...host.querySelectorAll<HTMLButtonElement>('[data-tx-confirm] button')].find(node => node.textContent === 'Confirm & queue')!.click())
+  await settle(); await settle()
+  expect(wallet.writeContract).toHaveBeenCalledOnce()
+  // Reloaded after another action (close) changed the rules: pause is no longer offered.
+  await act(async () => root.unmount()); root = createRoot(host)
+  runtime.states = [single(true)]
+  await show(single(true)); await settle(); await settle()
+  expect(button('Review pause')?.disabled).toBe(true)
+  expect(button(EXIT), host.textContent ?? '').toBeDefined()
+  await click(EXIT)
+  expect(button(EXIT)).toBeUndefined()
+})
+

@@ -112,3 +112,19 @@ it('adopts an approval the Sticky journal saved as pending before SDK holds: the
   await click('Review FUND approval')
   expect(wallet.writeContract).toHaveBeenCalledOnce()
 })
+
+it('shows a held holder action and its exit after a reload, even when the Sticky contracts can no longer be verified', async () => {
+  wallet.writeContract.mockRejectedValueOnce(new Error('Wallet reply was lost after broadcast'))
+  await render()
+  await click('Use available FUND')
+  await click('Review FUND approval')
+  expect(button(EXIT)).toBeDefined()
+  vi.mocked(readStickyProjectState).mockRejectedValue(new Error('Sticky unavailable'))
+  await act(async () => root.unmount()); root = createRoot(host); cache.clear()
+  await render()
+  expect(button('Review FUND approval')).toBeUndefined()
+  expect(button(EXIT), host.textContent ?? '').toBeDefined()
+  await click(EXIT)
+  expect(button(EXIT)).toBeUndefined()
+})
+

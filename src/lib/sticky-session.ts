@@ -66,6 +66,15 @@ export function stickyIntent(projectId: bigint, functionName: string): string {
   return writeIntentKey(action, { project: projectId });
 }
 
+/** Every holder action's intent, with what it does: the fixed set a reload looks through for held writes. */
+const STICKY_ACTION_LABELS: Record<string, string> = {
+  claimTokensFor: "Claim FUND credits", approve: "Approve FUND", pay: "Stake FUND",
+  cashOutTokensOf: "Unstake SHARE", beginVesting: "Start vesting INCOME", collectVestedRewards: "Collect vested INCOME",
+};
+export function stickyHeldIntents(projectId: bigint): { namespace: string; label: string }[] {
+  return Object.keys(STICKY_ACTIONS).map(functionName => ({ namespace: stickyIntent(projectId, functionName), label: STICKY_ACTION_LABELS[functionName] }));
+}
+
 /** A record the Sticky journal saved before SDK holds: the request it was, and the hold it is adopted into. */
 export function stickyPendingHold(record: StickyPending): {
   request: TxRequest;
