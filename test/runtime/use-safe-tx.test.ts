@@ -815,6 +815,33 @@ describe('useSafeTx', () => {
     vi.useRealTimers()
   })
 
+  it('ends without a send when the hold clears while its exit is open', async () => {
+    mocks.writeContract.mockRejectedValueOnce(new Error('Wallet reply was lost after broadcast'))
+    const hook = await renderHook()
+    await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+    expect(hook.ref.current!.held).not.toBeNull()
+    // Another tab ends the hold while this exit is on screen.
+    const other = createBrowserWriteRecovery({ chainId: 10, account: ALICE, safe: false, call: { to: BOB, data: encodeFunctionData({ abi: ABI, functionName: 'transfer', args: [BOB, 5n] }), value: 7n } })
+    await other.withLock(async () => { other.abandon(other.read()!, { checkedWallet: true }) })
+    await act(async () => { await hook.ref.current!.held!.release() })
+    expect(hook.ref.current).toMatchObject({ phase: 'submitted', notice: 'Your earlier transaction went through.', held: null })
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+  })
+
+  it('ends without a send when a poll sees the hold clear while its exit is open', async () => {
+    vi.useFakeTimers()
+    try {
+      mocks.writeContract.mockRejectedValueOnce(new Error('Wallet reply was lost after broadcast'))
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+      const other = createBrowserWriteRecovery({ chainId: 10, account: ALICE, safe: false, call: { to: BOB, data: encodeFunctionData({ abi: ABI, functionName: 'transfer', args: [BOB, 5n] }), value: 7n } })
+      await other.withLock(async () => { other.abandon(other.read()!, { checkedWallet: true }) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
+      expect(hook.ref.current).toMatchObject({ notice: 'Your earlier transaction went through.', held: null })
+      expect(mocks.writeContract).toHaveBeenCalledOnce()
+    } finally { vi.useRealTimers() }
+  })
+
   it('passes the exit the record the user saw, and follows a hash another tab recorded instead of releasing', async () => {
     mocks.writeContract.mockRejectedValueOnce(new Error('Wallet reply was lost after broadcast'))
     const hook = await renderHook()

@@ -215,6 +215,8 @@ const SHOWN_AS: Record<ProposalPhase, TxPhase> = {
   replaced: 'error',
 }
 
+/** A hold that ended on its own while its exit was open: the earlier write is not sent again. */
+const WENT_THROUGH_LINE = 'Your earlier transaction went through.'
 const SAFE_EXECUTION_CONFIRMING = 'Executed by your Safe. Confirming it onchain.'
 /** What a Safe app replied in place of a proposal or execution hash. */
 const SAFE_REPLY_UNREADABLE = 'Safe did not return a proposal hash. Check Safe before sending this again.'
@@ -490,6 +492,9 @@ export function useSafeTx(chainId: number) {
   const sending = useRef(false)
   /** The returned hash this flow already follows. */
   const tracked = useRef<Hex | null>(null)
+  /** An exit is on screen: a clear that arrives meanwhile ends the attempt without a send. */
+  const exitShown = useRef(false)
+  const exiting = useRef(false)
   /** A write with a durable domain journal has no generic hold; its wallet may still have lost the reply. */
   const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null)
   useEffect(() => {
@@ -607,6 +612,8 @@ export function useSafeTx(chainId: number) {
     if (state.status === 'clear') {
       setHeld(null)
       const ended = state.settled
+      if (exitShown.current && !exiting.current && !ended) { setRecoveryNotice(WENT_THROUGH_LINE); setPhase('submitted') }
+      exitShown.current = false
       if (ended && !tracked.current) {
         if ('hash' in ended) { tracked.current = ended.hash; setHash(ended.hash) }
         else { setError(SAFE_PROPOSAL_EXPIRED); setPhase('error') }
@@ -615,6 +622,7 @@ export function useSafeTx(chainId: number) {
     }
     if (sending.current && state.status === 'held-no-hash') return
     setHeld(state)
+    exitShown.current = state.exit
     if (state.exit) {
       inFlightRef.current = false
       setPhase('submitted')
@@ -654,15 +662,18 @@ export function useSafeTx(chainId: number) {
   /** The user checked their wallet: end the hold so the action can be sent again. */
   const release = useCallback(async () => {
     if (!hold || !held?.exit || !publicClient) return
+    exiting.current = true
     try {
       // The hold asks the chain again as the exit is taken, and shows what it finds instead of releasing.
       const { released, state } = await hold.exit(held, { checkedWallet: true }, publicClient)
       if (!released && (state.status !== 'clear' || state.settled)) return
+      if (!released) { setRecoveryNotice(WENT_THROUGH_LINE); setPhase('submitted'); return }
+      exitShown.current = false
       generation.current += 1
       inFlightRef.current = false
       tracked.current = null
       setHeld(null); setHash(null); setShownKey(null); setError(null); setPhase('idle')
-    } catch (reason) { setError(friendlyTxError(reason)) }
+    } catch (reason) { setError(friendlyTxError(reason)) } finally { exiting.current = false }
   }, [hold, held, publicClient])
 
   const send = useCallback(
