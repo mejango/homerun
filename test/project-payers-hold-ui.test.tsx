@@ -171,8 +171,13 @@ it('gap 8: a payer deployment that settled while away is shown and followed, and
   const hold = holds.open({ chainId: 1, account: ALICE, safe: false, namespace: payerIntent(7n), call: { to: ALICE, data: '0x' } })
   expect(await hold.onReceipt(await wallet.client.getTransactionReceipt({ hash }) as never, wallet.client as never)).toMatchObject({ status: 'clear', settled: { result: 'success' } })
   await render()
-  // Its result is shown and followed, never hidden behind a separate send.
+  // Its result is shown, never hidden behind a separate send: until it can be proven, nothing else is created.
   expect(host.textContent).toContain(HELD_SUCCESS_LINE)
-  await click('Review payer creation')
-  expect(wallet.writeContract).toHaveBeenCalledTimes(2)
+  expect(button('Check again')).toBeDefined()
+  expect(button('Review payer creation')!.matches(':disabled')).toBe(true)
+  // A reload still shows it: an unproven success is never retired.
+  await act(async () => root.unmount()); root = createRoot(host); cache.clear()
+  await render()
+  expect(host.textContent).toContain(HELD_SUCCESS_LINE)
+  expect(wallet.writeContract).toHaveBeenCalledOnce()
 })

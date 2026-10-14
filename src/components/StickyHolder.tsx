@@ -46,7 +46,7 @@ import {
   stickyPendingAttempt,
   stickySessionKey,
 } from "@/lib/sticky-session";
-import { HeldWritesNotice, useHeldIntents, useSavedAttempt } from '@/hooks/held-binding';
+import { HeldWritesNotice, useHeldIntents, useSavedAttempt } from '@bananapus/nana-sdk-core/review/react';
 import type { WriteHoldClient } from "@bananapus/nana-sdk-core/review";
 import { attempts, holds } from "@/lib/write-hold";
 import { HeldNotice } from "@/components/ui/HeldWriteExit";

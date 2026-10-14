@@ -6,7 +6,7 @@ import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import { getAccount, getPublicClient } from '@wagmi/core'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
-import { HeldWritesNotice, useHeldIntents, useSavedAttempt } from '@/hooks/held-binding'
+import { HeldWritesNotice, useHeldIntents, useSavedAttempt } from '@bananapus/nana-sdk-core/review/react'
 import { decodeEventLog, decodeFunctionData, encodeFunctionData, erc20Abi, formatUnits, getAddress, isAddress, isAddressEqual, zeroAddress, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import { useSafeTx, txPhaseLabel } from '@/hooks/useSafeTx'
 import { FundAssetWithdrawals, type FundAssetAllowanceConfiguration } from '@/components/FundAssetWithdrawals'
@@ -734,13 +734,15 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
   function chainScope(active: RulesetPlan, index: number, submission = submissionsRef.current.get(active.states[index].chainId)) {
     return planChainScope(active, index, submission, approval.isSafe, chainRetirable(active.states[index].chainId))
   }
-  /** A chain's verified write is recorded, then its settlement is followed, so the plan can close. */
+  /**
+   * A chain's verified write is recorded. Its settlement is followed only as the plan closes: until
+   * then each reload proves it again from its saved submission, so a completion is never lost.
+   */
   const confirmChain = (active: RulesetPlan) => (chainId: number, result: RulesetCompletion) => withSubmissionLock(async () => {
     if (planRef.current !== active) throw new Error('The linked plan changed during confirmation.')
     recordSubmission(chainId, result.submission)
     completedRef.current = new Map(completedRef.current).set(chainId, result)
     setCompleted(completedRef.current)
-    await attempts.retire(chainScope(active, active.states.findIndex(peer => peer.chainId === chainId), result.submission), { by: 'settled', hash: result.receipt.transactionHash })
   })
 
   /**
@@ -755,6 +757,11 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
         if (planRef.current !== active) throw new Error('The linked plan changed while closing. Keep its current submissions pending.')
         // A chain whose write its hold still holds keeps the plan, and its exit, until it settles or the user takes that exit;
         // one that settled keeps it until its result is recorded.
+        // Each recorded chain's settlement is followed now, as its plan closes.
+        for (const [chainId, result] of completedRef.current) {
+          const index = active.states.findIndex(peer => peer.chainId === chainId)
+          if (index >= 0) await attempts.retire(chainScope(active, index, result.submission), { by: 'settled', hash: result.receipt.transactionHash })
+        }
         for (const index of active.states.keys()) {
           if (!attempts.canDiscard(chainScope(active, index))) throw new Error('Finish or exit the pending update first.')
         }
@@ -1019,9 +1026,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
         <p>This plan can no longer finish. The chains not yet updated were not changed.</p>
         <button type="button" className="btn-secondary min-h-10 w-fit px-4" onClick={() => void closePlan(true)}>Close this plan</button>
       </div>}
-      {recovering ? <RecoveryPanel plan={plan} submissions={submissions} recorded={chainId => completedRef.current.get(chainId)} onFailed={() => setUnresumable(true)} onResume={recovered => withSubmissionLock(async () => { if (planRef.current !== plan) throw new Error('The linked plan changed during recovery.'); for (const [chainId, submission] of submissions) assertSubmission(chainId, submission); if (submissionsRef.current.size !== submissions.size) throw new Error('A linked submission changed during recovery.'); completedRef.current = new Map([...completedRef.current, ...recovered.completed]); setCompleted(completedRef.current); setRecovering(false)
-          // Recorded: each recovered chain's settlement is followed, so the plan can close.
-          for (const [chainId, result] of recovered.completed) await attempts.retire(chainScope(plan, plan.states.findIndex(peer => peer.chainId === chainId)), { by: 'settled', hash: result.receipt.transactionHash }) })} />
+      {recovering ? <RecoveryPanel plan={plan} submissions={submissions} recorded={chainId => completedRef.current.get(chainId)} onFailed={() => setUnresumable(true)} onResume={recovered => withSubmissionLock(async () => { if (planRef.current !== plan) throw new Error('The linked plan changed during recovery.'); for (const [chainId, submission] of submissions) assertSubmission(chainId, submission); if (submissionsRef.current.size !== submissions.size) throw new Error('A linked submission changed during recovery.'); completedRef.current = new Map([...completedRef.current, ...recovered.completed]); setCompleted(completedRef.current); setRecovering(false) })} />
         : completed.size < plan.states.length ? <LinkedRulesetStep key={`${plan.startsAt}:${completed.size}`} plan={plan} index={plan.states.findIndex(peer => !completed.has(peer.chainId))} submission={submissions.get(plan.states.find(peer => !completed.has(peer.chainId))!.chainId)} confirmRetirable={chainRetirable(plan.states.find(peer => !completed.has(peer.chainId))!.chainId)} completed={completed} onConfirmed={confirmChain(plan)} onCancel={() => void closePlan()} onCloseChecked={() => void closePlan(true)} onAdopted={(chainId, submission) => withSubmissionLock(async () => { assertSubmission(chainId, submission); removeSubmission(chainId) })} />
           : <><p role="status" className="text-sm">Every ruleset transaction is confirmed. The new rules take effect at the shared activation time.</p><button type="button" className="btn-secondary min-h-10 w-fit px-4" onClick={() => void closePlan()}>Done</button></>}
     </section>}

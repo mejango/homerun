@@ -212,7 +212,8 @@ describe('linked ruleset recovery of a Safe execution', () => {
     const newer = serializeRulesetRecovery(saved, new Map([[8453, { kind: 'submission-unknown', attemptId: crypto.randomUUID() }]]), ROOT)
     if (replaced) localStorage.setItem(key, newer)
     await act(async () => button('Done')!.click())
-    expect(locks.mock.calls.length).toBe(callsBeforeClose + 1)
+    // Closed under the plan's owner lock (the hold's own locks follow each chain's settlement inside it).
+    expect(locks.mock.calls.slice(callsBeforeClose).filter(([name]) => name === key)).toHaveLength(1)
     expect(localStorage.getItem(key)).toBe(replaced ? newer : null)
   })
 
@@ -317,6 +318,22 @@ describe('linked ruleset recovery of a Safe execution', () => {
       expect(localStorage.getItem(key)).toBeNull()
       expect(runtime.send).not.toHaveBeenCalled()
     } finally { clock.mockRestore() }
+  })
+
+  it('keeps a confirmed chain confirmed across a reload before the plan finishes, never resending it', async () => {
+    const saved = plan()
+    const first = successReceipt(saved, false, 0)
+    localStorage.setItem(key, serializeRulesetRecovery(saved, new Map(), ROOT))
+    runtime.states = saved.states.map((peer, index) => ({ ...state(), chainId: peer.chainId, projectId: peer.projectId, blockNumber: 121n, blockTimestamp: 1_000n, rulesetSnapshot: { ...peer.rulesetSnapshot, upcomingRulesetId: index === 0 ? 72n : 0n }, linkedChainIds: [8453, 10] }))
+    // The first chain settled and was recorded on a previous visit.
+    localStorage.setItem(key, serializeRulesetRecovery(saved, new Map([[8453, { kind: 'transaction' as const, hash: first.receipt.transactionHash }]]), ROOT))
+    await verify()
+    expect(button('Review transaction 2 of 2'), host.textContent ?? '').toBeDefined()
+    await act(async () => root.unmount()); root = createRoot(host)
+    await verify()
+    expect(host.textContent).toContain('Execution confirmed.')
+    expect(button('Review transaction 2 of 2'), host.textContent ?? '').toBeDefined()
+    expect(runtime.send).not.toHaveBeenCalled()
   })
 
   it('reverifies a legacy saved Safe execution hash without changing its saved identity', async () => {

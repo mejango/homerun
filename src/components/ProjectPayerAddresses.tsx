@@ -5,8 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { formatUnits, isAddress, isAddressEqual, zeroAddress, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
-import { HELD_SUCCESS_LINE } from '@bananapus/nana-sdk-core/review'
-import { useSavedAttempt } from '@/hooks/held-binding'
+import { useSavedAttempt } from '@bananapus/nana-sdk-core/review/react'
 import { useSafeTx, txPhaseLabel } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { displayChainName, explorerAddressUrl, explorerTxUrl } from '@/lib/chainDisplay'
@@ -92,10 +91,10 @@ function ProjectPayerAddressContext({ chainId, projectId, tokenLabel = 'Project 
       // The hold has the journal's attempt now: the journal goes.
       if (journal.saved) dropJournal()
       track({ chainId, call: { to: call.to, data: call.data, value: BigInt(call.value) } }, { reviewedAccount: outcome.state.record.account, recoveryNamespace: payerIntent(projectId), safe: outcome.state.record.safe, reservation: outcome.state.record.id })
-    } else if (outcome.status === 'done' && outcome.result === 'success') {
-      setRecovered(outcome.authenticated ? `Payer deployment confirmed: ${outcome.value.payer}.` : HELD_SUCCESS_LINE)
+    } else if (outcome.status === 'done' && outcome.result === 'success' && outcome.authenticated) {
+      // Proven and shown here: followed, and the journal's record goes. One that can't be shown keeps its "Check again".
+      setRecovered(`Payer deployment confirmed: ${outcome.value.payer}.`)
       void rows.refetch()
-      // Followed: shown here, and the journal's record goes.
       if (journal.saved) dropJournal()
       else void retire({ by: 'settled', ...(outcome.hash ? { hash: outcome.hash } : {}) })
     } else if (outcome.status === 'none' && outcome.retired && journal.saved) dropJournal()

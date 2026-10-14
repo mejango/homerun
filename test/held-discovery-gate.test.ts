@@ -43,11 +43,10 @@ it('leaves the SDK’s hold records to the SDK: no storage keys, and held states
   }
 })
 
-it('binds the SDK’s view and recovery in one place, until the SDK ships its own React binding', () => {
-  // nana-sdk-react 53 peers on wagmi 2; held-binding.tsx is the one swap point for SDK 2.40's review/react.
-  const binders = ['src/lib/write-hold.ts', 'src/hooks/useSafeTx.ts', 'src/hooks/useProjectAdminTx.ts', 'src/hooks/held-binding.tsx']
+it('takes its React hooks from the SDK’s review/react, and binds the SDK’s view itself only in the write adapters', () => {
+  const binders = ['src/lib/write-hold.ts', 'src/hooks/useSafeTx.ts', 'src/hooks/useProjectAdminTx.ts']
   for (const { path, source } of src) {
-    expect(/@bananapus\/nana-sdk-react/.test(source), `${path} imports nana-sdk-react`).toBe(false)
+    expect(/@bananapus\/nana-sdk-react|held-binding/.test(source), `${path} uses a binding other than the SDK's`).toBe(false)
     if (!binders.includes(path)) expect(/\bcreateHeldWriteView\b|\bcreateSavedAttemptRecovery\b/.test(source), `${path} binds the SDK itself`).toBe(false)
   }
 })

@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { HELD_SUCCESS_LINE, SAVED_ATTEMPT_TAB_ONLY_LINE } from '@bananapus/nana-sdk-core/review'
-import type { UseSavedAttemptResult } from '@/hooks/held-binding'
+import type { UseSavedAttemptResult } from '@bananapus/nana-sdk-core/review/react'
 
 /**
  * What a saved attempt's recovery asks of the user, in the SDK's words: its one check action (and,
