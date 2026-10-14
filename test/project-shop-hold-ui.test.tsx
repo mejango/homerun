@@ -152,7 +152,7 @@ it('refuses to cancel an update whose step reverted but is not final yet, and ke
   if (button('Cancel update') !== undefined) expect(host.textContent).toContain('Finish or exit the pending update first.')
 })
 
-it('does not ignore a step its hold settled while the page was away: it is checked before anything is sent again', async () => {
+async function settleAway(blockNumber: bigint) {
   const session = startShopWriteSession(localStorage, KEY, plan())
   await render()
   await click('Resume shop update')
@@ -161,17 +161,40 @@ it('does not ignore a step its hold settled while the page was away: it is check
   await act(async () => root.unmount()); root = createRoot(host); cache.clear()
   // The chain places it and the SDK settles it meanwhile.
   const hash = `0x${'1'.padStart(64, '0')}` as `0x${string}`
-  await act(async () => { wallet.confirm(hash) })
+  await act(async () => { wallet.confirm(hash, blockNumber) })
   const { holds } = await import('@/lib/write-hold')
   const hold = holds.open({ chainId: 8453, account: session.plan.snapshot.account, safe: false, namespace: shopStepIntent(session, 0), call: { to: session.plan.snapshot.account, data: '0x' } })
   expect(await hold.onReceipt(await wallet.client.getTransactionReceipt({ hash }) as never, wallet.client as never)).toMatchObject({ status: 'clear', settled: { result: 'success' } })
   await render()
   if (button('Resume shop update')) await click('Resume shop update')
-  // This chain's receipt carries no shop event, so the settled step can't be authenticated here: it waits for the user's check, never offered silently again.
-  expect(host.textContent).toContain('Check this shop step before running it again.')
-  expect(button('Review transaction')).toBeUndefined()
-  await click('I checked it. Review it again')
-  expect(button('Review transaction')).toBeDefined()
+}
+
+it('records a step its hold settled while the page was away, and never sends it again', async () => {
+  await settleAway(200n)
+  expect(JSON.parse(localStorage.getItem(KEY)!).completed, host.textContent ?? '').toHaveLength(1)
   expect(wallet.writeContract).toHaveBeenCalledOnce()
+})
+
+it('asks for a check when a step settled while away cannot be shown, and its exit closes the update without sending', async () => {
+  // Placed at a block before the plan's snapshot: this screen can't show it as the plan's step.
+  await settleAway(10n)
+  expect(host.textContent).toContain('Check this shop step before going on.')
+  expect(button('Review transaction')).toBeUndefined()
+  await click('I checked it. Close this update')
+  expect(localStorage.getItem(KEY)).toBeNull()
+  // The usable next step: a new update can start.
+  expect(button('Add items for sale')?.disabled, host.textContent ?? '').toBe(false)
+  expect(wallet.writeContract).toHaveBeenCalledOnce()
+})
+
+it('records a first step once its hold settles, after the plan’s snapshot block', async () => {
+  startShopWriteSession(localStorage, KEY, plan())
+  await render()
+  await click('Resume shop update')
+  await click('Review transaction')
+  expect(wallet.writeContract).toHaveBeenCalledOnce()
+  await act(async () => { wallet.confirm(`0x${'1'.padStart(64, '0')}` as `0x${string}`, 200n) })
+  await settle(); await settle(); await settle()
+  expect(JSON.parse(localStorage.getItem(KEY)!).completed, host.textContent ?? '').toHaveLength(1)
 })
 

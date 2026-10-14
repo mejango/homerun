@@ -156,3 +156,26 @@ it('shows a held creation and its exit even when a completion is saved', async (
   expect(button(EXIT), host.textContent ?? '').toBeDefined()
 })
 
+it('asks for a check when a creation settled away cannot be shown, and its exit reopens creation', async () => {
+  const onCreated = vi.fn()
+  await act(async () => root.render(createElement(StickyCreate, { state, client: wallet.client as unknown as PublicClient, manifest: {}, onCreated })))
+  await settle(); await settle()
+  await review()
+  await act(async () => root.unmount()); root = createRoot(host)
+  const hash = `0x${'1'.padStart(64, '0')}` as `0x${string}`
+  await act(async () => { wallet.confirm(hash) })
+  const { holds } = await import('@/lib/write-hold')
+  const hold = holds.open({ chainId: 1, account: OWNER, safe: false, namespace: stickyCreateIntent(7n), call: { to: DEPLOYER, data: encodeFunctionData(request), value: 1n } })
+  await hold.onReceipt(await wallet.client.getTransactionReceipt({ hash }) as never, wallet.client as never)
+  // Read now, it is a Safe's execTransaction, which this screen can't authenticate.
+  const sent = await wallet.client.getTransaction({ hash })
+  wallet.client.getTransaction.mockImplementation(async () => ({ ...sent!, input: '0x6a761202' }) as never)
+  await act(async () => root.render(createElement(StickyCreate, { state, client: wallet.client as unknown as PublicClient, manifest: {}, onCreated })))
+  await settle(); await settle(); await settle()
+  expect(host.textContent).toContain('Check this FUND’s Sticky creation before creating again.')
+  expect(button('Prepare Sticky creation')).toBeUndefined()
+  await click('I checked it. Create again')
+  expect((button('Prepare Sticky creation') ?? button('Review Sticky creation'))?.disabled, host.textContent ?? '').toBe(false)
+  expect(onCreated).not.toHaveBeenCalled()
+})
+

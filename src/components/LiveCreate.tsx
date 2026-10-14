@@ -60,21 +60,22 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
     if (saved?.input.salt !== session.input.salt || !previous || previous.phase === 'confirmed') throw new Error('The saved launch changed. Reload its progress before checking this transaction.')
     const executionHash = knownExecutionHash ?? (safe ? await waitForSafeExecutionHash(request.chainId, hash, { pollingIntervalMs: 5000, signal: AbortSignal.timeout(60_000) }) : hash)
     const receipt = await client.getTransactionReceipt({ hash: executionHash })
+    // Authenticated first: the saved launch changes only once its outcome is proven, so a failed check leaves it as it was.
+    const failed = fundLaunchFailed(receipt, session.input, safe, hash)
+    let projectId: bigint | null = null
+    if (failed) {
+      // A hash the hold settled came from the wallet; a saved one counts only if the wallet returned it.
+      await verifyReturnedFundWriteFailure(client, request, session.input, receipt, { hash, safe, walletReturned: previous.hash === hash ? previous.walletReturned : true })
+      await verifyFailedFundLaunch(client, request, session.input, receipt, safe, hash)
+    } else projectId = await verifyFundLaunch(client, request, session.input, receipt, safe)
     // A chain still ready or reopened (a recovered hashless attempt the hold settled) records its attempt as pending first.
     if (previous.phase !== 'pending') {
       const attempt: LaunchStatus = { phase: 'pending', hash, safe, walletReturned: true }
       update(attempt, undefined, previous)
       previous = attempt
     }
-    if (fundLaunchFailed(receipt, session.input, safe, hash)) {
-      // A hash the hold settled came from the wallet; a saved one counts only if the wallet returned it.
-      await verifyReturnedFundWriteFailure(client, request, session.input, receipt, { hash, safe, walletReturned: previous.hash === hash ? previous.walletReturned : true })
-      await verifyFailedFundLaunch(client, request, session.input, receipt, safe, hash)
-      update({ phase: 'reverted', hash, executionHash, safe, walletReturned: true }, undefined, previous)
-      return
-    }
-    const projectId = await verifyFundLaunch(client, request, session.input, receipt, safe)
-    update({ phase: 'confirmed', hash, executionHash, safe, walletReturned: true, projectId: projectId.toString() }, undefined, previous)
+    if (failed) update({ phase: 'reverted', hash, executionHash, safe, walletReturned: true }, undefined, previous)
+    else update({ phase: 'confirmed', hash, executionHash, safe, walletReturned: true, projectId: projectId!.toString() }, undefined, previous)
   }
   const verify = async (hash: Hex, safe: boolean, knownExecutionHash?: Hex) => {
     if (verifyLock.current) return
@@ -201,15 +202,24 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
 
   async function submitLaunch() {
     setError('')
-    if (checkRef.current) { setError('Check this network’s FUND deployment before deploying again.'); return }
     try {
+      // Recovery of anything held or settled for this launch finishes first; then the saved launch must still offer a send.
+      await adoption.wait()
+      const opened = loadLaunchSession()?.statuses[request.chainId]
+      const sendable = () => {
+        const current = loadLaunchSession()?.statuses[request.chainId]
+        if (checkRef.current) throw new Error('Check this network’s FUND deployment before deploying again.')
+        if (!current || !['ready', 'reverted'].includes(current.phase) || JSON.stringify(current) !== JSON.stringify(opened)) throw new Error('This network’s launch changed. Review its progress before deploying.')
+      }
+      sendable()
       sameSender(getAccount(wagmiConfig).address, sender)
       await ensureMultisigs()
       const safe = isSafeConnection(wagmiConfig)
       const hash = await tx.send({ ...request, label: `Launch ${session.name} FUND on ${chain.name}` }, {
         reviewedAccount: sender,
         recoveryNamespace: launchKey,
-        beforeWrite: adoption.wait,
+        // At the final boundary: recovery done, and the saved launch exactly as it was when this send began.
+        beforeWrite: async () => { await adoption.wait(); sendable() },
         reverify: async () => {
           sameSender(getAccount(wagmiConfig).address, sender)
           await checkLaunchDeployment(publicClient(request.chainId), request)

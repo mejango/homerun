@@ -282,7 +282,11 @@ describe('linked ruleset recovery of a Safe execution', () => {
     expect(host.querySelector('[role="alert"]')?.textContent ?? '').not.toContain('ruleset event')
     expect(host.textContent).toContain('Check this chain’s ruleset before running it again.')
     await act(async () => button('I checked it. Review it again')!.click())
-    expect(button('Review transaction 1 of 2')).toBeDefined()
+    // Usable next steps: review the chain again, or close the plan without claiming it.
+    expect(button('Review transaction 1 of 2')?.disabled).toBe(false)
+    await act(async () => button('Close this plan')!.click())
+    expect(localStorage.getItem(key)).toBeNull()
+    expect(runtime.send).not.toHaveBeenCalled()
   })
 
   it('asks for a check before running a chain again when neither its hold nor the chain can show its saved transaction', async () => {

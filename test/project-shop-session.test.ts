@@ -185,7 +185,7 @@ describe('durable live shop updates', () => {
     const unknown = rpc(completed)
     unknown.getTransactionReceipt.mockRejectedValue(new Error('Receipt not found'))
     await expect(verifyShopWriteProgress(unknown as unknown as PublicClient, completed)).rejects.toThrow()
-    expect(await verifyShopWriteProgress(rpc(f.session) as unknown as PublicClient, { ...f.session, completed: [] })).toBe(0n)
+    expect(await verifyShopWriteProgress(rpc(f.session) as unknown as PublicClient, { ...f.session, completed: [] })).toBe(BigInt(f.session.plan.snapshot.blockNumber))
   })
 
   it('requires a matching Safe call, operation, execution event and proposal hash', async () => {

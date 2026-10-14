@@ -165,7 +165,8 @@ async function verify(client: PublicClient, session: ShopWriteSession, step: num
 /** Recheck every prior exact call and canonical receipt; a saved completion flag is never sufficient. */
 export async function verifyShopWriteProgress(client: PublicClient, session: ShopWriteSession): Promise<bigint> {
   const current = validated(session)
-  let minimumBlock = 0n
+  // The first step's prerequisites are the plan's own snapshot: its receipt must follow that block.
+  let minimumBlock = BigInt(current.plan.snapshot.blockNumber)
   const indices = shopWriteRequestIndices(current)
   for (const [step, completed] of current.completed.entries()) {
     if (BigInt(completed.submission.afterBlock) < minimumBlock) throw new Error('The saved shop transaction order does not match its confirmed prerequisites.')
@@ -249,6 +250,17 @@ export async function clearShopWriteSession(storage: ShopWriteStorage, key: stri
   }
   storage.removeItem(key)
   if (storage.getItem(key) !== null) throw new Error('The browser could not clear the resolved shop update.')
+}
+
+/**
+ * Close an update whose step settled where this screen couldn't authenticate it, after the user checked
+ * it themselves: nothing is recorded as completed, and nothing is sent again. A held step keeps it.
+ */
+export function abandonShopWriteSession(storage: ShopWriteStorage, key: string, session: ShopWriteSession): void {
+  const current = matchingCurrent(storage, key, session)
+  if (shopHeldWrite(current)) throw new Error(SHOP_HELD_LINE)
+  storage.removeItem(key)
+  if (storage.getItem(key) !== null) throw new Error('The browser could not close this shop update.')
 }
 
 /** Hold across review, simulation and wallet submission; unknown submissions remain durable after release. */

@@ -16,7 +16,7 @@ import {
 } from '@/lib/project-shop-write'
 import {
   clearShopWriteSession, confirmShopWriteStep, dropShopWritePending, readShopWriteSession, shopPendingHold, shopStepIntent,
-  shopWriteSessionKey, startShopWriteSession, restoreShopWritePermissions, shopWriteRequestIndex, shopWriteRequestIndices,
+  shopWriteSessionKey, startShopWriteSession, restoreShopWritePermissions, abandonShopWriteSession, shopWriteRequestIndex, shopWriteRequestIndices,
   verifyShopWriteProgress, withShopWriteLock, type ShopWriteSession,
 } from '@/lib/project-shop-session'
 import { adoptLegacyWrite, recoverFromHold } from '@/lib/write-hold'
@@ -85,8 +85,8 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
     return () => { cancelled = true }
   }, [client, session])
 
-  /** A step its hold settled that couldn't be authenticated here: it runs again only by the user's check. */
-  const [stepCheck, setStepCheck] = useState(false)
+  /** A step its hold settled that couldn't be authenticated here: checked again, or closed by the user's check. */
+  const [stepCheck, setStepCheck] = useState(false), [recheck, setRecheck] = useState(0)
   /** The step this screen sent or adopted: what its settled execution is recorded against. */
   const sent = useRef<{ session: string; step: number; safe: boolean; afterBlock: bigint } | null>(null)
   const track = tx.track
@@ -132,7 +132,7 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
       })
     }).catch(reason => { if (!cancelled) setStorageError(message(reason)) })
     return () => { cancelled = true }
-  }, [adopt, client, invalidate, key, ready, session, track])
+  }, [adopt, client, invalidate, key, ready, recheck, session, track])
 
   // The SDK's hold settled the step: its exact execution is verified and recorded before the next one.
   const settledReceipt = tx.phase === 'success' ? tx.receipt : null
@@ -220,6 +220,16 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
     } catch (reason) { setError(message(reason)) }
     finally { action.current = false; setWorking(false) }
   }
+  /** The user checked a step this screen couldn't authenticate: the update closes without claiming it, and nothing is sent again. */
+  async function abandon() {
+    if (!session || action.current) return
+    action.current = true; setWorking(true)
+    try {
+      await withShopWriteLock(key, async () => { abandonShopWriteSession(localStorage, key, session); changed() })
+      setStepCheck(false); tx.reset(); setOpen(false); setError(null); setProgress('Closed without confirming its last step. Check the shop before updating it again.')
+    } catch (reason) { setError(message(reason)) }
+    finally { action.current = false; setWorking(false) }
+  }
   async function finish() {
     if (!session || !client || action.current) return
     action.current = true; setWorking(true)
@@ -266,7 +276,7 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
         : session ? <>
           {!stepActive && session.completed.length === 0 && <button type="button" className="ds-button ds-button-secondary" disabled={busy} onClick={() => void finish()}>Cancel update</button>}
           {!stepActive && !session.restoring && session.completed.length === 1 && session.plan.requestKinds.join(',') === 'grant,create,restore' && <button type="button" className="ds-button ds-button-secondary" disabled={busy || !accountMatches} onClick={() => void restore()}>Cancel creation and restore permissions</button>}
-          {stepCheck && <CheckRequired line="Check this shop step before running it again." action="I checked it. Review it again" onChecked={() => setStepCheck(false)} />}
+          {stepCheck && <CheckRequired line="Check this shop step before going on." action="I checked it. Close this update" retry={() => { setStepCheck(false); setRecheck(value => value + 1) }} onChecked={() => void abandon()} />}
           {(!stepActive || tx.phase === 'submitted') && !stepCheck && <button type="button" className="ds-button ds-button-primary" disabled={busy || !accountMatches || checkedProgress !== progressKey || !!storageError} onClick={() => void submit()}>{txPhaseLabel(tx.phase, { idle: 'Review transaction', pending: 'Waiting for confirmation…' })}</button>}
         </> : !working && <button type="button" className="ds-button ds-button-secondary" onClick={() => { setOpen(false); if (retryDraft) setEditor(retryDraft) }}>{retryDraft ? 'Back to items' : 'Close'}</button>}
     </div>}>

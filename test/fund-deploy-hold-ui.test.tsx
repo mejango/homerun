@@ -185,25 +185,56 @@ describe('a two-chain direct launch', () => {
   })
 })
 
-it('records a FUND its hold settled while the page was away, and never offers that deployment again', async () => {
+/** A deployment sent here, read as ready again (its wallet reply lost), then placed and settled while the page is away. */
+async function launchSettledAway() {
   save({ phase: 'ready' })
-  verification.launch = async () => 42n
   await render()
   await click('Review and deploy FUND')
   expect(wallet.writeContract).toHaveBeenCalledOnce()
   const hash = `0x${'1'.padStart(64, '0')}` as Hex
-  // The launch reads as ready again (its wallet reply was lost), and the page is left.
   const pending = decodeLaunchSession(localStorage.getItem(FUND_LAUNCH_KEY)!).statuses[8453]
   updateLaunchStatus(SALT, 8453, { phase: 'ready' }, 'pending', pending)
   await act(async () => root.unmount()); root = createRoot(host)
-  // The chain places it and the SDK settles it meanwhile.
   await act(async () => { wallet.confirm(hash) })
   const { holds } = await import('@/lib/write-hold')
   const hold = holds.open({ chainId: 8453, account: OWNER, safe: false, namespace: launchIntent(SALT), call: { to: OWNER, data: '0x' } })
   expect(await hold.onReceipt(await wallet.client.getTransactionReceipt({ hash }) as never, wallet.client as never)).toMatchObject({ status: 'clear', settled: { result: 'success' } })
+  return hash
+}
+
+it('records a FUND its hold settled while the page was away, and never offers that deployment again', async () => {
+  verification.launch = async () => 42n
+  await launchSettledAway()
   await render()
   expect(saved()).toMatchObject({ phase: 'confirmed', projectId: '42' })
   expect(button('Review and deploy FUND')).toBeUndefined()
   expect(wallet.writeContract).toHaveBeenCalledOnce()
 })
 
+it('sends nothing when Continue is pressed while recovery of a deployment settled away is still reading the chain', async () => {
+  verification.launch = async () => 42n
+  const hash = await launchSettledAway()
+  // The receipt read is slow; Continue is pressed meanwhile.
+  const chainReceipt = wallet.client.getTransactionReceipt.getMockImplementation()!
+  let answer!: () => void
+  const slow = new Promise<void>(resolve => { answer = resolve })
+  wallet.client.getTransactionReceipt.mockImplementation(async args => { await slow; return chainReceipt(args) })
+  await act(async () => root.render(<FundDeploy values={{} as CreateValues} />))
+  if (button('Continue creation')) await act(async () => button('Continue creation')!.click())
+  await act(async () => { answer() })
+  await settle(); await settle(); await settle()
+  expect(saved()).toMatchObject({ phase: 'confirmed', hash })
+  expect(wallet.writeContract).toHaveBeenCalledOnce()
+})
+
+it('asks for a check when a deployment settled away cannot be shown, leaves the launch as it was, and its exit reopens deploy and discard', async () => {
+  verification.launch = async () => { throw new Error('Not this launch') }
+  await launchSettledAway()
+  await render()
+  expect(host.textContent).toContain('Check this network’s FUND deployment before deploying again.')
+  expect(saved().phase).toBe('ready')
+  await click('I checked it. Deploy again')
+  expect(button('Review and deploy FUND')?.disabled, host.textContent ?? '').toBe(false)
+  expect(button('Discard and edit details')?.disabled).toBe(false)
+  expect(wallet.writeContract).toHaveBeenCalledOnce()
+})

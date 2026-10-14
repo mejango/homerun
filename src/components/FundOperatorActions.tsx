@@ -420,8 +420,10 @@ function PlanChainHold({ plan, index, submission, done, onAdopted, onConfirmed }
 }
 
 /** A chain-specific hook instance prevents a wallet switch from watching the wrong chain. */
-function LinkedRulesetStep({ plan, index, completed, onConfirmed, onCancel, onAdopted, submission, checkFirst = false }: {
+function LinkedRulesetStep({ plan, index, completed, onConfirmed, onCancel, onAdopted, onCloseChecked, submission, checkFirst = false }: {
   plan: RulesetPlan; index: number; completed: ReadonlyMap<number, RulesetCompletion>
+  /** After the user checked a chain this screen couldn't authenticate: close the plan without claiming it. */
+  onCloseChecked: () => void
   /** Its saved transaction couldn't be shown by its hold or on chain: it runs again only by explicit choice. */
   checkFirst?: boolean
   onConfirmed: (chainId: number, result: RulesetCompletion) => Promise<void>
@@ -473,13 +475,14 @@ function LinkedRulesetStep({ plan, index, completed, onConfirmed, onCancel, onAd
   }
 
   /** The write is with the wallet, the chain or a Safe: no other is sent meanwhile. */
-  const sending = !!submission || tx.phase === 'submitted' || tx.phase === 'pending' || tx.phase === 'success'
+  const sending = (!!submission && !checked) || tx.phase === 'submitted' || tx.phase === 'pending' || tx.phase === 'success'
   return <div className="grid gap-3">
     <p className="text-sm">Next: {displayChainName(state.chainId)}, project {state.projectId.toString()}.</p>
     {mustCheck && <CheckRequired line={CHAIN_CHECK_LINE} action="I checked it. Review it again" onChecked={() => setChecked(true)} />}
     <div className="flex flex-wrap gap-3">{mustCheck ? null
       : <button type="button" className="btn-primary min-h-11 px-5" disabled={busy || sending} onClick={() => void submit()}>{preparing ? 'Verifying every chain…' : txPhaseLabel(tx.phase, { idle: `Review transaction ${index + 1} of ${plan.requests.length}`, pending: 'Confirming onchain…' })}</button>}
-    {completed.size === 0 && !busy && !sending && !tx.hash && <button type="button" className="btn-secondary min-h-10 px-4" onClick={onCancel}>Cancel plan</button>}</div>
+    {completed.size === 0 && !busy && !sending && !tx.hash && <button type="button" className="btn-secondary min-h-10 px-4" onClick={onCancel}>Cancel plan</button>}
+    {(checkFirst || checkRequired) && checked && !busy && !sending && <button type="button" className="btn-secondary min-h-10 px-4" onClick={onCloseChecked}>Close this plan</button>}</div>
     {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
     <Status tx={tx.phase === 'success' ? { ...tx, phase: 'pending' } : tx} chainId={state.chainId} />
   </div>
@@ -675,7 +678,11 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
     })
   }
 
-  async function closePlan() {
+  /**
+   * Close the plan. Normally every saved submission must be verified first; after the user checked a chain
+   * this screen couldn't authenticate (`checked`), it closes without claiming that chain, and sends nothing.
+   */
+  async function closePlan(checked = false) {
     const active = planRef.current
     if (!active) return
     try {
@@ -686,7 +693,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
           if ((await holdOutcome({ chainId: peer.chainId, account: active.account, namespace: planIntent(active, peer.projectId) })).status === 'held') throw new Error('Finish or exit the pending update first.')
         }
         const records = submissionsRef.current
-        if (records.size || completed.size) {
+        if (!checked && (records.size || completed.size)) {
           if (completed.size !== active.states.length || records.size !== active.states.length) throw new Error('Every saved submission must be verified before this plan can be closed.')
           for (const project of active.states) {
             const result = completed.get(project.chainId)
@@ -942,8 +949,8 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
       {/* Every chain's hold is shown with its exit, while the plan is verified and after it resumes, except the chain its step shows. */}
       {plan.states.map((peer, index) => (recovering || peer.chainId !== plan.states.find(next => !completed.has(next.chainId))?.chainId) && <PlanChainHold key={`${plan.startsAt}:${peer.chainId}`} plan={plan} index={index} submission={submissions.get(peer.chainId)} onConfirmed={(chainId, result) => withSubmissionLock(async () => { if (planRef.current !== plan) throw new Error('The linked plan changed during confirmation.'); recordSubmission(chainId, result.submission); setCompleted(previous => new Map(previous).set(chainId, result)) })} done={completed.has(peer.chainId)} onAdopted={(chainId, submission) => withSubmissionLock(async () => { assertSubmission(chainId, submission); removeSubmission(chainId) })} />)}
       {recovering ? <RecoveryPanel plan={plan} submissions={submissions} onResume={recovered => withSubmissionLock(async () => { if (planRef.current !== plan) throw new Error('The linked plan changed during recovery.'); for (const [chainId, submission] of submissions) assertSubmission(chainId, submission); if (submissionsRef.current.size !== submissions.size) throw new Error('A linked submission changed during recovery.'); setCompleted(recovered.completed); setCheckFirst(recovered.checkFirst); setRecovering(false) })} />
-        : completed.size < plan.states.length ? <LinkedRulesetStep key={`${plan.startsAt}:${completed.size}`} plan={plan} index={plan.states.findIndex(peer => !completed.has(peer.chainId))} submission={submissions.get(plan.states.find(peer => !completed.has(peer.chainId))!.chainId)} checkFirst={checkFirst.has(plan.states.find(peer => !completed.has(peer.chainId))!.chainId)} completed={completed} onConfirmed={(chainId, result) => withSubmissionLock(async () => { if (planRef.current !== plan) throw new Error('The linked plan changed during confirmation.'); recordSubmission(chainId, result.submission); setCompleted(previous => new Map(previous).set(chainId, result)) })} onCancel={closePlan} onAdopted={(chainId, submission) => withSubmissionLock(async () => { assertSubmission(chainId, submission); removeSubmission(chainId) })} />
-          : <><p role="status" className="text-sm">Every ruleset transaction is confirmed. The new rules take effect at the shared activation time.</p><button type="button" className="btn-secondary min-h-10 w-fit px-4" onClick={closePlan}>Done</button></>}
+        : completed.size < plan.states.length ? <LinkedRulesetStep key={`${plan.startsAt}:${completed.size}`} plan={plan} index={plan.states.findIndex(peer => !completed.has(peer.chainId))} submission={submissions.get(plan.states.find(peer => !completed.has(peer.chainId))!.chainId)} checkFirst={checkFirst.has(plan.states.find(peer => !completed.has(peer.chainId))!.chainId)} completed={completed} onConfirmed={(chainId, result) => withSubmissionLock(async () => { if (planRef.current !== plan) throw new Error('The linked plan changed during confirmation.'); recordSubmission(chainId, result.submission); setCompleted(previous => new Map(previous).set(chainId, result)) })} onCancel={() => void closePlan()} onCloseChecked={() => void closePlan(true)} onAdopted={(chainId, submission) => withSubmissionLock(async () => { assertSubmission(chainId, submission); removeSubmission(chainId) })} />
+          : <><p role="status" className="text-sm">Every ruleset transaction is confirmed. The new rules take effect at the shared activation time.</p><button type="button" className="btn-secondary min-h-10 w-fit px-4" onClick={() => void closePlan()}>Done</button></>}
     </section>}
 
     {!linked && <HeldIntents chainId={state.chainId} account={address} intents={[
