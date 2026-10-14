@@ -9,6 +9,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { encodeFunctionData, type Address, type PublicClient } from 'viem'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { installRecoveryLocks } from './runtime/write-recovery-fixture'
+import { checkedItLabel, HELD_SUCCESS_LINE, SAVED_ATTEMPT_CHECK_LINE } from '@bananapus/nana-sdk-core/review'
 
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@wagmi/core', async importOriginal => {
@@ -103,7 +104,7 @@ it('shows the held creation and its exit after a reload, before anything else', 
   expect(wallet.writeContract).toHaveBeenCalledOnce()
 })
 
-it('adopts a creation the journal saved before SDK holds: its records go, and only the exit creates again', async () => {
+it('asks for the user’s check on a creation the journal saved without a hash before SDK holds: only that check creates again', async () => {
   const key = stickySessionKey(1, 7n, OWNER)
   localStorage.setItem('homerun:sticky:create-pending:v1:1:7', key)
   localStorage.setItem(key, JSON.stringify({
@@ -112,10 +113,12 @@ it('adopts a creation the journal saved before SDK holds: its records go, and on
     submittedAt: Date.now() - 31 * 60_000, afterBlock: '120',
   }))
   await render()
+  // Nothing proves what it did: no creation until the user says they checked it.
+  expect(host.textContent).toContain(SAVED_ATTEMPT_CHECK_LINE)
+  expect(button('Prepare Sticky creation')).toBeUndefined()
+  await click(checkedItLabel('Create again'))
   expect(localStorage.getItem(key)).toBeNull()
   expect(localStorage.getItem('homerun:sticky:create-pending:v1:1:7')).toBeNull()
-  expect(button(EXIT)).toBeDefined()
-  await click(EXIT)
   expect(wallet.writeContract).not.toHaveBeenCalled()
   await review()
   expect(wallet.writeContract).toHaveBeenCalledOnce()
@@ -150,13 +153,14 @@ it('shows a held creation and its exit even when a completion is saved', async (
   const record = stickyCreationRecord(m.prepared as never, OWNER, false)
   saveStickyCreated(localStorage, record, `0x${'ab'.repeat(32)}`, 9n)
   // An unresolved creation is held for this FUND, its exit due.
-  const { adoptLegacyWrite } = await import('@/lib/write-hold')
-  await adoptLegacyWrite({ chainId: 1, account: OWNER, safe: false, namespace: stickyCreateIntent(7n), call: { to: DEPLOYER, data: encodeFunctionData(request), value: 1n } }, { submittedAt: Date.now() - 31 * 60_000 }, wallet.client as never)
+  const { holds } = await import('@/lib/write-hold')
+  const hold = holds.open({ chainId: 1, account: OWNER, safe: false, namespace: stickyCreateIntent(7n), call: { to: DEPLOYER, data: encodeFunctionData(request), value: 1n } })
+  await hold.adopt(await hold.state(wallet.client as never), { submittedAt: Date.now() - 31 * 60_000 }, wallet.client as never)
   await render()
   expect(button(EXIT), host.textContent ?? '').toBeDefined()
 })
 
-it('asks for a check when a creation settled away cannot be shown, and its exit reopens creation', async () => {
+it('keeps a creation that settled away as done when it cannot be shown here: never a check, never created again', async () => {
   const onCreated = vi.fn()
   await act(async () => root.render(createElement(StickyCreate, { state, client: wallet.client as unknown as PublicClient, manifest: {}, onCreated })))
   await settle(); await settle()
@@ -172,10 +176,34 @@ it('asks for a check when a creation settled away cannot be shown, and its exit 
   wallet.client.getTransaction.mockImplementation(async () => ({ ...sent!, input: '0x6a761202' }) as never)
   await act(async () => root.render(createElement(StickyCreate, { state, client: wallet.client as unknown as PublicClient, manifest: {}, onCreated })))
   await settle(); await settle(); await settle()
-  expect(host.textContent).toContain('Check this FUND’s Sticky creation before creating again.')
+  // A settled success always wins: it went through, and its only action is to check again.
+  expect(host.textContent).toContain(HELD_SUCCESS_LINE)
+  expect(button('Check again')).toBeDefined()
+  expect(host.textContent).not.toContain(SAVED_ATTEMPT_CHECK_LINE)
   expect(button('Prepare Sticky creation')).toBeUndefined()
-  await click('I checked it. Create again')
-  expect((button('Prepare Sticky creation') ?? button('Review Sticky creation'))?.disabled, host.textContent ?? '').toBe(false)
+  await click('Check again')
+  expect(button('Prepare Sticky creation')).toBeUndefined()
+  expect(wallet.writeContract).toHaveBeenCalledOnce()
   expect(onCreated).not.toHaveBeenCalled()
 })
 
+it('gap 7: a saved completion that can’t be proven again offers "Check again", which shows it once it can', async () => {
+  m.verify = async () => ({ status: 'confirmed', projectId: 9n })
+  const onCreated = vi.fn()
+  const show = () => act(async () => root.render(createElement(StickyCreate, { state, client: wallet.client as unknown as PublicClient, manifest: {}, onCreated })))
+  await show(); await settle(); await settle()
+  await review()
+  await act(async () => { wallet.confirm(`0x${'1'.padStart(64, '0')}` as `0x${string}`) })
+  await settle(); await settle(); await settle()
+  expect(readStickyCreated(localStorage, 1, 7n)).toMatchObject({ projectId: '9' })
+  // Reloaded while its proof can't be read: never a dead end, never created again.
+  m.verify = async () => { throw new Error('The RPC has not caught up') }
+  await act(async () => root.unmount()); root = createRoot(host)
+  await show(); await settle(); await settle(); await settle()
+  expect(host.textContent).toContain(HELD_SUCCESS_LINE)
+  expect(button('Prepare Sticky creation')).toBeUndefined()
+  m.verify = async () => ({ status: 'confirmed', projectId: 9n })
+  await click('Check again'); await settle()
+  expect(host.textContent, host.textContent ?? '').toContain('Sticky project 9 is confirmed and verified')
+  expect(wallet.writeContract).toHaveBeenCalledOnce()
+})

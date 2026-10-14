@@ -36,6 +36,7 @@ import { homerunDeployerAbi } from '../src/lib/income-contracts'
 import { incomeLaunchIntent, incomeLaunchRecord } from '../src/lib/income-launch-session'
 import { readIncomeGlobalDraft, saveIncomeGlobalDraft, serializeIncomeGlobalDraft } from '../src/lib/income-global-launch-draft'
 import { displayChainName } from '../src/lib/chainDisplay'
+import { installRecoveryLocks } from './runtime/write-recovery-fixture'
 import { BLOCK_HASH, CHAIN_IDS, FUND_IDS, HELPER, OWNER, TOKEN, fundState, globalDraft, globalManifest, globalSnapshot, hashFor, launchInput, launchPlan } from './fixtures/income-global-launch'
 
 type Callbacks = Pick<Required<TxSendOptions>, 'reverify' | 'beforeWrite' | 'recoveryNamespace' | 'reviewedAccount'>
@@ -60,7 +61,7 @@ describe('global INCOME launch flow', () => {
     runtime.prepare.mockImplementation(async (_client, input) => launchPlan(input)); runtime.pinMedia.mockImplementation(async file => { runtime.manifest = JSON.parse(await readFile(file)); return { cid: 'global-snapshot' } }); runtime.pinJson.mockResolvedValue({ cid: 'global-metadata' })
     runtime.verify.mockResolvedValue('confirmed'); runtime.readBinding.mockResolvedValue(10n); runtime.allocation.mockImplementation(async (_client, {chainId}) => allocation(chainId)); runtime.waitSafe.mockResolvedValue(hashFor(8453)); runtime.invalidate.mockResolvedValue(undefined)
     runtime.fetch.mockImplementation(async () => ({ ok: true, json: async () => runtime.manifest })); vi.stubGlobal('fetch', runtime.fetch)
-    Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: async (_name: string, _options: unknown, callback: (lock: object) => Promise<void>) => callback({}) } })
+    installRecoveryLocks()
     Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:test') }); Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
     host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   })
@@ -78,6 +79,15 @@ describe('global INCOME launch flow', () => {
   async function setInput(field: HTMLInputElement, value: string) { await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, value); field.dispatchEvent(new Event('input', { bubbles: true })) }) }
   async function upload(field: Element, json: string) { Object.defineProperty(field, 'files', { configurable: true, value: [{ size: json.length, text: async () => json }] }); await act(async () => field.dispatchEvent(new Event('change', { bubbles: true }))) }
   function restorePlan() { saveIncomeGlobalDraft(localStorage, globalDraft()) }
+  /** Each chain's saved launch is mined and final where the SDK's hold reads it. */
+  function minedLaunches() {
+    for (const chainId of CHAIN_IDS) {
+      const record = savedPending(chainId), client = runtime.clients.get(chainId) as unknown as Record<string, unknown>
+      client.getTransaction = async ({ hash }: { hash: Hex }) => ({ hash, from: OWNER, to: record.target, input: record.data, value: BigInt(record.value), nonce: 1, chainId, blockNumber: 201n, blockHash: BLOCK_HASH, transactionIndex: 0 })
+      client.getTransactionReceipt = async () => ({ ...eventReceipt(chainId), status: 'success', blockHash: BLOCK_HASH, from: OWNER, to: record.target, transactionIndex: 0 })
+      client.getBlock = async ({ blockNumber }: { blockNumber?: bigint } = {}) => ({ number: blockNumber ?? 250n, hash: BLOCK_HASH, timestamp: BigInt(1000 + chainId) })
+    }
+  }
   function reservedInput() {
     const fields = [...host.querySelectorAll<HTMLInputElement>('input[inputmode="decimal"]')]
     expect(fields).toHaveLength(1)
@@ -284,9 +294,9 @@ describe('global INCOME launch flow', () => {
   it('reverifies restored completed receipts rather than trusting the saved completion count', async () => {
     restorePlan(); let shared = draft()
     for (const chainId of CHAIN_IDS) { const record = savedPending(chainId); shared = { ...shared, chains: shared.chains.map(row => row.chainId === chainId ? { ...row, execution: { hash: hashFor(chainId), record } } : row) } }
-    saveIncomeGlobalDraft(localStorage, shared)
+    saveIncomeGlobalDraft(localStorage, shared); minedLaunches()
     runtime.verify.mockImplementation(async (client: PublicClient) => { if (await client.getChainId() === 10) throw new Error('RPC unavailable'); return 'confirmed' })
-    await render()
+    await render(); await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)) })
     expect(host.textContent).toContain('3 of 4 networks confirmed'); expect(host.textContent).not.toContain('Every network’s deployment'); expect(runtime.verify).toHaveBeenCalled()
   })
 
@@ -294,11 +304,13 @@ describe('global INCOME launch flow', () => {
     restorePlan(); let shared = draft()
     for (const chainId of CHAIN_IDS) { const record = savedPending(chainId); shared = { ...shared, chains: shared.chains.map(row => row.chainId === chainId ? { ...row, execution: { hash: hashFor(chainId), record } } : row) } }
     saveIncomeGlobalDraft(localStorage, shared)
+    minedLaunches()
     // Base's launch is held unresolved: its saved completion waits for the hold.
-    const { adoptLegacyWrite } = await import('../src/lib/write-hold')
-    const base = savedPending(8453)
-    await adoptLegacyWrite({ chainId: 8453, account: OWNER, safe: false, namespace: incomeLaunchIntent(7n), call: { to: base.target, data: base.data, value: BigInt(base.value) } }, {}, runtime.clients.get(8453) as never)
-    await render()
+    const { holds } = await import('../src/lib/write-hold')
+    const base = savedPending(8453), client = runtime.clients.get(8453) as never
+    const hold = holds.open({ chainId: 8453, account: OWNER, safe: false, namespace: incomeLaunchIntent(7n), call: { to: base.target, data: base.data, value: BigInt(base.value) } })
+    await hold.adopt(await hold.state(client), {}, client)
+    await render(); await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)) })
     expect(host.textContent).toContain('3 of 4 networks confirmed')
     expect(runtime.verify).not.toHaveBeenCalledWith(runtime.clients.get(8453), expect.anything(), hashFor(8453))
   })
@@ -306,7 +318,7 @@ describe('global INCOME launch flow', () => {
   it('confirms all four recorded allocations, including the empty one, before declaring completion', async () => {
     restorePlan(); let shared = draft()
     for (const chainId of CHAIN_IDS) { const record = savedPending(chainId); shared = { ...shared, chains: shared.chains.map(row => row.chainId === chainId ? { ...row, execution: { hash: hashFor(chainId), record } } : row) } }
-    saveIncomeGlobalDraft(localStorage, shared); await render()
+    saveIncomeGlobalDraft(localStorage, shared); minedLaunches(); await render(); await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)) })
     expect(host.textContent).toContain('4 of 4 networks confirmed'); expect(host.textContent).toContain('Every network’s deployment and local initial allocation is confirmed')
   })
 

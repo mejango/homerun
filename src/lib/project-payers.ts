@@ -1,10 +1,10 @@
 import { jbDirectoryAbi, jbProjectsAbi, NATIVE_TOKEN, type JBChainId } from '@bananapus/nana-sdk-core'
 import { buildDeployProjectPayerTx, JB_PROJECT_PAYER_DEPLOYER, jbProjectPayerDeployerAbi, v6Address } from '@bananapus/nana-sdk-core/v6'
-import { decodeEventLog, encodeFunctionData, isAddress, isAddressEqual, parseAbi, zeroAddress, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
+import { decodeEventLog, decodeFunctionData, encodeFunctionData, isAddress, isAddressEqual, parseAbi, zeroAddress, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import { bendystraw } from './bendystraw'
 import { safeExecutionRunsCalls, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
-import { verifyReviewedWriteReceipt, writeIntentKey, type ReviewedWriteRecoveryInput } from '@bananapus/nana-sdk-core/review'
-import { callOf, type LegacyWriteEvidence } from './write-hold'
+import { verifyReviewedWriteReceipt, writeIntentKey, type SavedAttempt } from '@bananapus/nana-sdk-core/review'
+import { callOf } from './write-hold'
 
 export type ProjectPayerRow = {
   chainId: number; projectId: number; version: number; address: Address
@@ -62,14 +62,51 @@ export function payerIntent(projectId: bigint): string {
   return writeIntentKey('payer-create', { project: projectId })
 }
 
-/** The write hold a saved journal attempt is adopted into, and the evidence it saved. */
-export function payerAttemptHold(attempt: PayerAttempt): { input: ReviewedWriteRecoveryInput; evidence: LegacyWriteEvidence } {
-  const hash = attempt.hash ?? attempt.executionHash
+/** A recovered payer deployment: the payer it created. */
+export type PayerRecovered = { payer: Address }
+
+/**
+ * The payer deployment saved for this project, as the SDK's saved-attempt recovery reads it: one the
+ * journal from before SDK holds kept (with its call and hash), else the project's payer hold alone
+ * (saved as unsent: the hold has any send). `authenticate` checks one transaction against the
+ * deployment's exact settings; with no journal record, a direct deployment's own call names them.
+ */
+export function payerSavedAttempt(client: PublicClient, chainId: JBChainId, projectId: bigint, account: Address, safe: boolean, saved: PayerAttempt | null): SavedAttempt<PayerRecovered> {
+  const hash = saved?.hash ?? saved?.executionHash
   return {
-    input: { chainId: attempt.settings.chainId, account: attempt.account, safe: attempt.safe, namespace: payerIntent(BigInt(attempt.settings.projectId)), call: callOf(buildPayerTransaction(attempt.settings)) },
-    evidence: !hash ? {} : attempt.safe && attempt.hash ? { safe: { safeTxHash: attempt.hash } } : { hash },
+    chainId, account: saved?.account ?? account, safe: saved?.safe ?? safe,
+    namespaces: [payerIntent(projectId)],
+    ...(saved ? { call: callOf(buildPayerTransaction(saved.settings)) } : {}),
+    saved: !saved ? { started: false } : { started: true, ...(hash ? saved.safe && saved.hash ? { safeTxHash: saved.hash } : { hash } : {}) },
+    // A payer deployment has no completion record: nothing here can say it succeeded.
+    confirmRetirable: async () => true,
+    authenticate: async found => {
+      if (!found) return { result: 'unknown', reason: 'No saved payer transaction to check.' }
+      const settings = saved?.settings ?? await payerSettingsOf(client, chainId, projectId, found)
+      if (!settings) return { result: 'unknown', reason: 'This payer deployment’s settings could not be read here.' }
+      const receipt = await client.getTransactionReceipt({ hash: found })
+      const result = await verifyPayerReceipt(client, { version: 1, settings, account: saved?.account ?? account, safe: saved?.safe ?? safe, phase: 'submitted', afterBlock: saved?.afterBlock ?? '0', hash: saved?.hash ?? found }, receipt)
+      return result.status === 'confirmed' ? { result: 'proven', value: { payer: result.payer } } : { result: 'not-this', reason: 'The payer deployment reverted.' }
+    },
   }
 }
+
+/** A direct payer deployment's settings, from its own transaction's call; null for anything else. */
+async function payerSettingsOf(client: PublicClient, chainId: JBChainId, projectId: bigint, hash: Hex): Promise<PayerSettings | null> {
+  const transaction = await client.getTransaction({ hash })
+  return transaction.to && isAddressEqual(transaction.to, JB_PROJECT_PAYER_DEPLOYER) ? payerSettingsOfCall(chainId, projectId, transaction.input) : null
+}
+
+/** A payer deployment's settings from its exact call data; null when the call is something else. */
+export function payerSettingsOfCall(chainId: JBChainId, projectId: bigint, data: Hex): PayerSettings | null {
+  try {
+    const { functionName, args } = decodeFunctionData({ abi: jbProjectPayerDeployerAbi, data })
+    if (functionName !== 'deployProjectPayer') return null
+    const [defaultProjectId, beneficiary, memo, , addToBalance, owner] = args as readonly [bigint, Address, string, Hex, boolean, Address]
+    return defaultProjectId === projectId ? { chainId, projectId: projectId.toString(), beneficiary, owner, memo, addToBalance } : null
+  } catch { return null }
+}
+
 export function decodePayerAttempt(raw: string, chainId: JBChainId, projectId: bigint): PayerAttempt {
   const attempt = JSON.parse(raw) as PayerAttempt
   if (attempt.version !== 1 || attempt.settings?.chainId !== chainId || attempt.settings.projectId !== String(projectId) || !isAddress(attempt.account) || isAddressEqual(attempt.account, zeroAddress) || typeof attempt.safe !== 'boolean' || !/^\d+$/.test(attempt.afterBlock) || !['signing', 'submitted', 'confirmed', 'reverted'].includes(attempt.phase)

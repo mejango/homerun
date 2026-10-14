@@ -11,7 +11,7 @@ import {
   type Hex,
 } from 'viem'
 import { SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
-import { intent, writeIntentKey, WRITE_HOLD_STALE_REVIEW_LINE, WRITE_EXIT_LABEL, WRITE_HOLD_NONCE_LINE, WRITE_HOLD_PENDING_LINE, WRITE_HOLD_REVERTED_LINE, createBrowserWriteRecovery, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
+import { HELD_AWAY_SUCCESS_LINE, HELD_RELEASED_ELSEWHERE_LINE, HELD_SEND_AGAIN_LABEL, SAVED_ATTEMPT_CHECK_LINE, intent, writeIntentKey, WRITE_HOLD_STALE_REVIEW_LINE, WRITE_EXIT_LABEL, WRITE_HOLD_MINED_LINE, WRITE_HOLD_NONCE_LINE, WRITE_HOLD_PENDING_LINE, WRITE_HOLD_REVERTED_LINE, createBrowserWriteRecovery, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { installRecoveryLocks, recoveryRecords } from './write-recovery-fixture'
 
@@ -400,7 +400,8 @@ describe('useSafeTx', () => {
       busy: false,
       settled: true,
       confirmationUncertain: true,
-      notice: 'Still pending in your wallet. Speed it up or cancel it there.',
+      // The hold's own check finds it mined, with its result not yet readable.
+      notice: WRITE_HOLD_MINED_LINE,
       held: null,
     })
     await act(async () => {
@@ -525,8 +526,8 @@ describe('useSafeTx', () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(4_100)
       })
-      // The proof independently re-reads the canonical receipt.
-      expect(getTransactionReceipt).toHaveBeenCalledTimes(3)
+      // The proof independently re-reads the canonical receipt, as does the hold's own check.
+      expect(getTransactionReceipt).toHaveBeenCalledTimes(4)
       expect(hook.ref.current).toMatchObject({ phase: 'success', busy: false, error: null })
       expect(hook.ref.current!.receipt).toMatchObject({ blockNumber: 77n })
     } finally {
@@ -900,62 +901,60 @@ describe('useSafeTx', () => {
     expect(hook.ref.current!.held).toMatchObject({ label: WRITE_EXIT_LABEL })
   })
 
-  describe('a journal record from before SDK holds', () => {
+  describe('a journal record from before SDK holds, recovered through the SDK', () => {
     const intentKey = writeIntentKey('journal-test', { project: 7n })
     const call = () => ({ to: BOB, data: encodeFunctionData({ abi: ABI, functionName: 'transfer', args: [BOB, 5n] }), value: 7n })
+    const attempt = (saved: { hash?: Hex; submittedAt: number }) => ({
+      chainId: 10, account: ALICE, safe: false, namespaces: [intentKey], call: call(),
+      saved: { started: true, ...saved }, confirmRetirable: async () => true,
+      authenticate: async () => ({ result: 'unknown' as const }),
+    })
+    const recover = async (saved: { hash?: Hex; submittedAt: number }) => {
+      const { attempts } = await import('@/lib/write-hold')
+      return attempts.recover(attempt(saved), mocks.publicClient as never)
+    }
 
     it('is adopted with its hash and shown pending without a send, and the same write is refused', async () => {
-      const { adoptLegacyWrite } = await import('@/lib/write-hold')
       // The saved hash is still pending, and it is this exact call.
       mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => ({ hash, from: ALICE, to: BOB, nonce: 5, blockNumber: null, chainId: 10,
         input: call().data, value: 7n }))
-      await adoptLegacyWrite({ chainId: 10, account: ALICE, safe: false, namespace: intentKey, call: call() }, { hash: HASH, submittedAt: Date.now() }, mocks.publicClient as never)
+      expect(await recover({ hash: HASH, submittedAt: Date.now() })).toMatchObject({ status: 'held' })
       const hook = await renderHook()
-      await act(async () => { await hook.ref.current!.track(request, { ...reviewedByAlice, recoveryNamespace: intentKey }) })
+      await act(async () => { hook.ref.current!.track(request, { ...reviewedByAlice, recoveryNamespace: intentKey }) })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
       expect(hook.ref.current).toMatchObject({ phase: 'pending', hash: HASH, held: null })
       await act(async () => { hook.ref.current!.reset() })
       await act(async () => { await hook.ref.current!.send(request, { ...reviewedByAlice, recoveryNamespace: intentKey }) })
       expect(mocks.writeContract).not.toHaveBeenCalled()
     })
 
-    it('is adopted without a hash and gets the warned exit; only accepting it sends again', async () => {
-      const { adoptLegacyWrite } = await import('@/lib/write-hold')
-      await adoptLegacyWrite({ chainId: 10, account: ALICE, safe: false, namespace: intentKey, call: call() }, { submittedAt: Date.now() - 31 * 60_000 }, mocks.publicClient as never)
+    it('asks for the user’s check when it saved no hash: nothing proves what it did', async () => {
+      expect(await recover({ submittedAt: Date.now() - 31 * 60_000 })).toMatchObject({ status: 'check', line: SAVED_ATTEMPT_CHECK_LINE })
+      // Nothing is held for it: the flow, not the hold, keeps it from being sent until the user's check.
+      expect(recoveryRecords()).toHaveLength(0)
+    })
+
+    it('is adopted already mined: tracking it shows it went through while away, and nothing is sent until "Send it again"', async () => {
+      // The saved hash is this exact call, mined successfully before the reload.
+      mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => ({ hash, from: ALICE, to: BOB, nonce: 5, chainId: 10,
+        input: call().data, value: 7n, blockHash: BLOCK_HASH, blockNumber: 77n, transactionIndex: 0 }))
+      mocks.receipt = { data: canonicalReceipt('success'), isError: false }
+      expect(await recover({ hash: HASH, submittedAt: Date.now() })).toMatchObject({ status: 'done', result: 'success', hash: HASH })
       const hook = await renderHook()
-      await act(async () => { await hook.ref.current!.track(request, { ...reviewedByAlice, recoveryNamespace: intentKey }) })
-      expect(hook.ref.current).toMatchObject({ phase: 'submitted', confirmationUncertain: true })
-      expect(hook.ref.current!.held).toMatchObject({ label: WRITE_EXIT_LABEL })
       await act(async () => { await hook.ref.current!.send(request, { ...reviewedByAlice, recoveryNamespace: intentKey }) })
       expect(mocks.writeContract).not.toHaveBeenCalled()
+      expect(hook.ref.current).toMatchObject({ phase: 'submitted', notice: HELD_AWAY_SUCCESS_LINE })
+      expect(hook.ref.current!.held).toMatchObject({ kind: 'send-again', label: HELD_SEND_AGAIN_LABEL })
       await act(async () => { await hook.ref.current!.held!.release() })
       await act(async () => { await hook.ref.current!.send(request, { ...reviewedByAlice, recoveryNamespace: intentKey }) })
       expect(mocks.writeContract).toHaveBeenCalledOnce()
     })
 
-    it('is adopted already mined: tracking it delivers its verified receipt to the flow', async () => {
-      const { adoptLegacyWrite } = await import('@/lib/write-hold')
-      // The saved hash is this exact call, mined successfully before the reload.
-      mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => ({ hash, from: ALICE, to: BOB, nonce: 5, chainId: 10,
-        input: call().data, value: 7n, blockHash: BLOCK_HASH, blockNumber: 77n, transactionIndex: 0 }))
-      mocks.receipt = { data: canonicalReceipt('success'), isError: false }
-      const adopted = await adoptLegacyWrite({ chainId: 10, account: ALICE, safe: false, namespace: intentKey, call: call() }, { hash: HASH, submittedAt: Date.now() }, mocks.publicClient as never)
-      expect(adopted).toMatchObject({ adopted: true, state: { status: 'clear', settled: { result: 'success', hash: HASH } } })
-      const hook = await renderHook()
-      await act(async () => { await hook.ref.current!.track(request, { ...reviewedByAlice, recoveryNamespace: intentKey }) })
-      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
-      expect(hook.ref.current).toMatchObject({ phase: 'success' })
-      expect(hook.ref.current!.receipt?.transactionHash).toBe(HASH)
-    })
-
-    it('is adopted once: a second adoption leaves the first hold as it is', async () => {
-      const { adoptLegacyWrite } = await import('@/lib/write-hold')
-      const input = { chainId: 10, account: ALICE, safe: false, namespace: intentKey, call: call() }
-      await adoptLegacyWrite(input, { submittedAt: Date.now() }, mocks.publicClient as never)
-      const again = await adoptLegacyWrite(input, { hash: HASH, submittedAt: Date.now() }, mocks.publicClient as never)
-      expect(again.state.status).toBe('held-no-hash')
-      // Held without that hash, it is not that attempt: its journal stays.
-      expect(again.adopted).toBe(false)
-      expect((await adoptLegacyWrite(input, { submittedAt: Date.now() }, mocks.publicClient as never)).adopted).toBe(true)
+    it('is adopted once: a second recovery finds the first hold as it is', async () => {
+      mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => ({ hash, from: ALICE, to: BOB, nonce: 5, blockNumber: null, chainId: 10,
+        input: call().data, value: 7n }))
+      expect(await recover({ hash: HASH, submittedAt: Date.now() })).toMatchObject({ status: 'held' })
+      expect(await recover({ hash: HASH, submittedAt: Date.now() })).toMatchObject({ status: 'held', state: { record: { hash: HASH } } })
       // One write, and the mirror the SDK keeps at its exact call for older readers.
       expect(recoveryRecords().filter(record => !record.mirrorOf)).toHaveLength(1)
     })
@@ -1046,7 +1045,7 @@ describe('useSafeTx', () => {
     await other.withLock(async () => { other.abandon(other.read()!, { checkedWallet: true }) })
     await act(async () => { await hook.ref.current!.held!.release() })
     // Another tab took the exit: nothing proves it ran, so nothing says it went through.
-    expect(hook.ref.current).toMatchObject({ phase: 'submitted', notice: 'This transaction is no longer held here. Check your wallet before sending it again.', held: null })
+    expect(hook.ref.current).toMatchObject({ phase: 'submitted', notice: HELD_RELEASED_ELSEWHERE_LINE, held: null })
     expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 
@@ -1059,7 +1058,7 @@ describe('useSafeTx', () => {
       const other = createBrowserWriteRecovery({ chainId: 10, account: ALICE, safe: false, call: { to: BOB, data: encodeFunctionData({ abi: ABI, functionName: 'transfer', args: [BOB, 5n] }), value: 7n } })
       await other.withLock(async () => { other.abandon(other.read()!, { checkedWallet: true }) })
       await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
-      expect(hook.ref.current).toMatchObject({ notice: 'This transaction is no longer held here. Check your wallet before sending it again.', held: null })
+      expect(hook.ref.current).toMatchObject({ notice: HELD_RELEASED_ELSEWHERE_LINE, held: null })
       expect(mocks.writeContract).toHaveBeenCalledOnce()
     } finally { vi.useRealTimers() }
   })
@@ -1164,7 +1163,7 @@ describe('useSafeTx', () => {
     expect(recoveryRecords()).toHaveLength(1)
   })
 
-  it('shows a write that settled while its tab was closed as a notice after a reload, and sends the next one at once as one new write', async () => {
+  it('refuses to repeat a write that settled while its tab was closed until the user says "Send it again", then sends one new write', async () => {
     const first = await renderHook()
     await act(async () => { await first.ref.current!.send(request, reviewedByAlice) })
     expect(recoveryRecords()).toHaveLength(1)
@@ -1187,12 +1186,17 @@ describe('useSafeTx', () => {
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => { renderer = TestRenderer.create(createElement(Reloaded, { ref })) })
     renderers.push(renderer)
+    // It went through while the tab was closed: sending it again may pay twice, so it has to be said first.
+    await act(async () => { await expect(ref.current!.send(request, reviewedByAlice)).resolves.toBeNull() })
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    expect(ref.current).toMatchObject({ phase: 'submitted', notice: HELD_AWAY_SUCCESS_LINE, held: { kind: 'send-again', label: HELD_SEND_AGAIN_LABEL } })
+    await act(async () => { await ref.current!.held!.release() })
     mocks.writeContract.mockResolvedValueOnce(EXECUTION_HASH)
     await act(async () => { await expect(ref.current!.send(request, reviewedByAlice)).resolves.toBe(EXECUTION_HASH) })
-    // A settled write is finished: the new send is a new write, and the earlier result is only a notice.
+    // The new send is one new write.
     expect(mocks.writeContract).toHaveBeenCalledTimes(2)
     expect(recoveryRecords()).toEqual([expect.objectContaining({ hash: EXECUTION_HASH })])
-    expect(ref.current).toMatchObject({ phase: 'pending', hash: EXECUTION_HASH, notice: 'Your earlier transaction went through.', confirmationUncertain: false })
+    expect(ref.current).toMatchObject({ phase: 'pending', hash: EXECUTION_HASH, confirmationUncertain: false })
   })
 
   it('keeps a noncanonical receipt pending and retains its durable record', async () => {

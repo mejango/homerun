@@ -35,7 +35,7 @@ import {
   clearStickyCreationPending,
   prepareStickyCreate,
   stickyCreateIntent,
-  stickyCreationHold,
+  stickyCreationAttempt, stickyCreationRequest,
   stickyCreationRecord,
   readStickyCreated,
   readStickyCreationPending,
@@ -818,6 +818,7 @@ function executionClient(
       from: OWNER,
       input: options.wrongPayload ? "0xdeadbeef" : record.data,
       value: 123n,
+      nonce: 5,
       blockNumber: 130n,
       blockHash: hash(130n),
       transactionIndex: 0,
@@ -834,7 +835,10 @@ function executionClient(
             const number = blockNumber ?? options.finalized ?? 140n;
             return { number, hash: hash(number), timestamp };
           })
-        : client.getBlock,
+        // The chain's head is past the execution, as the hold that settles it reads it.
+        : vi.fn(async (args: { blockTag?: string; blockNumber?: bigint }) => args?.blockNumber !== undefined
+          ? (client.getBlock as (args: unknown) => Promise<unknown>)(args)
+          : { number: 140n, hash: hash(140n), timestamp }),
   } as unknown as PublicClient;
 }
 describe("creation recovery and duplicate protection", () => {
@@ -847,11 +851,13 @@ describe("creation recovery and duplicate protection", () => {
     const { prepared, record } = await pendingFixture();
     expect(stickyCreateIntent(7n)).not.toBe(stickyCreateIntent(8n));
     const saved = { ...record, safe: true, hash: EXECUTION };
-    expect(stickyCreationHold(saved)).toMatchObject({
-      request: { chainId: 1, address: prepared.request.address, functionName: "deployStickyFor", value: prepared.request.value },
-      input: { chainId: 1, account: OWNER, safe: true, namespace: stickyCreateIntent(7n), call: { to: prepared.request.address, data: encodeFunctionData(prepared.request), value: prepared.request.value } },
-      evidence: { submittedAt: record.submittedAt, safe: { safeTxHash: EXECUTION } },
+    expect(stickyCreationRequest(saved)).toMatchObject({ chainId: 1, address: prepared.request.address, functionName: "deployStickyFor", value: prepared.request.value });
+    expect(stickyCreationAttempt({} as never, storageFixture(), 1, 7n, OWNER, false, { completed: null, pending: saved })).toMatchObject({
+      chainId: 1, account: OWNER, safe: true, namespaces: [stickyCreateIntent(7n)], call: { to: prepared.request.address, data: encodeFunctionData(prepared.request), value: prepared.request.value },
+      saved: { started: true, submittedAt: record.submittedAt, safeTxHash: EXECUTION },
     });
+    // With nothing saved, the FUND's creation hold alone says whether anything was sent.
+    expect(stickyCreationAttempt({} as never, storageFixture(), 1, 7n, OWNER, false, { completed: null, pending: null })).toMatchObject({ namespaces: [stickyCreateIntent(7n)], saved: { started: false } });
     const storage = storageFixture(), key = stickySessionKey(1, 7n, OWNER);
     storage.setItem("homerun:sticky:create-pending:v1:1:7", key);
     storage.setItem(key, JSON.stringify(record));
@@ -1036,12 +1042,14 @@ describe("creation recovery and duplicate protection", () => {
     saveStickyCreated(localStorage, record, EXECUTION, 9n);
     const verifiedClient = executionClient(client, record);
     // The creation's hold holds an unresolved write: the saved completion waits for it.
-    const { adoptLegacyWrite } = await import("../src/lib/write-hold");
-    const adoptedHold = await adoptLegacyWrite({ chainId: 1, account: record.holder, safe: false, namespace: stickyCreateIntent(7n), call: { to: record.target, data: record.data, value: BigInt(record.value) } }, { submittedAt: Date.now() }, {
+    const { holds } = await import("../src/lib/write-hold");
+    const quiet = {
       getChainId: async () => 1, getBlockNumber: async () => 90n, getTransactionCount: async () => 5,
       getBlock: async () => ({ number: 100n, hash: `0x${"ef".repeat(32)}`, timestamp: 1_000n }), getTransaction: async () => null, getTransactionReceipt: async () => null,
-    } as never);
-    expect(adoptedHold.state.status, JSON.stringify(adoptedHold.state, (_k, v) => typeof v === "bigint" ? String(v) : v)).toBe("held-no-hash");
+    } as never;
+    const hold = holds.open({ chainId: 1, account: record.holder, safe: false, namespace: stickyCreateIntent(7n), call: { to: record.target, data: record.data, value: BigInt(record.value) } });
+    const adoptedHold = await hold.adopt(await hold.state(quiet), { submittedAt: Date.now() }, quiet);
+    expect(adoptedHold.status, JSON.stringify(adoptedHold, (_k, v) => typeof v === "bigint" ? String(v) : v)).toBe("held-no-hash");
     const container = document.createElement("div"),
       root = createRoot(container),
       onCreated = vi.fn();
@@ -1078,7 +1086,7 @@ describe("creation recovery and duplicate protection", () => {
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 20));
       });
-      expect(onCreated).toHaveBeenCalledExactlyOnceWith(9n);
+      expect(onCreated, container.textContent ?? "").toHaveBeenCalledExactlyOnceWith(9n);
       expect(navigator.locks.request).toHaveBeenCalledWith("homerun-sticky-create:1:7", expect.any(Function));
       expect(readStickyProjectState).toHaveBeenCalledTimes(1);
       expect(container.textContent).toContain(

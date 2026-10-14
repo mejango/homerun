@@ -15,16 +15,15 @@ import {
   type StickyProjectState,
 } from "../src/lib/sticky-state";
 import { readStickyPending, stickyIntent, stickySessionKey } from "../src/lib/sticky-session";
+import { installRecoveryLocks } from "./runtime/write-recovery-fixture";
 
 const mocks = vi.hoisted(() => ({
   send: vi.fn(),
   track: vi.fn(),
-  adoptLegacy: vi.fn(),
   client: {} as Record<string, unknown>,
   phase: "idle",
   receipt: null as null | { status: string; transactionHash: string; blockNumber: bigint },
 }));
-vi.mock("@/lib/write-hold", () => ({ adoptLegacyWrite: mocks.adoptLegacy }));
 vi.mock("@/hooks/useWallet", () => ({
   useWallet: () => ({
     address: "0x1111111111111111111111111111111111111111",
@@ -117,7 +116,7 @@ async function mount(incomeProjectId?: bigint) {
 }
 beforeEach(() => {
   localStorage.clear();
-  Object.defineProperty(navigator, "locks", { configurable: true, value: { request: vi.fn(async (_name: string, callback: () => unknown) => callback()) } });
+  installRecoveryLocks();
   registry.StickyDeployer = { 1: DEPLOYER };
   vi.clearAllMocks();
   mocks.client = {};
@@ -150,21 +149,15 @@ describe("Sticky holder recovery and independent loading", () => {
       version: 1, id: "11111111-1111-4111-8111-111111111111", chainId: 1, projectId: "9", holder: HOLDER, target: FUND, data, value: "0",
       label: "Approve FUND", safe: true, submittedAt: 1_800_000_000_000, afterBlock: "99", hash: `0x${"ab".repeat(32)}`,
     }));
+    // Its Safe proposal can't be read here: the SDK holds it (the exit comes with time), never sends it.
     mocks.client = { getChainId: async () => 1 };
-    mocks.adoptLegacy.mockResolvedValue({ adopted: true, state: { status: "pending-known-hash" } });
     await mount();
-    expect(mocks.adoptLegacy).toHaveBeenCalledWith(
-      { chainId: 1, account: HOLDER, safe: true, namespace: stickyIntent(9n, "approve"), call: { to: FUND, data, value: 0n } },
-      { submittedAt: 1_800_000_000_000, safe: { safeTxHash: `0x${"ab".repeat(32)}` } },
-      mocks.client,
-    );
-    expect(readStickyPending(localStorage, key)).toBeNull();
+    await vi.waitFor(() => expect(readStickyPending(localStorage, key)).toBeNull());
     expect(element.textContent).not.toContain("Saved transaction");
-    // The adopted action is shown in its panel; the other panels only look for what their own holds hold.
-    const shown = mocks.track.mock.calls.filter(([, options]) => !options.heldOnly);
-    expect(shown).toHaveLength(1);
-    expect(shown[0][0]).toMatchObject({ address: FUND, functionName: "approve", args: [getAddress(TERMINAL), 10n ** 18n] });
-    expect(shown[0][1]).toEqual({ reviewedAccount: HOLDER, recoveryNamespace: stickyIntent(9n, "approve"), safe: true });
+    // The adopted action is shown in its panel, once.
+    expect(mocks.track).toHaveBeenCalledOnce();
+    expect(mocks.track.mock.calls[0][0]).toMatchObject({ address: FUND, functionName: "approve", args: [getAddress(TERMINAL), 10n ** 18n] });
+    expect(mocks.track.mock.calls[0][1]).toEqual({ reviewedAccount: HOLDER, recoveryNamespace: stickyIntent(9n, "approve"), safe: true });
     expect(mocks.send).not.toHaveBeenCalled();
   });
   it("renders balances and staking controls while reward history is still loading", async () => {

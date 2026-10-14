@@ -9,6 +9,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { encodeFunctionData, type PublicClient } from 'viem'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { installRecoveryLocks } from './runtime/write-recovery-fixture'
+import { checkedItLabel, HELD_SUCCESS_LINE, SAVED_ATTEMPT_CHECK_LINE } from '@bananapus/nana-sdk-core/review'
 import { HELPER, OWNER, fundState, globalDraft, globalManifest, launchInput, launchPlan } from './fixtures/income-global-launch'
 
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
@@ -90,16 +91,18 @@ it('refuses another launch after a lost wallet reply until the user takes the ex
   expect(wallet.writeContract).toHaveBeenCalledTimes(2)
 })
 
-it('adopts a hashless launch the journal saved before SDK holds: its record goes, and only the exit launches again', async () => {
+it('asks for the user’s check on a hashless launch the journal saved before SDK holds: only that check launches again', async () => {
   localStorage.setItem(KEY, JSON.stringify({
     version: 1, kind: 'income-launch', sessionId: '11111111-1111-4111-8111-111111111111', phase: 'unknown',
     chainId: 8453, projectId: '7', holder: OWNER, target: HELPER, data: encodeFunctionData(launchPlan(launchInput()).request),
     value: '1', label: 'Deploy INCOME', safe: false, submittedAt: Date.now() - 31 * 60_000, afterBlock: '200',
   }))
   await render()
+  // Nothing proves what it did: nothing launches until the user says they checked it.
+  expect(host.textContent).toContain(SAVED_ATTEMPT_CHECK_LINE)
+  expect(button('Prepare Base INCOME')).toBeUndefined()
+  await click(checkedItLabel('Launch again'))
   expect(localStorage.getItem(KEY)).toBeNull()
-  expect(button(EXIT)).toBeDefined()
-  await click(EXIT)
   expect(wallet.writeContract).not.toHaveBeenCalled()
   await review()
   expect(wallet.writeContract).toHaveBeenCalledOnce()
@@ -117,7 +120,7 @@ it('shows a held launch and its exit after a reload while the published snapshot
   expect(button(EXIT), host.textContent ?? '').toBeDefined()
 })
 
-it('asks for a check, never dead-ending, when a launch settled while away can only be shown as a Safe execution', async () => {
+it('keeps a launch that settled while away as done when it can only be shown as a Safe execution: never a check, never launched again', async () => {
   await render()
   await review()
   expect(wallet.writeContract).toHaveBeenCalledOnce()
@@ -131,10 +134,26 @@ it('asks for a check, never dead-ending, when a launch settled while away can on
   const sent = await wallet.client.getTransaction({ hash })
   wallet.client.getTransaction.mockImplementation(async () => ({ ...sent!, to: OWNER, input: '0x6a761202' }) as never)
   await render()
-  expect(host.textContent).toContain('Check this network’s INCOME launch before launching again.')
+  // A settled success always wins: it went through, and its only action is to check again.
+  expect(host.textContent).toContain(HELD_SUCCESS_LINE)
+  expect(host.textContent).not.toContain(SAVED_ATTEMPT_CHECK_LINE)
   expect(button('Prepare Base INCOME'), host.textContent ?? '').toBeUndefined()
-  await click('I checked it. Launch again')
-  expect(button('Prepare Base INCOME')?.closest('fieldset')?.disabled).toBe(false)
+  await click('Check again')
+  expect(button('Prepare Base INCOME')).toBeUndefined()
   expect(wallet.writeContract).toHaveBeenCalledOnce()
 })
 
+it('gap 3: a recovery whose chain reads throw ends in the explicit check, never a dead end', async () => {
+  localStorage.setItem(KEY, JSON.stringify({
+    version: 1, kind: 'income-launch', sessionId: '11111111-1111-4111-8111-111111111111', phase: 'unknown',
+    chainId: 8453, projectId: '7', holder: OWNER, target: HELPER, data: encodeFunctionData(launchPlan(launchInput()).request),
+    value: '1', label: 'Deploy INCOME', safe: false, submittedAt: Date.now(), afterBlock: '200',
+  }))
+  wallet.client.getTransaction.mockRejectedValue(new Error('RPC unavailable'))
+  wallet.client.getTransactionReceipt.mockRejectedValue(new Error('RPC unavailable'))
+  await render()
+  expect(host.textContent).toContain(SAVED_ATTEMPT_CHECK_LINE)
+  await click(checkedItLabel('Launch again'))
+  expect(button('Prepare Base INCOME')?.closest('fieldset')?.disabled, host.textContent ?? '').toBe(false)
+  expect(wallet.writeContract).not.toHaveBeenCalled()
+})

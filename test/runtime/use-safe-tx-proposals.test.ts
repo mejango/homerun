@@ -1242,7 +1242,7 @@ describe('generic Safe durable recovery', () => {
     expect(recoveryRecords()).toHaveLength(1)
   })
 
-  it('sends a changed amount as its own write while the earlier amount stays followed', async () => {
+  it('sends a changed amount as its own write, whatever became of the earlier amount', async () => {
     canonicalExecution()
     signersDecide()
     mocks.writeContract.mockResolvedValueOnce(PROPOSAL).mockResolvedValueOnce(SECOND_PROPOSAL)
@@ -1251,6 +1251,7 @@ describe('generic Safe durable recovery', () => {
     await settle()
     await expect(flow.send({ ...request, args: [BOB, 6n] })).resolves.toBe(SECOND_PROPOSAL)
     expect(mocks.writeContract).toHaveBeenCalledTimes(2)
-    expect(recoveryRecords()).toHaveLength(2)
+    // The hold's own check proves the first proposal ran (its canonical execution): only the second is held.
+    expect(recoveryRecords().map(record => record.hash)).toEqual([SECOND_PROPOSAL])
   })
 })

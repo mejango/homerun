@@ -1,20 +1,21 @@
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { encodeFunctionData, parseAbi, zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
 import type { Project721Tier } from '@bananapus/nana-sdk-core/v6'
 import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
 import type { ProjectShopState } from '@/lib/project-shop'
 import type { PreparedProjectShopWrite, ProjectShopWriteState } from '@/lib/project-shop-write'
 import type { ShopWriteSession, ShopWriteStorage } from '@/lib/project-shop-session'
+import { installRecoveryLocks } from './runtime/write-recovery-fixture'
 
 const runtime = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111' as Address | undefined,
   safe: false, receipt: 'pending' as 'pending' | 'confirmed' | 'reverted',
   send: vi.fn(), reset: vi.fn(), read: vi.fn(), prepare: vi.fn(), reverify: vi.fn(),
   inventory: vi.fn(), customers: vi.fn(), metadata: vi.fn(), waitSafe: vi.fn(), viewAs: vi.fn(),
-  readSession: vi.fn(), start: vi.fn(), drop: vi.fn(), adoptLegacy: vi.fn(), track: vi.fn(),
+  readSession: vi.fn(), start: vi.fn(), drop: vi.fn(), track: vi.fn(),
   confirm: vi.fn(), verify: vi.fn(), clear: vi.fn(), restore: vi.fn(), lock: vi.fn(),
   phase: 'idle', txReceipt: null as null | { transactionHash: Hex },
   saved: new Map<string, ShopWriteSession>(), client: { getBlock: vi.fn() },
@@ -29,7 +30,6 @@ vi.mock('@/hooks/useSafeTx', () => ({
   txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,
 }))
 vi.mock('@/lib/viewAs', () => ({ assertNoViewAs: runtime.viewAs }))
-vi.mock('@/lib/write-hold', () => ({ adoptLegacyWrite: runtime.adoptLegacy }))
 vi.mock('@/lib/project-shop-write', () => ({
   readProjectShopWriteState: runtime.read,
   prepareProjectShopWrite: runtime.prepare,
@@ -38,7 +38,8 @@ vi.mock('@/lib/project-shop-write', () => ({
 }))
 vi.mock('@/lib/project-shop-session', async importOriginal => ({
   shopStepIntent: (await importOriginal<typeof import('@/lib/project-shop-session')>()).shopStepIntent,
-  shopPendingHold: (captured: ShopWriteSession) => captured.pending ? { step: captured.completed.length, input: { chainId: 8453, account: captured.plan.snapshot.account, safe: captured.pending.safe, namespace: 'intent:shop-step:fixture', call: { to: HOOK, data: '0x', value: 0n } }, evidence: { submittedAt: captured.pending.startedAt } } : null,
+  // The step recovers through the SDK, from what the journal saved.
+  shopStepAttempt: (await importOriginal<typeof import('@/lib/project-shop-session')>()).shopStepAttempt,
   shopWriteSessionKey: (chainId: number, projectId: bigint) => `${chainId}:${projectId}`,
   readShopWriteSession: runtime.readSession, startShopWriteSession: runtime.start,
   dropShopWritePending: runtime.drop, confirmShopWriteStep: runtime.confirm,
@@ -111,6 +112,8 @@ let root: Root
 let cache: QueryClient
 
 beforeEach(() => {
+  // Recovery runs through the SDK's real holds: each test starts with none.
+  localStorage.clear(); installRecoveryLocks()
   runtime.account = WALLET; runtime.safe = false; runtime.receipt = 'pending'; runtime.saved.clear()
   runtime.read.mockReset().mockResolvedValue(snapshot())
   runtime.prepare.mockReset().mockResolvedValue(plan())
@@ -124,7 +127,6 @@ beforeEach(() => {
   runtime.readSession.mockReset().mockImplementation((_storage, key) => runtime.saved.get(key) ?? null)
   runtime.start.mockReset().mockImplementation((_storage, key, prepared) => store(key, session(prepared)))
   runtime.drop.mockReset().mockImplementation((_storage, key, captured) => { const { pending: _pending, ...next } = captured; return store(key, next) })
-  runtime.adoptLegacy.mockReset().mockResolvedValue({ adopted: true, state: { status: 'held-no-hash' } })
   runtime.track.mockReset().mockResolvedValue(undefined)
   runtime.phase = 'idle'; runtime.txReceipt = null
   runtime.confirm.mockReset().mockImplementation(async (_client: PublicClient, _storage: ShopWriteStorage, key: string, captured: ShopWriteSession, submission: { safe: boolean; hash?: Hex; afterBlock: bigint }, executionHash: Hex) => {
@@ -297,14 +299,21 @@ describe('live project shop management', () => {
     expect(runtime.send).not.toHaveBeenCalled()
   })
 
-  it('adopts a step the journal saved as pending before SDK holds into its hold, and drops it from the journal', async () => {
+  it('recovers a step the journal saved as pending before SDK holds into its hold, and drops it from the journal', async () => {
     const prepared = plan(snapshot({ mode: 'existing' }), ['adjust'])
-    runtime.saved.set(KEY, session(prepared, { pending: { safe: true, afterBlock: '110', startedAt: 1_800_000_000_000, hash: HASH } }))
+    const request = prepared.requests[0]
+    // The saved hash is this exact step, still pending: the SDK adopts it into the step's hold.
+    const client = runtime.client as Record<string, unknown>
+    client.getChainId = vi.fn(async () => 8453)
+    client.getTransaction = vi.fn(async () => ({ hash: HASH, from: WALLET, to: request.address, input: encodeFunctionData(request as never), value: 0n, nonce: 3, chainId: 8453, blockHash: null, blockNumber: null, transactionIndex: null }))
+    onTestFinished(() => { delete client.getChainId; delete client.getTransaction })
+    runtime.saved.set(KEY, session(prepared, { pending: { safe: false, afterBlock: '110', startedAt: Date.now(), hash: HASH } }))
     await render()
-    await settled(() => expect(runtime.track).toHaveBeenCalledOnce())
-    expect(runtime.adoptLegacy).toHaveBeenCalledWith(expect.objectContaining({ account: WALLET, safe: true }), { submittedAt: 1_800_000_000_000 }, runtime.client)
+    await settled(() => expect(runtime.track, host.textContent ?? '').toHaveBeenCalled())
     expect(runtime.saved.get(KEY)?.pending).toBeUndefined()
-    expect(runtime.track).toHaveBeenCalledWith(prepared.requests[0], expect.objectContaining({ reviewedAccount: WALLET, safe: true }))
+    // Shown once: a recovery that finds the same reservation again is told which one it is.
+    expect(new Set(runtime.track.mock.calls.map(([, options]) => options.reservation)).size).toBe(1)
+    expect(runtime.track).toHaveBeenCalledWith(request, expect.objectContaining({ reviewedAccount: WALLET, safe: false }))
   })
 
   it('shows a held step with the shared line, and records it only once the hold settles its execution', async () => {

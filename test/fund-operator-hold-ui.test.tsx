@@ -12,6 +12,7 @@ import type { Address, PublicClient } from 'viem'
 import { buildFundRulesetChange, initialFundRuleset, type FundRulesetSnapshot } from '../src/lib/fund-contracts'
 import type { FundProjectState } from '../src/lib/fund-state'
 import { installRecoveryLocks } from './runtime/write-recovery-fixture'
+import { checkedItLabel, HELD_RELEASE_LABEL, SAVED_ATTEMPT_CHECK_LINE } from '@bananapus/nana-sdk-core/review'
 
 const runtime = vi.hoisted(() => ({ states: [] as unknown[] }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
@@ -110,27 +111,28 @@ it('refuses another send on a chain after a lost wallet reply until the user tak
   await act(async () => root.unmount()); root = createRoot(host)
   await render()
   await click('Verify and resume queued plan')
-  await click('Review transaction 1 of 2')
+  // Held: its exit is offered, the review isn't.
+  expect(button('Review transaction 1 of 2')).toBeUndefined()
   expect(wallet.writeContract).toHaveBeenCalledOnce()
   await click(EXIT)
   await click('Review transaction 1 of 2')
   expect(wallet.writeContract).toHaveBeenCalledTimes(2)
 })
 
-it('adopts a hashless submission the plan saved before SDK holds; with no saved send time its warned exit is due at once', async () => {
+it('asks for the user’s check on a hashless submission the plan saved before SDK holds, and only that check reviews it again, across a reload', async () => {
   save(new Map([[8453, { kind: 'submission-unknown' as const, attemptId: crypto.randomUUID() }]]))
   await render()
   await click('Verify and resume queued plan')
-  expect(host.textContent).not.toContain('add its execution hash')
-  // The plan no longer holds the submission: the SDK's hold does.
-  expect(deserializeRulesetRecovery(localStorage.getItem(KEY)!, ROOT, ACCOUNT).submissions.size).toBe(0)
-  expect(button('Review transaction 1 of 2')?.disabled ?? true).toBe(true)
+  // Nothing proves what it did: the chain isn't offered until the user says they checked it.
+  expect(host.textContent).toContain(SAVED_ATTEMPT_CHECK_LINE)
+  expect(button('Review transaction 1 of 2')).toBeUndefined()
+  await click(checkedItLabel())
+  // The check is kept for this attempt: a reload doesn't ask again.
   await act(async () => root.unmount()); root = createRoot(host)
   await render()
   await click('Verify and resume queued plan')
-  await click('Review transaction 1 of 2')
+  expect(host.textContent).not.toContain(SAVED_ATTEMPT_CHECK_LINE)
   expect(wallet.writeContract).not.toHaveBeenCalled()
-  await click(EXIT)
   await click('Review transaction 1 of 2')
   expect(wallet.writeContract).toHaveBeenCalledOnce()
 })
@@ -175,9 +177,10 @@ it('shows a held owner action and its exit after a reload, while its own button 
   runtime.states = [single(true)]
   await show(single(true)); await settle(); await settle()
   expect(button('Review pause')?.disabled).toBe(true)
-  expect(button(EXIT), host.textContent ?? '').toBeDefined()
-  await click(EXIT)
-  expect(button(EXIT)).toBeUndefined()
+  // The notice of the project's held owner actions offers the release.
+  expect(button(HELD_RELEASE_LABEL), host.textContent ?? '').toBeDefined()
+  await click(HELD_RELEASE_LABEL)
+  expect(button(HELD_RELEASE_LABEL)).toBeUndefined()
 })
 
 it('shows a held purchase-allowance write and its exit after a reload, with allowance configuration unavailable', async () => {
@@ -185,25 +188,26 @@ it('shows a held purchase-allowance write and its exit after a reload, with allo
   const current = { ...state(), linkedChainIds: [8453], accountingContexts: [{ terminal: TERMINAL, token: TOKEN, decimals: 6, currency: 1, symbol: 'USDC', balance: 0n, surplus: 0n, surplusAllowances: [] }],
     permissions: { queueRulesets: false, mintTokens: false } } as unknown as FundProjectState
   // An allowance change the wallet never answered for, from before the reload.
-  const { adoptLegacyWrite } = await import('@/lib/write-hold')
-  await adoptLegacyWrite({ chainId: 8453, account: ACCOUNT, safe: false, namespace: allowanceIntent(7n, { terminal: TERMINAL, token: TOKEN }), call: { to: TERMINAL, data: '0x12345678', value: 0n } }, {}, wallet.client as never)
+  const { holds } = await import('@/lib/write-hold')
+  const hold = holds.open({ chainId: 8453, account: ACCOUNT, safe: false, namespace: allowanceIntent(7n, { terminal: TERMINAL, token: TOKEN }), call: { to: TERMINAL, data: '0x12345678', value: 0n } })
+  await hold.adopt(await hold.state(wallet.client as never), {}, wallet.client as never)
   await act(async () => root.render(<FundOperatorActions state={current} client={wallet.client as unknown as PublicClient} contextIndex={0} />))
   await settle(); await settle()
-  expect(button(EXIT), host.textContent ?? '').toBeDefined()
-  await click(EXIT)
-  expect(button(EXIT)).toBeUndefined()
+  expect(button(HELD_RELEASE_LABEL), host.textContent ?? '').toBeDefined()
+  await click(HELD_RELEASE_LABEL)
+  expect(button(HELD_RELEASE_LABEL)).toBeUndefined()
 })
 
-it('keeps a later chain’s held write and its exit shown after the plan resumes, and refuses to cancel the plan', async () => {
+it('keeps a later chain’s unproven submission and its check shown after the plan resumes, and refuses to cancel the plan', async () => {
   save(new Map([[10, { kind: 'submission-unknown' as const, attemptId: crypto.randomUUID() }]]))
   await render()
   await click('Verify and resume queued plan')
-  // The plan resumes on its first chain; the later chain's hold is still shown with its exit.
+  // The plan resumes on its first chain; the later chain's saved submission still asks for its check.
   expect(button('Review transaction 1 of 2'), host.textContent ?? '').toBeDefined()
-  expect(button(EXIT), host.textContent ?? '').toBeDefined()
+  expect(button(checkedItLabel()), host.textContent ?? '').toBeDefined()
   await click('Cancel plan')
-  expect(host.textContent).toContain('Finish or exit the pending update first.')
+  expect(host.textContent).toContain('Every saved submission must be verified before this plan can be closed.')
   expect(localStorage.getItem(KEY)).not.toBeNull()
-  expect(button(EXIT)).toBeDefined()
+  expect(button(checkedItLabel())).toBeDefined()
 })
 

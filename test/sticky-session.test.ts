@@ -15,7 +15,7 @@ import {
   clearStickyPending,
   readStickyPending,
   stickyIntent,
-  stickyPendingHold,
+  stickyPendingAttempt,
   stickySessionKey,
   verifyStickyExecution,
   type StickyPending,
@@ -257,14 +257,15 @@ describe("Sticky Safe execution events", () => {
 });
 
 describe("a Sticky record from before SDK holds", () => {
-  it("is adopted under its action's intent with its own evidence", () => {
-    const record = { ...saved(true), hash: HASH, submittedAt: 1_800_000_000_000 };
-    expect(stickyPendingHold(record)).toMatchObject({
+  it("is recovered under its action's intent with its own evidence", () => {
+    const record = { ...saved(true), hash: HASH, submittedAt: 1_800_000_000_000 }, client = {} as never;
+    expect(stickyPendingAttempt(client, record)).toMatchObject({
       request: { chainId: 1, address: TARGET, functionName: "approve", value: 0n, label: "Approve FUND" },
-      input: { chainId: 1, account: HOLDER, safe: true, namespace: stickyIntent(9n, "approve"), call: { to: TARGET, data: encodeFunctionData(request), value: 0n } },
-      evidence: { submittedAt: 1_800_000_000_000, safe: { safeTxHash: HASH } },
+      namespace: stickyIntent(9n, "approve"),
+      attempt: { chainId: 1, account: HOLDER, safe: true, namespaces: [stickyIntent(9n, "approve")], call: { to: TARGET, data: encodeFunctionData(request), value: 0n },
+        saved: { started: true, submittedAt: 1_800_000_000_000, safeTxHash: HASH } },
     });
-    expect(stickyPendingHold(saved()).evidence).toEqual({ submittedAt: 1_000 });
+    expect(stickyPendingAttempt(client, saved()).attempt.saved).toEqual({ started: true, submittedAt: 1_000 });
   });
   it("holds each holder action on its own, one at a time per Sticky project", () => {
     const actions = ["claimTokensFor", "approve", "pay", "cashOutTokensOf", "beginVesting", "collectVestedRewards"];

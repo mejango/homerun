@@ -6,7 +6,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   formatUnits,
   isAddressEqual,
@@ -43,13 +43,14 @@ import {
   readStickyPending,
   stickyIntent,
   stickyHeldIntents,
-  stickyPendingHold,
+  stickyPendingAttempt,
   stickySessionKey,
 } from "@/lib/sticky-session";
-import { adoptLegacyWrite } from "@/lib/write-hold";
+import { HeldWritesNotice, useHeldIntents, useSavedAttempt } from '@bananapus/nana-sdk-core/review/react';
+import type { WriteHoldClient } from "@bananapus/nana-sdk-core/review";
+import { attempts, holds } from "@/lib/write-hold";
 import { HeldNotice } from "@/components/ui/HeldWriteExit";
-import { useLegacyAdoption } from "@/hooks/useLegacyAdoption";
-import { HeldIntents } from "@/components/ui/HeldIntents";
+import { SavedAttemptNotice } from "@/components/ui/SavedAttemptNotice";
 
 export type StickyHolderProps = {
   chainId: JBChainId;
@@ -89,43 +90,44 @@ type AdoptedSticky = {
   account: Address;
   safe: boolean;
 };
-/** The adopted journal action, and the gate every send waits on until adoption has finished. */
-const StickyAdoption = createContext<{ adopted: AdoptedSticky | null; ready: boolean; wait: () => Promise<void> }>({ adopted: null, ready: false, wait: async () => { throw new Error("Saved transactions are still being checked. Try again in a moment."); } });
+/** The journal action the hold took over, and whether sends may go (its saved attempt has recovered). */
+const StickyAdoption = createContext<{ adopted: AdoptedSticky | null; ready: boolean }>({ adopted: null, ready: false });
 /**
- * An action the Sticky journal saved as pending before SDK holds is adopted into its hold, with its
- * hash or Safe proposal and its send time, and the journal record goes.
+ * An action the Sticky journal saved as pending before SDK holds recovers through the SDK: once the
+ * hold holds it (adopted) or it settled, the journal record goes; one nothing can show asks the user.
+ * No action is sent until it has.
  */
-function useStickyAdoption(
+function useStickyRecovery(
   chainId: number,
   projectId: bigint,
   account: Address | undefined,
   client: PublicClient | undefined,
 ) {
-  const [adopted, setAdopted] = useState<AdoptedSticky | null>(null),
-    [error, setError] = useState<string | null>(null);
-  const adoption = useLegacyAdoption(),
-    adopt = adoption.run;
+  const key = account ? stickySessionKey(chainId, projectId, account) : null;
+  const [version, setVersion] = useState(0);
+  const journal = useMemo(() => {
+    void version;
+    try { return { record: key ? readStickyPending(localStorage, key) : null }; }
+    catch (failure) { return { record: null, error: reason(failure) }; }
+  }, [key, version]);
+  const saved = useMemo(() => journal.record && client ? stickyPendingAttempt(client, journal.record) : null, [client, journal.record]);
+  const recovery = useSavedAttempt({ recovery: attempts, attempt: saved?.attempt, client: client as WriteHoldClient | undefined });
+  const [adopted, setAdopted] = useState<AdoptedSticky | null>(null);
+  const { outcome } = recovery;
   useEffect(() => {
-    if (!account || !client) return;
-    const key = stickySessionKey(chainId, projectId, account);
-    let cancelled = false;
-    void adopt(async () => {
-      const record = readStickyPending(localStorage, key);
-      if (!record) return;
-      const { request, input, evidence } = stickyPendingHold(record);
-      const result = await adoptLegacyWrite(input, evidence, client);
-      // The journal keeps it until its attempt is the hold's.
-      if (result.adopted) clearStickyPending(localStorage, key, record);
-      if (!cancelled)
-        setAdopted({ request, namespace: input.namespace!, account: record.holder, safe: record.safe });
-    }).catch((failure) => {
-      if (!cancelled) setError(reason(failure));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [account, adopt, chainId, client, projectId]);
-  return { adopted, error, ready: adoption.ready, wait: adoption.wait };
+    const record = journal.record;
+    if (!outcome || !record || !key || !saved) return;
+    if (outcome.status === "held") setAdopted({ request: saved.request, namespace: saved.namespace, account: record.holder, safe: record.safe });
+    // The hold has the attempt, it settled, or it was retired: the record goes.
+    if (outcome.status === "held" || outcome.status === "done" || (outcome.status === "none" && outcome.retired)) {
+      try { clearStickyPending(localStorage, key, record); } catch { /* Read again below. */ }
+      setVersion((value) => value + 1);
+    }
+  // Each outcome is handled once, against the journal as it is now.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [outcome]);
+  const ready = !journal.error && (!journal.record || (!!outcome && outcome.status !== "check"));
+  return { adopted, error: journal.error ?? null, ready, recovery };
 }
 function Status({ tx, chainId }: { tx: StickyTx; chainId: number }) {
   const link =
@@ -154,13 +156,13 @@ function useStickyTx(state: StickyProjectState, actions: readonly string[]) {
     cache = useQueryClient(),
     previous = useRef<string | null>(null),
     prerequisite = useRef<bigint | undefined>(undefined);
-  const { adopted, ready, wait } = useContext(StickyAdoption),
+  const { adopted, ready } = useContext(StickyAdoption),
     track = tx.track;
   // An adopted journal record of one of this screen's actions is shown here, with its line and exit.
   const shows = !!adopted && actions.includes(adopted.request.functionName);
   useEffect(() => {
     if (!ready || !adopted || !shows) return;
-    void track(adopted.request, {
+    track(adopted.request, {
       reviewedAccount: adopted.account,
       recoveryNamespace: adopted.namespace,
       safe: adopted.safe,
@@ -212,7 +214,7 @@ function useStickyTx(state: StickyProjectState, actions: readonly string[]) {
       ...options,
       recoveryNamespace: stickyIntent(state.stickyProjectId, request.functionName),
       beforeWrite: async () => {
-        await wait();
+        if (!ready) throw new Error("Saved transactions are still being checked. Try again in a moment.");
         await options.beforeWrite?.();
       },
     });
@@ -264,7 +266,10 @@ export function StickyHolder({
 }: StickyHolderProps) {
   const { address } = useWallet();
   const client = usePublicClient({ chainId }) as PublicClient | undefined;
-  const adoption = useStickyAdoption(chainId, stickyProjectId, address, client);
+  const adoption = useStickyRecovery(chainId, stickyProjectId, address, client);
+  // Whatever a holder action's hold holds is shown with its exit, whatever the contracts or balances allow now.
+  const heldIntents = useMemo(() => stickyHeldIntents(stickyProjectId), [stickyProjectId]);
+  const heldActions = useHeldIntents({ hold: holds, chainId, account: address, client: client as WriteHoldClient | undefined, intents: heldIntents });
   const [page, setPage] = useState(0n),
     [lastState, setLastState] = useState<StickyProjectState | null>(null);
   const query = useQuery({
@@ -307,8 +312,8 @@ export function StickyHolder({
         Stake FUND to receive SHARE for ongoing INCOME rewards. The initial
         INCOME allocation follows all FUND ownership separately.
       </p>
-      {/* Whatever a holder action's hold holds is shown with its exit, whatever the contracts or balances allow now. */}
-      <HeldIntents chainId={chainId} account={address} intents={stickyHeldIntents(stickyProjectId)} />
+      <HeldWritesNotice items={heldActions} className="mb-5 grid gap-2 text-sm" />
+      <SavedAttemptNotice attempt={adoption.recovery} />
       {query.isPending && <p role="status">Verifying the Sticky contracts…</p>}
       {query.isError && (
         <div className="rounded border border-[#d8d3bd] p-5" role="alert">

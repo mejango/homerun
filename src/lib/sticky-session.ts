@@ -12,10 +12,9 @@ import {
   type PublicClient,
 } from "viem";
 import type { FundTransaction } from "./fund-contracts";
-import { verifyReviewedWriteReceipt, writeIntentKey, type ReviewedWriteRecoveryInput } from "@bananapus/nana-sdk-core/review";
+import { verifyReviewedWriteReceipt, writeIntentKey, type SavedAttempt } from "@bananapus/nana-sdk-core/review";
 import { jbControllerAbi, jbMultiTerminalAbi } from "@bananapus/nana-sdk-core";
 import type { TxRequest } from "@/hooks/useSafeTx";
-import type { LegacyWriteEvidence } from "./write-hold";
 import {
   heldCall,
   type SafeAppCall,
@@ -75,22 +74,29 @@ export function stickyHeldIntents(projectId: bigint): { namespace: string; label
   return Object.keys(STICKY_ACTIONS).map(functionName => ({ namespace: stickyIntent(projectId, functionName), label: STICKY_ACTION_LABELS[functionName] }));
 }
 
-/** A record the Sticky journal saved before SDK holds: the request it was, and the hold it is adopted into. */
-export function stickyPendingHold(record: StickyPending): {
-  request: TxRequest;
-  input: ReviewedWriteRecoveryInput;
-  evidence: LegacyWriteEvidence;
-} {
-  const { functionName, args } = decodeFunctionData({ abi: STICKY_ABI, data: record.data });
-  const value = BigInt(record.value);
+/**
+ * A record a journal saved before SDK holds, as the saved attempt the SDK recovers: its exact call,
+ * held under `namespace`, and what the wallet returned. Every journal of this shape (Sticky actions
+ * and creation, INCOME launches) recovers through this one description.
+ */
+export function savedRecordAttempt<T>(record: StickyPending, namespace: string, authenticate: SavedAttempt<T>["authenticate"], confirmRetirable: () => Promise<boolean> = async () => true): SavedAttempt<T> {
   return {
-    request: { chainId: record.chainId, address: record.target, abi: STICKY_ABI, functionName, args: args ?? [], value, label: record.label },
-    input: {
-      chainId: record.chainId, account: record.holder, safe: record.safe,
-      namespace: stickyIntent(BigInt(record.projectId), functionName),
-      call: { to: record.target, data: record.data, value },
-    },
-    evidence: { submittedAt: record.submittedAt, ...(record.hash ? record.safe ? { safe: { safeTxHash: record.hash } } : { hash: record.hash } : {}) },
+    chainId: record.chainId, account: record.holder, safe: record.safe, namespaces: [namespace],
+    call: { to: record.target, data: record.data, value: BigInt(record.value) },
+    saved: { started: true, submittedAt: record.submittedAt, ...(record.hash ? record.safe ? { safeTxHash: record.hash } : { hash: record.hash } : {}) },
+    confirmRetirable, authenticate,
+  };
+}
+
+/** A Sticky action the journal saved before SDK holds: the request it was, and its saved attempt. */
+export function stickyPendingAttempt(client: PublicClient, record: StickyPending): { request: TxRequest; namespace: string; attempt: SavedAttempt<true> } {
+  const { functionName, args } = decodeFunctionData({ abi: STICKY_ABI, data: record.data });
+  const namespace = stickyIntent(BigInt(record.projectId), functionName);
+  return {
+    request: { chainId: record.chainId, address: record.target, abi: STICKY_ABI, functionName, args: args ?? [], value: BigInt(record.value), label: record.label },
+    namespace,
+    attempt: savedRecordAttempt(record, namespace, async hash => !hash ? { result: "unknown", reason: "No saved transaction to check." }
+      : (await verifyStickyExecution(client, record, hash)) === "confirmed" ? { result: "proven", value: true } : { result: "not-this", reason: "It reverted." }),
   };
 }
 const HASH = /^0x[\da-fA-F]{64}$/;

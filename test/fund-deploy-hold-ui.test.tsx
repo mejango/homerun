@@ -9,6 +9,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Address, Hex } from 'viem'
 import { installRecoveryLocks } from './runtime/write-recovery-fixture'
+import { checkedItLabel, HELD_SUCCESS_LINE, SAVED_ATTEMPT_CHECK_LINE } from '@bananapus/nana-sdk-core/review'
 
 vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fixtures/homerun-deployer')).withHomerunDeployer(await importOriginal()))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ replace: vi.fn(), push: vi.fn() }) }))
@@ -88,9 +89,10 @@ it('refuses another deployment after a lost wallet reply until the user takes th
   expect(wallet.writeContract).toHaveBeenCalledTimes(2)
 })
 
-it('adopts a hashless attempt the launch record saved before SDK holds: the record reopens, and only the exit deploys again', async () => {
+it('adopts a hashless attempt the launch record saved before SDK holds with its nonce: the record reopens, and only the exit deploys again', async () => {
   save({ phase: 'signing', safe: false, attemptId: '11111111-1111-4111-8111-111111111111', nonce: '0', fromBlock: '900' })
   await render()
+  // The hold has it at its nonce: the chain can still settle it, and its exit is the user's.
   expect(saved().phase).toBe('ready')
   expect(saved().attemptId).toBeUndefined()
   expect(button(EXIT), host.textContent ?? '').toBeDefined()
@@ -227,14 +229,98 @@ it('sends nothing when Continue is pressed while recovery of a deployment settle
   expect(wallet.writeContract).toHaveBeenCalledOnce()
 })
 
-it('asks for a check when a deployment settled away cannot be shown, leaves the launch as it was, and its exit reopens deploy and discard', async () => {
+it('keeps a deployment that settled away as done when it cannot be shown: never a check, never deployed again, never discarded', async () => {
   verification.launch = async () => { throw new Error('Not this launch') }
   await launchSettledAway()
   await render()
-  expect(host.textContent).toContain('Check this network’s FUND deployment before deploying again.')
-  expect(saved().phase).toBe('ready')
-  await click('I checked it. Deploy again')
-  expect(button('Review and deploy FUND')?.disabled, host.textContent ?? '').toBe(false)
-  expect(button('Discard and edit details')?.disabled).toBe(false)
+  // A settled success always wins: it went through, and its only action is to check again.
+  expect(host.textContent).toContain(HELD_SUCCESS_LINE)
+  expect(host.textContent).not.toContain(SAVED_ATTEMPT_CHECK_LINE)
+  expect(button('Review and deploy FUND')?.disabled).toBe(true)
+  await click('Check again')
+  expect(button('Review and deploy FUND')?.disabled).toBe(true)
+  // Its result isn't recorded yet: the launch can't be discarded.
+  if (button('Discard and edit details')) await click('Discard and edit details')
+  expect(localStorage.getItem(FUND_LAUNCH_KEY)).not.toBeNull()
   expect(wallet.writeContract).toHaveBeenCalledOnce()
+})
+
+/**
+ * The nine gaps the recovery audit found on main (ALIGN/hr-inv.md), each closed by the SDK's
+ * saved-attempt recovery and pinned here (gaps 2, 3, 7 and 8 live with the payer, shop and Sticky suites).
+ */
+describe('recovery audit gaps', () => {
+  const holdOf = async (namespace: string, submittedAt: number) => {
+    const { holds } = await import('@/lib/write-hold')
+    const hold = holds.open({ chainId: 8453, account: OWNER, safe: false, namespace, call: { to: OWNER, data: '0x' } })
+    return hold.adopt(await hold.state(wallet.client as never), { submittedAt }, wallet.client as never)
+  }
+
+  it('gap 1: a saved submission with no hold record and nothing on chain is never sendable on that absence', async () => {
+    // An unproven failure the wallet never confirmed: the chain doesn't know its hash, and no hold remembers it.
+    save({ phase: 'reverted', hash: `0x${'ee'.repeat(32)}` as Hex })
+    await render()
+    expect(button('Review and deploy FUND')?.disabled ?? true).toBe(true)
+    expect(wallet.writeContract).not.toHaveBeenCalled()
+  })
+
+  it('gap 4: a saved launch its builder now refuses still shows its held write and exit', async () => {
+    // Mixing a testnet into a mainnet launch: the builder refuses it, the record still loads.
+    saveLaunch({ version: 1, name: 'Test asset', input: { owner: OWNER, sender: OWNER, chainIds: [8453, 84532], projectUri: 'ipfs://bafkreimetadata', tokenName: 'House FUND', ticker: 'HOUSE', salt: SALT, mustStartAtOrAfter: 1_000, creationFees: { 8453: 0n, 84532: 0n } }, statuses: { 8453: { phase: 'ready' }, 84532: { phase: 'ready' } } })
+    expect(await holdOf(launchIntent(SALT), Date.now() - 31 * 60_000)).toMatchObject({ status: 'held-no-hash' })
+    await render()
+    expect(button(EXIT), host.textContent ?? '').toBeDefined()
+    expect(button('Review and deploy FUND')?.disabled ?? true).toBe(true)
+  })
+
+  it('gap 5: an exit the chain refuses (the write settled meanwhile) never reopens the launch', async () => {
+    save({ phase: 'ready' })
+    verification.launch = async () => 42n
+    await render()
+    await click('Review and deploy FUND')
+    const hash = `0x${'1'.padStart(64, '0')}` as Hex
+    expect(saved()).toMatchObject({ phase: 'pending', hash })
+    // The node forgets the hash for over half an hour: the hold offers its warned exit.
+    const known = wallet.client.getTransaction.getMockImplementation()!, chainReceipt = wallet.client.getTransactionReceipt.getMockImplementation()!
+    wallet.client.getTransaction.mockImplementation(async () => null)
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 31 * 60_000)
+    try {
+      await act(async () => root.unmount()); root = createRoot(host)
+      await render(); await settle()
+      expect(button(EXIT), host.textContent ?? '').toBeDefined()
+      // It is mined, and only the exit's own last look at the chain finds it: the exit is refused, and the success is recorded.
+      const sent = (await known({ hash }))!
+      const placed = { blockNumber: 10n, blockHash: `0x${'0a'.repeat(32)}` as Hex, transactionIndex: 0 }
+      wallet.client.getTransaction.mockImplementation(async () => ({ ...sent, ...placed }) as never)
+      wallet.client.getTransactionReceipt.mockImplementation(async () => ({ status: 'success', transactionHash: hash, from: sent.from, to: sent.to, logs: [], ...placed }) as never)
+      wallet.client.getBlock.mockImplementation(async ({ blockNumber }: { blockNumber?: bigint }) => ({ number: blockNumber ?? 1_000n, hash: blockNumber === 10n ? placed.blockHash : `0x${'0b'.repeat(32)}`, timestamp: 1_000n }) as never)
+      await click(EXIT); await settle(); await settle()
+      expect(saved(), host.textContent ?? '').toMatchObject({ phase: 'confirmed', projectId: '42' })
+      expect(wallet.writeContract).toHaveBeenCalledOnce()
+    } finally { clock.mockRestore(); wallet.client.getTransactionReceipt.mockImplementation(chainReceipt) }
+  })
+
+  it('gap 6: the user’s check is kept across a reload, and the launch reopens once', async () => {
+    // A legacy attempt that saved neither hash nor nonce: nothing can show it, so only the user's check reopens it.
+    save({ phase: 'signing', safe: false, attemptId: '11111111-1111-4111-8111-111111111111' })
+    await render()
+    await click(checkedItLabel('Deploy again'))
+    expect(saved().phase).toBe('ready')
+    await act(async () => root.unmount()); root = createRoot(host)
+    await render()
+    expect(host.textContent).not.toContain(SAVED_ATTEMPT_CHECK_LINE)
+    expect(button('Review and deploy FUND')?.disabled).toBe(false)
+  })
+
+  it('gap 9: a launch whose write settled with a result not yet recorded is never discarded', async () => {
+    verification.launch = async () => { throw new Error('The RPC has not caught up') }
+    await launchSettledAway()
+    await render()
+    if (button('Discard and edit details')) await click('Discard and edit details')
+    expect(localStorage.getItem(FUND_LAUNCH_KEY)).not.toBeNull()
+    // Nor can a change of networks discard it.
+    await act(async () => root.render(<FundDeploy values={{ networkEnvironment: 'production', networks: ['optimism'] } as unknown as CreateValues} />))
+    await settle(); await settle()
+    expect(localStorage.getItem(FUND_LAUNCH_KEY)).not.toBeNull()
+  })
 })

@@ -5,7 +5,7 @@ import { encodeAbiParameters, encodeEventTopics, encodeFunctionData, parseAbi, z
 import { homerunDeployerAbi, INITIAL_INCOME_SUPPLY } from '../src/lib/income-contracts'
 import type { FundTransaction } from '../src/lib/fund-contracts'
 import {
-  clearIncomeLaunchPending, exportIncomeLaunchPending, incomeLaunchHold, incomeLaunchIntent, incomeLaunchRecord,
+  clearIncomeLaunchPending, exportIncomeLaunchPending, incomeLaunchAttempt, incomeLaunchRequest, incomeLaunchIntent, incomeLaunchRecord,
   incomeLaunchSessionKey, readIncomeLaunchPending, verifyIncomeLaunchExecution, type IncomeLaunchPending, type IncomeLaunchStorage,
 } from '../src/lib/income-launch-session'
 import { safeExecutionLog } from './support/safe-logs'
@@ -249,13 +249,16 @@ describe('exact INCOME EOA and Safe execution recovery', () => {
   })
 })
 
-describe('a journal launch as its SDK hold', () => {
-  it('holds the call under the FUND intent with the saved send time and the evidence it has', () => {
-    const unknown = begin(), held = incomeLaunchHold(unknown)
-    expect(held.input).toEqual({ chainId: 1, account: HOLDER, safe: false, namespace: incomeLaunchIntent(9n), call: { to: TARGET, data: unknown.data, value: 100n } })
-    expect(held.evidence).toEqual({ submittedAt: unknown.submittedAt })
-    expect(encodeFunctionData(held.request)).toBe(unknown.data)
-    expect(incomeLaunchHold(begin(memory(), false, HASH)).evidence).toEqual({ submittedAt: expect.any(Number), hash: HASH })
-    expect(incomeLaunchHold(begin(memory(), true, HASH)).evidence).toEqual({ submittedAt: expect.any(Number), safe: { safeTxHash: HASH } })
+describe('a journal launch as its saved attempt', () => {
+  const retirable = async () => true
+  it('recovers the call under the FUND intent with the saved send time and the evidence it has', () => {
+    const unknown = begin(), client = {} as never
+    const attempt = incomeLaunchAttempt(client, 1, 9n, HOLDER, false, { pending: unknown }, undefined, retirable)
+    expect(attempt).toMatchObject({ chainId: 1, account: HOLDER, safe: false, namespaces: [incomeLaunchIntent(9n)], call: { to: TARGET, data: unknown.data, value: 100n }, saved: { started: true, submittedAt: unknown.submittedAt } })
+    expect(encodeFunctionData(incomeLaunchRequest(unknown))).toBe(unknown.data)
+    expect(incomeLaunchAttempt(client, 1, 9n, HOLDER, false, { pending: begin(memory(), false, HASH) }, undefined, retirable).saved).toEqual({ started: true, submittedAt: expect.any(Number), hash: HASH })
+    expect(incomeLaunchAttempt(client, 1, 9n, HOLDER, false, { pending: begin(memory(), true, HASH) }, undefined, retirable).saved).toEqual({ started: true, submittedAt: expect.any(Number), safeTxHash: HASH })
+    // With nothing saved, the FUND's launch hold alone says whether anything was sent.
+    expect(incomeLaunchAttempt(client, 1, 9n, HOLDER, false, { pending: null }, undefined, retirable)).toMatchObject({ namespaces: [incomeLaunchIntent(9n)], saved: { started: false } })
   })
 })

@@ -2,17 +2,17 @@
 
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useId, useRef, useState } from 'react'
-import { formatUnits, isAddress, isAddressEqual, zeroAddress, type Address } from 'viem'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { formatUnits, isAddress, isAddressEqual, zeroAddress, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
+import { useSavedAttempt } from '@bananapus/nana-sdk-core/review/react'
 import { useSafeTx, txPhaseLabel } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { displayChainName, explorerAddressUrl, explorerTxUrl } from '@/lib/chainDisplay'
-import { buildPayerTransaction, checkPayerFactory, decodePayerAttempt, getProjectPayerAddresses, payerAttemptHold, payerAttemptKey, payerIntent, verifyPayerReceipt, type PayerSettings, type ProjectPayerRow } from '@/lib/project-payers'
-import { adoptLegacyWrite } from '@/lib/write-hold'
-import { HeldNotice } from '@/components/ui/HeldWriteExit'
-import { useLegacyAdoption } from '@/hooks/useLegacyAdoption'
-import { HeldIntents } from '@/components/ui/HeldIntents'
+import { buildPayerTransaction, checkPayerFactory, decodePayerAttempt, getProjectPayerAddresses, payerAttemptKey, payerIntent, payerSavedAttempt, payerSettingsOfCall, verifyPayerReceipt, type PayerAttempt, type PayerSettings, type ProjectPayerRow } from '@/lib/project-payers'
+import { attempts } from '@/lib/write-hold'
+import { HeldNotice, retiringExit } from '@/components/ui/HeldWriteExit'
+import { SavedAttemptNotice } from '@/components/ui/SavedAttemptNotice'
 
 type Props = { chainId: JBChainId; projectId: bigint; tokenLabel?: string }
 function message(error: unknown) { return error instanceof Error ? error.message : 'The payer address could not be verified.' }
@@ -37,7 +37,6 @@ function ProjectPayerAddressContext({ chainId, projectId, tokenLabel = 'Project 
   const wallet = useWallet()
   const tx = useSafeTx(chainId)
   const prefix = useId()
-  const [storageError, setStorageError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [preparing, setPreparing] = useState(false)
   const [beneficiary, setBeneficiary] = useState('')
@@ -48,37 +47,67 @@ function ProjectPayerAddressContext({ chainId, projectId, tokenLabel = 'Project 
   const [copied, setCopied] = useState<string | null>(null)
   /** The deployment this screen follows: what its receipt is verified against. */
   const following = useRef<{ settings: PayerSettings; account: Address; safe: boolean } | null>(null)
-  const adoption = useLegacyAdoption()
-  const busy = preparing || tx.busy || tx.phase === 'review' || !adoption.ready
+  /** A deployment its hold settled while the page was away, authenticated by its saved-attempt recovery. */
+  const [recovered, setRecovered] = useState<string | null>(null)
   const rows = useQuery({ queryKey: ['project-payers', chainId, String(projectId)], queryFn: ({ signal }) => getProjectPayerAddresses(chainId, projectId, { signal }), staleTime: 30_000, refetchInterval: 30_000, retry: 1 })
   const factory = useQuery({ queryKey: ['project-payer-factory', chainId, String(projectId)], enabled: !!client, queryFn: () => checkPayerFactory(client!, chainId, projectId), staleTime: 30_000, retry: 1 })
   const track = tx.track
 
-  // An attempt the payer journal saved before SDK holds is adopted into its hold, then the journal goes.
-  const adopt = adoption.run
-  useEffect(() => {
-    if (!client) return
-    let cancelled = false
-    void adopt(async () => {
-      const key = payerAttemptKey(chainId, projectId)
+  // The payer journal from before SDK holds: an attempt it saved is only evidence for the recovery below.
+  const key = payerAttemptKey(chainId, projectId)
+  const [journalVersion, setJournalVersion] = useState(0)
+  const journal = useMemo((): { saved: PayerAttempt | null; error?: string } => {
+    void journalVersion
+    try {
       const raw = localStorage.getItem(key)
-      if (!raw) return
-      const saved = decodePayerAttempt(raw, chainId, projectId)
-      if (saved.phase === 'signing' || saved.phase === 'submitted') {
-        const { input, evidence } = payerAttemptHold(saved)
-        // The journal stays until its attempt is the hold's.
-        const { adopted } = await adoptLegacyWrite(input, evidence, client)
-        if (adopted && localStorage.getItem(key) === raw) localStorage.removeItem(key)
-        if (cancelled) return
-        following.current = { settings: saved.settings, account: saved.account, safe: saved.safe }
-        await track({ ...buildPayerTransaction(saved.settings), label: `Create ${tokenLabel} payer address` }, { reviewedAccount: saved.account, recoveryNamespace: input.namespace, safe: saved.safe })
-      } else if (localStorage.getItem(key) === raw) localStorage.removeItem(key)
-    }).catch(reason => { if (!cancelled) setStorageError(message(reason)) })
-    return () => { cancelled = true }
-  }, [adopt, chainId, client, projectId, tokenLabel, track])
+      const saved = raw ? decodePayerAttempt(raw, chainId, projectId) : null
+      return { saved: saved?.phase === 'signing' || saved?.phase === 'submitted' ? saved : null }
+    } catch (reason) { return { saved: null, error: message(reason) } }
+  }, [chainId, key, projectId, journalVersion])
+  const storageError = journal.error ?? null
+  const dropJournal = () => { localStorage.removeItem(key); setJournalVersion(value => value + 1) }
+  // A finished journal attempt is only history.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(key)
+      if (raw && !journal.saved && !journal.error) localStorage.removeItem(key)
+    } catch { /* Read again on the next load. */ }
+  }, [journal, key])
 
-  // A deployment the hold settled is verified against its settings before its payer is shown.
+  // The project's payer deployment recovers through the SDK before anything is sent: a held one shows
+  // with its exit, one that settled while away is authenticated and shown, one that can't be shown asks.
+  const account = journal.saved?.account ?? wallet.address
+  const attempt = useMemo(() => client && account && !journal.error
+    ? payerSavedAttempt(client as PublicClient, chainId, projectId, account, tx.isSafe, journal.saved) : null,
+  [account, chainId, client, journal, projectId, tx.isSafe])
+  const saved = useSavedAttempt({ recovery: attempts, attempt, client, checkNext: 'Review payer creation' })
+  const { outcome, retire } = saved
+  useEffect(() => {
+    if (!outcome || !attempt) return
+    if (outcome.status === 'held') {
+      const call = outcome.state.record.call
+      const settings = journal.saved?.settings ?? payerSettingsOfCall(chainId, projectId, call.data)
+      following.current = settings ? { settings, account: outcome.state.record.account, safe: outcome.state.record.safe } : null
+      // The hold has the journal's attempt now: the journal goes.
+      if (journal.saved) dropJournal()
+      track({ chainId, call: { to: call.to, data: call.data, value: BigInt(call.value) } }, { reviewedAccount: outcome.state.record.account, recoveryNamespace: payerIntent(projectId), safe: outcome.state.record.safe, reservation: outcome.state.record.id })
+    } else if (outcome.status === 'done' && outcome.result === 'success' && outcome.authenticated) {
+      // Proven and shown here: followed, and the journal's record goes. One that can't be shown keeps its "Check again".
+      setRecovered(`Payer deployment confirmed: ${outcome.value.payer}.`)
+      void rows.refetch()
+      if (journal.saved) dropJournal()
+      else void retire({ by: 'settled', ...(outcome.hash ? { hash: outcome.hash } : {}) })
+    } else if (outcome.status === 'none' && outcome.retired && journal.saved) dropJournal()
+  // Each outcome is handled once; the journal and hold are read as they are now.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [outcome])
+  // Nothing to recover without a wallet; with one, every send waits for its recovery's outcome.
+  const ready = !attempt || !!outcome && (outcome.status === 'none' || (outcome.status === 'done' && (outcome.result === 'failed' || !!recovered)))
+  const busy = preparing || tx.busy || tx.phase === 'review' || !ready
+
+  // A deployment the hold settled is verified against its settings before its payer is shown, and the attempt is followed.
   const receipt = tx.phase === 'success' ? tx.receipt : null
+  useEffect(() => { if (receipt) void retire({ by: 'settled', hash: receipt.transactionHash }) }, [receipt, retire])
   const deployed = useQuery({
     queryKey: ['project-payer-deployed', chainId, String(projectId), receipt?.transactionHash],
     enabled: !!client && !!receipt && !!following.current,
@@ -109,7 +138,6 @@ function ProjectPayerAddressContext({ chainId, projectId, tokenLabel = 'Project 
         recoveryNamespace: payerIntent(projectId),
         reviewNotice: `Create a dedicated payer address for project #${projectId} on ${displayChainName(chainId)}. ${addToBalance ? 'ETH received adds to the project balance without minting tokens.' : `ETH received pays the project; ${tokenLabel} goes to ${isAddressEqual(selectedBeneficiary, zeroAddress) ? 'the original payer' : selectedBeneficiary}. Direct ETH transfers accept the current minting rate with no minimum token amount.`} ${editable ? `Admin ${selectedOwner} may change the routing and beneficiary later.` : 'Routing is immutable because the admin is the zero address.'} Sending other tokens directly does not forward them. This creates a payer contract and spends only gas; it does not deploy a FUND or INCOME project.`,
         reverify: async () => { await checkPayerFactory(client, chainId, projectId) },
-        beforeWrite: adoption.wait,
       })
     } catch (reason) { setError(message(reason)) } finally { setPreparing(false) }
   }
@@ -137,11 +165,12 @@ function ProjectPayerAddressContext({ chainId, projectId, tokenLabel = 'Project 
         </div>
       </article>)}</div>}
     </div>
+    <SavedAttemptNotice attempt={saved} title={`Create ${tokenLabel} payer address`} />
+    {recovered && tx.phase === 'idle' && <p role="status" className="border-t border-[var(--line)] pt-6 text-sm">{recovered}</p>}
     {/* A deployment held for this project shows with its exit, whatever is entered or the factory allows now. */}
-    {tx.phase === 'idle' && adoption.ready && <HeldIntents chainId={chainId} account={wallet.address} intents={[{ namespace: payerIntent(projectId), label: `Create ${tokenLabel} payer address` }]} />}
     {(tx.phase === 'submitted' || tx.phase === 'pending' || tx.phase === 'success' || storageError) && <div className="border-t border-[var(--line)] pt-6 text-sm" role="status">
       {storageError ? <p role="alert">{storageError}</p>
-        : tx.phase === 'submitted' ? <HeldNotice tx={tx} />
+        : tx.phase === 'submitted' ? <HeldNotice tx={{ notice: tx.notice, held: retiringExit(tx.held, retire) }} />
         : tx.phase === 'pending' ? <p>Submitted. Verifying the payer deployment onchain…</p>
         : deployed.data?.status === 'confirmed' ? <><p>Payer deployment confirmed.</p><p className="mt-2 text-xs text-[var(--muted)]">This confirms the original deployment. Use the list above for current routing; an admin may have changed it. New addresses appear once indexed.</p></>
         : deployed.data?.status === 'reverted' ? <p>The payer deployment reverted. No payer was created by this call. Review the settings before trying again.</p>
@@ -166,3 +195,4 @@ function ProjectPayerAddressContext({ chainId, projectId, tokenLabel = 'Project 
     {(error || storageError || tx.error) && <p className="text-sm text-red-800" role="alert">{error || storageError || tx.error}</p>}
   </section>
 }
+
