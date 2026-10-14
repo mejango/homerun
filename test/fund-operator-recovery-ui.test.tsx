@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { jbControllerAbi } from '@bananapus/nana-sdk-core'
+import { writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import { encodeAbiParameters, encodeEventTopics, encodeFunctionData, parseAbi, zeroAddress, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import { buildFundRulesetChange, initialFundRuleset, type FundRulesetSnapshot } from '../src/lib/fund-contracts'
@@ -12,13 +13,13 @@ import { placeReceipt } from './support/recovery-receipt'
 
 const runtime = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111' as Address,
-  receipt: vi.fn(), transaction: vi.fn(), block: vi.fn(), wait: vi.fn(), send: vi.fn(),
+  receipt: vi.fn(), transaction: vi.fn(), block: vi.fn(), wait: vi.fn(), send: vi.fn(), track: vi.fn(), adopt: vi.fn(),
   states: [] as unknown[],
   tx: {} as Record<string, unknown>,
 }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.account }) }))
-vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({ phase: 'idle', busy: false, send: runtime.send, ...runtime.tx }), txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle }))
+vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({ phase: 'idle', busy: false, send: runtime.send, track: runtime.track, ...runtime.tx }), txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle }))
 vi.mock('@/lib/fund-state', async importOriginal => ({
   ...await importOriginal<typeof import('../src/lib/fund-state')>(),
   readFundProjectState: async () => runtime.states[0],
@@ -26,6 +27,7 @@ vi.mock('@/lib/fund-state', async importOriginal => ({
 }))
 vi.mock('@/components/FundAssetWithdrawals', () => ({ FundAssetWithdrawals: () => null }))
 vi.mock('@/lib/safe-connector', () => ({ waitForSafeExecutionHash: runtime.wait }))
+vi.mock('@/lib/write-hold', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/write-hold')>(), adoptLegacyWrite: runtime.adopt }))
 vi.mock('@wagmi/core', async importOriginal => ({
   ...await importOriginal<typeof import('@wagmi/core')>(),
   getAccount: () => ({ address: runtime.account }),
@@ -81,38 +83,26 @@ describe('linked ruleset recovery of a Safe execution', () => {
   const button = (label: string) => [...host.querySelectorAll('button')].find(node => node.textContent === label)
   const key = `homerun:fund-ruleset-recovery:${ROOT.chainId}:${ROOT.projectId}:${ACCOUNT.toLowerCase()}`
 
-  it('withdraws the unknown-submission marker when a linked write stops before the wallet', async () => {
+  it('sends each chain under its project and chosen action, saving nothing for the write itself', async () => {
     const saved = plan()
     localStorage.setItem(key, serializeRulesetRecovery(saved, new Map(), ROOT))
-    // Fresh reads that still match the saved plan on both chains.
     runtime.states = saved.states.map(peer => ({
       ...state(), chainId: peer.chainId, projectId: peer.projectId, blockNumber: 101n, blockTimestamp: 1_000n,
       rulesetSnapshot: peer.rulesetSnapshot, linkedChainIds: [8453, 10],
     }))
-    let marked = false
-    runtime.send.mockImplementation(async (_request: unknown, options: { durableRecovery: { reserve: () => void; releaseUnsubmitted: () => void } }) => {
-      await options.durableRecovery.reserve()
-      marked = deserializeRulesetRecovery(localStorage.getItem(key)!, ROOT, ACCOUNT).submissions.get(8453)?.kind === 'submission-unknown'
-      // A Safe connection that changes at the write: nothing reaches the wallet.
-      await options.durableRecovery.releaseUnsubmitted()
-      return null
-    })
+    runtime.send.mockResolvedValue(null)
     await act(async () => root.render(<FundOperatorActions state={state()} client={{} as PublicClient} contextIndex={0} />))
     await act(async () => button('Verify and resume queued plan')!.click())
     await act(async () => button('Review transaction 1 of 2')!.click())
     expect(runtime.send).toHaveBeenCalledOnce()
-    expect(runtime.send.mock.calls[0][1].reviewedAccount).toBe(ACCOUNT)
-    expect(marked).toBe(true)
-    expect(deserializeRulesetRecovery(localStorage.getItem(key)!, ROOT, ACCOUNT).submissions.has(8453)).toBe(false)
-    expect(host.textContent).not.toContain('Submission started; hash not yet recorded.')
+    expect(runtime.send.mock.calls[0][1]).toMatchObject({ reviewedAccount: ACCOUNT, recoveryNamespace: writeIntentKey('fund-ruleset', { project: 7n, action: 'pause' }) })
+    expect(localStorage.getItem(key)).toBe(serializeRulesetRecovery(saved, new Map(), ROOT))
   })
 
-  it.each([true, false])('only clears a saved Safe failure when finalized=%s', async finalized => {
+  it('leaves a saved failed Safe execution uncounted and adopts it into its chain’s hold', async () => {
     const saved = plan()
-    localStorage.setItem(
-      `homerun:fund-ruleset-recovery:${ROOT.chainId}:${ROOT.projectId}:${ACCOUNT.toLowerCase()}`,
-      serializeRulesetRecovery(saved, new Map([[8453, { kind: 'safe-proposal' as const, hash: PROPOSAL }]]), ROOT),
-    )
+    localStorage.setItem(key, serializeRulesetRecovery(saved, new Map([[8453, { kind: 'safe-proposal' as const, hash: PROPOSAL }]]), ROOT))
+    freshStates(saved)
     const request = saved.requests[0]
     runtime.wait.mockResolvedValue(EXECUTION)
     // The Safe ran the exact reviewed call, which failed: the receipt succeeds, with the Safe's ExecutionFailure.
@@ -122,34 +112,14 @@ describe('linked ruleset recovery of a Safe execution', () => {
     placeReceipt(transaction, receipt)
     runtime.receipt.mockResolvedValue(receipt)
     runtime.transaction.mockResolvedValue(transaction)
-    runtime.block.mockImplementation(async ({ blockNumber }: { blockNumber?: bigint }) => ({ hash: BLOCK_HASH, number: blockNumber ?? (finalized ? 120n : 119n), timestamp: 1_000n }))
     await act(async () => root.render(<FundOperatorActions state={state()} client={{} as PublicClient} contextIndex={0} />))
     await act(async () => button('Verify and resume queued plan')!.click())
-    if (!finalized) {
-      expect(button('Clear the confirmed reverted attempt')).toBeUndefined()
-      expect(deserializeRulesetRecovery(localStorage.getItem(key)!, ROOT, ACCOUNT).submissions.get(8453)).toEqual({ kind: 'safe-proposal', hash: PROPOSAL })
-      return
-    }
-    expect(host.textContent).toContain('The Safe executed this transaction, but its call failed. It has not changed the rules.')
-    const clear = button('Clear the confirmed reverted attempt')
-    expect(clear).toBeDefined()
-    await act(async () => clear!.click())
-    expect(host.textContent).toContain('The failed execution was verified and removed from this plan.')
+    const namespace = writeIntentKey('fund-ruleset', { project: 7n, action: 'pause' })
+    expect(runtime.adopt).toHaveBeenCalledWith(expect.objectContaining({ chainId: 8453, account: ACCOUNT, safe: true, namespace }), { safe: { safeTxHash: PROPOSAL } }, expect.anything())
+    expect(runtime.track).toHaveBeenCalledWith(expect.objectContaining({ chainId: 8453 }), expect.objectContaining({ recoveryNamespace: namespace, safe: true }))
+    expect(deserializeRulesetRecovery(localStorage.getItem(key)!, ROOT, ACCOUNT).submissions.size).toBe(0)
   })
 
-  it('blocks a stale tab before review when another tab saved a linked submission', async () => {
-    const saved = plan()
-    localStorage.setItem(key, serializeRulesetRecovery(saved, new Map(), ROOT))
-    runtime.states = saved.states.map(peer => ({ ...state(), chainId: peer.chainId, projectId: peer.projectId, blockNumber: 101n, blockTimestamp: 1_000n, rulesetSnapshot: peer.rulesetSnapshot, linkedChainIds: [8453, 10] }))
-    await act(async () => root.render(<FundOperatorActions state={state()} client={{} as PublicClient} contextIndex={0} />))
-    await act(async () => button('Verify and resume queued plan')!.click())
-    const newer = serializeRulesetRecovery(saved, new Map([[8453, { kind: 'submission-unknown' as const }]]), ROOT)
-    localStorage.setItem(key, newer)
-    await act(async () => button('Review transaction 1 of 2')!.click())
-    expect(runtime.send).not.toHaveBeenCalled()
-    expect(localStorage.getItem(key)).toBe(newer)
-    expect(host.textContent).toContain('changed in another tab')
-  })
   function freshStates(saved = plan()) {
     runtime.states = saved.states.map(peer => ({ ...state(), chainId: peer.chainId, projectId: peer.projectId, blockNumber: 121n, blockTimestamp: 1_000n, rulesetSnapshot: peer.rulesetSnapshot, linkedChainIds: [8453, 10] }))
   }
@@ -174,9 +144,7 @@ describe('linked ruleset recovery of a Safe execution', () => {
     const saved = plan()
     localStorage.setItem(key, serializeRulesetRecovery(saved, new Map(), ROOT)); freshStates(saved)
     runtime.tx = { isSafe: safe }
-    runtime.send.mockImplementation(async (_request: unknown, options: { durableRecovery: { reserve: () => void; submitted: (hash: Hex, safe: boolean) => void } }) => {
-      options.durableRecovery.reserve(); options.durableRecovery.submitted(PROPOSAL, safe); return PROPOSAL
-    })
+    runtime.send.mockResolvedValue(PROPOSAL)
     await act(async () => root.render(<FundOperatorActions state={state()} client={{} as PublicClient} contextIndex={0} />))
     await act(async () => button('Verify and resume queued plan')!.click())
     await act(async () => button('Review transaction 1 of 2')!.click())
@@ -187,18 +155,18 @@ describe('linked ruleset recovery of a Safe execution', () => {
     const saved = await liveSubmission(safe)
     const { receipt } = successReceipt(saved, safe)
     runtime.block.mockResolvedValue({ hash: `0x${'ff'.repeat(32)}`, number: 120n, timestamp: 1_000n })
-    runtime.tx = { phase: 'success', receipt, isSafe: safe }
+    runtime.tx = { phase: 'success', receipt, isSafe: safe, submissionHash: PROPOSAL }
     await act(async () => root.render(<FundOperatorActions state={state()} client={{} as PublicClient} contextIndex={0} />))
     expect(button('Review transaction 2 of 2')).toBeUndefined()
     expect(button('Done')).toBeUndefined()
     expect(host.textContent).not.toContain('Execution confirmed.')
-    expect(deserializeRulesetRecovery(localStorage.getItem(key)!, ROOT, ACCOUNT).submissions.get(8453)).toMatchObject({ kind: safe ? 'safe-proposal' : 'transaction', hash: PROPOSAL })
+    expect(deserializeRulesetRecovery(localStorage.getItem(key)!, ROOT, ACCOUNT).submissions.has(8453)).toBe(false)
   })
 
   it('advances a canonically proven live Safe execution while retaining its proposal identity', async () => {
     const saved = await liveSubmission()
     const { receipt } = successReceipt(saved)
-    runtime.tx = { phase: 'success', receipt, isSafe: true }
+    runtime.tx = { phase: 'success', receipt, isSafe: true, submissionHash: PROPOSAL }
     await act(async () => root.render(<FundOperatorActions state={state()} client={{} as PublicClient} contextIndex={0} />))
     expect(button('Review transaction 2 of 2'), host.textContent ?? '').toBeDefined()
     expect(deserializeRulesetRecovery(localStorage.getItem(key)!, ROOT, ACCOUNT).submissions.get(8453)).toMatchObject({ kind: 'safe-proposal', hash: PROPOSAL })
@@ -209,7 +177,7 @@ describe('linked ruleset recovery of a Safe execution', () => {
     const { receipt, transaction } = successReceipt(saved)
     let resolve!: (value: typeof transaction) => void
     runtime.transaction.mockImplementationOnce(() => new Promise(done => { resolve = done }))
-    runtime.tx = { phase: 'success', receipt, isSafe: true }
+    runtime.tx = { phase: 'success', receipt, isSafe: true, submissionHash: PROPOSAL }
     await act(async () => root.render(<FundOperatorActions state={state()} client={{} as PublicClient} contextIndex={0} />))
     expect(resolve, host.textContent ?? '').toBeTypeOf('function')
     const newer = serializeRulesetRecovery(saved, new Map([[8453, { kind: 'submission-unknown', attemptId: crypto.randomUUID() }]]), ROOT)
@@ -218,22 +186,6 @@ describe('linked ruleset recovery of a Safe execution', () => {
     expect(button('Review transaction 2 of 2')).toBeUndefined()
     expect(localStorage.getItem(key)).toBe(newer)
     expect(host.textContent).toContain('changed in another tab')
-  })
-
-  it('rolls back only its unsubmitted reservation after a transient readback failure', async () => {
-    const saved = plan(); const previous = serializeRulesetRecovery(saved, new Map(), ROOT)
-    localStorage.setItem(key, previous); freshStates(saved)
-    runtime.send.mockImplementation(async (_request: unknown, options: { durableRecovery: { reserve: () => void } }) => { options.durableRecovery.reserve() })
-    await act(async () => root.render(<FundOperatorActions state={state()} client={{} as PublicClient} contextIndex={0} />))
-    await act(async () => button('Verify and resume queued plan')!.click())
-    const get = Storage.prototype.getItem; const set = Storage.prototype.setItem
-    let failRead = false
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, storageKey, value) { set.call(this, storageKey, value); if (storageKey === key && value !== previous) failRead = true })
-    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, storageKey) { if (storageKey === key && failRead) { failRead = false; throw new Error('Readback unavailable') }; return get.call(this, storageKey) })
-    await act(async () => button('Review transaction 1 of 2')!.click())
-    expect(localStorage.getItem(key)).toBe(previous)
-    expect(host.textContent).toContain('Readback unavailable')
-    expect(host.textContent).not.toContain('Submission started; hash not yet recorded.')
   })
 
   it.each([true, false])('only closes a fully verified plan under its unchanged owner lock: replaced=%s', async replaced => {
@@ -257,27 +209,6 @@ describe('linked ruleset recovery of a Safe execution', () => {
     await act(async () => button('Done')!.click())
     expect(locks.mock.calls.length).toBe(callsBeforeClose + 1)
     expect(localStorage.getItem(key)).toBe(replaced ? newer : null)
-  })
-
-  it.each([true, false])('can authenticate an unknown Safe execution only as positive recovery: success=%s', async success => {
-    const saved = plan(); const attemptId = crypto.randomUUID()
-    const previous = serializeRulesetRecovery(saved, new Map([[8453, { kind: 'submission-unknown', attemptId }]]), ROOT)
-    localStorage.setItem(key, previous); freshStates(saved)
-    const { receipt, transaction } = successReceipt(saved)
-    if (!success) {
-      receipt.logs = [safeExecutionLog(ACCOUNT, PROPOSAL, { failed: true })] as TransactionReceipt['logs']
-      placeReceipt(transaction, receipt)
-    }
-    await act(async () => root.render(<FundOperatorActions state={state()} client={{} as PublicClient} contextIndex={0} />))
-    const input = [...host.querySelectorAll('label')].find(label => label.textContent?.startsWith('Onchain transaction hash'))!.querySelector('input')!
-    await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, EXECUTION); input.dispatchEvent(new Event('input', { bubbles: true })) })
-    await act(async () => button('Verify execution hash')!.click())
-    if (success) expect(deserializeRulesetRecovery(localStorage.getItem(key)!, ROOT, ACCOUNT).submissions.get(8453), host.textContent ?? '').toEqual({ kind: 'transaction', hash: EXECUTION, attemptId })
-    else {
-      expect(localStorage.getItem(key)).toBe(previous)
-      expect(button('Clear the confirmed reverted attempt')).toBeUndefined()
-      expect(host.textContent).toContain('historical failure cannot release')
-    }
   })
 
   it('reverifies a legacy saved Safe execution hash without changing its saved identity', async () => {

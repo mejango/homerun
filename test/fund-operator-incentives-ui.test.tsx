@@ -159,7 +159,6 @@ describe('FUND success allocation belongs to the owner', () => {
       const context = { token: USDC, terminal: TERMINAL, decimals: 6, currency: CURRENCY, symbol: 'USDC', balance: 0n, surplus: 0n, surplusAllowances: [] }
       Object.assign(next, { accountingContexts: [context] })
       Object.assign(next.rulesetSnapshot, { accountingContexts: [context] })
-      const configuration = next.rulesetSnapshot.configuration!
       return next
     }
     runtime.state = withContext()
