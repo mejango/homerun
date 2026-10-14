@@ -108,12 +108,6 @@ export type TxSendOptions = {
    * attempt with another amount then holds a new one (a project's updates, say).
    */
   recoveryNamespace?: string
-  /** An existing domain journal owns this write, including its returned hash. */
-  durableRecovery?: {
-    reserve: () => unknown | Promise<unknown>
-    releaseUnsubmitted: () => unknown | Promise<unknown>
-    submitted: (hash: Hex, safe: boolean) => unknown | Promise<unknown>
-  }
   /**
    * The exact request was already rendered in a parent confirmation surface.
    * This skips only the second app-owned review; account checks, revalidation,
@@ -745,8 +739,7 @@ export function useSafeTx(chainId: number) {
       const account = options.reviewedAccount
       const connectorUid = getAccount(wagmiConfig).connector?.uid
       // Where the browser refuses to store a hold, the tab's memory holds it, and the review says so.
-      const reviewNotice = [options.reviewNotice, options.durableRecovery ? null : holds.reviewLine()].filter(Boolean).join('\n\n') || undefined
-      let walletUncertain = false
+      const reviewNotice = [options.reviewNotice, holds.reviewLine()].filter(Boolean).join('\n\n') || undefined
       let current: WriteHoldHandle | undefined
       try {
         /** The exact call simulated and sent, which a Safe execution must run. */
@@ -760,18 +753,17 @@ export function useSafeTx(chainId: number) {
             throw new Error('The reviewed transaction changed. Review it again.')
           }
         }
-        // A domain journal owns its write's returned hash; every other write is held by the SDK.
-        current = options.durableRecovery ? undefined : holds.open({
+        // Every write is held by the SDK.
+        const hold = holds.open({
           ...input, ...(options.recoveryNamespace ? { namespace: options.recoveryNamespace } : {}),
         })
-        if (current) {
-          holdAt.current = at
-          setHold(current)
-          // The call's last write settled where this flow didn't see it (another tab, or before a
-          // reload): a settled write is finished, so its result is only a notice, and this send goes out.
-          const before = current.peek()
-          if (before.status === 'clear' && before.settled && 'hash' in before.settled) setSettledNotice(settledLine(before.settled))
-        }
+        current = hold
+        holdAt.current = at
+        setHold(hold)
+        // The call's last write settled where this flow didn't see it (another tab, or before a
+        // reload): a settled write is finished, so its result is only a notice, and this send goes out.
+        const before = hold.peek()
+        if (before.status === 'clear' && before.settled && 'hash' in before.settled) setSettledNotice(settledLine(before.settled))
         const execute = async (gate?: WriteHoldGate) => {
           assertCurrent()
           if (viaSafe) {
@@ -799,7 +791,6 @@ export function useSafeTx(chainId: number) {
               tracked.current = existing.proposalHash
               await gate?.beforeSend(existing.call)
               gate?.afterSubmit(existing.proposalHash)
-              await options.durableRecovery?.submitted(existing.proposalHash, true)
               assertCurrent()
               inFlightRef.current = false
               setShownKey(key)
@@ -850,26 +841,20 @@ export function useSafeTx(chainId: number) {
               await options.beforeWrite?.()
               assertCurrent()
               assertReviewedRequest()
-              await options.durableRecovery?.reserve()
               await gate?.beforeSend()
             },
             onBeforeWriteAborted: async () => {
               gate?.onRejected()
-              await options.durableRecovery?.releaseUnsubmitted()
               await options.onBeforeWriteAborted?.()
             },
             onWriteRejected: async () => {
               gate?.onRejected()
-              await options.durableRecovery?.releaseUnsubmitted()
               await options.onWriteRejected?.()
             },
-            onWriteUncertain: () => { walletUncertain = true },
             onWriteSubmitted: async (submittedHash: Hex) => {
-              walletUncertain = true
               if (!isHash(submittedHash)) throw new Error(SAFE_REPLY_UNREADABLE)
               tracked.current = submittedHash
               gate?.afterSubmit(submittedHash)
-              await options.durableRecovery?.submitted(submittedHash, viaSafe)
             },
             // Simulation is the safety gate: the exact reviewed call, args, and
             // value must succeed before a signature is requested. Only the
@@ -925,7 +910,7 @@ export function useSafeTx(chainId: number) {
           return txHash
         }
         sending.current = true
-        return current ? await current.send(publicClient, execute) : await execute()
+        return await hold.send(publicClient, execute)
       } catch (e) {
         sending.current = false
         const submitted = e instanceof SubmittedContractWriteError && typeof e.hash === 'string' && isHash(e.hash) ? e : undefined
@@ -970,18 +955,6 @@ export function useSafeTx(chainId: number) {
             apply(now, publicClient)
             return now.record.hash ?? null
           }
-        } else if (submitted) {
-          const hash = submitted.hash as Hex
-          tracked.current = hash
-          if (viaSafe) setShownKey(recordProposal({ chainId: request.chainId, safe: account,
-            call: callOf(request), proposalHash: hash }, publicClient, true))
-          else setHash(hash)
-          setPhase('pending')
-          return hash
-        } else if (walletUncertain) {
-          setRecoveryNotice(writeHeldMessage())
-          setPhase('submitted')
-          return null
         }
         if (e instanceof TransactionReviewCancelledError) {
           setPhase('idle')

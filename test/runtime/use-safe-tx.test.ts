@@ -1216,46 +1216,6 @@ describe('useSafeTx', () => {
     expect(recoveryRecords()).toHaveLength(0)
   })
 
-  it('awaits a typed domain hash handoff and does not open a second generic journal', async () => {
-    const events: string[] = []
-    mocks.writeContract.mockImplementationOnce(async () => {
-      events.push('write')
-      expect(recoveryRecords()).toHaveLength(0)
-      return HASH
-    })
-    const hook = await renderHook()
-    await act(async () => {
-      await hook.ref.current!.send(request, { ...reviewedByAlice, durableRecovery: {
-        reserve: () => { events.push('reserve') },
-        releaseUnsubmitted: () => { events.push('released') },
-        submitted: async (hash, safe) => {
-          expect(hash).toBe(HASH)
-          expect(safe).toBe(false)
-          await Promise.resolve()
-          events.push('stored')
-        },
-      } })
-      events.push('returned')
-    })
-    expect(events).toEqual(['reserve', 'write', 'stored', 'returned'])
-  })
-
-  it('returns a known hash after a domain storage failure without invoking rejection cleanup', async () => {
-    const releaseUnsubmitted = vi.fn()
-    const hook = await renderHook()
-    let returned: Hex | null = null
-    await act(async () => {
-      returned = await hook.ref.current!.send(request, { ...reviewedByAlice, durableRecovery: {
-        reserve: vi.fn(), releaseUnsubmitted,
-        submitted: () => { throw { code: 4001, message: 'Storage callback failed' } },
-      } })
-    })
-    expect(returned).toBe(HASH)
-    expect(hook.ref.current).toMatchObject({ phase: 'pending', submissionHash: HASH })
-    expect(releaseUnsubmitted).not.toHaveBeenCalled()
-    expect(mocks.writeContract).toHaveBeenCalledOnce()
-  })
-
   it('persists a wallet reply received after reset without reopening the old review', async () => {
     let reply!: (hash: Hex) => void
     mocks.writeContract.mockImplementationOnce(() => new Promise<Hex>(resolve => { reply = resolve }))

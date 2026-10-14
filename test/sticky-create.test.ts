@@ -954,7 +954,6 @@ describe("creation recovery and duplicate protection", () => {
       expect(engine.send).toHaveBeenCalledOnce();
       const options = engine.send.mock.calls[0][1];
       expect(options.recoveryNamespace).toBe(stickyCreateIntent(7n));
-      expect(options.durableRecovery).toBeUndefined();
       // Sent as the FUND owner the creation was prepared for.
       expect(options.reviewedAccount).toBe(OWNER);
       expect(readStickyCreationPending(localStorage, 1, 7n)).toBeNull();

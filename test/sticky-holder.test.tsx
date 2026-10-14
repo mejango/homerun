@@ -205,7 +205,6 @@ describe("Sticky holder recovery and independent loading", () => {
     expect(mocks.send).toHaveBeenCalledOnce();
     // Held under the claim's own intent while unresolved, not its amount.
     expect(mocks.send.mock.calls[0][1].recoveryNamespace).toBe(stickyIntent(9n, "claimTokensFor"));
-    expect(mocks.send.mock.calls[0][1].durableRecovery).toBeUndefined();
     expect(mocks.send.mock.calls[0][0]).toMatchObject({
       functionName: "claimTokensFor",
       args: [HOLDER, 7n, 2n * 10n ** 18n, HOLDER],

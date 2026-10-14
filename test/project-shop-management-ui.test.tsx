@@ -142,7 +142,6 @@ beforeEach(() => {
   runtime.send.mockReset().mockImplementation(async (request: TxRequest, options: TxSendOptions) => {
     await options.reverify?.(request)
     await options.beforeWrite?.()
-    expect(options.durableRecovery).toBeUndefined()
     expect(options.recoveryNamespace).toMatch(/^intent:shop-step:/)
     if (runtime.receipt !== 'pending') { runtime.phase = 'success'; runtime.txReceipt = { transactionHash: EXECUTION } }
     else runtime.phase = 'pending'
