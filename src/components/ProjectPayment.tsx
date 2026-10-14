@@ -17,7 +17,7 @@ import { useSafeTx, type TxRequest } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { parseAmount } from '@/lib/fund-contracts'
-import { approvalIntentKey, buildErc20ApproveRequest, chosenOrAuto } from '@/lib/transaction-builders'
+import { approvalIntentKey, buildErc20ApproveRequest, canonicalDecimal, chosenOrAuto } from '@/lib/transaction-builders'
 import { prepareProjectPayQuote, readProjectPayTokenOptions } from '@/lib/project-pay-quote'
 import { swapDeadline } from '@/lib/safe-connector'
 // `intent` names this flow's own reviewed intent here.
@@ -190,7 +190,10 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
         return true
       }
       // One payment intent whichever route the quote picks; its approvals are that intent's steps.
-      const payment = writeIntentKey('pay', { project: projectId, token: chosenOrAuto('token', keyed.address(context.token), currencyChosen || !!selectedToken), amount: count })
+      // A chosen currency's decimals are fixed, so its units key the amount. A default currency can
+      // switch (ETH to USDC, say), and with it the units of the same typed amount: it keys as typed.
+      const chosen = currencyChosen || !!selectedToken
+      const payment = writeIntentKey('pay', { project: projectId, token: chosenOrAuto('token', keyed.address(context.token), chosen), amount: chosen ? count : canonicalDecimal(input) })
       if (!native) {
         const allowance = await client.readContract({ address: context.token, abi: erc20Abi, functionName: 'allowance', args: [address, spender], blockNumber: latestBlock })
         if (allowance < count) {
