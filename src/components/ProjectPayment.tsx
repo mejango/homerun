@@ -17,7 +17,7 @@ import { useSafeTx, type TxRequest } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { parseAmount } from '@/lib/fund-contracts'
-import { buildErc20ApproveRequest } from '@/lib/transaction-builders'
+import { approvalIntentKey, buildErc20ApproveRequest } from '@/lib/transaction-builders'
 import { prepareProjectPayQuote, readProjectPayTokenOptions } from '@/lib/project-pay-quote'
 import { swapDeadline } from '@/lib/safe-connector'
 // `intent` names this flow's own reviewed intent here.
@@ -187,11 +187,14 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
         guard()
         return true
       }
+      // One payment intent whichever route the quote picks; its approvals are that intent's steps.
+      const payment = writeIntentKey('pay', { project: projectId, token: keyed.address(context.token), amount: count })
       if (!native) {
         const allowance = await client.readContract({ address: context.token, abi: erc20Abi, functionName: 'allowance', args: [address, spender], blockNumber: latestBlock })
         if (allowance < count) {
           setStatus(`Review ${context.symbol} access for ${swap ? 'the Uniswap route' : 'the payment terminal'}.`); setStage('approve')
-          if (!await waitForApproval(approval, { ...buildErc20ApproveRequest({ chainId, token: context.token, spender, amount: count }), label: `Approve exactly ${formatUnits(count, context.decimals)} ${context.symbol} for this payment` })) return
+          if (!await waitForApproval(approval, { ...buildErc20ApproveRequest({ chainId, token: context.token, spender, amount: count }), label: `Approve exactly ${formatUnits(count, context.decimals)} ${context.symbol} for this payment` },
+            approvalIntentKey(payment, { token: context.token, spender, step: 'token' }))) return
         }
       }
       let request: TxRequest
@@ -220,8 +223,8 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
             if (onchain) {
               setStatus('Review the swap-router authorization.'); setStage('router')
               if (!await waitForApproval(routerApproval, { ...buildPermit2ApproveTx({ chainId, token: context.token, amount: count, expiration: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60 }), label: 'Authorize the Uniswap swap router for this exact payment amount' },
-                // Its expiration is stamped now: a retry is held by the token and amount the user chose.
-                writeIntentKey('permit2-router-approve', { token: keyed.address(context.token), amount: count }))) return
+                // Its expiration is stamped now: a retry is held by the payment's router step.
+                approvalIntentKey(payment, { token: context.token, spender: deployment.universalRouter, step: 'router' }))) return
             }
           }
         }
@@ -235,7 +238,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       await tx.send({ ...request, label: `Pay ${formatUnits(count, context.decimals)} ${context.symbol} through ${route}; minimum ${formatUnits(latest.minimumTokenCount, 18)} ${tokenLabel}` }, {
         reviewedAccount: address,
         // The route, minimum, deadline and signature are fresh each attempt: a retry is held by the payment the user chose.
-        recoveryNamespace: writeIntentKey('pay', { project: projectId, token: keyed.address(context.token), amount: count }),
+        recoveryNamespace: payment,
         simulationBlockNumber: latestBlock === undefined ? undefined : checked.blockNumber,
         reviewNotice: noTokens ? `You receive no ${tokenLabel} for this payment. This project allocates 100% of new tokens to its reserved recipients.` : [swap ? 'This route buys existing tokens on Uniswap. It does not add the payment to the project treasury or issue reserved tokens.' : null, latest.minimumTokenCount < minimum ? `The quote decreased. Your protected minimum is now ${formatUnits(latest.minimumTokenCount, 18)} ${tokenLabel}.` : null].filter(Boolean).join(' ') || undefined,
         reverify: async () => {

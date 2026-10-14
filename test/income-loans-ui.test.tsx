@@ -55,6 +55,8 @@ import { IncomeLoanTools } from '@/components/IncomeLoanTools'
 import { buildReallocateCollateralTx, MIN_PREPAID_FEE_PERCENT } from '@bananapus/nana-sdk-core/v6'
 import { expectRetryHeldByIntent } from './support/intent-retry'
 import { loanRepaymentIntent } from '@/lib/income-loan-tools'
+import { approvalIntentKey } from '@/lib/transaction-builders'
+import { v6Address } from '@/lib/income-contracts'
 
 const context = { token: USDC, terminal: TERMINAL, decimals: 6, currency: 1, symbol: 'USDC', isPrimary: true, balance: 0n }
 const state = {
@@ -171,7 +173,7 @@ describe('INCOME loans like Juicebox Money', () => {
     runtime.loan = usdcLoan(400_500n)
     await act(async () => button('Confirm & repay').click()); await settle()
     expect(runtime.sends.map(sent => sent.request.functionName)).toEqual(['approve', 'approve'])
-    await expectRetryHeldByIntent(runtime.sends[0], runtime.sends[1], writeIntentKey('loan-repay-approve', { project: state.projectId, loan: 41n, token: intent.address(USDC) }))
+    await expectRetryHeldByIntent(runtime.sends[0], runtime.sends[1], approvalIntentKey(loanRepaymentIntent(state.projectId, 41n), { token: USDC, spender: v6Address('REVLoans', 8453), step: 'repay' }))
   })
 
   async function loanTools(action: 'reallocate' | 'partialRepay', collateral: string) {
@@ -215,7 +217,7 @@ describe('INCOME loans like Juicebox Money', () => {
     runtime.partial = partialWith(201_400n)
     await reviewLoanChange()
     expect(runtime.sends.map(sent => sent.request.functionName)).toEqual(['approve', 'approve'])
-    await expectRetryHeldByIntent(runtime.sends[0], runtime.sends[1], writeIntentKey('loan-repay-approve', { project: state.projectId, loan: 41n, token: intent.address(USDC) }))
+    await expectRetryHeldByIntent(runtime.sends[0], runtime.sends[1], approvalIntentKey(loanRepaymentIntent(state.projectId, 41n), { token: USDC, spender: v6Address('REVLoans', 8453), step: 'repay' }))
   })
 
   it('repays part of a loan under the chosen collateral, and a retry with a ceiling that accrued is held by the first', async () => {

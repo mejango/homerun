@@ -38,7 +38,7 @@ import { ProjectPermissionsEditor } from '@/components/ProjectPermissionsEditor'
 import { ProjectSplitsEditor } from '@/components/ProjectSplitsEditor'
 import { fetchFundProjectMetadata, type FundProjectMetadata } from '@/lib/fund-project-metadata'
 import { parseAmount } from '@/lib/fund-contracts'
-import { buildErc20ApproveRequest } from '@/lib/transaction-builders'
+import { approvalIntentKey, buildErc20ApproveRequest } from '@/lib/transaction-builders'
 import { readFundProjectState } from '@/lib/fund-state'
 import { readIncomeFundBinding } from '@/lib/income-fund-binding'
 import {
@@ -493,8 +493,8 @@ function IncomeRepayDialog({ state, client, loanId, tx, approval, onClose }: { s
         let approved = await client.readContract({ address: current.sourceContext.token, abi: erc20Abi, functionName: 'allowance', args: [address, loansContract], blockNumber: current.blockNumber })
         if (approved < current.loan.amount + current.accruedFee) {
           setStage('approve')
-          // Its amount, the repay ceiling, accrues with time: a retry is held by the loan.
-          const hash = await approval.send({ ...buildErc20ApproveRequest({ chainId: state.chainId, token: current.sourceContext.token, spender: loansContract, amount: current.repayCeiling }), label: `Approve up to ${units(current.repayCeiling, current.sourceContext.decimals)} ${current.sourceContext.symbol} to repay loan ${loanId}` }, { reviewedAccount: address, recoveryNamespace: writeIntentKey('loan-repay-approve', { project: state.projectId, loan: loanId, token: intent.address(current.sourceContext.token) }), reverify: async () => { await readIncomeLoan(client, { chainId: state.chainId, projectId: state.projectId, loanId, account: address }) } })
+          // Its amount, the repay ceiling, accrues with time: it is held as the repayment's approval step.
+          const hash = await approval.send({ ...buildErc20ApproveRequest({ chainId: state.chainId, token: current.sourceContext.token, spender: loansContract, amount: current.repayCeiling }), label: `Approve up to ${units(current.repayCeiling, current.sourceContext.decimals)} ${current.sourceContext.symbol} to repay loan ${loanId}` }, { reviewedAccount: address, recoveryNamespace: approvalIntentKey(loanRepaymentIntent(state.projectId, loanId), { token: current.sourceContext.token, spender: loansContract, step: 'repay' }), reverify: async () => { await readIncomeLoan(client, { chainId: state.chainId, projectId: state.projectId, loanId, account: address }) } })
           const block = await prerequisiteBlock(client, hash, approval.isSafe)
           if (block === null) return
           prerequisite = block

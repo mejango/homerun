@@ -1,4 +1,5 @@
 import type { Address } from 'viem'
+import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 
 /**
  * ERC-20 `approve` without a declared return. Some tokens (mainnet USDT)
@@ -17,6 +18,14 @@ const erc20ApproveAbi = [
     outputs: [],
   },
 ] as const
+
+/**
+ * The hold name of an approval step inside a flow: its parent intent (the user's action), the token,
+ * the spender and the step. Never the amount, which the flow calculates (a repay ceiling, say).
+ */
+export function approvalIntentKey(parent: string, { token, spender, step }: { token: Address; spender: Address; step: string }): string {
+  return writeIntentKey('approve', { intent: parent, token: intent.address(token), spender: intent.address(spender), step })
+}
 
 /** Exact ERC-20 allowance request shared by every approval: payments, loans, bridging, Sticky and treasury returns. */
 export function buildErc20ApproveRequest({

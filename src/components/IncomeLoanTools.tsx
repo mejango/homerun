@@ -9,13 +9,13 @@ import { useSafeTx, txPhaseLabel } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { parseAmount } from '@/lib/fund-contracts'
-import { buildErc20ApproveRequest } from '@/lib/transaction-builders'
+import { approvalIntentKey, buildErc20ApproveRequest } from '@/lib/transaction-builders'
 import { v6Address } from '@/lib/income-contracts'
 import { readIncomeLoan, type IncomeProjectState } from '@/lib/income-state'
 import { assertSameIncomeLoan, buildIncomePartialRepayment, incomeLoanRecipient, loanRepaymentIntent, prepareIncomeLoanReallocation, prepareIncomeLoanTransfer, prepareIncomePartialRepayment } from '@/lib/income-loan-tools'
 import { readableError } from '@/lib/readable-error'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
-import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
+import { writeIntentKey } from '@bananapus/nana-sdk-core/review'
 
 type Props = { state: IncomeProjectState; client: PublicClient }
 type LoanAction = 'transfer' | 'reallocate' | 'partialRepay'
@@ -112,8 +112,8 @@ export function IncomeLoanTools({ state, client }: Props) {
           const allowance = await client.readContract({ address: source.token, abi: erc20Abi, functionName: 'allowance', args: [address, loans], blockNumber: prepared.loan.blockNumber })
           if (allowance < prepared.owed) {
             await prerequisite.send({ ...buildErc20ApproveRequest({ chainId: state.chainId, token: source.token, spender: loans, amount: maximum }), label: `Approve up to ${formatUnits(maximum, source.decimals)} ${source.symbol} for this loan repayment` }, { reviewedAccount: input.account,
-              // Its amount, the repay ceiling, accrues with time: a retry is held by the loan.
-              recoveryNamespace: writeIntentKey('loan-repay-approve', { project: state.projectId, loan: loanId, token: intent.address(source.token) }), reverify: async () => { const current = await prepareIncomePartialRepayment({ ...input, collateralToReturn: collateral }); assertSameIncomeLoan(prepared.loan, current.loan); if (current.owed > maximum) throw new Error('The repayment quote exceeded the approval. Review a fresh quote.') } })
+              // Its amount, the repay ceiling, accrues with time: it is held as the repayment's approval step.
+              recoveryNamespace: approvalIntentKey(loanRepaymentIntent(state.projectId, loanId), { token: source.token, spender: loans, step: 'repay' }), reverify: async () => { const current = await prepareIncomePartialRepayment({ ...input, collateralToReturn: collateral }); assertSameIncomeLoan(prepared.loan, current.loan); if (current.owed > maximum) throw new Error('The repayment quote exceeded the approval. Review a fresh quote.') } })
             return
           }
           // Use existing allowance that covers actual debt even when a newly calculated buffer grew by one wei.

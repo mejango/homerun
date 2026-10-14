@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectPayQuote, ProjectPayTokenOption } from '@/lib/project-pay-quote'
 import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
 import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
+import { approvalIntentKey } from '@/lib/transaction-builders'
 
 type Action = 'payment' | 'approval' | 'router'
 type Handle = { notice: string | null; dismiss: ReturnType<typeof vi.fn>; phase: string; busy: boolean; isSafe: boolean; error: null; hash: Hex | null; safeProposalHash: Hex | null; receipt: null; send: ReturnType<typeof vi.fn>; reset: ReturnType<typeof vi.fn> }
@@ -206,6 +207,10 @@ describe('shared payment execution', () => {
     expect(runtime.writes[0].request.abi[0]).toMatchObject({ name: 'approve', outputs: [] })
     expect(runtime.writes[0].request.address).toBe(TOKEN)
     expect(runtime.writes[1].request.value).toBe(0n)
+    // One payment intent whichever route the quote picks; its approval is that intent's token step.
+    const payment = writeIntentKey('pay', { project: 7n, token: intent.address(TOKEN), amount: 2_500_000n })
+    expect(runtime.writes[1].options.recoveryNamespace).toBe(payment)
+    expect(runtime.writes[0].options.recoveryNamespace).toBe(approvalIntentKey(payment, { token: TOKEN, spender: TERMINAL, step: 'token' }))
     expect(runtime.verify).toHaveBeenCalledWith(WALLET, 101n)
   })
 
@@ -240,8 +245,9 @@ describe('shared payment execution', () => {
     expect(encoded(runtime.writes[0].request).args?.slice(0, 3)).toEqual([TOKEN, getAddress(DEPLOYMENT.universalRouter!), 3_000_000n])
     expect(encoded(runtime.writes[1].request).args?.[0]).toBe('0x10')
     // The approval's expiration and the swap's deadline are stamped now: both are held by the user's choice.
-    expect(runtime.writes[0].options.recoveryNamespace).toBe(writeIntentKey('permit2-router-approve', { token: intent.address(TOKEN), amount: 3_000_000n }))
-    expect(runtime.writes[1].options.recoveryNamespace).toBe(writeIntentKey('pay', { project: 7n, token: intent.address(TOKEN), amount: 3_000_000n }))
+    const payment = writeIntentKey('pay', { project: 7n, token: intent.address(TOKEN), amount: 3_000_000n })
+    expect(runtime.writes[0].options.recoveryNamespace).toBe(approvalIntentKey(payment, { token: TOKEN, spender: DEPLOYMENT.universalRouter!, step: 'router' }))
+    expect(runtime.writes[1].options.recoveryNamespace).toBe(payment)
   })
 
   it('never substitutes an onchain approval after the user rejects a signature', async () => {
