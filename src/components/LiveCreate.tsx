@@ -36,7 +36,9 @@ function publicClient(chainId: number): PublicClient {
   return client as PublicClient
 }
 function LaunchChain({ session, request, status, update, refreshFee, runId = 0, onStopped, onFeedback }: {
-  runId?: number; onStopped?: () => void
+  runId?: number
+  /** The run ended here: `awaiting` when this chain's hold still follows its send, so its success may continue the run. */
+  onStopped?: (awaiting?: boolean) => void
   onFeedback?: (phase: string, error: string) => void
   session: FundLaunchSession; request: FundTransaction; status: LaunchStatus; update: (status: LaunchStatus, expectedPhase?: LaunchStatus['phase'], expectedStatus?: LaunchStatus) => void; refreshFee: (fee: bigint) => void
 }) {
@@ -129,11 +131,12 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settled])
 
-  /** The SDK's exit, which also reopens a pending launch the chain never placed. */
+  /** The SDK's exit, which also reopens a pending launch the chain never placed, and ends the run. */
   const launchHeld = {
     notice: tx.notice,
     held: tx.held && { ...tx.held, release: () => {
       tx.held!.release()
+      onStopped?.(false)
       const current = loadLaunchSession()?.statuses[request.chainId]
       if (current?.phase === 'pending') { try { update({ phase: 'ready' }, 'pending', current) } catch (cause) { setError(message(cause)) } }
     } },
@@ -218,8 +221,9 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
     void (async () => {
       if (status.phase === 'pending' && status.hash) await checkHold()
       else if (status.phase === 'ready' || status.phase === 'reverted') await launch()
-      if (loadLaunchSession()?.statuses[request.chainId]?.phase !== 'confirmed') onStopped?.()
-    })().catch(() => onStopped?.())
+      const phase = loadLaunchSession()?.statuses[request.chainId]?.phase
+      if (phase !== 'confirmed') onStopped?.(phase === 'pending')
+    })().catch(() => onStopped?.(false))
   // One explicit Create/Continue gesture starts each destination once.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runId])
@@ -232,7 +236,7 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
     {status.phase === 'confirmed' && <a className="create-primary" href={projectPath(request.chainId, status.projectId!)}>Open FUND project ↗</a>}
     {(status.phase === 'ready' || status.phase === 'reverted') && <button type="button" disabled={tx.busy || setupTx.busy || tx.phase === 'review' || setupTx.phase === 'review' || verifying || sending || !adoption.ready} onClick={() => void launch()}>Review and deploy FUND</button>}
     {status.phase === 'pending' && status.hash && <button type="button" disabled={verifying} onClick={() => void checkHold()}>{verifying ? 'Checking execution…' : 'Check confirmation'}</button>}
-    {setupTx.phase === 'submitted' && <div role="status"><HeldNotice tx={setupTx} /></div>}
+    {setupTx.phase === 'submitted' && <div role="status"><HeldNotice tx={{ notice: setupTx.notice, held: setupTx.held && { ...setupTx.held, release: () => { setupTx.held!.release(); onStopped?.(false) } } }} /></div>}
     {tx.phase === 'submitted' && <div role="status"><HeldNotice tx={launchHeld} /></div>}
     {['ready', 'reverted'].includes(status.phase) && <button type="button" disabled={tx.busy || tx.phase === 'review'} onClick={() => void publicClient(request.chainId).readContract({ address: v6Address('JBProjects', request.chainId as JBChainId), abi: jbProjectsAbi, functionName: 'creationFee' }).then(refreshFee).catch(cause => setError(message(cause)))}>Refresh deployment fee</button>}
     {(error || tx.error || setupTx.error) && <p role="alert">{transactionMessage(error || tx.error || setupTx.error || '')}</p>}
@@ -314,7 +318,8 @@ export function FundDeploy({ values, onLockChange, importedRecord, onRecordUsed 
     if (detail) setProgress('')
     else if (text[phase]) setProgress(text[phase])
   }, [])
-  function stopDirect() { busyRef.current = false; setRunning(false) }
+  /** A run that stopped without a send its hold still follows (an exit, a rejection, an unknown result) no longer continues on its own. */
+  function stopDirect(awaiting = false) { if (!awaiting) autoContinue.current = false; busyRef.current = false; setRunning(false) }
   async function prepare() {
     if (!address || !values || preparing || busyRef.current) return
     setPreparing(true); setError('')

@@ -137,3 +137,18 @@ it('shows a held step and its exit after a reload, even when the shop can no lon
   expect(button(EXIT)).toBeUndefined()
 })
 
+it('refuses to cancel an update whose step reverted but is not final yet, and keeps it', async () => {
+  startShopWriteSession(localStorage, KEY, plan())
+  // The chain's finalized block is still behind the revert.
+  wallet.client.getBlock.mockImplementation(async ({ blockNumber, blockTag }: { blockNumber?: bigint; blockTag?: string }) => ({ number: blockTag === 'finalized' ? 5n : blockNumber ?? 1_000n, hash: `0x${'0b'.repeat(32)}`, timestamp: 1_000n }) as never)
+  await render()
+  await click('Resume shop update')
+  await click('Review transaction')
+  expect(wallet.writeContract).toHaveBeenCalledOnce()
+  await act(async () => { wallet.confirm(`0x${'1'.padStart(64, '0')}` as `0x${string}`, 10n, 'reverted') })
+  await settle(); await settle(); await settle()
+  if (button('Cancel update')) await click('Cancel update')
+  expect(localStorage.getItem(KEY)).not.toBeNull()
+  if (button('Cancel update') !== undefined) expect(host.textContent).toContain('Finish or exit the pending update first.')
+})
+

@@ -3,7 +3,7 @@ import { buildDeployProjectPayerTx, JB_PROJECT_PAYER_DEPLOYER, jbProjectPayerDep
 import { decodeEventLog, encodeFunctionData, isAddress, isAddressEqual, parseAbi, zeroAddress, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import { bendystraw } from './bendystraw'
 import { safeExecutionRunsCalls, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
-import { intent, verifyReviewedWriteReceipt, writeIntentKey, type ReviewedWriteRecoveryInput } from '@bananapus/nana-sdk-core/review'
+import { verifyReviewedWriteReceipt, writeIntentKey, type ReviewedWriteRecoveryInput } from '@bananapus/nana-sdk-core/review'
 import { callOf, type LegacyWriteEvidence } from './write-hold'
 
 export type ProjectPayerRow = {
@@ -54,16 +54,19 @@ export function buildPayerTransaction(settings: PayerSettings) {
 export function payerAttemptKey(chainId: JBChainId, projectId: bigint) { return `homerun:payer:${chainId}:${projectId}:v1` }
 
 /** A payer deployment's hold: the project and the settings the user chose. TODO(SDK 2.38): the SDK's shared builder. */
-export function payerIntent(settings: PayerSettings): string {
-  return writeIntentKey('payer-create', { project: BigInt(settings.projectId), beneficiary: intent.address(settings.beneficiary),
-    owner: intent.address(settings.owner), memo: settings.memo, addToBalance: settings.addToBalance })
+/**
+ * A payer deployment is held by its project alone: no entered settings, so its hold is found on
+ * load with nothing entered. A second deployment for the project waits while one is unresolved.
+ */
+export function payerIntent(projectId: bigint): string {
+  return writeIntentKey('payer-create', { project: projectId })
 }
 
 /** The write hold a saved journal attempt is adopted into, and the evidence it saved. */
 export function payerAttemptHold(attempt: PayerAttempt): { input: ReviewedWriteRecoveryInput; evidence: LegacyWriteEvidence } {
   const hash = attempt.hash ?? attempt.executionHash
   return {
-    input: { chainId: attempt.settings.chainId, account: attempt.account, safe: attempt.safe, namespace: payerIntent(attempt.settings), call: callOf(buildPayerTransaction(attempt.settings)) },
+    input: { chainId: attempt.settings.chainId, account: attempt.account, safe: attempt.safe, namespace: payerIntent(BigInt(attempt.settings.projectId)), call: callOf(buildPayerTransaction(attempt.settings)) },
     evidence: !hash ? {} : attempt.safe && attempt.hash ? { safe: { safeTxHash: attempt.hash } } : { hash },
   }
 }

@@ -12,6 +12,7 @@ import { buildPayerTransaction, checkPayerFactory, decodePayerAttempt, getProjec
 import { adoptLegacyWrite } from '@/lib/write-hold'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
 import { useLegacyAdoption } from '@/hooks/useLegacyAdoption'
+import { HeldIntents } from '@/components/ui/HeldIntents'
 
 type Props = { chainId: JBChainId; projectId: bigint; tokenLabel?: string }
 function message(error: unknown) { return error instanceof Error ? error.message : 'The payer address could not be verified.' }
@@ -105,7 +106,7 @@ function ProjectPayerAddressContext({ chainId, projectId, tokenLabel = 'Project 
       following.current = { settings, account: wallet.address, safe: tx.isSafe }
       await tx.send({ ...request, label: `Create ${tokenLabel} payer address` }, {
         reviewedAccount: wallet.address,
-        recoveryNamespace: payerIntent(settings),
+        recoveryNamespace: payerIntent(projectId),
         reviewNotice: `Create a dedicated payer address for project #${projectId} on ${displayChainName(chainId)}. ${addToBalance ? 'ETH received adds to the project balance without minting tokens.' : `ETH received pays the project; ${tokenLabel} goes to ${isAddressEqual(selectedBeneficiary, zeroAddress) ? 'the original payer' : selectedBeneficiary}. Direct ETH transfers accept the current minting rate with no minimum token amount.`} ${editable ? `Admin ${selectedOwner} may change the routing and beneficiary later.` : 'Routing is immutable because the admin is the zero address.'} Sending other tokens directly does not forward them. This creates a payer contract and spends only gas; it does not deploy a FUND or INCOME project.`,
         reverify: async () => { await checkPayerFactory(client, chainId, projectId) },
         beforeWrite: adoption.wait,
@@ -136,6 +137,8 @@ function ProjectPayerAddressContext({ chainId, projectId, tokenLabel = 'Project 
         </div>
       </article>)}</div>}
     </div>
+    {/* A deployment held for this project shows with its exit, whatever is entered or the factory allows now. */}
+    {tx.phase === 'idle' && adoption.ready && <HeldIntents chainId={chainId} account={wallet.address} intents={[{ namespace: payerIntent(projectId), label: `Create ${tokenLabel} payer address` }]} />}
     {(tx.phase === 'submitted' || tx.phase === 'pending' || tx.phase === 'success' || storageError) && <div className="border-t border-[var(--line)] pt-6 text-sm" role="status">
       {storageError ? <p role="alert">{storageError}</p>
         : tx.phase === 'submitted' ? <HeldNotice tx={tx} />

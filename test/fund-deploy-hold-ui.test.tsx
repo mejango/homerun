@@ -44,7 +44,7 @@ vi.mock('@/lib/fund-launch-relayr', () => ({ runRelayrLaunch: vi.fn(), launchReq
 import { wallet } from './support/fake-wallet'
 import { FundDeploy } from '../src/components/LiveCreate'
 import type { CreateValues } from '../src/components/CreateFlow'
-import { FUND_LAUNCH_KEY, decodeLaunchSession, saveLaunch, type LaunchStatus } from '../src/lib/fund-launch-session'
+import { FUND_LAUNCH_KEY, decodeLaunchSession, encodeLaunchSession, saveLaunch, updateLaunchStatus, type LaunchStatus } from '../src/lib/fund-launch-session'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as Address
 const SALT = `0x${'12'.repeat(32)}` as Hex
@@ -154,6 +154,22 @@ describe('a two-chain direct launch', () => {
     // No press: the second chain's send follows the first's settlement.
     await vi.waitFor(() => expect(wallet.writeContract, host.textContent ?? '').toHaveBeenCalledTimes(2))
     expect(wallet.writeContract.mock.calls[1][0]).toMatchObject({ chainId: 10 })
+  })
+
+  it('does not continue on its own after the user takes a chain’s exit', async () => {
+    twoChains()
+    wallet.client.getChainId.mockImplementation(async () => connected.chainId)
+    wallet.switchChain.mockImplementation(async ({ chainId }: { chainId: number }) => { connected.chainId = chainId })
+    wallet.writeContract.mockRejectedValueOnce(new Error('Wallet reply was lost after broadcast'))
+    await render()
+    await click('Continue creation')
+    await click(EXIT)
+    // The first chain is later confirmed elsewhere (another tab): nothing sends on its own.
+    const pending = updateLaunchStatus(SALT, 8453, { phase: 'pending', hash: first, safe: false, walletReturned: true })
+    const raw = encodeLaunchSession(updateLaunchStatus(SALT, 8453, { phase: 'confirmed', hash: first, safe: false, walletReturned: true, projectId: '42' }, undefined, pending.statuses[8453]))
+    await act(async () => { window.dispatchEvent(new StorageEvent('storage', { key: FUND_LAUNCH_KEY, newValue: raw })) })
+    await settle(); await settle()
+    expect(wallet.writeContract).toHaveBeenCalledOnce()
   })
 
   it('stops when the first settles without success', async () => {

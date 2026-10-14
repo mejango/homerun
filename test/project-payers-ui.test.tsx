@@ -52,7 +52,7 @@ describe('project payer controls', () => {
     expect(request.functionName).toBe('deployProjectPayer')
     expect(options.reviewNotice).toContain('Routing is immutable')
     expect(options.reviewedAccount).toBe(mocks.address)
-    expect(options.recoveryNamespace).toBe(payerIntent(saved().settings))
+    expect(options.recoveryNamespace).toBe(payerIntent(BigInt(saved().settings.projectId)))
     expect(mocks.factory).toHaveBeenCalledTimes(3)
     expect(localStorage.getItem(KEY)).toBeNull()
   })

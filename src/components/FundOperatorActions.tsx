@@ -19,15 +19,14 @@ import {
   type FundAssetAllowance, type FundRulesetAction, type FundRulesetSnapshot, type FundTransaction,
 } from '@/lib/fund-contracts'
 import { assertFundStateForWrite, readFundProjectState, readLinkedFundProjects, type FundProjectState } from '@/lib/fund-state'
-import { waitForSafeExecutionHash } from '@/lib/safe-connector'
-import { SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
+import { SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 import { intent, verifyReviewedWriteReceipt, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import { wagmiConfig } from '@/providers/Providers'
 import { readableError } from '@/lib/readable-error'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
 import { useLegacyAdoption } from '@/hooks/useLegacyAdoption'
 import { HeldIntents } from '@/components/ui/HeldIntents'
-import { adoptLegacyWrite, callOf } from '@/lib/write-hold'
+import { adoptLegacyWrite, callOf, settledSuccessHash } from '@/lib/write-hold'
 import type { WriteHoldClient } from '@bananapus/nana-sdk-core/review'
 
 type Props = { state: FundProjectState; client: PublicClient; contextIndex: number }
@@ -233,8 +232,6 @@ async function verifyRulesetSubmissionReceipt(plan: RulesetPlan, chainId: number
   }, receipt)
 }
 
-/** A Safe proposal not executed by then is left to its chain's hold, which follows it. */
-const SAFE_CHECK_MS = 10_000
 
 function RecoveryPanel({ plan, submissions, onResume }: {
   plan: RulesetPlan; submissions: ReadonlyMap<number, RulesetSubmission>
@@ -246,23 +243,21 @@ function RecoveryPanel({ plan, submissions, onResume }: {
   const abort = useRef<AbortController | null>(null)
   useEffect(() => () => abort.current?.abort(), [])
 
-  /** A saved submission's verified success, or null while it is unsettled: its chain's step adopts it into the SDK hold. */
+  /**
+   * A saved submission's verified success, or null while its hold hasn't settled it with success: its
+   * chain's hold follows it. Completion comes from the hold's settlement; the domain checks run after.
+   */
   async function execution(chainId: number, submission: RulesetSubmission, signal: AbortSignal): Promise<RulesetCompletion | null> {
     if (submission.kind === 'submission-unknown') return null
     const index = plan.states.findIndex(project => project.chainId === chainId)
     if (index < 0) throw new Error('This transaction is not part of the linked plan.')
     const project = plan.states[index]
     const client = chainClient(project.chainId)
-    let hash = submission.hash
-    if (submission.kind === 'safe-proposal') {
-      setNotice(`Checking the Safe proposal on ${displayChainName(chainId)}. An unexecuted proposal is not a confirmed ruleset change.`)
-      try { hash = await waitForSafeExecutionHash(chainId, hash, { signal: AbortSignal.any([signal, AbortSignal.timeout(SAFE_CHECK_MS)]) }) } catch (reason) { if (signal.aborted) throw reason; return null }
-    }
-    let receipt: TransactionReceipt
-    try { receipt = await client.getTransactionReceipt({ hash }) } catch { return null }
+    setNotice(`Checking ${displayChainName(chainId)}'s transaction with its hold.`)
+    const settled = await settledSuccessHash({ chainId, account: plan.account, namespace: planIntent(plan, project.projectId) }, client as WriteHoldClient)
+    if (!settled) return null
+    const receipt = await client.getTransactionReceipt({ hash: settled })
     if (signal.aborted) throw new DOMException('Recovery checks paused.', 'AbortError')
-    // A failed execution (a revert, or a Safe's ExecutionFailure) changed nothing: its hold settles it.
-    if (receipt.status !== 'success' || safeExecutionResult(receipt, plan.account, submission.hash).status === 'failed') return null
     const rulesetId = validateRulesetRecoveryReceipt(receipt, project.projectId, project.rulesetSnapshot.controller, `Homerun: ${plan.action}`)
     if (await verifyRulesetSubmissionReceipt(plan, chainId, submission, receipt) !== 'success') throw new Error('The saved ruleset submission has not been proven successful.')
     return { rulesetId, receipt, submission }

@@ -59,9 +59,10 @@ describe('stock project payer transaction and recovery', () => {
     expect(decodePayerAttempt(JSON.stringify(saved), 1, 7n)).toEqual(saved)
   })
   it('holds a deployment by the settings the user chose, and adopts a saved attempt with its own evidence', () => {
-    const original = attempt(), key = payerIntent(original.settings)
-    expect(payerIntent({ ...original.settings, beneficiary: original.settings.beneficiary.toUpperCase().replace('0X', '0x') as Address })).toBe(key)
-    for (const settings of [{ ...original.settings, memo: 'Other memo' }, { ...original.settings, beneficiary: PAYER }, { ...original.settings, owner: PAYER }, { ...original.settings, addToBalance: true }]) expect(payerIntent(settings)).not.toBe(key)
+    const original = attempt(), key = payerIntent(7n)
+    // Held by the project alone: any settings for it share the hold.
+    expect(payerAttemptHold({ ...original, settings: { ...original.settings, memo: 'Other memo', addToBalance: true } }).input.namespace).toBe(key)
+    expect(payerIntent(8n)).not.toBe(key)
     expect(payerAttemptHold(original)).toMatchObject({ input: { chainId: 1, account: ACCOUNT, safe: false, namespace: key }, evidence: { hash: HASH } })
     expect(payerAttemptHold({ ...original, safe: true, hash: PROPOSAL, executionHash: HASH }).evidence).toEqual({ safe: { safeTxHash: PROPOSAL } })
     expect(payerAttemptHold({ ...original, phase: 'signing', hash: undefined }).evidence).toEqual({})

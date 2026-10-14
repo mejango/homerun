@@ -13,7 +13,7 @@ import { placeReceipt } from './support/recovery-receipt'
 
 const runtime = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111' as Address,
-  receipt: vi.fn(), transaction: vi.fn(), block: vi.fn(), wait: vi.fn(), send: vi.fn(), track: vi.fn(), adopt: vi.fn(),
+  receipt: vi.fn(), transaction: vi.fn(), block: vi.fn(), wait: vi.fn(), send: vi.fn(), track: vi.fn(), adopt: vi.fn(), settled: vi.fn(),
   states: [] as unknown[],
   tx: {} as Record<string, unknown>,
 }))
@@ -27,7 +27,7 @@ vi.mock('@/lib/fund-state', async importOriginal => ({
 }))
 vi.mock('@/components/FundAssetWithdrawals', () => ({ FundAssetWithdrawals: () => null }))
 vi.mock('@/lib/safe-connector', () => ({ waitForSafeExecutionHash: runtime.wait }))
-vi.mock('@/lib/write-hold', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/write-hold')>(), adoptLegacyWrite: runtime.adopt }))
+vi.mock('@/lib/write-hold', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/write-hold')>(), adoptLegacyWrite: runtime.adopt, settledSuccessHash: runtime.settled }))
 vi.mock('@wagmi/core', async importOriginal => ({
   ...await importOriginal<typeof import('@wagmi/core')>(),
   getAccount: () => ({ address: runtime.account }),
@@ -76,6 +76,9 @@ describe('linked ruleset recovery of a Safe execution', () => {
   let host: HTMLDivElement, root: Root
   beforeEach(() => {
     localStorage.clear(); vi.resetAllMocks(); runtime.tx = {}
+    runtime.adopt.mockResolvedValue({ adopted: false, state: { status: 'clear' } })
+    // No hold has settled anything unless a test says so.
+    runtime.settled.mockResolvedValue(null)
     Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: async (_name: string, _options: unknown, task: (lock: object) => Promise<unknown>) => task({}) } })
     host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   })
@@ -198,6 +201,8 @@ describe('linked ruleset recovery of a Safe execution', () => {
     ])
     localStorage.setItem(key, serializeRulesetRecovery(saved, records, ROOT))
     runtime.receipt.mockImplementation(async ({ hash }: { hash: Hex }) => hash === first.receipt.transactionHash ? first.receipt : second.receipt)
+    // Each chain's hold settled its transaction with success.
+    runtime.settled.mockImplementation(async ({ chainId }: { chainId: number }) => chainId === 8453 ? first.receipt.transactionHash : second.receipt.transactionHash)
     runtime.transaction.mockImplementation(async ({ hash }: { hash: Hex }) => hash === first.receipt.transactionHash ? first.transaction : second.transaction)
     runtime.states = saved.states.map(peer => ({ ...state(), chainId: peer.chainId, projectId: peer.projectId, blockNumber: 121n, blockTimestamp: 1_000n, rulesetSnapshot: { ...peer.rulesetSnapshot, upcomingRulesetId: 72n }, linkedChainIds: [8453, 10] }))
     const locks = vi.spyOn(navigator.locks, 'request')
@@ -212,11 +217,24 @@ describe('linked ruleset recovery of a Safe execution', () => {
     expect(localStorage.getItem(key)).toBe(replaced ? newer : null)
   })
 
+  it('never counts a chain whose transaction authenticates while its hold has not settled it', async () => {
+    const saved = plan(); const record = { kind: 'transaction' as const, hash: EXECUTION }
+    localStorage.setItem(key, serializeRulesetRecovery(saved, new Map([[8453, record]]), ROOT))
+    successReceipt(saved)
+    runtime.states = saved.states.map((peer, index) => ({ ...state(), chainId: peer.chainId, projectId: peer.projectId, blockNumber: 121n, blockTimestamp: 1_000n, rulesetSnapshot: { ...peer.rulesetSnapshot, upcomingRulesetId: index === 0 ? 72n : 0n }, linkedChainIds: [8453, 10] }))
+    await act(async () => root.render(<FundOperatorActions state={state()} client={{} as PublicClient} contextIndex={0} />))
+    await act(async () => button('Verify and resume queued plan')!.click())
+    // The receipt alone proves nothing here: the chain is still the next one, its hold to settle.
+    expect(button('Review transaction 2 of 2')).toBeUndefined()
+    expect(runtime.settled).toHaveBeenCalledWith(expect.objectContaining({ chainId: 8453, account: ACCOUNT }), expect.anything())
+  })
+
   it('reverifies a legacy saved Safe execution hash without changing its saved identity', async () => {
     const saved = plan(); const record = { kind: 'transaction' as const, hash: EXECUTION, attemptId: crypto.randomUUID() }
     const previous = serializeRulesetRecovery(saved, new Map([[8453, record]]), ROOT)
     localStorage.setItem(key, previous)
     successReceipt(saved)
+    runtime.settled.mockImplementation(async ({ chainId }: { chainId: number }) => chainId === 8453 ? EXECUTION : null)
     runtime.states = saved.states.map((peer, index) => ({ ...state(), chainId: peer.chainId, projectId: peer.projectId, blockNumber: 121n, blockTimestamp: 1_000n, rulesetSnapshot: { ...peer.rulesetSnapshot, upcomingRulesetId: index === 0 ? 72n : 0n }, linkedChainIds: [8453, 10] }))
     await act(async () => root.render(<FundOperatorActions state={state()} client={{} as PublicClient} contextIndex={0} />))
     await act(async () => button('Verify and resume queued plan')!.click())

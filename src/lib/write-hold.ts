@@ -54,3 +54,17 @@ function sameAttempt(record: { hash?: string; call: { to: string; data: string; 
   return record.call.to.toLowerCase() === input.call.to.toLowerCase() && record.call.data.toLowerCase() === input.call.data.toLowerCase()
     && BigInt(record.call.value) === BigInt(input.call.value ?? 0n)
 }
+
+/**
+ * The hash a hold for this intent settled with success, from either kind of wallet, or null when
+ * it holds something, settled otherwise, or has no settlement saved: completion is the hold's to say.
+ */
+export async function settledSuccessHash(intent: { chainId: number; account: Address; namespace: string }, client: WriteHoldClient): Promise<`0x${string}` | null> {
+  for (const safe of [false, true]) {
+    const state = await holds.open({ ...intent, safe, call: { to: '0x0000000000000000000000000000000000000000', data: '0x' } }).state(client)
+    if (state.status !== 'clear') return null
+    if (state.settled && 'hash' in state.settled && state.settled.result === 'success') return state.settled.hash
+  }
+  return null
+}
+

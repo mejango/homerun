@@ -29,9 +29,10 @@ vi.mock('@/lib/transaction-review', async importOriginal => {
   return { ...(await importOriginal<typeof import('@/lib/transaction-review')>()), requestContractTransactionReview: wallet.requestReview }
 })
 vi.mock('@/lib/safe-connector', async importOriginal => ({ ...(await importOriginal<typeof import('@/lib/safe-connector')>()), isSafeConnection: () => false, useSafeConnection: () => false }))
+const factory = vi.hoisted(() => ({ check: async (): Promise<{ acceptsNative: boolean }> => ({ acceptsNative: true }) }))
 vi.mock('@/lib/project-payers', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/project-payers')>()),
-  checkPayerFactory: async () => ({ acceptsNative: true }),
+  checkPayerFactory: () => factory.check(),
   getProjectPayerAddresses: async () => [],
 }))
 
@@ -124,5 +125,22 @@ it('sends nothing while a saved attempt is still being adopted, and keeps the jo
   expect(localStorage.getItem(KEY)).toBeNull()
   expect(host.textContent).toContain('Submitted. Verifying the payer deployment onchain')
   expect(wallet.writeContract).not.toHaveBeenCalled()
+})
+
+it('shows a held payer deployment with custom settings after a reload, with nothing entered and the factory unverified', async () => {
+  wallet.writeContract.mockRejectedValueOnce(new Error('Wallet reply was lost after broadcast'))
+  await render()
+  const memo = host.querySelector<HTMLInputElement>('input[maxlength="500"]')!
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(memo, 'Rent'); memo.dispatchEvent(new Event('input', { bubbles: true })) })
+  await click('Review payer creation')
+  expect(button(EXIT)).toBeDefined()
+  factory.check = async () => { throw new Error('Factory unavailable') }
+  try {
+    await act(async () => root.unmount()); root = createRoot(host); cache.clear()
+    await render()
+    expect(button(EXIT), host.textContent ?? '').toBeDefined()
+    await click(EXIT)
+    expect(button(EXIT)).toBeUndefined()
+  } finally { factory.check = async () => ({ acceptsNative: true }) }
 })
 

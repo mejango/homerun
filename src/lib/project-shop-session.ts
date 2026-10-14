@@ -1,10 +1,10 @@
 /** Recovery facts block duplicate writes; only fresh, exact on-chain executions advance a shop update. */
-import { encodeFunctionData, zeroHash, type Hex, type PublicClient } from 'viem'
+import { encodeFunctionData, zeroHash, type Address, type Hex, type PublicClient } from 'viem'
 import { FUND_CHAIN_IDS } from './fund-contracts'
 import { parseProjectShopWrite, projectShopWriteRequest, serializeProjectShopWrite, type PreparedProjectShopWrite } from './project-shop-write'
 import { verifyStickyExecution, type StickyPending } from './sticky-session'
 import { writeIntentKey, type ReviewedWriteRecoveryInput } from '@bananapus/nana-sdk-core/review'
-import { callOf, type LegacyWriteEvidence } from './write-hold'
+import { callOf, holds, type LegacyWriteEvidence } from './write-hold'
 
 export type ShopWriteStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 export type ShopWriteSubmission = { afterBlock: string; safe: boolean; startedAt: number; hash?: Hex; attemptId?: string }
@@ -136,6 +136,7 @@ export function shopWriteRequestIndex(session: ShopWriteSession): number | null 
 /** Cleanup changes the next reviewed call, never claims the skipped creation was executed. */
 export function restoreShopWritePermissions(storage: ShopWriteStorage, key: string, session: ShopWriteSession): ShopWriteSession {
   const current = matchingCurrent(storage, key, session)
+  if (shopHeldWrite(current)) throw new Error(SHOP_HELD_LINE)
   if (current.restoring || current.pending || current.completed.length !== 1 || current.plan.requestKinds.join(',') !== 'grant,create,restore') {
     throw new Error('Verify any pending shop creation before switching to permission restoration.')
   }
@@ -197,6 +198,16 @@ export async function confirmShopWriteStep(client: PublicClient, storage: ShopWr
 }
 
 /** A step's hold: the update this session plans and the step. TODO(SDK 2.38): the SDK's shared builder. */
+export const SHOP_HELD_LINE = 'Finish or exit the pending update first.'
+
+/** Whether the SDK holds a write of any of this update's steps (from storage, either wallet kind). */
+export function shopHeldWrite(session: ShopWriteSession): boolean {
+  const placeholder = { to: '0x0000000000000000000000000000000000000000' as Address, data: '0x' as Hex }
+  return session.plan.requests.some((_, step) => [false, true].some(safe => holds.open({
+    chainId: session.plan.snapshot.chainId, account: session.plan.snapshot.account, safe, namespace: shopStepIntent(session, step), call: placeholder,
+  }).peek().status !== 'clear'))
+}
+
 export function shopStepIntent(session: ShopWriteSession, step: number): string {
   return writeIntentKey('shop-step', { project: session.plan.snapshot.projectId, update: session.id, step })
 }
@@ -228,6 +239,8 @@ export function dropShopWritePending(storage: ShopWriteStorage, key: string, ses
 /** Partial progress must survive until permission restoration completes. Finished records require fresh proof. */
 export async function clearShopWriteSession(storage: ShopWriteStorage, key: string, session: ShopWriteSession, client?: PublicClient): Promise<void> {
   const current = matchingCurrent(storage, key, session)
+  // A held step keeps its update, and its exit, until it settles or the user takes that exit.
+  if (shopHeldWrite(current)) throw new Error(SHOP_HELD_LINE)
   if (current.completed.length) {
     if (shopWriteRequestIndex(current) !== null) throw new Error('This shop update still has unfinished steps. Complete them, including restoring deployer permissions, before clearing it.')
     if (!client) throw new Error('Verify every completed shop execution before clearing this update.')
