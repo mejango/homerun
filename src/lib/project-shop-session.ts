@@ -2,8 +2,9 @@
 import { encodeFunctionData, zeroHash, type Hex, type PublicClient } from 'viem'
 import { FUND_CHAIN_IDS } from './fund-contracts'
 import { parseProjectShopWrite, projectShopWriteRequest, serializeProjectShopWrite, type PreparedProjectShopWrite } from './project-shop-write'
-import { assertSafeProposalCall, verifyStickyExecution, type ExistingSafeProposal, type StickyPending } from './sticky-session'
-import { withPrewalletReservation } from './prewallet-reservation'
+import { verifyStickyExecution, type StickyPending } from './sticky-session'
+import { writeIntentKey, type ReviewedWriteRecoveryInput } from '@bananapus/nana-sdk-core/review'
+import { callOf, type LegacyWriteEvidence } from './write-hold'
 
 export type ShopWriteStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 export type ShopWriteSubmission = { afterBlock: string; safe: boolean; startedAt: number; hash?: Hex; attemptId?: string }
@@ -108,15 +109,12 @@ function matchingCurrent(storage: ShopWriteStorage, key: string, session: ShopWr
   return current
 }
 
-function persist(storage: ShopWriteStorage, key: string, session: ShopWriteSession, previousRaw?: string | null): ShopWriteSession {
+function persist(storage: ShopWriteStorage, key: string, session: ShopWriteSession): ShopWriteSession {
   const next = validated(session, key)
   const raw = encode(next)
-  const write = () => {
-    storage.setItem(key, raw)
-    if (storage.getItem(key) !== raw) throw new Error('The browser could not save shop recovery data. Do not submit until the saved record is restored.')
-    return next
-  }
-  return previousRaw === undefined ? write() : withPrewalletReservation(storage, key, previousRaw, raw, write)
+  storage.setItem(key, raw)
+  if (storage.getItem(key) !== raw) throw new Error('The browser could not save shop recovery data. Do not submit until the saved record is restored.')
+  return next
 }
 
 /** Call while holding withShopWriteLock; an existing record must be resolved, regardless of its account. */
@@ -142,47 +140,6 @@ export function restoreShopWritePermissions(storage: ShopWriteStorage, key: stri
     throw new Error('Verify any pending shop creation before switching to permission restoration.')
   }
   return persist(storage, key, { ...current, restoring: true })
-}
-
-/** Persist unknown submission immediately before the wallet can broadcast. Elapsed time never releases it. */
-export function beginShopWriteSubmission(storage: ShopWriteStorage, key: string, session: ShopWriteSession, options: { safe: boolean; afterBlock: bigint }): ShopWriteSession {
-  const current = matchingCurrent(storage, key, session)
-  if (current.pending) throw new Error('A shop transaction may already be pending. Verify its execution before submitting another.')
-  if (shopWriteRequestIndex(current) === null) throw new Error('This shop update has already completed.')
-  if (typeof options.afterBlock !== 'bigint') throw invalid()
-  return persist(storage, key, { ...current, pending: { safe: options.safe, afterBlock: options.afterBlock.toString(), startedAt: Date.now(), attemptId: globalThis.crypto.randomUUID() } }, storage.getItem(key))
-}
-
-/** Adopt the exact next call after proving the immutable plan's historical prerequisites. */
-export async function adoptShopWriteProposal(client: PublicClient, storage: ShopWriteStorage, key: string, session: ShopWriteSession, proposal: ExistingSafeProposal): Promise<ShopWriteSession> {
-  const current = matchingCurrent(storage, key, session)
-  if (current.pending) throw new Error('A shop transaction may already be pending. Verify its execution before submitting another.')
-  const index = shopWriteRequestIndex(current)
-  if (index === null) throw new Error('This shop update has already completed.')
-  assertSafeProposalCall(projectShopWriteRequest(current.plan, index), proposal)
-  const prerequisiteBlock = await verifyShopWriteProgress(client, current)
-  matchingCurrent(storage, key, current)
-  const afterBlock = prerequisiteBlock > current.plan.snapshot.blockNumber ? prerequisiteBlock : current.plan.snapshot.blockNumber
-  return persist(storage, key, { ...current, pending: { safe: true, afterBlock: afterBlock.toString(), startedAt: Date.now(), hash: proposal.proposalHash } })
-}
-export function recordShopWriteHash(storage: ShopWriteStorage, key: string, session: ShopWriteSession, transactionHash: Hex): ShopWriteSession {
-  if (!hash(transactionHash)) throw new Error('Invalid shop transaction or Safe proposal hash.')
-  const persisted = readShopWriteSession(storage, key)
-  if (session.pending && persisted && encode(persisted) === encode(validated({ ...session, pending: { ...session.pending, hash: transactionHash.toLowerCase() as Hex } }, key))) return persisted
-  const current = matchingCurrent(storage, key, session)
-  if (!current.pending) throw new Error('The pending shop submission is missing.')
-  if (current.pending.hash && current.pending.hash !== transactionHash.toLowerCase()) throw new Error('A different shop transaction is already pending. Verify that execution before recording another hash.')
-  return persist(storage, key, { ...current, pending: { ...current.pending, hash: transactionHash.toLowerCase() as Hex } })
-}
-
-/** Only useSafeTx's typed rejection/final pre-write abort callbacks may release an unknown submission. */
-export function rejectShopWriteSubmission(storage: ShopWriteStorage, key: string, session: ShopWriteSession, reason: ShopWriteRejection): ShopWriteSession {
-  if (reason !== 'wallet-rejected' && reason !== 'before-write-aborted') throw new Error('An uncertain shop submission must remain saved until its exact execution is verified.')
-  const current = matchingCurrent(storage, key, session)
-  if (!current.pending || current.pending.hash) throw new Error('A submitted shop transaction cannot be discarded as a wallet rejection.')
-  const { pending: _pending, ...next } = current
-  void _pending
-  return persist(storage, key, next)
 }
 
 function stickyRecord(session: ShopWriteSession, step: number, saved: ShopWriteSubmission): StickyPending {
@@ -218,23 +175,59 @@ export async function verifyShopWriteProgress(client: PublicClient, session: Sho
   return minimumBlock
 }
 
-/** An exact on-chain revert releases only this step; earlier grants and required cleanup remain saved. */
-export async function confirmShopWriteExecution(client: PublicClient, storage: ShopWriteStorage, key: string, session: ShopWriteSession, executionHash: Hex): Promise<{ session: ShopWriteSession; status: 'confirmed' | 'reverted' }> {
+/**
+ * The step the SDK's write hold settled: its exact execution is verified against the plan and its
+ * confirmed prerequisites, then recorded as completed. A revert records nothing, so the step can be
+ * reviewed again. `submission` is what was sent: the Safe flag, its returned hash, and the block its
+ * prerequisites were confirmed at.
+ */
+export async function confirmShopWriteStep(client: PublicClient, storage: ShopWriteStorage, key: string, session: ShopWriteSession, submission: Pick<ShopWriteSubmission, 'safe' | 'hash'> & { afterBlock: bigint }, executionHash: Hex): Promise<{ session: ShopWriteSession; status: 'confirmed' | 'reverted' }> {
   const current = matchingCurrent(storage, key, session)
-  if (!current.pending) throw new Error('The pending shop submission is missing.')
+  const index = shopWriteRequestIndex(current)
+  if (index === null) throw new Error('This shop update has already completed.')
   const minimumBlock = await verifyShopWriteProgress(client, current)
-  if (BigInt(current.pending.afterBlock) < minimumBlock) throw new Error('The pending shop transaction predates its confirmed prerequisite.')
-  const { status } = await verify(client, current, shopWriteRequestIndex(current)!, current.pending, executionHash)
+  const afterBlock = submission.afterBlock > minimumBlock ? submission.afterBlock : minimumBlock
+  const saved: ShopWriteSubmission = { safe: submission.safe, afterBlock: afterBlock.toString(), startedAt: Date.now(), ...(submission.hash ? { hash: submission.hash.toLowerCase() as Hex } : {}) }
+  const { status } = await verify(client, current, index, saved, executionHash)
   matchingCurrent(storage, key, session)
-  const { pending, ...next } = current
-  return { status, session: persist(storage, key, { ...next, completed: status === 'confirmed'
-    ? [...current.completed, { submission: pending, executionHash: executionHash.toLowerCase() as Hex }] : current.completed }) }
+  // A step the journal saved as pending before SDK holds is settled with it.
+  const { pending: _pending, ...rest } = current
+  void _pending
+  return { status, session: persist(storage, key, status === 'confirmed' ? { ...rest, completed: [...rest.completed, { submission: saved, executionHash: executionHash.toLowerCase() as Hex }] } : rest) }
+}
+
+/** A step's hold: the update this session plans and the step. TODO(SDK 2.38): the SDK's shared builder. */
+export function shopStepIntent(session: ShopWriteSession, step: number): string {
+  return writeIntentKey('shop-step', { project: session.plan.snapshot.projectId, update: session.id, step })
+}
+
+/**
+ * The hold a step the journal saved as pending before SDK holds is adopted into, with what it saved
+ * (its hash or Safe proposal, and when it was sent), or null when nothing is pending.
+ */
+export function shopPendingHold(session: ShopWriteSession): { input: ReviewedWriteRecoveryInput; evidence: LegacyWriteEvidence; step: number } | null {
+  const pending = session.pending
+  const step = shopWriteRequestIndex(session)
+  if (!pending || step === null) return null
+  const request = projectShopWriteRequest(session.plan, step)
+  return {
+    step,
+    input: { chainId: request.chainId, account: session.plan.snapshot.account, safe: pending.safe, namespace: shopStepIntent(session, step), call: callOf(request) },
+    evidence: { submittedAt: pending.startedAt, ...(pending.hash ? pending.safe ? { safe: { safeTxHash: pending.hash } } : { hash: pending.hash } : {}) },
+  }
+}
+
+/** Drop a pending step the SDK's hold now holds: the session keeps only its plan and completed steps. */
+export function dropShopWritePending(storage: ShopWriteStorage, key: string, session: ShopWriteSession): ShopWriteSession {
+  const current = matchingCurrent(storage, key, session)
+  const { pending: _pending, ...next } = current
+  void _pending
+  return persist(storage, key, next)
 }
 
 /** Partial progress must survive until permission restoration completes. Finished records require fresh proof. */
 export async function clearShopWriteSession(storage: ShopWriteStorage, key: string, session: ShopWriteSession, client?: PublicClient): Promise<void> {
   const current = matchingCurrent(storage, key, session)
-  if (current.pending) throw new Error('Verify the pending shop execution before clearing this update.')
   if (current.completed.length) {
     if (shopWriteRequestIndex(current) !== null) throw new Error('This shop update still has unfinished steps. Complete them, including restoring deployer permissions, before clearing it.')
     if (!client) throw new Error('Verify every completed shop execution before clearing this update.')

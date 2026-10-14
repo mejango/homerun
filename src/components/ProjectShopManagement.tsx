@@ -4,27 +4,26 @@ import type { JBChainId } from '@bananapus/nana-sdk-core'
 import type { Project721Tier } from '@bananapus/nana-sdk-core/v6'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { isAddressEqual, type Hex, type PublicClient } from 'viem'
+import { isAddressEqual, type PublicClient } from 'viem'
 import { useWallet } from '@/hooks/useWallet'
 import { useSafeTx, txPhaseLabel } from '@/hooks/useSafeTx'
 import { newDemoShopItem, type DemoShopItem } from '@/lib/demo-shop'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { waitForSafeExecutionHash } from '@/lib/safe-connector'
 import {
   prepareProjectShopWrite, projectShopWriteRequest, readProjectShopWriteState, reverifyProjectShopWrite,
   type ProjectShopWriteState,
 } from '@/lib/project-shop-write'
 import {
-  adoptShopWriteProposal, beginShopWriteSubmission, clearShopWriteSession, confirmShopWriteExecution, readShopWriteSession,
-  recordShopWriteHash, rejectShopWriteSubmission, shopWriteSessionKey, startShopWriteSession,
-  restoreShopWritePermissions, shopWriteRequestIndex, shopWriteRequestIndices,
+  clearShopWriteSession, confirmShopWriteStep, dropShopWritePending, readShopWriteSession, shopPendingHold, shopStepIntent,
+  shopWriteSessionKey, startShopWriteSession, restoreShopWritePermissions, shopWriteRequestIndex, shopWriteRequestIndices,
   verifyShopWriteProgress, withShopWriteLock, type ShopWriteSession,
 } from '@/lib/project-shop-session'
+import { adoptLegacyWrite } from '@/lib/write-hold'
+import { HeldNotice } from '@/components/ui/HeldWriteExit'
 import { ShopItemEditor, type ShopItemEditorState } from '@/components/ShopItemEditor'
 import { ModalShell } from '@/components/ui/ModalShell'
 
-const HASH = /^0x[\da-fA-F]{64}$/
 const SESSION_EVENT = 'homerun-shop-session'
 const message = (error: unknown) => error instanceof Error ? error.message : 'The shop update could not be completed. Try again.'
 type Editor = { initial: ShopItemEditorState; snapshot: ProjectShopWriteState }
@@ -50,7 +49,6 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
   const [progress, setProgress] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [checkedProgress, setCheckedProgress] = useState('')
-  const [executionHash, setExecutionHash] = useState('')
   const action = useRef(false)
   const state = useQuery({
     queryKey: ['project-shop-write', chainId, projectId.toString(), address ?? null],
@@ -85,42 +83,55 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
     return () => { cancelled = true }
   }, [client, session])
 
-  const confirm = useCallback(async (captured: ShopWriteSession, hash: Hex) => {
-    if (!client) throw new Error('The network connection is unavailable.')
-    const result = await confirmShopWriteExecution(client, localStorage, key, captured, hash)
-    setSession(result.session)
-    resetTx()
-    setCheckedProgress(`${result.session.id}:${result.session.completed.length}`)
-    setProgress(result.status === 'reverted' ? 'The transaction reverted. Review this step and try again.' : 'Transaction confirmed.')
-    setError(null)
-    window.dispatchEvent(new Event(SESSION_EVENT))
-    await invalidate()
-  }, [client, invalidate, key, resetTx])
+  /** The step this screen sent or adopted: what its settled execution is recorded against. */
+  const sent = useRef<{ session: string; step: number; safe: boolean; afterBlock: bigint } | null>(null)
+  const track = tx.track
+  // A step the journal saved as pending before SDK holds is adopted into its hold, then dropped from the journal.
   useEffect(() => {
-    if (!client || !session?.pending?.hash) return
+    if (!client || !session?.pending) return
     const captured = session
-    const pending = session.pending
-    const controller = new AbortController()
-    let timer: ReturnType<typeof setTimeout> | undefined
-    async function check() {
-      try {
-        const hash = pending!.safe
-          ? await waitForSafeExecutionHash(chainId, pending!.hash!, { pollingIntervalMs: 5_000, signal: controller.signal })
-          : pending!.hash!
-        if (!controller.signal.aborted) await withShopWriteLock(key, () => confirm(captured, hash))
-      } catch (reason) {
-        if (controller.signal.aborted) return
-        setProgress(`Waiting for confirmation. ${message(reason)}`)
-        timer = setTimeout(() => void check(), 5_000)
-      }
-    }
-    void check()
-    return () => { controller.abort(); if (timer) clearTimeout(timer) }
-  }, [chainId, client, confirm, key, session])
+    let cancelled = false
+    void withShopWriteLock(key, async () => {
+      const pending = shopPendingHold(captured)
+      if (!pending) return
+      await adoptLegacyWrite(pending.input, pending.evidence, client)
+      const next = dropShopWritePending(localStorage, key, captured)
+      if (cancelled) return
+      sent.current = { session: next.id, step: pending.step, safe: !!pending.input.safe, afterBlock: BigInt(captured.pending!.afterBlock) }
+      setSession(next); window.dispatchEvent(new Event(SESSION_EVENT))
+      await track(projectShopWriteRequest(next.plan, pending.step), { reviewedAccount: next.plan.snapshot.account, recoveryNamespace: pending.input.namespace, safe: pending.input.safe })
+    }).catch(reason => { if (!cancelled) setStorageError(message(reason)) })
+    return () => { cancelled = true }
+  }, [client, key, session, track])
+
+  // The SDK's hold settled the step: its exact execution is verified and recorded before the next one.
+  const settledReceipt = tx.phase === 'success' ? tx.receipt : null
+  const submissionHash = tx.submissionHash
+  useEffect(() => {
+    const step = sent.current
+    if (!client || !settledReceipt || !session || !step || step.session !== session.id || shopWriteRequestIndex(session) !== step.step) return
+    const captured = session
+    let cancelled = false
+    void withShopWriteLock(key, async () => {
+      const result = await confirmShopWriteStep(client, localStorage, key, captured, { safe: step.safe, hash: submissionHash ?? undefined, afterBlock: step.afterBlock }, settledReceipt.transactionHash)
+      if (cancelled) return
+      sent.current = null
+      setSession(result.session)
+      resetTx()
+      setCheckedProgress(`${result.session.id}:${result.session.completed.length}`)
+      setProgress(result.status === 'reverted' ? 'The transaction reverted. Review this step and try again.' : 'Transaction confirmed.')
+      setError(null)
+      window.dispatchEvent(new Event(SESSION_EVENT))
+      await invalidate()
+    }).catch(reason => { if (!cancelled) setError(message(reason)) })
+    return () => { cancelled = true }
+  }, [client, invalidate, key, resetTx, session, settledReceipt, submissionHash])
 
   const snapshot = state.data
   const canStart = ready && !storageError && !session && !unavailable && !state.isError && !!snapshot && !!address && isAddressEqual(snapshot.account, address)
   const busy = working || tx.busy || tx.phase === 'review'
+  /** A step is with the wallet, the chain or a Safe: nothing else is reviewed meanwhile. */
+  const stepActive = tx.busy || tx.phase === 'review' || tx.phase === 'submitted' || tx.phase === 'success'
   const indices = session ? shopWriteRequestIndices(session) : []
   const complete = !!session && session.completed.length === indices.length && checkedProgress === progressKey
   const accountMatches = !!session && !!address && isAddressEqual(address, session.plan.snapshot.account)
@@ -145,7 +156,7 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
     finally { action.current = false; setWorking(false) }
   }
   async function submit() {
-    if (!client || !session || !address || !accountMatches || session.pending || complete || action.current || storageError) return
+    if (!client || !session || !address || !accountMatches || complete || action.current || storageError) return
     const captured = session
     const account = address
     action.current = true; setWorking(true); setError(null)
@@ -156,49 +167,26 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
         const index = shopWriteRequestIndex(captured)
         if (index === null) throw new Error('This shop update is already complete.')
         const request = projectShopWriteRequest(captured.plan, index)
-        let submitting: ShopWriteSession | null = null
-        const persistSubmitted = (hash: Hex, safe?: boolean) => {
-          if (!submitting?.pending || (safe !== undefined && submitting.pending.safe !== safe)) throw new Error('The saved shop update does not match the submitted wallet write.')
-          if (submitting.pending.hash === hash) return
-          submitting = recordShopWriteHash(localStorage, key, submitting, hash)
-          changed()
-        }
         await reverifyProjectShopWrite(client, captured.plan, account, index, request)
-        const hash = await tx.send(request, {
+        const remember = () => { sent.current = { session: captured.id, step: index, safe: tx.isSafe, afterBlock: prerequisiteBlock } }
+        remember()
+        await tx.send(request, {
           reviewedAccount: captured.plan.snapshot.account,
+          recoveryNamespace: shopStepIntent(captured, index),
           reviewNotice: captured.restoring ? 'Cancel shop creation by restoring the shop deployer’s previous permissions for this project. No shop will be created.' : captured.plan.notice,
           reverify: async reviewed => {
             prerequisiteBlock = await verifyShopWriteProgress(client, captured)
             await reverifyProjectShopWrite(client, captured.plan, account, index, reviewed)
+            remember()
           },
-          onExistingProposal: async proposal => { submitting = await adoptShopWriteProposal(client, localStorage, key, captured, proposal); changed() },
-          durableRecovery: {
-            reserve: async () => {
-              const currentBlock = await client.getBlock({ blockTag: 'latest' })
-              if (currentBlock.number === null) throw new Error('The latest block could not be read.')
-              if (currentBlock.number < prerequisiteBlock) throw new Error('The network has not caught up with the previous shop transaction. Try again shortly.')
-              submitting = beginShopWriteSubmission(localStorage, key, captured, { safe: tx.isSafe, afterBlock: currentBlock.number })
-              changed()
-            },
-            releaseUnsubmitted: () => {
-              if (!submitting) return
-              rejectShopWriteSubmission(localStorage, key, submitting, 'before-write-aborted')
-              submitting = null
-              changed()
-            },
-            submitted: persistSubmitted,
+          beforeWrite: async () => {
+            const currentBlock = await client.getBlock({ blockTag: 'latest' })
+            if (currentBlock.number === null) throw new Error('The latest block could not be read.')
+            if (currentBlock.number < prerequisiteBlock) throw new Error('The network has not caught up with the previous shop transaction. Try again shortly.')
           },
         })
-        if (hash) persistSubmitted(hash)
       })
     } catch (reason) { setError(message(reason)) }
-    finally { action.current = false; setWorking(false) }
-  }
-  async function recover() {
-    if (!session?.pending || !HASH.test(executionHash) || action.current) return
-    action.current = true; setWorking(true); setError(null)
-    try { await withShopWriteLock(key, () => confirm(session, executionHash as Hex)); tx.reset() }
-    catch (reason) { setError(message(reason)) }
     finally { action.current = false; setWorking(false) }
   }
   async function finish() {
@@ -228,7 +216,7 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
   }
 
   const lastHash = session?.completed.at(-1)?.executionHash
-  const link = lastHash ? explorerTxUrl(chainId, lastHash) : session?.pending?.hash && !session.pending.safe ? explorerTxUrl(chainId, session.pending.hash) : null
+  const link = tx.hash ? explorerTxUrl(chainId, tx.hash) : lastHash ? explorerTxUrl(chainId, lastHash) : null
   const toolbar = session ? <button type="button" className="ds-button ds-button-secondary" onClick={() => setOpen(true)}>{complete ? 'Shop update complete' : 'Resume shop update'}</button>
     : snapshot?.canAdd && <button type="button" className="ds-button ds-button-primary" disabled={!canStart || busy} onClick={add}>Add items for sale</button>
   const notice = <>
@@ -245,23 +233,22 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
     {open && <ModalShell title={complete ? session?.restoring ? 'Shop creation cancelled' : 'Shop updated' : session?.restoring ? 'Restore shop permissions' : session?.plan.snapshot.mode === 'create' ? 'Create your shop' : 'Update your shop'} onClose={() => { if (!working && tx.phase !== 'review' && tx.phase !== 'signing') setOpen(false) }} busy={working || tx.phase === 'review' || tx.phase === 'signing'} footer={<div className="ds-footer">
       {complete ? <button type="button" className="ds-button ds-button-primary" onClick={() => void finish()}>Done</button>
         : session ? <>
-          {!session.pending && session.completed.length === 0 && <button type="button" className="ds-button ds-button-secondary" disabled={busy} onClick={() => void finish()}>Cancel update</button>}
-          {!session.pending && !session.restoring && session.completed.length === 1 && session.plan.requestKinds.join(',') === 'grant,create,restore' && <button type="button" className="ds-button ds-button-secondary" disabled={busy || !accountMatches} onClick={() => void restore()}>Cancel creation and restore permissions</button>}
-          {!session.pending && <button type="button" className="ds-button ds-button-primary" disabled={busy || !accountMatches || checkedProgress !== progressKey || !!storageError} onClick={() => void submit()}>{txPhaseLabel(tx.phase, { idle: 'Review transaction', pending: 'Waiting for confirmation…' })}</button>}
+          {!stepActive && session.completed.length === 0 && <button type="button" className="ds-button ds-button-secondary" disabled={busy} onClick={() => void finish()}>Cancel update</button>}
+          {!stepActive && !session.restoring && session.completed.length === 1 && session.plan.requestKinds.join(',') === 'grant,create,restore' && <button type="button" className="ds-button ds-button-secondary" disabled={busy || !accountMatches} onClick={() => void restore()}>Cancel creation and restore permissions</button>}
+          {(!stepActive || tx.phase === 'submitted') && <button type="button" className="ds-button ds-button-primary" disabled={busy || !accountMatches || checkedProgress !== progressKey || !!storageError} onClick={() => void submit()}>{txPhaseLabel(tx.phase, { idle: 'Review transaction', pending: 'Waiting for confirmation…' })}</button>}
         </> : !working && <button type="button" className="ds-button ds-button-secondary" onClick={() => { setOpen(false); if (retryDraft) setEditor(retryDraft) }}>{retryDraft ? 'Back to items' : 'Close'}</button>}
     </div>}>
       <div className="grid gap-4 text-sm">
         {session && <>
           <p>{session.restoring ? 'Cancel shop creation by restoring the deployer’s previous permissions. Confirm the restoration transaction to finish.' : session.plan.notice}</p>
-          <ol className="list-decimal space-y-3 pl-5">{indices.map((requestIndex, index) => <li key={requestIndex}>{session.plan.requests[requestIndex].label}<span className="ml-2">{index < session.completed.length ? checkedProgress === progressKey ? 'Confirmed' : 'Verifying…' : index === session.completed.length ? session.pending ? 'Waiting for confirmation' : 'Ready' : 'Next'}</span></li>)}</ol>
+          <ol className="list-decimal space-y-3 pl-5">{indices.map((requestIndex, index) => <li key={requestIndex}>{session.plan.requests[requestIndex].label}<span className="ml-2">{index < session.completed.length ? checkedProgress === progressKey ? 'Confirmed' : 'Verifying…' : index === session.completed.length ? stepActive ? 'Waiting for confirmation' : 'Ready' : 'Next'}</span></li>)}</ol>
           {!accountMatches && !complete && <p>Connect {session.plan.snapshot.account} to continue this update.</p>}
-          {session.pending?.safe && <p>Proposed to Safe. Execution is required before the next step.</p>}
-          {session.pending && <details><summary className="cursor-pointer">Check an execution transaction</summary><p className="mt-3">If you already confirmed this step, enter its onchain transaction hash.</p><label className="mt-3 grid gap-2">Execution transaction hash<input className="min-h-11 w-full rounded border border-[#bfc9b5] bg-transparent px-3" value={executionHash} onChange={event => setExecutionHash(event.target.value.trim())} /></label><button type="button" className="btn-secondary mt-3" disabled={working || !HASH.test(executionHash)} onClick={() => void recover()}>Check execution</button></details>}
+          {tx.phase === 'submitted' && <HeldNotice tx={tx} />}
+          {tx.phase === 'pending' && <p>Submitted. Waiting for onchain confirmation…</p>}
           {complete && <p>{session.restoring ? 'The previous permissions have been restored. Shop creation was cancelled.' : session.plan.snapshot.mode === 'create' ? 'The shop and first items are created. They become available when the attached ruleset is active.' : 'Your inventory changes are confirmed onchain.'}</p>}
         </>}
         {progress && !complete && <p role="status">{progress}</p>}
         {(error || tx.error) && <p role="alert">{error ?? tx.error}</p>}
-        {session?.pending && !session.pending.hash && tx.submissionHash && <p className="break-all">{session.pending.safe ? 'Safe proposal' : 'Submitted transaction'}: <code>{tx.submissionHash}</code></p>}
         {link && <a href={link} className="underline" target="_blank" rel="noreferrer">View transaction</a>}
       </div>
     </ModalShell>}
