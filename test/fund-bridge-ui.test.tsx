@@ -5,7 +5,7 @@ import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 import { encodeFunctionData, parseAbi, type Address } from 'viem'
 import { WRITE_EXIT_LABEL, writeExitMessage, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
 import type { TxRequest, TxSendOptions } from '../src/hooks/useSafeTx'
-import { writeIntent } from '../src/lib/write-intent'
+import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import type { FundBridgeRoute } from '../src/lib/fund-bridge'
 
 const runtime = vi.hoisted(() => ({
@@ -211,8 +211,8 @@ it('rechecks destination mint authority before source submission and permits ret
   expect(write).toHaveBeenCalledOnce()
   expect(runtime.verifyDestinationMint).toHaveBeenCalledTimes(4)
   // Its minimum backing comes from a quote: a retry is held by the move the user chose.
-  expect(runtime.send.mock.calls.at(-1)![1].recoveryNamespace).toBe(writeIntent('bridge-prepare', {
-    token: runtime.route!.sourceToken, destination: 10, amount: 2n * 10n ** 18n, beneficiary: runtime.address }))
+  expect(runtime.send.mock.calls.at(-1)![1].recoveryNamespace).toBe(writeIntentKey('bridge-prepare', {
+    token: intent.address(runtime.route!.sourceToken), destination: 10, amount: 2n * 10n ** 18n, beneficiary: intent.address(runtime.address) }))
 })
 
 it('closes an unproven Safe outer revert without counting its approval or releasing the bridge lock', async () => {
@@ -288,7 +288,7 @@ it('relays a prepared movement under its batch, and a retry with a fresh fee is 
   await act(async () => relay().click())
   const relays = runtime.send.mock.calls.filter(([request]) => (request as TxRequest).functionName === 'toRemote').map(([request, options]) => ({ request, options }))
   expect(relays).toHaveLength(2)
-  await expectRetryHeldByIntent(relays[0], relays[1], writeIntent('bridge-relay', { sucker: route.sourceSucker, token: route.sourceToken }))
+  await expectRetryHeldByIntent(relays[0], relays[1], writeIntentKey('bridge-relay', { sucker: intent.address(route.sourceSucker), token: intent.address(route.sourceToken) }))
 })
 
 it('claims a delivered movement under its exact leaf, and a retry with a proof against a newer root is held by the first', async () => {
@@ -306,5 +306,5 @@ it('claims a delivered movement under its exact leaf, and a retry with a proof a
   await act(async () => claim().click())
   const claims = runtime.send.mock.calls.filter(([request]) => (request as TxRequest).functionName === 'claim').map(([request, options]) => ({ request, options }))
   expect(claims).toHaveLength(2)
-  await expectRetryHeldByIntent(claims[0], claims[1], writeIntent('bridge-claim', { sucker: route.destinationSucker, token: route.destinationToken, leaf: 3n, leafHash }))
+  await expectRetryHeldByIntent(claims[0], claims[1], writeIntentKey('bridge-claim', { sucker: intent.address(route.destinationSucker), token: intent.address(route.destinationToken), leaf: 3n, leafHash: intent.hex(leafHash) }))
 })

@@ -9,7 +9,7 @@ import { decodeAbiParameters, encodeFunctionData, decodeFunctionData, getAddress
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectPayQuote, ProjectPayTokenOption } from '@/lib/project-pay-quote'
 import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
-import { writeIntent } from '@/lib/write-intent'
+import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 
 type Action = 'payment' | 'approval' | 'router'
 type Handle = { notice: string | null; dismiss: ReturnType<typeof vi.fn>; phase: string; busy: boolean; isSafe: boolean; error: null; hash: Hex | null; safeProposalHash: Hex | null; receipt: null; send: ReturnType<typeof vi.fn>; reset: ReturnType<typeof vi.fn> }
@@ -181,7 +181,7 @@ describe('shared payment execution', () => {
     expect(options.reviewedAccount).toBe(WALLET)
     expect(options.simulationBlockNumber).toBe(100n)
     // Its minimum comes from a fresh quote, so a retry is held by the user's choice, not the calldata.
-    expect(options.recoveryNamespace).toBe(writeIntent('pay', { project: 7n, token: NATIVE_TOKEN, amount: UNIT }))
+    expect(options.recoveryNamespace).toBe(writeIntentKey('pay', { project: 7n, token: intent.address(NATIVE_TOKEN), amount: UNIT }))
   })
 
   it('preserves the SDK swap minimum exactly in genuine Universal Router calldata', async () => {
@@ -240,8 +240,8 @@ describe('shared payment execution', () => {
     expect(encoded(runtime.writes[0].request).args?.slice(0, 3)).toEqual([TOKEN, getAddress(DEPLOYMENT.universalRouter!), 3_000_000n])
     expect(encoded(runtime.writes[1].request).args?.[0]).toBe('0x10')
     // The approval's expiration and the swap's deadline are stamped now: both are held by the user's choice.
-    expect(runtime.writes[0].options.recoveryNamespace).toBe(writeIntent('permit2-router-approve', { token: TOKEN, amount: 3_000_000n }))
-    expect(runtime.writes[1].options.recoveryNamespace).toBe(writeIntent('pay', { project: 7n, token: TOKEN, amount: 3_000_000n }))
+    expect(runtime.writes[0].options.recoveryNamespace).toBe(writeIntentKey('permit2-router-approve', { token: intent.address(TOKEN), amount: 3_000_000n }))
+    expect(runtime.writes[1].options.recoveryNamespace).toBe(writeIntentKey('pay', { project: 7n, token: intent.address(TOKEN), amount: 3_000_000n }))
   })
 
   it('never substitutes an onchain approval after the user rejects a signature', async () => {

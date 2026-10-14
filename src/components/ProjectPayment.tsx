@@ -20,7 +20,8 @@ import { parseAmount } from '@/lib/fund-contracts'
 import { buildErc20ApproveRequest } from '@/lib/transaction-builders'
 import { prepareProjectPayQuote, readProjectPayTokenOptions } from '@/lib/project-pay-quote'
 import { swapDeadline } from '@/lib/safe-connector'
-import { writeIntent } from '@/lib/write-intent'
+// `intent` names this flow's own reviewed intent here.
+import { intent as keyed, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import dynamic from 'next/dynamic'
 import { readableError } from '@/lib/readable-error'
 import { refreshIndexedProject } from '@/lib/refresh-indexed'
@@ -220,7 +221,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
               setStatus('Review the swap-router authorization.'); setStage('router')
               if (!await waitForApproval(routerApproval, { ...buildPermit2ApproveTx({ chainId, token: context.token, amount: count, expiration: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60 }), label: 'Authorize the Uniswap swap router for this exact payment amount' },
                 // Its expiration is stamped now: a retry is held by the token and amount the user chose.
-                writeIntent('permit2-router-approve', { token: context.token, amount: count }))) return
+                writeIntentKey('permit2-router-approve', { token: keyed.address(context.token), amount: count }))) return
             }
           }
         }
@@ -234,7 +235,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       await tx.send({ ...request, label: `Pay ${formatUnits(count, context.decimals)} ${context.symbol} through ${route}; minimum ${formatUnits(latest.minimumTokenCount, 18)} ${tokenLabel}` }, {
         reviewedAccount: address,
         // The route, minimum, deadline and signature are fresh each attempt: a retry is held by the payment the user chose.
-        recoveryNamespace: writeIntent('pay', { project: projectId, token: context.token, amount: count }),
+        recoveryNamespace: writeIntentKey('pay', { project: projectId, token: keyed.address(context.token), amount: count }),
         simulationBlockNumber: latestBlock === undefined ? undefined : checked.blockNumber,
         reviewNotice: noTokens ? `You receive no ${tokenLabel} for this payment. This project allocates 100% of new tokens to its reserved recipients.` : [swap ? 'This route buys existing tokens on Uniswap. It does not add the payment to the project treasury or issue reserved tokens.' : null, latest.minimumTokenCount < minimum ? `The quote decreased. Your protected minimum is now ${formatUnits(latest.minimumTokenCount, 18)} ${tokenLabel}.` : null].filter(Boolean).join(' ') || undefined,
         reverify: async () => {

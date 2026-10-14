@@ -23,7 +23,7 @@ import { submitReviewedContractWrite } from '@/lib/contract-write'
 import {
   gasWithHeadroom, sameReviewedWrite, SubmittedContractWriteError, WRITE_EXIT_LABEL, SAFE_PROPOSAL_REPLACED_LINE,
   waitForTrackedReceipt, transactionMessage, WRITE_HOLD_PENDING_LINE, WRITE_HOLD_REVERTED_LINE, writeExitMessage, writeHeldMessage,
-  WriteHeldError, WriteHoldBusyError, WriteHoldNonceError,
+  WriteHeldError, WriteHoldBusyError, WriteHoldNonceError, WriteHoldStaleReviewError,
   type ReviewedWriteRecoveryRecord, type WriteHeldState, type WriteHoldClient, type WriteHoldGate, type WriteHoldHandle, type WriteHoldState,
 } from '@bananapus/nana-sdk-core/review'
 import { holds } from '@/lib/write-hold'
@@ -502,6 +502,10 @@ export function useSafeTx(chainId: number) {
   const exitShown = useRef(false)
   /** How the call's earlier write settled where this flow didn't see it: a notice that blocks nothing. */
   const [settledNotice, setSettledNotice] = useState<string | null>(null)
+  /** The SDK's own notice on the hold's states: that holds last in this tab alone, say. */
+  const [holdNotice, setHoldNotice] = useState<string | null>(null)
+  /** The hold reservation this flow follows: states of another one (another tab's later attempt) are not its own. */
+  const reservation = useRef<string | null>(null)
   const exiting = useRef(false)
   /** A write with a durable domain journal has no generic hold; its wallet may still have lost the reply. */
   const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null)
@@ -585,7 +589,7 @@ export function useSafeTx(chainId: number) {
           : phase
   // A success settles only once the hold has verified it and let go.
   const effectivePhase: TxPhase = held?.exit ? 'submitted' : held && shownPhase === 'success' ? 'pending' : shownPhase
-  const notice = held && held.status !== 'pending-known-hash' ? held.line
+  const shownNotice = held && held.status !== 'pending-known-hash' ? held.line
     : watchGaveUp ? (held?.line ?? WRITE_HOLD_PENDING_LINE) : recoveryNotice ?? (
     proposal?.phase === 'awaiting'
       ? (proposal.message ?? SAFE_PROPOSAL_AWAITING)
@@ -594,6 +598,7 @@ export function useSafeTx(chainId: number) {
         : proposal?.phase === 'unproven'
           ? (proposal.message ?? SAFE_PROPOSAL_UNCONFIRMED)
           : settledNotice)
+  const notice = [shownNotice, holdNotice].filter(Boolean).join(' ') || null
   const effectiveError = shownKey
     ? proposal && SHOWN_AS[proposal.phase] === 'error'
       ? proposal.message
@@ -626,6 +631,9 @@ export function useSafeTx(chainId: number) {
   /** Show what the hold says: a write the chain has not placed, a hash to follow, or its end. */
   const apply = useCallback((state: WriteHoldState, client: FollowClient) => {
     if (!mounted.current) return
+    if (state.reservation && reservation.current && state.reservation !== reservation.current) return
+    if (state.status !== 'clear' && state.reservation) reservation.current = state.reservation
+    setHoldNotice(state.notice ?? null)
     if (state.status === 'clear') {
       setHeld(null)
       const ended = state.settled
@@ -737,7 +745,9 @@ export function useSafeTx(chainId: number) {
       setShownKey(null)
       setPolledReceipt(null)
       tracked.current = null
+      reservation.current = null
       setSettledNotice(null)
+      setHoldNotice(null)
       // No exit is on screen for the send that starts now.
       exitShown.current = false
       setHold(null)
@@ -944,6 +954,15 @@ export function useSafeTx(chainId: number) {
               ? (e.state.record.hash ?? null) : null
           } catch { return null }
         }
+        if (e instanceof WriteHoldStaleReviewError) {
+          // Another window sent this same write while its review was open: a fresh review is needed.
+          // That window follows its own attempt; this flow doesn't adopt it.
+          holdAt.current = -1
+          setError(e.message)
+          setPhase('error')
+          if (e.settled && 'hash' in e.settled) setSettledNotice(settledLine(e.settled))
+          return null
+        }
         if (e instanceof WriteHoldBusyError || e instanceof WriteHoldNonceError) {
           setError(e.message)
           setPhase('error')
@@ -1003,7 +1022,9 @@ export function useSafeTx(chainId: number) {
     inFlightRef.current = false
     tracked.current = null
     exitShown.current = false
+    reservation.current = null
     setSettledNotice(null)
+    setHoldNotice(null)
     setPhase('idle')
     setError(null)
     setHash(null)

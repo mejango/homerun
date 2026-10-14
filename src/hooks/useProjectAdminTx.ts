@@ -194,7 +194,7 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
   return {
     send, reset, dismiss, ready: adopted,
     busy: working || tx.busy || phase === 'review', pending,
-    phase, settled: tx.settled || !!otherHold, notice: otherHold ? otherHold.state.line : phase === 'submitted' ? tx.notice : null,
+    phase, settled: tx.settled || !!otherHold, notice: otherHold ? [otherHold.state.line, otherHold.state.notice].filter(Boolean).join(' ') : phase === 'submitted' ? tx.notice : null,
     error: error ?? tx.error, status: phase === 'success' ? `${label} confirmed.` : null,
     hash: tx.hash, submissionHash: tx.submissionHash,
     safe: tx.isSafe, chainId, pendingLabel: pending ? label : null,

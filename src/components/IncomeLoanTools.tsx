@@ -15,7 +15,7 @@ import { readIncomeLoan, type IncomeProjectState } from '@/lib/income-state'
 import { assertSameIncomeLoan, buildIncomePartialRepayment, incomeLoanRecipient, loanRepaymentIntent, prepareIncomeLoanReallocation, prepareIncomeLoanTransfer, prepareIncomePartialRepayment } from '@/lib/income-loan-tools'
 import { readableError } from '@/lib/readable-error'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
-import { writeIntent } from '@/lib/write-intent'
+import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 
 type Props = { state: IncomeProjectState; client: PublicClient }
 type LoanAction = 'transfer' | 'reallocate' | 'partialRepay'
@@ -97,7 +97,7 @@ export function IncomeLoanTools({ state, client }: Props) {
         await tx.send({ ...prepared.transaction, label: `Refinance loan ${loanId}; borrow at least ${formatUnits(prepared.minimumBorrowAmount, source.decimals)} ${source.symbol} before fees` }, {
           reviewedAccount: input.account,
           // Its minimum comes from a fresh quote: a retry is held by the refinance the user chose.
-          recoveryNamespace: writeIntent('loan-reallocate', { project: state.projectId, loan: loanId, collateral, added: additional }),
+          recoveryNamespace: writeIntentKey('loan-reallocate', { project: state.projectId, loan: loanId, collateral, added: additional }),
           simulationBlockNumber: minimumBlock === undefined ? undefined : prepared.loan.blockNumber,
           reviewNotice: `The original debt remains backed by ${formatUnits(prepared.remainingCollateral, 18)} INCOME. A new loan uses ${formatUnits(prepared.newCollateral, 18)} INCOME. Its minimum has 1% slippage protection before the 2.5% prepaid source fee and applicable protocol and REV fees. Proceeds and both replacement loan NFTs stay with your wallet.`,
           reverify: async () => { const current = await prepareIncomeLoanReallocation({ ...input, collateralToTransfer: collateral, collateralToAdd: additional }); assertSameIncomeLoan(prepared.loan, current.loan); if (current.grossBorrowAmount < prepared.minimumBorrowAmount) throw new Error('The protected borrowing quote is no longer available. Review a fresh quote.') },
@@ -113,7 +113,7 @@ export function IncomeLoanTools({ state, client }: Props) {
           if (allowance < prepared.owed) {
             await prerequisite.send({ ...buildErc20ApproveRequest({ chainId: state.chainId, token: source.token, spender: loans, amount: maximum }), label: `Approve up to ${formatUnits(maximum, source.decimals)} ${source.symbol} for this loan repayment` }, { reviewedAccount: input.account,
               // Its amount, the repay ceiling, accrues with time: a retry is held by the loan.
-              recoveryNamespace: writeIntent('loan-repay-approve', { project: state.projectId, loan: loanId, token: source.token }), reverify: async () => { const current = await prepareIncomePartialRepayment({ ...input, collateralToReturn: collateral }); assertSameIncomeLoan(prepared.loan, current.loan); if (current.owed > maximum) throw new Error('The repayment quote exceeded the approval. Review a fresh quote.') } })
+              recoveryNamespace: writeIntentKey('loan-repay-approve', { project: state.projectId, loan: loanId, token: intent.address(source.token) }), reverify: async () => { const current = await prepareIncomePartialRepayment({ ...input, collateralToReturn: collateral }); assertSameIncomeLoan(prepared.loan, current.loan); if (current.owed > maximum) throw new Error('The repayment quote exceeded the approval. Review a fresh quote.') } })
             return
           }
           // Use existing allowance that covers actual debt even when a newly calculated buffer grew by one wei.

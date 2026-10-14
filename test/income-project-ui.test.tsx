@@ -74,7 +74,7 @@ vi.mock('@tanstack/react-query', () => ({
 
 import { IncomeProject } from '../src/components/IncomeProject'
 import { parseAbi } from 'viem'
-import { writeIntent } from '../src/lib/write-intent'
+import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import { expectRetryHeldByIntent } from './support/intent-retry'
 
 function state(): IncomeProjectState {
@@ -150,7 +150,7 @@ describe('INCOME transaction surfaces', () => {
     await act(async () => review().click())
     expect(runtime.send).toHaveBeenCalledTimes(2)
     const [first, retry] = runtime.send.mock.calls.map(([request, options]) => ({ request, options }))
-    await expectRetryHeldByIntent(first, retry, writeIntent('cash-out', { project: 7n, token, count: 2n * 10n ** 18n }))
+    await expectRetryHeldByIntent(first, retry, writeIntentKey('cash-out', { project: 7n, token: intent.address(token), count: 2n * 10n ** 18n }))
   })
 
   function section(title: string) { return [...host.querySelectorAll('section')].find(element => element.querySelector('h2, h3')?.textContent === title)! }

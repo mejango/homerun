@@ -2,7 +2,7 @@ import { heldStorage, holds } from './write-hold'
 import { isAddress, zeroAddress, zeroHash, type Address, type Hex, type PublicClient } from 'viem'
 import {
   createBrowserWriteRecovery, parseReviewedWriteRecoveryRecord, readBrowserWriteRecovery, sameReviewedWrite,
-  type WriteHeldState, type WriteHoldHandle,
+  type WriteHeldState, type WriteHoldHandle, type WriteHoldState,
 } from '@bananapus/nana-sdk-core/review'
 
 /** One reservation per chain and project, around the SDK's per-account records. */
@@ -92,7 +92,7 @@ export function pruneProjectAdminAccounts(storage: Store, chainId: number, proje
 }
 
 /** Another account's unresolved update: its hold, and what the SDK says it is. */
-export type ProjectAdminHold = { hold: WriteHoldHandle; state: WriteHeldState }
+export type ProjectAdminHold = { hold: WriteHoldHandle; state: WriteHeldState & Pick<WriteHoldState, 'notice'> }
 
 /**
  * Unresolved updates this project holds for accounts other than `account`, each as the SDK's write

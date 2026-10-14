@@ -8,7 +8,7 @@ import { formatUnits, type Address, type Hex } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { IncomeProjectState } from '@/lib/income-state'
 import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
-import { writeIntent } from '@/lib/write-intent'
+import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 
 const WALLET = '0x1111111111111111111111111111111111111111' as Address
 const TERMINAL = '0x3333333333333333333333333333333333333333' as Address
@@ -126,7 +126,7 @@ describe('INCOME loans like Juicebox Money', () => {
     expect(borrow.options.simulationBlockNumber).toBe(200n)
     expect(borrow.options.reviewNotice).toContain('The prepaid source fee is 5%')
     // Its borrow amount and minimum come from a fresh quote: a retry is held by the collateral the user chose.
-    expect(borrow.options.recoveryNamespace).toBe(writeIntent('borrow', { project: state.projectId, token: context.token, collateral: 10n * UNIT, fee: 50n }))
+    expect(borrow.options.recoveryNamespace).toBe(writeIntentKey('borrow', { project: state.projectId, token: intent.address(context.token), collateral: 10n * UNIT, fee: 50n }))
   })
 
   it('lists only the wallet’s open loans and repays one in full', async () => {
@@ -171,7 +171,7 @@ describe('INCOME loans like Juicebox Money', () => {
     runtime.loan = usdcLoan(400_500n)
     await act(async () => button('Confirm & repay').click()); await settle()
     expect(runtime.sends.map(sent => sent.request.functionName)).toEqual(['approve', 'approve'])
-    await expectRetryHeldByIntent(runtime.sends[0], runtime.sends[1], writeIntent('loan-repay-approve', { project: state.projectId, loan: 41n, token: USDC }))
+    await expectRetryHeldByIntent(runtime.sends[0], runtime.sends[1], writeIntentKey('loan-repay-approve', { project: state.projectId, loan: 41n, token: intent.address(USDC) }))
   })
 
   async function loanTools(action: 'reallocate' | 'partialRepay', collateral: string) {
@@ -199,7 +199,7 @@ describe('INCOME loans like Juicebox Money', () => {
     runtime.reallocation = quoteWith(99_000n)
     await reviewLoanChange()
     expect(runtime.sends.map(sent => sent.request.functionName)).toEqual(['reallocateCollateralFromLoan', 'reallocateCollateralFromLoan'])
-    await expectRetryHeldByIntent(runtime.sends[0], runtime.sends[1], writeIntent('loan-reallocate', { project: state.projectId, loan: 41n, collateral: 2n * UNIT, added: 0n }))
+    await expectRetryHeldByIntent(runtime.sends[0], runtime.sends[1], writeIntentKey('loan-reallocate', { project: state.projectId, loan: 41n, collateral: 2n * UNIT, added: 0n }))
   })
 
   /** A partial repayment's quote whose ceiling is `ceiling` now. */
@@ -215,7 +215,7 @@ describe('INCOME loans like Juicebox Money', () => {
     runtime.partial = partialWith(201_400n)
     await reviewLoanChange()
     expect(runtime.sends.map(sent => sent.request.functionName)).toEqual(['approve', 'approve'])
-    await expectRetryHeldByIntent(runtime.sends[0], runtime.sends[1], writeIntent('loan-repay-approve', { project: state.projectId, loan: 41n, token: USDC }))
+    await expectRetryHeldByIntent(runtime.sends[0], runtime.sends[1], writeIntentKey('loan-repay-approve', { project: state.projectId, loan: 41n, token: intent.address(USDC) }))
   })
 
   it('repays part of a loan under the chosen collateral, and a retry with a ceiling that accrued is held by the first', async () => {

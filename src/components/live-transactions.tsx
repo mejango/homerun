@@ -1,7 +1,7 @@
 'use client'
 
 import { buildBurnTokensTx, getHookAwareCashOutQuote, prepareHookAwareCashOut } from '@bananapus/nana-sdk-core/v6'
-import { writeIntent } from '@/lib/write-intent'
+import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { erc20Abi, formatUnits, getAddress, isAddress, isAddressEqual, zeroAddress, type Address, type PublicClient } from 'viem'
@@ -180,7 +180,7 @@ export function CashOutPanel({ state, client, contextIndex }: { state: FundProje
     reviewedAccount: account,
     reviewNotice: plan.reviewNotice,
     // Its minimum comes from a fresh quote: a retry is held by the cash out the user chose.
-    recoveryNamespace: writeIntent('cash-out', { project: state.projectId, token: context.token, count: plan.count }),
+    recoveryNamespace: writeIntentKey('cash-out', { project: state.projectId, token: intent.address(context.token), count: plan.count }),
     reverify: async () => {
       const latest = await freshState(client, state, account)
       if (latest.metadata.cashOutTaxRate >= 10_000 || plan.count > latest.creditBalance + latest.erc20Balance) throw new Error('Cash-out conditions changed during review. Refresh and try again.')
