@@ -24,7 +24,7 @@ const runtime = vi.hoisted(() => ({
   verifyDestinationMint: vi.fn(),
   sourceClient: { chain: { id: 8453 } },
   destinationClient: { chain: { id: 10 } },
-  movements: [] as unknown[], relayValue: 0n,
+  movements: [] as unknown[], relayValue: 0n, claimProof: [] as `0x${string}`[],
   engine: null as null | { phase: string; notice?: string; receipt: { status: string; transactionHash: string; blockNumber: bigint } | null },
 }))
 vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
@@ -75,6 +75,9 @@ vi.mock('@/lib/project-bridge', async importOriginal => ({
   readProjectBridgeSendValue: async () => runtime.relayValue,
   buildProjectBridgeSend: (route: FundBridgeRoute, value: bigint) => ({ chainId: route.source.chainId, address: route.sourceSucker,
     abi: parseAbi(['function toRemote(address token) payable']), functionName: 'toRemote', args: [route.sourceToken], value }),
+  // A claim's proof is against the destination's latest inbox root: a newer root regenerates it for the same leaf.
+  buildProjectBridgeClaim: (route: FundBridgeRoute, movement: { destinationSucker: Address; leaf: { index: bigint } }) => ({ chainId: route.destination.chainId,
+    address: movement.destinationSucker, abi: parseAbi(['function claim(uint256 index, bytes32[] proof)']), functionName: 'claim', args: [movement.leaf.index, runtime.claimProof] }),
 }))
 
 import { FundBridgeActions } from '../src/components/FundBridgeActions'
@@ -286,4 +289,22 @@ it('relays a prepared movement under its batch, and a retry with a fresh fee is 
   const relays = runtime.send.mock.calls.filter(([request]) => (request as TxRequest).functionName === 'toRemote').map(([request, options]) => ({ request, options }))
   expect(relays).toHaveLength(2)
   await expectRetryHeldByIntent(relays[0], relays[1], writeIntent('bridge-relay', { sucker: route.sourceSucker, token: route.sourceToken }))
+})
+
+it('claims a delivered movement under its exact leaf, and a retry with a proof against a newer root is held by the first', async () => {
+  runtime.idle = true
+  const route = runtime.route!
+  const leafHash = `0x${'12'.repeat(32)}` as const
+  runtime.movements = [{ sourceSucker: route.sourceSucker, destinationSucker: route.destinationSucker, remoteToken: route.destinationToken, beneficiary: runtime.address,
+    leaf: { index: 3n, projectTokenCount: 2n * 10n ** 18n }, leafHash, status: 'claimable', canExecute: false }]
+  runtime.send.mockImplementation(async (request: TxRequest, options: TxSendOptions) => { await options.reverify?.(request); return null })
+  await render()
+  const claim = () => [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Review destination claim')!
+  runtime.claimProof = [`0x${'a1'.repeat(32)}`]
+  await act(async () => claim().click())
+  runtime.claimProof = [`0x${'b2'.repeat(32)}`]
+  await act(async () => claim().click())
+  const claims = runtime.send.mock.calls.filter(([request]) => (request as TxRequest).functionName === 'claim').map(([request, options]) => ({ request, options }))
+  expect(claims).toHaveLength(2)
+  await expectRetryHeldByIntent(claims[0], claims[1], writeIntent('bridge-claim', { sucker: route.destinationSucker, token: route.destinationToken, leaf: 3n, leafHash }))
 })

@@ -913,6 +913,14 @@ function BridgeMovements<State extends BridgeProjectState>({
           },
           {
             reviewedAccount: address,
+            // Its proof is against the destination's latest inbox root, which a newer delivery
+            // changes: a retry is held by the exact leaf, never by the proof or root.
+            recoveryNamespace: writeIntent("bridge-claim", {
+              sucker: current.destinationSucker,
+              token: current.remoteToken,
+              leaf: current.leaf.index,
+              leafHash: current.leafHash,
+            }),
             reverify: async () => {
               const latest = await find();
               const prepared = buildProjectBridgeClaim(fresh, latest);
