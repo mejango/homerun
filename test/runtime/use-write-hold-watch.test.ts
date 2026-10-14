@@ -37,4 +37,28 @@ describe('useWriteHoldWatch', () => {
     expect(seen).toEqual([pending, unproven])
     await act(async () => renderer.unmount())
   })
+
+  it("keeps a shown exit through a check that lost the lock, and hides it only on the chain's pending answer", async () => {
+    const lost = { status: 'held-no-hash', record, exit: true, line: 'lost reply' } as WriteHoldState
+    let answer!: (state: WriteHoldState) => void
+    const hold = {
+      subscribe: vi.fn(() => () => {}),
+      state: vi.fn(() => new Promise<WriteHoldState>(resolve => { answer = resolve })),
+    } as unknown as WriteHoldHandle
+    const seen: WriteHoldState[] = []
+    let recheck!: () => void
+    function Watch() { recheck = useWriteHoldWatch(hold, {} as never, state => seen.push(state), { shown: lost }); return null }
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => { renderer = TestRenderer.create(createElement(Watch)) })
+    // A check that lost the lock: the saved state, which never carries an exit.
+    await act(async () => { recheck() })
+    await act(async () => { answer({ ...lost, exit: false } as WriteHoldState) })
+    expect(seen).toEqual([])
+    // The chain says the hash is pending after all: that hides the exit.
+    const now = { status: 'pending-known-hash', record, hash: `0x${'ab'.repeat(32)}`, exit: false, line: 'pending' } as WriteHoldState
+    await act(async () => { recheck() })
+    await act(async () => { answer(now) })
+    expect(seen).toEqual([now])
+    await act(async () => renderer.unmount())
+  })
 })

@@ -37,6 +37,15 @@ export function useWriteHoldWatch(
     if (!hold) return
     let live = true
     let checking = false
+    // The same state without its exit (a replay, or a check that lost the lock and read the saved
+    // state) never hides an exit the screen shows: only a changed chain answer (another status,
+    // record or reservation) does.
+    // ponytail: shape comparison; key off the SDK's `checked: false` once it marks contended results.
+    const hidesShownExit = (state: WriteHoldState) => {
+      const current = shownRef.current
+      return state.status !== 'clear' && !state.exit && !!current && current.status !== 'clear' && current.exit &&
+        sameShownHold({ ...state, exit: true } as WriteHoldState, current)
+    }
     // The chain's answer reaches `onState` itself: only that, never a replayed or
     // peeked state, may offer an exit.
     const check = () => {
@@ -44,19 +53,14 @@ export function useWriteHoldWatch(
       if (!current || checking) return
       checking = true
       void hold.state(current)
-        .then(state => { if (live) onStateRef.current(state) }, () => {})
+        .then(state => { if (live && !hidesShownExit(state)) onStateRef.current(state) }, () => {})
         .finally(() => { checking = false })
     }
     // The SDK replays the hold's latest state as it subscribes, so a state reported before is not missed.
     // One that offers an exit is asked of the chain first.
     const stop = hold.subscribe(state => {
       if (state.status !== 'clear' && state.exit) { check(); return }
-      // The same state without the exit (a replay, or a look while the lock was contended) never
-      // hides an exit the chain offered: only another chain answer does.
-      const current = shownRef.current
-      if (state.status !== 'clear' && current && current.status !== 'clear' && current.exit &&
-        sameShownHold({ ...state, exit: true } as WriteHoldState, current)) return
-      onStateRef.current(state)
+      if (!hidesShownExit(state)) onStateRef.current(state)
     })
     recheckRef.current = check
     const timer = setInterval(check, HOLD_RECHECK_MS)
