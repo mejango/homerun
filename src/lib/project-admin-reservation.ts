@@ -1,9 +1,8 @@
-import { provenDropped } from './write-hold'
-import { lookAtSafeProposal, reportedSafeExecution, waitForSafeExecutionHash } from '@bananapus/nana-sdk-core/safe-service'
+import { heldStorage, holds } from './write-hold'
 import { isAddress, zeroAddress, zeroHash, type Address, type Hex, type PublicClient } from 'viem'
 import {
-  createBrowserWriteRecovery, parseReviewedWriteRecoveryRecord, readBrowserWriteRecovery, sameReviewedWrite, verifyReviewedWriteExpiry, verifyReviewedWriteReceipt,
-  type ReviewedWriteRecoveryRecord,
+  createBrowserWriteRecovery, parseReviewedWriteRecoveryRecord, readBrowserWriteRecovery, sameReviewedWrite,
+  type WriteHeldState, type WriteHoldHandle,
 } from '@bananapus/nana-sdk-core/review'
 
 /** One reservation per chain and project, around the SDK's per-account records. */
@@ -80,7 +79,6 @@ export async function adoptLegacyProjectAdminRecord(storage: Store, chainId: num
   storage.removeItem(key)
 }
 
-/** `exit`: the hold may be ended by the user: it has no known hash, or its hash is proven dropped. */
 /**
  * Drop accounts that hold nothing from the list as it is now, keeping `account`. Call it under the
  * project lock: a scan reads the list and waits on the chain, so it never writes one back.
@@ -89,57 +87,28 @@ export function pruneProjectAdminAccounts(storage: Store, chainId: number, proje
   const namespace = projectAdminNamespace(projectId)
   const accounts = accountsOf(storage, chainId, projectId)
   const keep = accounts.filter(other => other.toLowerCase() === account.toLowerCase()
-    || !!readBrowserWriteRecovery({ chainId, account: other, namespace }, { storage: storage as Storage }))
+    || !!readBrowserWriteRecovery({ chainId, account: other, namespace }, { storage: heldStorage }))
   if (keep.length !== accounts.length) writeAccounts(storage, chainId, projectId, keep)
 }
 
-export type ProjectAdminHold = { journal: ReturnType<typeof createBrowserWriteRecovery>; record: ReviewedWriteRecoveryRecord; exit: boolean }
+/** Another account's unresolved update: its hold, and what the SDK says it is. */
+export type ProjectAdminHold = { hold: WriteHoldHandle; state: WriteHeldState }
 
 /**
- * Unresolved updates this project holds for accounts other than `account`. The chain is asked
- * first: a placed transaction or a mined receipt ends the hold; anything else stays.
+ * Unresolved updates this project holds for accounts other than `account`, each as the SDK's write
+ * hold reads it from the chain: a placed transaction or a mined receipt ends it; anything else stays.
  */
 export async function otherProjectAdminHolds(storage: Store, client: PublicClient, chainId: number, projectId: bigint, account: Address): Promise<ProjectAdminHold[]> {
   const namespace = projectAdminNamespace(projectId)
-  const accounts = accountsOf(storage, chainId, projectId)
-  const holds: ProjectAdminHold[] = []
-  for (const other of accounts) {
-    const mine = other.toLowerCase() === account.toLowerCase()
-    const found = readBrowserWriteRecovery({ chainId, account: other, namespace }, { storage: storage as Storage })
-    if (!found || mine) continue
-    const record = parseReviewedWriteRecoveryRecord(found)
-    const journal = createBrowserWriteRecovery({ chainId, account: record.account, safe: record.safe, namespace, call: record.call }, { storage: storage as Storage })
-    try {
-      await journal.withLock(async () => {
-        await journal.resolve(client)
-        const current = journal.read()
-        if (current?.hash && !current.safe) {
-          const receipt = await client.getTransactionReceipt({ hash: current.hash })
-          await verifyReviewedWriteReceipt(client, current, receipt)
-          journal.clear(current)
-        } else if (current?.hash && current.safe) {
-          // The Safe's own events decide: replaced, expired and executed are each proven before the hold ends.
-          const look = await lookAtSafeProposal(client, chainId, current.account, current.hash)
-          if (look === 'replaced') journal.clear(current)
-          else if (look === 'expired') { await verifyReviewedWriteExpiry(client, current); journal.clear(current) }
-          else {
-            const proposal = current.hash
-            // A proposal that ran and failed makes the waiter throw; the service's record still names its execution.
-            const execution = await waitForSafeExecutionHash(chainId, proposal, { client, signal: AbortSignal.timeout(5_000) })
-              .catch(async (reason: unknown) => {
-                const reported = await reportedSafeExecution(reason, chainId, current.account, proposal)
-                if (!reported) throw reason
-                return reported
-              })
-            const receipt = await client.getTransactionReceipt({ hash: execution })
-            await verifyReviewedWriteReceipt(client, current, receipt)
-            journal.clear(current)
-          }
-        }
-      })
-    } catch { /* The chain can't place it yet: it stays held. */ }
-    const current = journal.read()
-    if (current) holds.push({ journal, record: current, exit: !current.hash || await provenDropped(client, current).catch(() => false) })
+  const found: ProjectAdminHold[] = []
+  for (const other of accountsOf(storage, chainId, projectId)) {
+    if (other.toLowerCase() === account.toLowerCase()) continue
+    const saved = readBrowserWriteRecovery({ chainId, account: other, namespace }, { storage: heldStorage })
+    if (!saved) continue
+    const { account: holder, safe, call } = parseReviewedWriteRecoveryRecord(saved)
+    const hold = holds.open({ chainId, account: holder, safe, namespace, call })
+    const state = await hold.state(client).catch(() => hold.peek())
+    if (state.status !== 'clear') found.push({ hold, state })
   }
-  return holds
+  return found
 }

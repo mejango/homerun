@@ -16,16 +16,16 @@ export async function readLaunchNonceEvidence(client: PublicClient, sender: Addr
 
 /**
  * What the chain shows of a launch write whose wallet reply was lost: the SDK's nonce check finds the
- * exact call at the nonce it saved (`sent`, with the hash to verify), or `effect` shows it took effect
- * (`ran`). Anything else stays `pending`, and the user's exit stays open.
+ * exact call at the nonce it saved (`sent`, with the hash to verify). Anything else stays `pending`, and
+ * the user's exit stays open: another sender's matching deployment never releases a marker.
  */
 export async function proveLostLaunchWrite(client: PublicClient, input: {
   request: FundTransaction; sender: Address; safe: boolean; attemptId: string
-} & LaunchNonceEvidence, effect?: (chainId: number) => Promise<boolean>): Promise<ReviewedWriteCheck> {
+} & LaunchNonceEvidence): Promise<ReviewedWriteCheck> {
   if (input.safe) return { status: 'pending' }
   return checkReviewedWrite(client, {
     version: 1, id: input.attemptId, chainId: input.request.chainId, account: input.sender, safe: false,
     call: { to: input.request.address, data: encodeFunctionData(input.request), value: String(input.request.value ?? 0n) },
     ...(input.nonce !== undefined ? { nonce: input.nonce } : {}), ...(input.fromBlock !== undefined ? { fromBlock: input.fromBlock } : {}),
-  }, { effect })
+  })
 }

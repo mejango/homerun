@@ -60,6 +60,9 @@ function createFakeWallet() {
       return new Promise<Receipt>(resolve => awaiting.set(key, [...(awaiting.get(key) ?? []), resolve]))
     }),
     getBalance: vi.fn(async () => 10n ** 30n),
+    /** The nonce evidence a held write reads before the wallet opens. */
+    getBlockNumber: vi.fn(async () => 1_000n),
+    getTransactionCount: vi.fn(async () => 0),
     /** A flow's own reads; each test answers the ones its flow makes. */
     readContract: vi.fn(async (request: { functionName: string; args?: readonly unknown[] }): Promise<unknown> => {
       throw new Error(`Unexpected read ${request.functionName}`)

@@ -218,6 +218,7 @@ beforeEach(async () => {
     request: { address: BOB, functionName: 'transfer', gas: 100n },
   })
   mocks.publicClient.estimateContractGas.mockResolvedValue(50_000n)
+  mocks.publicClient.getChainId.mockResolvedValue(10)
   // A proposal's hash is no transaction; the execution is an owner's execTransaction of the call.
   mocks.publicClient.getTransaction.mockReset().mockImplementation(async ({ hash }: { hash: Hex }) => {
     if (hash !== EXECUTION) throw new TransactionNotFoundError({ hash })
@@ -1041,7 +1042,7 @@ describe('generic Safe durable recovery', () => {
     ;({ useSafeTx } = await import('@/hooks/useSafeTx'))
     const reopened = await mount(10, undefined, { reviewedAccount: SAFE })
     await reopened.send()
-    expect(reopened.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: true, notice: writeHeldMessage('transaction') })
+    expect(reopened.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: true, notice: writeHeldMessage() })
     expect(reopened.tx.held).toMatchObject({ label: WRITE_EXIT_LABEL })
     expect(mocks.writeContract).toHaveBeenCalledOnce()
     expect(mocks.findPendingSafeAppProposal).toHaveBeenCalledOnce()
@@ -1086,6 +1087,34 @@ describe('generic Safe durable recovery', () => {
     await flow.send()
     await settle()
     expect(flow.tx.phase).toBe('pending')
+    expect(recoveryRecords()).toHaveLength(1)
+  })
+
+  it('lets go of its hold on the proposal’s canonical execution receipt', async () => {
+    canonicalExecution()
+    const flow = await mount(10, undefined, { reviewedAccount: SAFE })
+    await flow.send()
+    await settle()
+    expect(flow.tx.phase).toBe('success')
+    expect(recoveryRecords()).toHaveLength(0)
+  })
+
+  it('keeps a proposal the Safe ran held through a reload until its receipt settles it, never sent again', async () => {
+    mocks.publicClient.getTransactionReceipt.mockRejectedValue(new TransactionReceiptNotFoundError({ hash: EXECUTION }))
+    mocks.publicClient.waitForTransactionReceipt.mockRejectedValue(new Error('timed out'))
+    const executes = signersDecide()
+    const first = await mount(10, undefined, { reviewedAccount: SAFE })
+    await first.send()
+    await act(async () => { executes() })
+    await settle()
+    expect(recoveryRecords()).toEqual([expect.objectContaining({ hash: PROPOSAL, executed: true, executionHash: EXECUTION })])
+    await first.close()
+    vi.resetModules()
+    ;({ useSafeTx } = await import('@/hooks/useSafeTx'))
+    const reopened = await mount(10, undefined, { reviewedAccount: SAFE })
+    await reopened.send()
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    expect(reopened.tx.held).toBeNull()
     expect(recoveryRecords()).toHaveLength(1)
   })
 

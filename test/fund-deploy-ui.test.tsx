@@ -62,7 +62,7 @@ describe('Create submission recovery', () => {
     runtime.safe = false
     runtime.send.mockReset()
     runtime.evidence.mockReset().mockResolvedValue({})
-    runtime.prove.mockReset().mockImplementation(async (_client: unknown, _input: unknown, effect?: (chainId: number) => Promise<boolean>) => effect && await effect(8453) ? { status: 'ran' } : { status: 'pending' })
+    runtime.prove.mockReset().mockResolvedValue({ status: 'pending' })
     runtime.waitSafe.mockReset(); runtime.waitReceipt.mockReset(); runtime.checkMultisigs.mockReset().mockResolvedValue(undefined); runtime.verifyMultisigs.mockReset().mockResolvedValue(true)
     runtime.getTransaction.mockReset(); runtime.getTransactionReceipt.mockReset()
     runtime.readContract.mockResolvedValue(0n); runtime.getBlock.mockReset().mockResolvedValue({ timestamp: 1000n }); runtime.publish.mockResolvedValue({ cid: 'bafkreimetadata' }); runtime.checkDeployment.mockResolvedValue(undefined)
@@ -141,7 +141,7 @@ describe('Create submission recovery', () => {
       expect(saved().statuses[8453].phase).toBe('signing')
     })
 
-    it('ends a hashless multisig setup the chain shows created, then lets the launch continue', async () => {
+    it('keeps a hashless multisig setup held, with the exit, when the matching Safes were deployed by another sender', async () => {
       const policy = { owners: [owner, '0x2222222222222222222222222222222222222222' as const], threshold: 2, saltNonce: salt, proxyCreationCode: '0x6000' as Hex }
       const plan: CreateMultisig = { ...policy, role: 'operator', address: predictMultisig(policy) }
       const current = saved()
@@ -149,8 +149,9 @@ describe('Create submission recovery', () => {
       saveLaunch({ ...current, input: { ...current.input, operator: plan.address, multisigs: [plan] }, statuses: { 8453: { phase: 'ready', multisigSetup: { safe: false, attemptId: ATTEMPT } } } })
       runtime.verifyMultisigs.mockResolvedValue(true)
       await render()
-      await vi.waitFor(() => expect(saved().statuses[8453].multisigSetup).toBeUndefined())
-      expect(runtime.verifyMultisigs).toHaveBeenCalledWith(expect.anything(), [plan], true)
+      await vi.waitFor(() => expect(host.textContent).toContain(writeHeldMessage('multisig setup')))
+      expect(saved().statuses[8453].multisigSetup).toEqual({ safe: false, attemptId: ATTEMPT })
+      expect(exit()).toBeDefined()
     })
 
     it('holds a hashless multisig setup the chain cannot place, with the exit', async () => {

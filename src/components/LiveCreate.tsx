@@ -94,10 +94,8 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
       } else if (current.multisigSetup && !current.multisigSetup.hash && current.multisigSetup.attemptId) {
         const plans = session.input.multisigs ?? []
         const setup = current.multisigSetup
-        const found = await proveLostLaunchWrite(client, { request: multisigDeploymentRequest(request.chainId, plans), sender, safe: setup.safe, attemptId: setup.attemptId!, nonce: setup.nonce, fromBlock: setup.fromBlock },
-          () => verifyCreatedMultisigs(client, plans, true))
-        if (found.status === 'ran') update({ ...current, multisigSetup: undefined }, undefined, current)
-        else if (found.status === 'sent') update({ ...current, multisigSetup: { ...setup, hash: found.hash, walletReturned: true } }, undefined, current)
+        const found = await proveLostLaunchWrite(client, { request: multisigDeploymentRequest(request.chainId, plans), sender, safe: setup.safe, attemptId: setup.attemptId!, nonce: setup.nonce, fromBlock: setup.fromBlock })
+        if (found.status === 'sent') update({ ...current, multisigSetup: { ...setup, hash: found.hash, walletReturned: true } }, undefined, current)
       }
     } catch { /* The node can't answer: it stays held, and the next look asks again. */ }
     finally { recovering.current = false; setLostChecked(true) }
