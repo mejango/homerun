@@ -18,12 +18,13 @@ import {
   useWriteContract,
 } from 'wagmi'
 import { useWallet } from '@/hooks/useWallet'
+import { useWriteHoldWatch } from '@/hooks/useWriteHoldWatch'
 import { submitReviewedContractWrite } from '@/lib/contract-write'
 import {
   gasWithHeadroom, sameReviewedWrite, SubmittedContractWriteError, WRITE_EXIT_LABEL, SAFE_PROPOSAL_REPLACED_LINE,
   waitForTrackedReceipt, transactionMessage, WRITE_HOLD_PENDING_LINE, WRITE_HOLD_REVERTED_LINE, writeExitMessage, writeHeldMessage,
   WriteHeldError, WriteHoldBusyError, WriteHoldNonceError,
-  type ReviewedWriteRecoveryRecord, type WriteHeldState, type WriteHoldGate, type WriteHoldHandle, type WriteHoldState,
+  type ReviewedWriteRecoveryRecord, type WriteHeldState, type WriteHoldClient, type WriteHoldGate, type WriteHoldHandle, type WriteHoldState,
 } from '@bananapus/nana-sdk-core/review'
 import { holds } from '@/lib/write-hold'
 import { hasSafeService } from '@bananapus/nana-sdk-core/safe-service'
@@ -56,8 +57,6 @@ import {
 const RECEIPT_WATCH_TIMEOUT_MS = 120_000
 const RECEIPT_POLL_INTERVAL_MS = 4_000
 
-/** A held write is checked against the chain this often while its line shows. */
-const HELD_LOOK_INTERVAL_MS = 15_000
 /** ~10 minutes of direct lookups, matching the watcher's own retry horizon. */
 const RECEIPT_POLL_ATTEMPTS = 150
 
@@ -487,7 +486,8 @@ export function useSafeTx(chainId: number) {
   /** The SDK's hold on the call this flow sent or was refused, and what it says now. */
   const [hold, setHold] = useState<WriteHoldHandle | null>(null)
   const [held, setHeld] = useState<WriteHeldState | null>(null)
-  const unsubscribe = useRef<(() => void) | null>(null)
+  /** The send generation the hold was opened in: a later reset, exit or chain change stops its states. */
+  const holdAt = useRef(-1)
   /** The wallet is being handed the call: a hold with no hash yet is the send, not a lost reply. */
   const sending = useRef(false)
   /** The returned hash this flow already follows. */
@@ -499,7 +499,7 @@ export function useSafeTx(chainId: number) {
   const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null)
   useEffect(() => {
     mounted.current = true
-    return () => { mounted.current = false; generation.current += 1; unsubscribe.current?.() }
+    return () => { mounted.current = false; generation.current += 1 }
   }, [chainId])
 
   const receipt = useWaitForTransactionReceipt({
@@ -649,14 +649,10 @@ export function useSafeTx(chainId: number) {
 
   const watching = !!held
   const fresh = held?.status === 'pending-known-hash'
-  // A held write ends on the chain's proof: the hold asks it while its state shows.
-  useEffect(() => {
-    if (!hold || !publicClient || !watching) return
-    const look = () => void hold.state(publicClient).catch(() => null)
-    const timer = setInterval(look, HELD_LOOK_INTERVAL_MS)
-    if (!fresh) look()
-    return () => clearInterval(timer)
-  }, [hold, publicClient, watching, fresh])
+  // A held write ends on the chain's proof: the hold is watched, and asked while its state shows.
+  useWriteHoldWatch(hold ?? undefined, publicClient as WriteHoldClient | undefined, state => {
+    if (publicClient && holdAt.current === generation.current) apply(state, publicClient)
+  }, { checkNow: watching && !fresh })
 
   // A verified receipt releases the hold; a revert only once it is final.
   useEffect(() => {
@@ -729,8 +725,6 @@ export function useSafeTx(chainId: number) {
       setHash(null)
       setShownKey(null)
       setPolledReceipt(null)
-      unsubscribe.current?.()
-      unsubscribe.current = null
       tracked.current = null
       setHold(null)
       setHeld(null)
@@ -761,7 +755,7 @@ export function useSafeTx(chainId: number) {
           ...input, ...(options.recoveryNamespace ? { namespace: options.recoveryNamespace } : {}),
         })
         if (current) {
-          unsubscribe.current = current.subscribe(state => { if (generation.current === at) apply(state, publicClient) })
+          holdAt.current = at
           setHold(current)
         }
         const execute = async (gate?: WriteHoldGate) => {
@@ -980,8 +974,6 @@ export function useSafeTx(chainId: number) {
     if (following.current) return
     generation.current += 1
     inFlightRef.current = false
-    unsubscribe.current?.()
-    unsubscribe.current = null
     tracked.current = null
     setPhase('idle')
     setError(null)
