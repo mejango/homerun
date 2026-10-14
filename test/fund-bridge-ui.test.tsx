@@ -5,6 +5,7 @@ import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 import { encodeFunctionData, parseAbi, type Address } from 'viem'
 import { WRITE_EXIT_LABEL, writeExitMessage, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
 import type { TxRequest, TxSendOptions } from '../src/hooks/useSafeTx'
+import { writeIntent } from '../src/lib/write-intent'
 import type { FundBridgeRoute } from '../src/lib/fund-bridge'
 
 const runtime = vi.hoisted(() => ({
@@ -194,6 +195,9 @@ it('rechecks destination mint authority before source submission and permits ret
   await act(async () => prepare().click())
   expect(write).toHaveBeenCalledOnce()
   expect(runtime.verifyDestinationMint).toHaveBeenCalledTimes(4)
+  // Its minimum backing comes from a quote: a retry is held by the move the user chose.
+  expect(runtime.send.mock.calls.at(-1)![1].recoveryNamespace).toBe(writeIntent('bridge-prepare', {
+    token: runtime.route!.sourceToken, destination: 10, amount: 2n * 10n ** 18n, beneficiary: runtime.address }))
 })
 
 it('closes an unproven Safe outer revert without counting its approval or releasing the bridge lock', async () => {

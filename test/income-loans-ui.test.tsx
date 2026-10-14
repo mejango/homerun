@@ -8,6 +8,7 @@ import { formatUnits, type Address, type Hex } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { IncomeProjectState } from '@/lib/income-state'
 import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
+import { writeIntent } from '@/lib/write-intent'
 
 const WALLET = '0x1111111111111111111111111111111111111111' as Address
 const TERMINAL = '0x3333333333333333333333333333333333333333' as Address
@@ -111,6 +112,8 @@ describe('INCOME loans like Juicebox Money', () => {
     expect(borrow.request.args).toContain(50n)
     expect(borrow.options.simulationBlockNumber).toBe(200n)
     expect(borrow.options.reviewNotice).toContain('The prepaid source fee is 5%')
+    // Its borrow amount and minimum come from a fresh quote: a retry is held by the collateral the user chose.
+    expect(borrow.options.recoveryNamespace).toBe(writeIntent('borrow', { project: state.projectId, token: context.token, collateral: 10n * UNIT, fee: 50n }))
   })
 
   it('lists only the wallet’s open loans and repays one in full', async () => {
@@ -133,6 +136,8 @@ describe('INCOME loans like Juicebox Money', () => {
     await act(async () => button('Confirm & repay').click()); await settle()
     expect(runtime.sends).toHaveLength(1)
     expect(runtime.sends[0].request.functionName).toBe('repayLoan')
+    // Its ceiling accrues with time: a retry is held by the loan the user chose to repay.
+    expect(runtime.sends[0].options.recoveryNamespace).toBe(writeIntent('loan-repay', { project: state.projectId, loan: 41n }))
     expect(runtime.sends[0].request.value).toBe(4n * UNIT / 10n + 4n * UNIT / 10_000n)
   })
 })

@@ -6,6 +6,7 @@ import { parseAbi, type Address, type Hex } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FundProjectState } from '@/lib/fund-state'
 import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
+import { writeIntent } from '@/lib/write-intent'
 
 const WALLET = '0x1111111111111111111111111111111111111111' as Address
 const OTHER_WALLET = '0x6666666666666666666666666666666666666666' as Address
@@ -87,6 +88,7 @@ describe('FUND holder actions confirm like Juicebox Money', () => {
     const [request, options] = runtime.tx.send.mock.calls[0] as [TxRequest, TxSendOptions]
     expect(request.label).toBe('Cash out 10 FUND for at least 8.9 USDC')
     expect(options.reviewNotice).toContain('down from 9 USDC')
+    expect(options.recoveryNamespace).toBe(writeIntent('cash-out', { project: state.projectId, token: USDC, count: 10n * 10n ** 18n }))
     await expect(options.reverify!()).resolves.toBeUndefined()
     runtime.fresh = { ...state, erc20Balance: 1n }
     await expect(options.reverify!()).rejects.toThrow('Cash-out conditions changed')

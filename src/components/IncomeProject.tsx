@@ -51,6 +51,7 @@ import {
 } from '@/lib/income-state'
 import { readableError } from '@/lib/readable-error'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
+import { writeIntent } from '@/lib/write-intent'
 
 function message(reason: unknown) { return readableError(reason, 'The transaction could not be prepared. Refresh and try again.') }
 function amount(value: string, decimals = 18) { try { return parseAmount(value.trim(), decimals) } catch { return 0n } }
@@ -293,6 +294,8 @@ function IncomeCashOut({ state, client, context }: { state: IncomeProjectState; 
       if (prepared.route.minimumReturn <= 0n) throw new Error('No positive protected cash-out return is available.')
       await tx.send({ ...prepared.transaction, label: `Cash out ${units(count)} INCOME for at least ${units(prepared.route.minimumReturn, context.decimals)} ${context.symbol}` }, {
         reviewedAccount: address,
+        // Its minimum comes from a fresh quote: a retry is held by the cash out the user chose.
+        recoveryNamespace: writeIntent('cash-out', { project: state.projectId, token: context.token, count }),
         reviewNotice: prepared.route.minimumReturn < quote.data.minimumReturn ? `The quote decreased. Your new protected minimum is ${units(prepared.route.minimumReturn, context.decimals)} ${context.symbol}.` : undefined,
         reverify: async () => { const latest = await fresh(client, state, address); matchingContext(latest, context); if (!latest.cashOutsAvailable || count > latest.totalBalance) throw new Error('Cash-out conditions changed during review.') },
       })
@@ -410,6 +413,8 @@ export function IncomeBorrow({ state, client, context }: { state: IncomeProjectS
       const minimum = protectedIncomeMinimum(latestQuote.borrowableNow)
       await tx.send({ ...buildProtectedIncomeBorrow({ chainId: state.chainId, revnetId: state.projectId, token: context.token, quotedBorrowAmount: latestQuote.borrowableNow, collateralCount: count, holder: address, beneficiary: address, prepaidFeePercent: prepaid }), label: `Borrow against ${units(count)} INCOME; minimum ${units(minimum, context.decimals)} ${context.symbol} before loan fees` }, {
         reviewedAccount: address,
+        // Its borrow amount and minimum come from a fresh quote: a retry is held by the loan the user chose.
+        recoveryNamespace: writeIntent('borrow', { project: state.projectId, token: context.token, collateral: count, fee: prepaid }),
         simulationBlockNumber: minimumBlock === undefined ? undefined : latest.blockNumber,
         reviewNotice: `The prepaid source fee is ${optionLabel}. Protocol and REV fees also reduce wallet proceeds. Your INCOME becomes loan collateral; repayment is required to recover it. Unpaid loans can be liquidated after the contract’s ten-year term.`,
         reverify: async () => { const again = await fresh(client, state, address, minimumBlock); matchingContext(again, context); if (!again.cashOutsAvailable || count > again.totalBalance) throw new Error('The borrowing conditions changed during review.') },
@@ -487,7 +492,8 @@ function IncomeRepayDialog({ state, client, loanId, tx, approval, onClose }: { s
         let approved = await client.readContract({ address: current.sourceContext.token, abi: erc20Abi, functionName: 'allowance', args: [address, loansContract], blockNumber: current.blockNumber })
         if (approved < current.loan.amount + current.accruedFee) {
           setStage('approve')
-          const hash = await approval.send({ ...buildErc20ApproveRequest({ chainId: state.chainId, token: current.sourceContext.token, spender: loansContract, amount: current.repayCeiling }), label: `Approve up to ${units(current.repayCeiling, current.sourceContext.decimals)} ${current.sourceContext.symbol} to repay loan ${loanId}` }, { reviewedAccount: address, reverify: async () => { await readIncomeLoan(client, { chainId: state.chainId, projectId: state.projectId, loanId, account: address }) } })
+          // Its amount, the repay ceiling, accrues with time: a retry is held by the loan.
+          const hash = await approval.send({ ...buildErc20ApproveRequest({ chainId: state.chainId, token: current.sourceContext.token, spender: loansContract, amount: current.repayCeiling }), label: `Approve up to ${units(current.repayCeiling, current.sourceContext.decimals)} ${current.sourceContext.symbol} to repay loan ${loanId}` }, { reviewedAccount: address, recoveryNamespace: writeIntent('loan-repay-approve', { project: state.projectId, loan: loanId, token: current.sourceContext.token }), reverify: async () => { await readIncomeLoan(client, { chainId: state.chainId, projectId: state.projectId, loanId, account: address }) } })
           const block = await prerequisiteBlock(client, hash, approval.isSafe)
           if (block === null) return
           prerequisite = block
@@ -503,6 +509,8 @@ function IncomeRepayDialog({ state, client, loanId, tx, approval, onClose }: { s
       const reviewed = current
       await tx.send({ ...buildRepayLoanTx({ chainId: state.chainId, loanId, maxRepayBorrowAmount: maximum, collateralCountToReturn: reviewed.loan.collateral, beneficiary: address, value: tokenNative ? maximum : 0n }), label: `Repay loan ${loanId}; spend at most ${units(maximum, reviewed.sourceContext.decimals)} ${reviewed.sourceContext.symbol}` }, {
         reviewedAccount: address,
+        // Its ceiling accrues with time: a retry is held by the loan the user chose to repay.
+        recoveryNamespace: writeIntent('loan-repay', { project: state.projectId, loan: loanId }),
         simulationBlockNumber: prerequisite === undefined ? undefined : reviewed.blockNumber,
         reviewNotice: `Recover ${units(reviewed.loan.collateral)} INCOME. The maximum includes outstanding principal, accrued fees, and a 0.1% principal buffer. Unused funds are refunded.`,
         reverify: async () => { const latest = await readIncomeLoan(client, { chainId: state.chainId, projectId: state.projectId, loanId, account: address }); if (latest.loan.collateral !== reviewed.loan.collateral || latest.loan.amount !== reviewed.loan.amount || latest.loan.amount + latest.accruedFee > maximum) throw new Error('The loan changed or its fees exceeded the reviewed maximum. Review a fresh repayment.'); if (prerequisite !== undefined && latest.blockNumber < prerequisite) throw new Error('The RPC is behind the confirmed approval.') },

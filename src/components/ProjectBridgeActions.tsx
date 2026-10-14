@@ -44,6 +44,7 @@ import {
 } from "@/lib/project-bridge";
 import { verifyFundBridgeReceipt } from "@/lib/fund-bridge-receipts";
 import { readableError } from "@/lib/readable-error";
+import { writeIntent } from "@/lib/write-intent";
 import { SAFE_PROPOSAL_UNCONFIRMED } from "@bananapus/nana-sdk-core/safe-service";
 
 const clientFor = jbCenterPublicClient;
@@ -540,6 +541,13 @@ function BridgePreparation<State extends BridgeProjectState>({
         },
         {
           reviewedAccount: address,
+          // Its minimum backing comes from a quote: a retry is held by the move the user chose.
+          recoveryNamespace: writeIntent("bridge-prepare", {
+            token: fresh.sourceToken,
+            destination: fresh.destination.chainId,
+            amount: count,
+            beneficiary,
+          }),
           reviewNotice: `Beneficiary: ${beneficiary}. At least ${formatUnits(minimum, fresh.sourceContext.decimals)} ${fresh.sourceContext.symbol} of treasury backing moves with your ${adapter.tokenLabel}. Relay and destination claim are separate transactions.`,
           simulationBlockNumber:
             minimumBlock === undefined ? undefined : fresh.source.blockNumber,
@@ -875,6 +883,11 @@ function BridgeMovements<State extends BridgeProjectState>({
           },
           {
             reviewedAccount: address,
+            // Its value, the bridge fee, is read fresh each attempt: a retry is held by the batch the user relays.
+            recoveryNamespace: writeIntent("bridge-relay", {
+              sucker: current.sourceSucker,
+              token: fresh.sourceToken,
+            }),
             reviewNotice: `This relays the current batch for this backing token. Maximum transaction value: ${formatUnits(value, 18)} ETH. Destination delivery and claims follow separately.`,
             reverify: async () => {
               const latest = await find();
