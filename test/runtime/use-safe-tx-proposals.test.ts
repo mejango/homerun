@@ -18,7 +18,7 @@ import {
 } from '@bananapus/nana-sdk-core/safe-service'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildPermit2ApproveTx } from '@bananapus/nana-sdk-core/v6'
-import { WRITE_EXIT_LABEL, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
+import { WRITE_EXIT_LABEL, WRITE_HOLD_SAFE_UNPROVEN_LINE, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
 import { installRecoveryLocks, recoveryRecords } from './write-recovery-fixture'
 const STAMPED_CHAIN = 10
 const STAMPED_SITES = [['Permit2 allowance expiration', (stamp: bigint, other = 0n) => buildPermit2ApproveTx({ chainId: STAMPED_CHAIN, token: '0x3333333333333333333333333333333333333333', amount: 5n + other, expiration: Number(stamp) })]] as const
@@ -1048,6 +1048,53 @@ describe('generic Safe durable recovery', () => {
     expect(mocks.findPendingSafeAppProposal).toHaveBeenCalledOnce()
     await act(async () => reopened.tx.held!.release())
     expect(reopened.tx).toMatchObject({ phase: 'idle', held: null })
+  })
+
+  it('holds a proposal its follower lost track of with the SDK line and exit; only the accepted exit lets it be proposed again', async () => {
+    mocks.publicClient.getTransactionReceipt.mockRejectedValue(new TransactionReceiptNotFoundError({ hash: PROPOSAL }))
+    mocks.waitForSafeExecutionHash.mockRejectedValue(new Error('Safe service unavailable'))
+    mocks.writeContract.mockResolvedValueOnce(PROPOSAL).mockResolvedValueOnce(SECOND_PROPOSAL)
+    const flow = await mount(10, undefined, { reviewedAccount: SAFE })
+    await flow.send()
+    await settle()
+    expect(flow.tx).toMatchObject({ phase: 'submitted', busy: false, settled: true, confirmationUncertain: true, notice: WRITE_HOLD_SAFE_UNPROVEN_LINE })
+    expect(flow.tx.held).toMatchObject({ label: WRITE_EXIT_LABEL })
+    // Sending again, closing and reopening, or Done proposes nothing.
+    await flow.send()
+    await act(async () => flow.tx.reset())
+    await flow.send()
+    await act(async () => flow.tx.dismiss())
+    await flow.send()
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    expect(flow.tx).toMatchObject({ phase: 'submitted', notice: WRITE_HOLD_SAFE_UNPROVEN_LINE })
+    expect(flow.tx.held).toMatchObject({ label: WRITE_EXIT_LABEL })
+    await act(async () => flow.tx.held!.release())
+    expect(flow.tx).toMatchObject({ phase: 'idle', held: null })
+    await flow.send()
+    expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+  })
+
+  it('saves an adopted queued proposal in its hold: after it ends unproven, Done and a reload, a send the queue no longer matches proposes nothing and shows the exit', async () => {
+    mocks.publicClient.getTransactionReceipt.mockRejectedValue(new TransactionReceiptNotFoundError({ hash: PROPOSAL }))
+    mocks.findPendingSafeAppProposal.mockResolvedValueOnce({ proposalHash: PROPOSAL, call: { to: BOB, data: callData, value: 7n } })
+    mocks.waitForSafeExecutionHash.mockRejectedValue(new Error('Safe service unavailable'))
+    const flow = await mount(10, undefined, { reviewedAccount: SAFE })
+    await expect(flow.send()).resolves.toBe(PROPOSAL)
+    await settle()
+    expect(mocks.writeContract).not.toHaveBeenCalled()
+    expect(flow.tx.held).toMatchObject({ label: WRITE_EXIT_LABEL })
+    await act(async () => flow.tx.dismiss())
+    await flow.close()
+    vi.resetModules()
+    ;({ useSafeTx } = await import('@/hooks/useSafeTx'))
+    const reopened = await mount(10, undefined, { reviewedAccount: SAFE })
+    await reopened.send()
+    expect(mocks.writeContract).not.toHaveBeenCalled()
+    expect(reopened.tx).toMatchObject({ phase: 'submitted', notice: WRITE_HOLD_SAFE_UNPROVEN_LINE })
+    expect(reopened.tx.held).toMatchObject({ label: WRITE_EXIT_LABEL })
+    await act(async () => reopened.tx.held!.release())
+    await reopened.send()
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 
   it('saves the adopted proposal’s actual stamped calldata for later proof', async () => {

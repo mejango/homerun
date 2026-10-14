@@ -658,6 +658,11 @@ export function useSafeTx(chainId: number) {
   useEffect(() => {
     if (hold && proposalEnd && publicClient) void hold.state(publicClient).catch(() => null)
   }, [hold, proposalEnd, publicClient])
+  // The follower ended without proof: the hold offers the exit, and later evidence still settles it.
+  const unprovenHash = proposal?.phase === 'unproven' ? proposal.proposalHash : null
+  useEffect(() => {
+    if (hold && unprovenHash && publicClient) void hold.onUnproven(publicClient, unprovenHash).catch(() => null)
+  }, [hold, unprovenHash, publicClient])
 
   /** The user checked their wallet: end the hold so the action can be sent again. */
   const release = useCallback(async () => {
@@ -668,6 +673,9 @@ export function useSafeTx(chainId: number) {
       const { released, state } = await hold.exit(held, { checkedWallet: true }, publicClient)
       if (!released && (state.status !== 'clear' || state.settled)) return
       if (!released) { setRecoveryNotice(WENT_THROUGH_LINE); setPhase('submitted'); return }
+      // The registry's view of the proposal goes with it, so the next send asks Safe's queue again.
+      const { record } = held
+      if (record.safe && proposals.delete(proposalKey(record.chainId, record.account, { ...record.call, value: BigInt(record.call.value) }))) notifyProposals()
       exitShown.current = false
       generation.current += 1
       inFlightRef.current = false
