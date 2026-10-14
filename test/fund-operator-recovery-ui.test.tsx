@@ -254,6 +254,17 @@ describe('linked ruleset recovery of a Safe execution', () => {
     expect(runtime.send).not.toHaveBeenCalled()
   })
 
+  it('recognizes a chain its hold settled while the page was away, with nothing saved, and sends nothing again', async () => {
+    const saved = plan()
+    localStorage.setItem(key, serializeRulesetRecovery(saved, new Map(), ROOT))
+    runtime.states = saved.states.map((peer, index) => ({ ...state(), chainId: peer.chainId, projectId: peer.projectId, blockNumber: 121n, blockTimestamp: 1_000n, rulesetSnapshot: { ...peer.rulesetSnapshot, upcomingRulesetId: index === 0 ? 72n : 0n }, linkedChainIds: [8453, 10] }))
+    successReceipt(saved, false)
+    runtime.outcome.mockImplementation(async ({ chainId }: { chainId: number }) => chainId === 8453 ? { status: 'settled', hash: PROPOSAL } : { status: 'none' })
+    await verify()
+    expect(button('Review transaction 2 of 2'), host.textContent ?? '').toBeDefined()
+    expect(runtime.send).not.toHaveBeenCalled()
+  })
+
   it('asks for a check before running a chain again when neither its hold nor the chain can show its saved transaction', async () => {
     savedChain({ kind: 'transaction', hash: EXECUTION })
     runtime.receipt.mockRejectedValue(new TransactionReceiptNotFoundError({ hash: EXECUTION }))

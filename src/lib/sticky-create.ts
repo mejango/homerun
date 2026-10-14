@@ -782,6 +782,25 @@ export function stickyCreationFromHold(record: ReviewedWriteRecoveryRecord, fund
     ...(record.hash ? { hash: record.hash } : {}),
   };
 }
+/**
+ * The creation a settled transaction ran, as the record its execution is verified against: only an
+ * account's own direct call to the factory carries its call. A Safe's execution names no proposal
+ * here, so it can't be authenticated from the transaction alone.
+ */
+export function stickyCreationFromTransaction(
+  transaction: { from: Address; to: Address | null; input: Hex; value: bigint },
+  chainId: number,
+  fundProjectId: bigint,
+): StickyPending {
+  if (!transaction.to) throw new Error("The settled creation has no factory call.");
+  const { functionName } = decodeFunctionData({ abi: stickyCreateAbi, data: transaction.input });
+  if (functionName !== "deployStickyFor") throw new Error("The settled transaction is not a Sticky creation.");
+  return {
+    version: 1, chainId, projectId: fundProjectId.toString(), holder: transaction.from, target: transaction.to,
+    data: transaction.input, value: transaction.value.toString(), label: "Create the FUND Sticky project and SHARE token",
+    safe: false, submittedAt: Date.now(), afterBlock: "0",
+  };
+}
 export function clearStickyCreationPending(
   storage: StickyStorage,
   record: StickyPending,

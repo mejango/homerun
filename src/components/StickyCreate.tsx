@@ -21,6 +21,7 @@ import {
   stickyCreateIntent,
   stickyCreationHold,
   stickyCreationFromHold,
+  stickyCreationFromTransaction,
   stickyCreationRecord,
   readStickyCreated,
   readStickyCreationPending,
@@ -198,6 +199,8 @@ export function StickyCreate({
 
   /** The creation this screen sent or adopted: what its settled execution is verified against. */
   const sent = useRef<StickyPending | null>(null);
+  /** A creation the hold settled that couldn't be authenticated here: no other is created without the user's check. */
+  const [unchecked, setUnchecked] = useState(false);
   const track = tx.track;
   const adoption = useLegacyAdoption();
   const adopt = adoption.run;
@@ -210,8 +213,25 @@ export function StickyCreate({
       const record = readStickyCreationPending(localStorage, state.chainId, state.projectId, address);
       if (!record) {
         if (!address || sent.current) return;
-        const held = await track({ chainId: state.chainId, call: { to: zeroAddress, data: "0x" } }, { reviewedAccount: address, recoveryNamespace: stickyCreateIntent(state.projectId), heldOnly: true });
-        if (!cancelled && held && held.status !== "clear") sent.current = stickyCreationFromHold(held.record, state.projectId);
+        const intent = { chainId: state.chainId, account: address, namespace: stickyCreateIntent(state.projectId) };
+        // Asking the hold lets it settle what the chain placed while this page was away.
+        const held = await track({ chainId: state.chainId, call: { to: zeroAddress, data: "0x" } }, { reviewedAccount: address, recoveryNamespace: intent.namespace, heldOnly: true });
+        if (!cancelled && held && held.status !== "clear") { sent.current = stickyCreationFromHold(held.record, state.projectId); return; }
+        if (readStickyCreated(localStorage, state.chainId, state.projectId)) return;
+        // A creation the hold settled with success is recorded from its own transaction before creation reopens.
+        let settled = false;
+        try {
+          await recoverFromHold(intent, async (settledHash) => {
+            if (!settledHash) return null;
+            settled = true;
+            const transaction = await client.getTransaction({ hash: settledHash });
+            await recover(stickyCreationFromTransaction(transaction, state.chainId, state.projectId), settledHash);
+            return true;
+          });
+        } catch {
+          // Settled but not shown here (a Safe's execution, or an unanswered read): creation waits for the user's check.
+          if (settled && !cancelled) setUnchecked(true);
+        }
         return;
       }
       const { request, input, evidence } = stickyCreationHold(record);
@@ -227,7 +247,7 @@ export function StickyCreate({
     return () => {
       cancelled = true;
     };
-  }, [address, adopt, client, loadedScope, state.chainId, state.projectId, track, walletScope]);
+  }, [address, adopt, client, loadedScope, recover, state.chainId, state.projectId, track, walletScope]);
 
   // The SDK's hold settled the creation: its exact execution and the live project are verified and saved.
   const settled = tx.phase === "success" ? tx.receipt : null,
@@ -404,6 +424,12 @@ export function StickyCreate({
         Sticky custody. Creation uses the stock Sticky factory; holders choose
         whether to stake afterward.
       </p>
+      {/* A held creation shows with its exit whatever else is saved. */}
+      {tx.phase === "submitted" && (
+        <div className="mt-4 rounded border border-[#bfc9b5] p-4 text-sm">
+          <HeldNotice tx={tx} />
+        </div>
+      )}
       {verified ? (
         <p role="status" className="mt-4">
           Sticky project {verified.toString()} is confirmed and verified.
@@ -412,9 +438,10 @@ export function StickyCreate({
         <div className="mt-4 rounded border border-[#bfc9b5] p-4 text-sm">
           <p>Rechecking the saved Sticky creation.</p>
         </div>
-      ) : tx.phase === "submitted" ? (
-        <div className="mt-4 rounded border border-[#bfc9b5] p-4 text-sm">
-          <HeldNotice tx={tx} />
+      ) : tx.phase === "submitted" ? null : unchecked ? (
+        <div className="mt-4 grid gap-3 text-sm">
+          <p role="status">Check this FUND’s Sticky creation before creating again.</p>
+          <button type="button" className="w-fit underline" onClick={() => setUnchecked(false)}>I checked it. Create again</button>
         </div>
       ) : tx.phase === "pending" || tx.phase === "success" ? (
         <p role="status" className="mt-4 text-sm">

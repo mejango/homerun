@@ -34,16 +34,20 @@ vi.mock('@/lib/fund-global-manifest', async importOriginal => ({
   fundGlobalManifestHash: () => `0x${'22'.repeat(32)}`,
 }))
 vi.mock('@/lib/jbcenter-ipfs', () => ({ jbCenterIpfs: { pinJson: async () => ({ cid: 'bafkreisticky' }) } }))
-const m = vi.hoisted(() => ({ prepared: null as unknown }))
-vi.mock('@/lib/sticky-create', async importOriginal => ({
-  ...(await importOriginal<typeof import('@/lib/sticky-create')>()),
-  stickyCreateBlockers: () => [],
-  prepareStickyCreate: async () => m.prepared,
-}))
+const m = vi.hoisted(() => ({ prepared: null as unknown, verify: null as null | ((...args: unknown[]) => Promise<unknown>) }))
+vi.mock('@/lib/sticky-create', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/lib/sticky-create')>()
+  return {
+    ...actual,
+    stickyCreateBlockers: () => [],
+    prepareStickyCreate: async () => m.prepared,
+    verifyStickyCreationExecution: (...args: Parameters<typeof actual.verifyStickyCreationExecution>) => m.verify ? m.verify(...args) : actual.verifyStickyCreationExecution(...args),
+  }
+})
 
 import { wallet } from './support/fake-wallet'
 import { StickyCreate } from '@/components/StickyCreate'
-import { stickyCreateAbi } from '@/lib/sticky-create'
+import { readStickyCreated, saveStickyCreated, stickyCreateAbi, stickyCreateIntent, stickyCreationRecord } from '@/lib/sticky-create'
 import { stickySessionKey } from '@/lib/sticky-session'
 import type { FundProjectState } from '@/lib/fund-state'
 
@@ -74,7 +78,8 @@ beforeEach(() => {
   m.prepared = { request, fund: state, manifest: {}, localAllocation: { snapshotBlockNumber: '100' }, manifestHash: `0x${'22'.repeat(32)}`, deployer: DEPLOYER, distributor: DEPLOYER, hook: DEPLOYER, creationFee: 1n }
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); localStorage.clear() })
+afterEach(async () => {
+  m.verify = null; await act(async () => root.unmount()); host.remove(); localStorage.clear() })
 
 it('refuses another creation after a lost wallet reply until the user takes the exit', async () => {
   wallet.writeContract.mockRejectedValueOnce(new Error('Wallet reply was lost after broadcast'))
@@ -115,3 +120,39 @@ it('adopts a creation the journal saved before SDK holds: its records go, and on
   await review()
   expect(wallet.writeContract).toHaveBeenCalledOnce()
 })
+
+it('records a creation its hold settled while the page was away, and never reopens creation', async () => {
+  m.verify = async () => ({ status: 'confirmed', projectId: 9n })
+  const onCreated = vi.fn()
+  await act(async () => root.render(createElement(StickyCreate, { state, client: wallet.client as unknown as PublicClient, manifest: {}, onCreated })))
+  await settle(); await settle()
+  await review()
+  expect(wallet.writeContract).toHaveBeenCalledOnce()
+  // The page is left before the creation is saved; the chain then places it.
+  await act(async () => root.unmount()); root = createRoot(host)
+  await act(async () => { wallet.confirm(`0x${'1'.padStart(64, '0')}` as `0x${string}`) })
+  // The SDK settles it meanwhile (another tab's look, say): the hold is clear, with its settlement.
+  const { holds } = await import('@/lib/write-hold')
+  const hold = holds.open({ chainId: 1, account: OWNER, safe: false, namespace: stickyCreateIntent(7n), call: { to: DEPLOYER, data: encodeFunctionData(request), value: 1n } })
+  const receipt = await wallet.client.getTransactionReceipt({ hash: `0x${'1'.padStart(64, '0')}` as `0x${string}` })
+  const away = await hold.onReceipt(receipt as never, wallet.client as never)
+  expect(away).toMatchObject({ status: 'clear', settled: { result: 'success' } })
+  await act(async () => root.render(createElement(StickyCreate, { state, client: wallet.client as unknown as PublicClient, manifest: {}, onCreated })))
+  await settle(); await settle(); await settle()
+  expect(readStickyCreated(localStorage, 1, 7n), host.textContent ?? '').toMatchObject({ projectId: '9' })
+  expect(onCreated).toHaveBeenCalledWith(9n)
+  expect(button('Review Sticky creation')).toBeUndefined()
+  expect(button('Prepare Sticky creation')).toBeUndefined()
+  expect(wallet.writeContract).toHaveBeenCalledOnce()
+})
+
+it('shows a held creation and its exit even when a completion is saved', async () => {
+  const record = stickyCreationRecord(m.prepared as never, OWNER, false)
+  saveStickyCreated(localStorage, record, `0x${'ab'.repeat(32)}`, 9n)
+  // An unresolved creation is held for this FUND, its exit due.
+  const { adoptLegacyWrite } = await import('@/lib/write-hold')
+  await adoptLegacyWrite({ chainId: 1, account: OWNER, safe: false, namespace: stickyCreateIntent(7n), call: { to: DEPLOYER, data: encodeFunctionData(request), value: 1n } }, { submittedAt: Date.now() - 31 * 60_000 }, wallet.client as never)
+  await render()
+  expect(button(EXIT), host.textContent ?? '').toBeDefined()
+})
+

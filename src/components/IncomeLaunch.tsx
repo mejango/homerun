@@ -149,11 +149,15 @@ function GlobalIncomeLaunch({ state, client, name = 'Homerun INCOME', launchUnav
  * A network's INCOME launch held by the SDK: a launch the journal saved before SDK holds is adopted
  * (its record goes once the hold has it); with none, whatever the hold holds for this FUND is shown.
  */
-function useIncomeLaunchHold(chainId: JBChainId, projectId: bigint, client: PublicClient, tx: ReturnType<typeof useSafeTx>, setSent: (record: IncomeLaunchPending) => void, setError: (error: string) => void) {
+function useIncomeLaunchHold(chainId: JBChainId, projectId: bigint, client: PublicClient, tx: ReturnType<typeof useSafeTx>, setSent: (record: IncomeLaunchPending) => void, setError: (error: string) => void,
+  /** With no completion saved, records a launch the hold settled while the page was away. */
+  settledAway?: { saved: boolean; record: (record: IncomeLaunchPending, hash: Hex) => Promise<void> }) {
   const { address } = useWallet()
   const adoption = useLegacyAdoption()
   const { track } = tx, adopt = adoption.run
   const onSent = useEffectEvent(setSent), onError = useEffectEvent(setError)
+  const recordAway = useEffectEvent((record: IncomeLaunchPending, hash: Hex) => settledAway && !settledAway.saved ? settledAway.record(record, hash) : Promise.resolve())
+  const recovers = !!settledAway
   useEffect(() => {
     let cancelled = false
     const key = incomeLaunchSessionKey(chainId, projectId)
@@ -161,8 +165,20 @@ function useIncomeLaunchHold(chainId: JBChainId, projectId: bigint, client: Publ
       const record = readIncomeLaunchPending(localStorage, key)
       if (!record) {
         if (!address) return
-        const held = await track({ chainId, call: { to: zeroAddress, data: '0x' } }, { reviewedAccount: address, recoveryNamespace: incomeLaunchIntent(projectId), heldOnly: true })
-        if (!cancelled && held && held.status !== 'clear') onSent(incomeLaunchFromHold(held.record, projectId))
+        const intent = { chainId, account: address, namespace: incomeLaunchIntent(projectId) }
+        // Asking the hold lets it settle what the chain placed while this page was away.
+        const held = await track({ chainId, call: { to: zeroAddress, data: '0x' } }, { reviewedAccount: address, recoveryNamespace: intent.namespace, heldOnly: true })
+        if (!cancelled && held && held.status !== 'clear') { onSent(incomeLaunchFromHold(held.record, projectId)); return }
+        if (!recovers) return
+        // A launch the hold settled with success is recorded from its own transaction (an account's direct call).
+        await recoverFromHold(intent, async settledHash => {
+          if (!settledHash) return null
+          const transaction = await client.getTransaction({ hash: settledHash })
+          if (!transaction.to) throw new Error('The settled launch has no launcher call.')
+          const record = incomeLaunchFromHold({ version: 1, id: 'settled', chainId, account: transaction.from, safe: false, call: { to: transaction.to, data: transaction.input, value: transaction.value.toString() } }, projectId)
+          await recordAway({ ...record, phase: 'pending', hash: settledHash }, settledHash)
+          return true
+        })
         return
       }
       const { request, input, evidence } = incomeLaunchHold(record)
@@ -174,7 +190,7 @@ function useIncomeLaunchHold(chainId: JBChainId, projectId: bigint, client: Publ
       await track({ ...request, label: `Deploy INCOME on ${displayChainName(chainId)}` }, { reviewedAccount: record.holder, recoveryNamespace: input.namespace, safe: record.safe })
     }).catch(reason => { if (!cancelled) onError(message(reason)) })
     return () => { cancelled = true }
-  }, [address, adopt, chainId, client, projectId, track])
+  }, [address, adopt, chainId, client, projectId, recovers, track])
   return adoption
 }
 
@@ -203,7 +219,7 @@ function IncomeChainActions({ local, draft, manifest, clients, client, rootState
   useEffect(() => { unavailableRef.current = launchUnavailable }, [launchUnavailable])
   const fund = useQuery({ queryKey: ['income-launch-fund', chainId, local.fundProjectId], queryFn: () => readFundProjectState(client, { chainId, projectId, account: address }), initialData: rootState.chainId === chainId && rootState.projectId === projectId ? rootState : undefined, placeholderData: keepPreviousData, retry: false })
   const binding = useQuery({ queryKey: ['income-binding', chainId, local.fundProjectId], queryFn: () => readIncomeLaunchBinding(client, chainId, projectId), staleTime: 300_000, retry: false })
-  const adoption = useIncomeLaunchHold(chainId, projectId, client, tx, setSent, setJournalError)
+  const adoption = useIncomeLaunchHold(chainId, projectId, client, tx, setSent, setJournalError, { saved: !!local.execution, record: (record, hash) => confirm(record, hash) })
   const confirm = useCallback(async (record: IncomeLaunchPending, hash: Hex) => {
     const decoded = decodeFunctionData({ abi: homerunDeployerAbi, data: record.data })
     if (decoded.functionName !== 'deployIncome' || JSON.stringify(canonicalSnapshotJson(decoded.args[1])) !== JSON.stringify(canonicalSnapshotJson(globalIncomeSnapshotParameters(manifest, draft.manifestUri)))) throw new Error('The recovered transaction uses a different global allocation.')
