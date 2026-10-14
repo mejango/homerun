@@ -3,8 +3,18 @@ import { NATIVE_TOKEN } from '@bananapus/nana-sdk-core'
 import { buildReallocateCollateralTx, buildRepayLoanTx, MIN_PREPAID_FEE_PERCENT } from '@bananapus/nana-sdk-core/v6'
 import { getAddress, isAddress, isAddressEqual, zeroAddress, type Address, type PublicClient } from 'viem'
 import type { FundTransaction } from './fund-contracts'
+import { writeIntent } from './write-intent'
 import { incomeRepayCeiling, protectedIncomeMinimum, revLoansAbi, v6Address } from './income-contracts'
 import { readIncomeLoan, readIncomeProjectState, type IncomeLoanState, type IncomeProjectState } from './income-state'
+
+/**
+ * The one hold name for repaying a loan, from the repay dialog or the loan tools: the loan and the
+ * collateral the repayment returns, all of it when the repayment closes the loan. Its ceiling
+ * accrues with time, so a retry is held by this, never by the calldata.
+ */
+export function loanRepaymentIntent(projectId: bigint, loanId: bigint, collateralReturned: bigint): string {
+  return writeIntent('loan-repay', { project: projectId, loan: loanId, collateral: collateralReturned })
+}
 
 export type IncomeLoanToolInput = { client: PublicClient; state: IncomeProjectState; account: Address; loanId: bigint; minimumBlock?: bigint }
 

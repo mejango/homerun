@@ -54,6 +54,7 @@ import { IncomeBorrow, IncomeLoansList } from '@/components/IncomeProject'
 import { IncomeLoanTools } from '@/components/IncomeLoanTools'
 import { buildReallocateCollateralTx, MIN_PREPAID_FEE_PERCENT } from '@bananapus/nana-sdk-core/v6'
 import { expectRetryHeldByIntent } from './support/intent-retry'
+import { loanRepaymentIntent } from '@/lib/income-loan-tools'
 
 const context = { token: USDC, terminal: TERMINAL, decimals: 6, currency: 1, symbol: 'USDC', isPrimary: true, balance: 0n }
 const state = {
@@ -149,7 +150,7 @@ describe('INCOME loans like Juicebox Money', () => {
     expect(runtime.sends).toHaveLength(1)
     expect(runtime.sends[0].request.functionName).toBe('repayLoan')
     // Its ceiling accrues with time: a retry is held by the loan the user chose to repay.
-    expect(runtime.sends[0].options.recoveryNamespace).toBe(writeIntent('loan-repay', { project: state.projectId, loan: 41n }))
+    expect(runtime.sends[0].options.recoveryNamespace).toBe(loanRepaymentIntent(state.projectId, 41n, 5n * UNIT))
     expect(runtime.sends[0].request.value).toBe(4n * UNIT / 10n + 4n * UNIT / 10_000n)
   })
 
@@ -226,6 +227,24 @@ describe('INCOME loans like Juicebox Money', () => {
     runtime.partial = partialWith(201_400n)
     await reviewLoanChange()
     expect(runtime.sends.map(sent => sent.request.functionName)).toEqual(['repayLoan', 'repayLoan'])
-    await expectRetryHeldByIntent(runtime.sends[0], runtime.sends[1], writeIntent('loan-partial-repay', { project: state.projectId, loan: 41n, collateral: 2n * UNIT }))
+    await expectRetryHeldByIntent(runtime.sends[0], runtime.sends[1], loanRepaymentIntent(state.projectId, 41n, 2n * UNIT))
+  })
+
+  it('holds a full repayment by one key from either screen: started in the repay dialog, the loan tools\' retry is refused', async () => {
+    runtime.loans = [{ id: '41', owner: WALLET, collateral: String(5n * UNIT), borrowAmount: '400000', token: USDC, createdAt: 1_800_000_000, chainId: 8453 }]
+    runtime.loan = usdcLoan(400_400n)
+    runtime.allowance = 10n ** 30n
+    stopAfterEachSend()
+    await act(async () => root.render(<QueryClientProvider client={cache}><IncomeLoansList state={state} client={client as never} /></QueryClientProvider>))
+    await settle()
+    await act(async () => button('Repay').click()); await settle()
+    await act(async () => button('Confirm & repay').click()); await settle()
+    // The loan tools close the loan: the contract returns all of its collateral, whatever was entered.
+    runtime.loan = usdcLoan(400_600n)
+    runtime.partial = { loan: runtime.loan, principal: 400_000n, fee: 500n, owed: 400_500n, ceiling: 400_600n, collateralToReturn: 5n * UNIT, remainingPrincipal: 0n, remainingCollateral: 0n }
+    await loanTools('partialRepay', '2')
+    await reviewLoanChange()
+    expect(runtime.sends.map(sent => sent.request.functionName)).toEqual(['repayLoan', 'repayLoan'])
+    await expectRetryHeldByIntent(runtime.sends[0], runtime.sends[1], loanRepaymentIntent(state.projectId, 41n, 5n * UNIT))
   })
 })

@@ -52,6 +52,7 @@ import {
 import { readableError } from '@/lib/readable-error'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
 import { writeIntent } from '@/lib/write-intent'
+import { loanRepaymentIntent } from '@/lib/income-loan-tools'
 
 function message(reason: unknown) { return readableError(reason, 'The transaction could not be prepared. Refresh and try again.') }
 function amount(value: string, decimals = 18) { try { return parseAmount(value.trim(), decimals) } catch { return 0n } }
@@ -509,8 +510,9 @@ function IncomeRepayDialog({ state, client, loanId, tx, approval, onClose }: { s
       const reviewed = current
       await tx.send({ ...buildRepayLoanTx({ chainId: state.chainId, loanId, maxRepayBorrowAmount: maximum, collateralCountToReturn: reviewed.loan.collateral, beneficiary: address, value: tokenNative ? maximum : 0n }), label: `Repay loan ${loanId}; spend at most ${units(maximum, reviewed.sourceContext.decimals)} ${reviewed.sourceContext.symbol}` }, {
         reviewedAccount: address,
-        // Its ceiling accrues with time: a retry is held by the loan the user chose to repay.
-        recoveryNamespace: writeIntent('loan-repay', { project: state.projectId, loan: loanId }),
+        // Its ceiling accrues with time: a retry is held by the loan and the collateral it returns, the
+        // same hold as closing it from the loan tools.
+        recoveryNamespace: loanRepaymentIntent(state.projectId, loanId, reviewed.loan.collateral),
         simulationBlockNumber: prerequisite === undefined ? undefined : reviewed.blockNumber,
         reviewNotice: `Recover ${units(reviewed.loan.collateral)} INCOME. The maximum includes outstanding principal, accrued fees, and a 0.1% principal buffer. Unused funds are refunded.`,
         reverify: async () => { const latest = await readIncomeLoan(client, { chainId: state.chainId, projectId: state.projectId, loanId, account: address }); if (latest.loan.collateral !== reviewed.loan.collateral || latest.loan.amount !== reviewed.loan.amount || latest.loan.amount + latest.accruedFee > maximum) throw new Error('The loan changed or its fees exceeded the reviewed maximum. Review a fresh repayment.'); if (prerequisite !== undefined && latest.blockNumber < prerequisite) throw new Error('The RPC is behind the confirmed approval.') },

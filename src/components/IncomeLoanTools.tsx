@@ -12,7 +12,7 @@ import { parseAmount } from '@/lib/fund-contracts'
 import { buildErc20ApproveRequest } from '@/lib/transaction-builders'
 import { v6Address } from '@/lib/income-contracts'
 import { readIncomeLoan, type IncomeProjectState } from '@/lib/income-state'
-import { assertSameIncomeLoan, buildIncomePartialRepayment, incomeLoanRecipient, prepareIncomeLoanReallocation, prepareIncomeLoanTransfer, prepareIncomePartialRepayment } from '@/lib/income-loan-tools'
+import { assertSameIncomeLoan, buildIncomePartialRepayment, incomeLoanRecipient, loanRepaymentIntent, prepareIncomeLoanReallocation, prepareIncomeLoanTransfer, prepareIncomePartialRepayment } from '@/lib/income-loan-tools'
 import { readableError } from '@/lib/readable-error'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
 import { writeIntent } from '@/lib/write-intent'
@@ -122,8 +122,9 @@ export function IncomeLoanTools({ state, client }: Props) {
         const transaction = buildIncomePartialRepayment({ quote: prepared, account: address, maximum })
         await tx.send({ ...transaction, label: `Return ${formatUnits(prepared.collateralToReturn, 18)} INCOME; repay at most ${formatUnits(maximum, source.decimals)} ${source.symbol}` }, {
           reviewedAccount: input.account,
-          // Its ceiling accrues with time: a retry is held by the collateral the user chose to recover.
-          recoveryNamespace: writeIntent('loan-partial-repay', { project: state.projectId, loan: loanId, collateral }),
+          // Its ceiling accrues with time: a retry is held by the collateral it returns (all of it when it
+          // closes the loan), the same hold as a full repayment from the repay dialog.
+          recoveryNamespace: loanRepaymentIntent(state.projectId, loanId, prepared.collateralToReturn),
           simulationBlockNumber: minimumBlock === undefined ? undefined : prepared.loan.blockNumber,
           reviewNotice: `This repayment owes ${formatUnits(prepared.principal, source.decimals)} ${source.symbol} principal and ${formatUnits(prepared.fee, source.decimals)} ${source.symbol} accrued fees. ${prepared.remainingPrincipal === 0n ? 'It closes the loan and returns all collateral.' : `A replacement loan keeps ${formatUnits(prepared.remainingCollateral, 18)} INCOME collateral and ${formatUnits(prepared.remainingPrincipal, source.decimals)} ${source.symbol} principal outstanding.`} Unused funds from the maximum are refunded to your wallet.`,
           reverify: async () => { const current = await prepareIncomePartialRepayment({ ...input, collateralToReturn: collateral }); assertSameIncomeLoan(prepared.loan, current.loan); if (current.owed > maximum || current.collateralToReturn !== prepared.collateralToReturn) throw new Error('The repayment amount or collateral return changed. Review a fresh quote.') },
