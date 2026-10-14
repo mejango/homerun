@@ -1,15 +1,11 @@
 /**
- * Every screen that looks for a held write on load (`heldOnly`) must also recover what that hold
- * settled while the page was away, through the shared `recoverFromHold` rule: a settled write is never
- * discarded, so it is never offered to be sent again. Each flow's own behavior is tested in its suite:
- * Sticky creation, INCOME launch, FUND launch and multisig setup, shop steps and linked ruleset chains.
+ * No app-local hold or recovery logic: the SDK's held-write view, saved-attempt recovery and copy own
+ * every rule. Homerun keeps only its domain journals and the two callbacks each flow supplies
+ * (`authenticate`, `confirmRetirable`). This gate fails when a copy of what the SDK owns comes back.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
-
-/** Fixed actions keep no record of their own: their result is the project's state, which their buttons read. */
-const NO_DOMAIN_RECORD = ['src/components/ui/HeldIntents.tsx']
 
 function sources(dir: string): string[] {
   return readdirSync(dir).flatMap(name => {
@@ -17,37 +13,61 @@ function sources(dir: string): string[] {
     return statSync(path).isDirectory() ? sources(path) : /\.tsx?$/.test(name) ? [path] : []
   })
 }
+const src = sources('src').map(path => ({ path, source: readFileSync(path, 'utf8') }))
 
-it('routes every held-write lookup on load through the shared settled-write recovery', () => {
-  const consumers = sources('src').filter(path => /heldOnly: true/.test(readFileSync(path, 'utf8')))
-  expect(consumers.length).toBeGreaterThan(0)
-  for (const path of consumers) {
-    if (NO_DOMAIN_RECORD.includes(path)) continue
-    const source = readFileSync(path, 'utf8')
-    const lookups = source.match(/heldOnly: true/g)!.length, recoveries = source.match(/recoverFromHold\(/g)?.length ?? 0
-    expect(recoveries, `${path}: ${lookups} held-write lookups, ${recoveries} recoveries`).toBeGreaterThanOrEqual(lookups)
+it('keeps none of the app-local hold watchers, adoption, recovery or check helpers the SDK replaced', () => {
+  const removed = [
+    /\buseWriteHoldWatch\b/, /\buseLegacyAdoption\b/, /\badoptLegacyWrite\b/, /\brecoverFromHold\b/, /\bholdOutcome\b/,
+    /\bsameShownHold\b/, /\bLegacyWriteEvidence\b/, /\bHeldIntents\b/, /\bCheckRequired\b/, /heldOnly: true/,
+    // App copies of what the SDK exports (importing them is fine; defining them is not).
+    /(?:function|const|let)\s+hidesShownExit\b/, /(?:function|const|let)\s+settledLine\b/,
+  ]
+  for (const { path, source } of src) for (const pattern of removed) expect(pattern.test(source), `${path}: ${pattern}`).toBe(false)
+})
+
+it('takes the held, released, checked and away lines from the SDK, never a copy', () => {
+  const copies = [
+    /Your earlier transaction went through\./, /is no longer held here/, /['"`]I checked (?:it|my wallet)\b/,
+    /['`]Send it again['`]/, /This went through while you were away/, /may already be in your wallet/,
+  ]
+  for (const { path, source } of src) for (const pattern of copies) expect(pattern.test(source), `${path}: ${pattern}`).toBe(false)
+})
+
+it('leaves the SDK’s hold records to the SDK: no storage keys, and held states read only by the write adapter', () => {
+  // The write hold adapter (useSafeTx), its controller, and the cross-wallet project-admin scan open holds directly.
+  const adapters = ['src/lib/write-hold.ts', 'src/hooks/useSafeTx.ts', 'src/lib/project-admin-reservation.ts']
+  for (const { path, source } of src) {
+    expect(/nana-sdk:/.test(source), `${path} names an SDK storage key`).toBe(false)
+    if (adapters.includes(path)) continue
+    expect(/\.peek\(\)|\bholds\.open\(|createBrowserWriteRecovery|readBrowserWriteRecovery/.test(source), `${path} reads a hold itself`).toBe(false)
   }
 })
 
-/** Each test case in a file, by where its `it(` starts. */
-function cases(source: string): string[] {
-  const starts = [...source.matchAll(/\n\s*it(?:\.each\([\s\S]*?\))?\(\s*['"`]/g)].map(match => match.index!)
-  return starts.map((start, index) => source.slice(start, starts[index + 1] ?? source.length))
-}
-
-it('presses every check-required exit in a test case that then finds the next step usable', () => {
-  const testCases = sources('test').flatMap(path => cases(readFileSync(path, 'utf8')))
-  const exits = new Set(sources('src').flatMap(path => [...readFileSync(path, 'utf8').matchAll(/<CheckRequired[^>]*?action="([^"]+)"/g)].map(match => match[1])))
-  expect(exits.size).toBeGreaterThan(0)
-  for (const label of exits) {
-    // Pressed (as a click or a button press), and later in the same case something is asserted enabled or done.
-    const presses = [`click('${label}')`, `button('${label}')!.click()`]
-    const pressing = testCases.filter(source => presses.some(press => source.includes(press)))
-    expect(pressing.length, `no test presses "${label}"`).toBeGreaterThan(0)
-    const usable = pressing.some(source => {
-      const at = Math.min(...presses.map(press => source.indexOf(press)).filter(index => index >= 0))
-      return /disabled[^\n]*\.toBe\(false\)|toBeNull\(\)/.test(source.slice(at))
-    })
-    expect(usable, `"${label}" is pressed, but no case then asserts a usable next step`).toBe(true)
+it('binds the SDK’s view and recovery in one place, until the SDK ships its own React binding', () => {
+  // nana-sdk-react 53 peers on wagmi 2; held-binding.tsx is the one swap point for SDK 2.40's review/react.
+  const binders = ['src/lib/write-hold.ts', 'src/hooks/useSafeTx.ts', 'src/hooks/useProjectAdminTx.ts', 'src/hooks/held-binding.tsx']
+  for (const { path, source } of src) {
+    expect(/@bananapus\/nana-sdk-react/.test(source), `${path} imports nana-sdk-react`).toBe(false)
+    if (!binders.includes(path)) expect(/\bcreateHeldWriteView\b|\bcreateSavedAttemptRecovery\b/.test(source), `${path} binds the SDK itself`).toBe(false)
   }
+})
+
+it('recovers every saved journal through the SDK, shows its check, and retires an exit', () => {
+  const flows = ['LiveCreate', 'IncomeLaunch', 'StickyCreate', 'ProjectShopManagement', 'FundOperatorActions', 'ProjectPayerAddresses', 'StickyHolder']
+  for (const name of flows) {
+    const source = readFileSync(`src/components/${name}.tsx`, 'utf8')
+    expect(/\buseSavedAttempt\(/.test(source), `${name} recovers through useSavedAttempt`).toBe(true)
+    expect(/<SavedAttemptNotice\b/.test(source), `${name} shows the SDK's check action`).toBe(true)
+    // A held write's exit retires its saved attempt, so recovery never asks for it again (StickyHolder's record goes once held).
+    if (name !== 'StickyHolder') expect(/\bretiringExit\(/.test(source), `${name} retires its exit`).toBe(true)
+  }
+})
+
+it('presses every check action a flow offers in a test', () => {
+  const tests = sources('test').map(path => readFileSync(path, 'utf8')).join('\n')
+  const nexts = new Set(src.flatMap(({ source }) => [...source.matchAll(/checkNext: ['"]([^'"]+)['"]/g)].map(match => match[1])))
+  expect(nexts.size).toBeGreaterThan(0)
+  for (const next of nexts) expect(tests.includes(`checkedItLabel('${next}')`), `no test presses "I checked it. ${next}."`).toBe(true)
+  // A flow with the default action ("Review it again").
+  expect(tests.includes('checkedItLabel()')).toBe(true)
 })

@@ -4,7 +4,7 @@ import { decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodeFunct
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({ bendystraw: vi.fn() }))
 vi.mock('../src/lib/bendystraw', () => ({ bendystraw: mocks.bendystraw }))
-import { buildPayerTransaction, checkPayerFactory, decodePayerAttempt, getProjectPayerAddresses, payerAttemptHold, payerIntent, verifyPayerReceipt, type PayerAttempt, type ProjectPayerRow } from '../src/lib/project-payers'
+import { buildPayerTransaction, checkPayerFactory, decodePayerAttempt, getProjectPayerAddresses, payerSavedAttempt, payerIntent, verifyPayerReceipt, type PayerAttempt, type ProjectPayerRow } from '../src/lib/project-payers'
 import { safeExecutionLog } from './support/safe-logs'
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111' as Address
@@ -58,14 +58,16 @@ describe('stock project payer transaction and recovery', () => {
     const saved = { ...attempt(), safe: true, hash: PROPOSAL, executionHash: HASH }
     expect(decodePayerAttempt(JSON.stringify(saved), 1, 7n)).toEqual(saved)
   })
-  it('holds a deployment by the settings the user chose, and adopts a saved attempt with its own evidence', () => {
-    const original = attempt(), key = payerIntent(7n)
+  it('recovers a deployment by its project, with the saved attempt\'s own evidence', () => {
+    const original = attempt(), key = payerIntent(7n), client = {} as never
     // Held by the project alone: any settings for it share the hold.
-    expect(payerAttemptHold({ ...original, settings: { ...original.settings, memo: 'Other memo', addToBalance: true } }).input.namespace).toBe(key)
+    expect(payerSavedAttempt(client, 1, 7n, ACCOUNT, false, { ...original, settings: { ...original.settings, memo: 'Other memo', addToBalance: true } }).namespaces).toEqual([key])
     expect(payerIntent(8n)).not.toBe(key)
-    expect(payerAttemptHold(original)).toMatchObject({ input: { chainId: 1, account: ACCOUNT, safe: false, namespace: key }, evidence: { hash: HASH } })
-    expect(payerAttemptHold({ ...original, safe: true, hash: PROPOSAL, executionHash: HASH }).evidence).toEqual({ safe: { safeTxHash: PROPOSAL } })
-    expect(payerAttemptHold({ ...original, phase: 'signing', hash: undefined }).evidence).toEqual({})
+    expect(payerSavedAttempt(client, 1, 7n, ACCOUNT, false, original)).toMatchObject({ chainId: 1, account: ACCOUNT, safe: false, namespaces: [key], saved: { started: true, hash: HASH } })
+    expect(payerSavedAttempt(client, 1, 7n, ACCOUNT, false, { ...original, safe: true, hash: PROPOSAL, executionHash: HASH }).saved).toEqual({ started: true, safeTxHash: PROPOSAL })
+    expect(payerSavedAttempt(client, 1, 7n, ACCOUNT, false, { ...original, phase: 'signing', hash: undefined }).saved).toEqual({ started: true })
+    // With no journal record, the project's hold alone says whether anything was sent.
+    expect(payerSavedAttempt(client, 1, 7n, ACCOUNT, false, null)).toMatchObject({ namespaces: [key], saved: { started: false } })
   })
   it.each([{ phase: 'unknown' }, { hash: '0x12' }, { account: zeroAddress }, { safe: 'false' }, { afterBlock: '-1' }, { afterBlock: undefined }, { phase: 'confirmed', payer: zeroAddress }, { settings: { ...attempt().settings, chainId: 10 } }, { settings: { ...attempt().settings, projectId: '8' } }])('rejects unsafe or foreign saved attempts %#', change => {
     expect(() => decodePayerAttempt(JSON.stringify({ ...attempt(), ...change }), 1, 7n)).toThrow()

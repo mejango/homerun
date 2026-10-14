@@ -7,7 +7,7 @@ import { safeExecutionLog } from './support/safe-logs'
 import { initialFundRuleset } from '../src/lib/fund-contracts'
 import { parseProjectShopWrite, projectShopWriteRequest, type PreparedProjectShopWrite } from '../src/lib/project-shop-write'
 import {
-  clearShopWriteSession, confirmShopWriteStep, dropShopWritePending, readShopWriteSession, restoreShopWritePermissions, shopPendingHold, shopStepIntent,
+  clearShopWriteSession, confirmShopWriteStep, dropShopWritePending, readShopWriteSession, restoreShopWritePermissions, shopStepScope, shopStepIntent,
   shopWriteRequestIndex, shopWriteRequestIndices, shopWriteSessionKey, startShopWriteSession, verifyShopWriteProgress, withShopWriteLock, type ShopWriteSession,
 } from '../src/lib/project-shop-session'
 
@@ -307,17 +307,17 @@ describe('durable live shop updates', () => {
 
 
 describe('a step the journal saved as pending before SDK holds', () => {
-  it('is adopted with its own evidence under the step it was, then dropped from the journal', () => {
+  it('is recovered with its own evidence under the step it was, then dropped from the journal', () => {
     const { storage, session } = pending(true)
     const hashed = withPending(storage, session, { ...sentOf(session), hash: executionHash(8) })
-    const adoption = shopPendingHold(hashed)!
     const request = projectShopWriteRequest(hashed.plan, 0)
-    expect(adoption).toEqual({ step: 0, input: { chainId: 8453, account: OWNER, safe: true, namespace: shopStepIntent(hashed, 0), call: { to: request.address, data: encodeFunctionData(request), value: request.value } },
-      evidence: { submittedAt: hashed.pending!.startedAt, safe: { safeTxHash: executionHash(8) } } })
+    expect(shopStepScope(storage, hashed, 0)).toMatchObject({ chainId: 8453, account: OWNER, safe: true, namespaces: [shopStepIntent(hashed, 0)], call: { to: request.address, data: encodeFunctionData(request), value: request.value },
+      saved: { started: true, submittedAt: hashed.pending!.startedAt, safeTxHash: executionHash(8) } })
     expect(shopStepIntent(hashed, 1)).not.toBe(shopStepIntent(hashed, 0))
     const dropped = dropShopWritePending(storage, key, hashed)
     expect(dropped.pending).toBeUndefined()
-    expect(shopPendingHold(dropped)).toBeNull()
+    // With nothing pending, the step's hold alone says whether anything was sent.
+    expect(shopStepScope(storage, dropped, 0).saved).toEqual({ started: false })
     expect(readShopWriteSession(storage, key)).toEqual(dropped)
   })
   it('settles with the step the hold confirmed', async () => {

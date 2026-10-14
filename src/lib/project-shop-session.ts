@@ -1,10 +1,10 @@
 /** Recovery facts block duplicate writes; only fresh, exact on-chain executions advance a shop update. */
-import { encodeFunctionData, zeroHash, type Address, type Hex, type PublicClient } from 'viem'
+import { encodeFunctionData, zeroHash, type Hex, type PublicClient } from 'viem'
 import { FUND_CHAIN_IDS } from './fund-contracts'
 import { parseProjectShopWrite, projectShopWriteRequest, serializeProjectShopWrite, type PreparedProjectShopWrite } from './project-shop-write'
 import { verifyStickyExecution, type StickyPending } from './sticky-session'
-import { writeIntentKey, type ReviewedWriteRecoveryInput } from '@bananapus/nana-sdk-core/review'
-import { callOf, holds, type LegacyWriteEvidence } from './write-hold'
+import { writeIntentKey, type SavedAttempt, type SavedAttemptScope } from '@bananapus/nana-sdk-core/review'
+import { attempts, callOf } from './write-hold'
 
 export type ShopWriteStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 export type ShopWriteSubmission = { afterBlock: string; safe: boolean; startedAt: number; hash?: Hex; attemptId?: string }
@@ -136,7 +136,7 @@ export function shopWriteRequestIndex(session: ShopWriteSession): number | null 
 /** Cleanup changes the next reviewed call, never claims the skipped creation was executed. */
 export function restoreShopWritePermissions(storage: ShopWriteStorage, key: string, session: ShopWriteSession): ShopWriteSession {
   const current = matchingCurrent(storage, key, session)
-  if (shopHeldWrite(current)) throw new Error(SHOP_HELD_LINE)
+  if (shopUndiscardable(storage, current)) throw new Error(SHOP_HELD_LINE)
   if (current.restoring || current.pending || current.completed.length !== 1 || current.plan.requestKinds.join(',') !== 'grant,create,restore') {
     throw new Error('Verify any pending shop creation before switching to permission restoration.')
   }
@@ -198,35 +198,57 @@ export async function confirmShopWriteStep(client: PublicClient, storage: ShopWr
   return { status, session: persist(storage, key, status === 'confirmed' ? { ...rest, completed: [...rest.completed, { submission: saved, executionHash: executionHash.toLowerCase() as Hex }] } : rest) }
 }
 
-/** A step's hold: the update this session plans and the step. TODO(SDK 2.38): the SDK's shared builder. */
 export const SHOP_HELD_LINE = 'Finish or exit the pending update first.'
 
-/** Whether the SDK holds a write of any of this update's steps (from storage, either wallet kind). */
-export function shopHeldWrite(session: ShopWriteSession): boolean {
-  const placeholder = { to: '0x0000000000000000000000000000000000000000' as Address, data: '0x' as Hex }
-  return session.plan.requests.some((_, step) => [false, true].some(safe => holds.open({
-    chainId: session.plan.snapshot.chainId, account: session.plan.snapshot.account, safe, namespace: shopStepIntent(session, step), call: placeholder,
-  }).peek().status !== 'clear'))
+/**
+ * One step of this update as the SDK's saved-attempt recovery reads it: what the journal saved of it
+ * (a pending submission from before SDK holds), else the step's hold alone (saved as unsent: the
+ * hold has any send). `confirmRetirable` refuses once the journal records the step done.
+ */
+export function shopStepScope(storage: ShopWriteStorage, session: ShopWriteSession, step: number, safe = session.pending?.safe ?? false): SavedAttemptScope {
+  const pending = session.pending
+  let call: SavedAttemptScope['call']
+  try { call = callOf(projectShopWriteRequest(session.plan, step)) } catch { /* The hold is found by its namespace. */ }
+  return {
+    chainId: session.plan.snapshot.chainId, account: session.plan.snapshot.account, safe,
+    namespaces: [shopStepIntent(session, step)], ...(call ? { call } : {}),
+    saved: pending && shopWriteRequestIndex(session) === step
+      ? { started: true, submittedAt: pending.startedAt, ...(pending.hash ? pending.safe ? { safeTxHash: pending.hash } : { hash: pending.hash } : {}) }
+      : { started: false },
+    confirmRetirable: async () => {
+      const current = readShopWriteSession(storage, shopWriteSessionKey(session.plan.snapshot.chainId, session.plan.snapshot.projectId))
+      return !!current && current.id === session.id && current.completed.length === session.completed.length
+    },
+  }
+}
+
+/** The step's attempt, with its domain check: one transaction ran exactly this step after its prerequisites. */
+export function shopStepAttempt(client: PublicClient, storage: ShopWriteStorage, session: ShopWriteSession, step: number, safe?: boolean): SavedAttempt<{ hash: Hex; safe: boolean }> {
+  return {
+    ...shopStepScope(storage, session, step, safe),
+    authenticate: async hash => {
+      if (!hash) return { result: 'unknown', reason: 'No saved shop transaction to check.' }
+      const afterBlock = await verifyShopWriteProgress(client, session)
+      const submission = (safe: boolean): ShopWriteSubmission => ({ safe, afterBlock: afterBlock.toString(), startedAt: Date.now(), ...(session.pending?.hash ? { hash: session.pending.hash } : {}) })
+      // An account's own transaction, else a Safe's execution of the step.
+      for (const viaSafe of [false, true]) {
+        try {
+          if ((await verify(client, session, step, submission(viaSafe), hash)).status === 'confirmed') return { result: 'proven', value: { hash, safe: viaSafe } }
+          return { result: 'not-this', reason: 'The shop step reverted.' }
+        } catch (error) { if (viaSafe) return { result: 'unknown', reason: error instanceof Error ? error.message : String(error) } }
+      }
+      return { result: 'unknown' }
+    },
+  }
+}
+
+/** Whether a step this update hasn't recorded may still be held, or settled unfollowed: then the update can't be discarded. */
+export function shopUndiscardable(storage: ShopWriteStorage, session: ShopWriteSession): boolean {
+  return shopWriteRequestIndices(session).slice(session.completed.length).some(step => !attempts.canDiscard(shopStepScope(storage, session, step)))
 }
 
 export function shopStepIntent(session: ShopWriteSession, step: number): string {
   return writeIntentKey('shop-step', { project: session.plan.snapshot.projectId, update: session.id, step })
-}
-
-/**
- * The hold a step the journal saved as pending before SDK holds is adopted into, with what it saved
- * (its hash or Safe proposal, and when it was sent), or null when nothing is pending.
- */
-export function shopPendingHold(session: ShopWriteSession): { input: ReviewedWriteRecoveryInput; evidence: LegacyWriteEvidence; step: number } | null {
-  const pending = session.pending
-  const step = shopWriteRequestIndex(session)
-  if (!pending || step === null) return null
-  const request = projectShopWriteRequest(session.plan, step)
-  return {
-    step,
-    input: { chainId: request.chainId, account: session.plan.snapshot.account, safe: pending.safe, namespace: shopStepIntent(session, step), call: callOf(request) },
-    evidence: { submittedAt: pending.startedAt, ...(pending.hash ? pending.safe ? { safe: { safeTxHash: pending.hash } } : { hash: pending.hash } : {}) },
-  }
 }
 
 /** Drop a pending step the SDK's hold now holds: the session keeps only its plan and completed steps. */
@@ -240,8 +262,8 @@ export function dropShopWritePending(storage: ShopWriteStorage, key: string, ses
 /** Partial progress must survive until permission restoration completes. Finished records require fresh proof. */
 export async function clearShopWriteSession(storage: ShopWriteStorage, key: string, session: ShopWriteSession, client?: PublicClient): Promise<void> {
   const current = matchingCurrent(storage, key, session)
-  // A held step keeps its update, and its exit, until it settles or the user takes that exit.
-  if (shopHeldWrite(current)) throw new Error(SHOP_HELD_LINE)
+  // A held step keeps its update, and its exit, until it settles or the user takes that exit; a settled one until it is recorded.
+  if (shopUndiscardable(storage, current)) throw new Error(SHOP_HELD_LINE)
   if (current.completed.length) {
     if (shopWriteRequestIndex(current) !== null) throw new Error('This shop update still has unfinished steps. Complete them, including restoring deployer permissions, before clearing it.')
     if (!client) throw new Error('Verify every completed shop execution before clearing this update.')
@@ -258,7 +280,7 @@ export async function clearShopWriteSession(storage: ShopWriteStorage, key: stri
  */
 export function abandonShopWriteSession(storage: ShopWriteStorage, key: string, session: ShopWriteSession): void {
   const current = matchingCurrent(storage, key, session)
-  if (shopHeldWrite(current)) throw new Error(SHOP_HELD_LINE)
+  if (shopUndiscardable(storage, current)) throw new Error(SHOP_HELD_LINE)
   storage.removeItem(key)
   if (storage.getItem(key) !== null) throw new Error('The browser could not close this shop update.')
 }

@@ -1,8 +1,8 @@
-import { type Address, type Hex } from 'viem'
-import { writeIntentKey, type ReviewedWriteRecoveryInput } from '@bananapus/nana-sdk-core/review'
-import { callOf, holds, type LegacyWriteEvidence } from './write-hold'
+import { isAddress, isHex, type Address, type Hex } from 'viem'
+import { writeIntentKey, type SavedAttemptScope } from '@bananapus/nana-sdk-core/review'
+import { attempts, callOf } from './write-hold'
 import type { LaunchRelayrJournal } from './fund-launch-relayr'
-import { buildFundLaunch, type FundLaunchInput, type FundTransaction } from './fund-contracts'
+import type { FundLaunchInput, FundTransaction } from './fund-contracts'
 
 export const FUND_LAUNCH_KEY = 'homerun:fund-launch:v1'
 export type LaunchStatus = {
@@ -22,6 +22,11 @@ export type LaunchStatus = {
   /** Actual receipt hash, kept separate from a pending Safe proposal identifier. */
   executionHash?: Hex
   projectId?: string
+  /**
+   * A reopened chain's last submission, which the user's exit or check retired: kept as that attempt's
+   * evidence, so its recovery still reads as retired. Only on `ready`.
+   */
+  releasedHash?: Hex
 }
 const UUID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i
 const ADDRESS = /^0x[\da-f]{40}$/i
@@ -93,9 +98,14 @@ export function decodeLaunchSession(raw: string): FundLaunchSession {
     return [id, BigInt(fee.replace(/n$/, ''))] as const
   })
   input.creationFees = Object.fromEntries(fees)
-  // Reuse the real transaction builder's chain, address, salt, fee, metadata,
-  // precision and multichain checks instead of maintaining looser validation.
-  buildFundLaunch(input)
+  // Only what recovery needs is checked here: a saved launch whose requests can no longer be built
+  // (its chain support changed, say) still loads, so its saved writes recover first. Fresh sends
+  // build, and so validate, every request.
+  const nonzero = (address: unknown) => typeof address === 'string' && isAddress(address) && !/^0x0{40}$/i.test(address)
+  if (!isHex(input.salt) || input.salt.length !== 66 || /^0x0{64}$/.test(input.salt) || !nonzero(input.sender) || !nonzero(input.owner)
+    || !input.chainIds.length || new Set(input.chainIds).size !== input.chainIds.length || !input.chainIds.every(id => Number.isSafeInteger(id) && id > 0)
+    || !Number.isSafeInteger(input.mustStartAtOrAfter) || input.mustStartAtOrAfter < 0
+    || typeof input.projectUri !== 'string' || !/^ipfs:\/\/[^\s/?#]+(?:\/[^\s]*)?$/.test(input.projectUri)) throw new Error('Saved launch is invalid. Restore its original deployment record before continuing.')
   for (const id of input.chainIds) {
     const status = value.statuses?.[id]
     if (typeof input.creationFees?.[id] !== 'bigint' || input.creationFees[id] < 0n || !status
@@ -107,6 +117,7 @@ export function decodeLaunchSession(raw: string): FundLaunchSession {
       || (status.walletReturned !== undefined && (status.walletReturned !== true || !status.hash))
       || [status.nonce, status.fromBlock].some(value => value !== undefined && (typeof value !== 'string' || !DECIMAL.test(value)))
       || (status.phase === 'ready' && (status.hash !== undefined || status.executionHash !== undefined || status.projectId !== undefined))
+      || (status.releasedHash !== undefined && (status.phase !== 'ready' || !/^0x[\da-f]{64}$/i.test(status.releasedHash)))
       || (status.phase === 'pending' && !status.hash)
       || (status.phase === 'reverted' && !status.hash)
       || (status.phase === 'confirmed' && (!status.hash || !/^[1-9]\d*$/.test(status.projectId ?? '')))) throw new Error('Saved launch progress is incomplete. Verify the submitted transaction before continuing.')
@@ -190,13 +201,45 @@ export function multisigSetupIntent(salt: Hex): string {
   return writeIntentKey('fund-multisigs', { launch: salt })
 }
 
-/** A write a launch record saved before SDK holds, as the hold it is adopted into: its hash, or the nonce read before the wallet opened. */
-export function launchHold(namespace: string, sender: Address, request: FundTransaction, saved: { hash?: Hex; safe?: boolean; nonce?: string; fromBlock?: string }): { input: ReviewedWriteRecoveryInput; evidence: LegacyWriteEvidence } {
-  const safe = saved.safe ?? false
+/** What a launch saved of one write: its hash (or Safe proposal), else the nonce read before the wallet opened. */
+function savedSubmission(started: boolean, saved: { hash?: Hex; safe?: boolean; nonce?: string; fromBlock?: string } | undefined): SavedAttemptScope['saved'] {
+  if (!started || !saved) return { started: false }
   return {
-    input: { chainId: request.chainId, account: sender, safe, namespace, call: callOf(request) },
-    evidence: saved.hash ? safe ? { safe: { safeTxHash: saved.hash } } : { hash: saved.hash }
-      : { ...(saved.nonce !== undefined ? { nonce: BigInt(saved.nonce) } : {}), ...(saved.fromBlock !== undefined ? { fromBlock: BigInt(saved.fromBlock) } : {}) },
+    started: true,
+    ...(saved.hash ? saved.safe ? { safeTxHash: saved.hash } : { hash: saved.hash } : {}),
+    ...(saved.nonce !== undefined ? { nonce: BigInt(saved.nonce) } : {}),
+    ...(saved.fromBlock !== undefined ? { fromBlock: BigInt(saved.fromBlock) } : {}),
+  }
+}
+
+/**
+ * One chain's deployment as the SDK's saved-attempt recovery reads it, from the launch record alone
+ * (no builder): its saved submission (a returned hash, a reopened chain's retired one, or a legacy
+ * hashless attempt's nonce), else the launch's hold alone (saved as unsent: the hold has any send).
+ * `confirmRetirable` refuses once the chain is recorded confirmed. Null once it is.
+ */
+export function launchScope(session: FundLaunchSession, chainId: number, request: FundTransaction | undefined, safe: boolean): SavedAttemptScope | null {
+  const status = session.statuses[chainId]
+  if (!status || status.phase === 'confirmed') return null
+  const released = status.phase === 'ready' ? status.releasedHash : undefined
+  return {
+    chainId, account: session.input.sender, safe: status.safe ?? safe, namespaces: [launchIntent(session.input.salt)],
+    ...(request ? { call: callOf(request) } : {}),
+    saved: savedSubmission(status.phase !== 'ready' || !!released, { ...status, hash: status.hash ?? released }),
+    confirmRetirable: async () => { const now = loadLaunchSession()?.statuses[chainId]; return !!now && now.phase !== 'confirmed' },
+  }
+}
+
+/** One chain's multisig setup as recovery reads it: a setup the record saved before SDK holds, else the setup's hold alone. */
+export function setupScope(session: FundLaunchSession, chainId: number, request: FundTransaction | undefined, safe: boolean): SavedAttemptScope | null {
+  const status = session.statuses[chainId]
+  if (!status || status.phase === 'confirmed' || (!session.input.multisigs?.length && !status.multisigSetup)) return null
+  const saved = status.multisigSetup
+  return {
+    chainId, account: session.input.sender, safe: saved?.safe ?? safe, namespaces: [multisigSetupIntent(session.input.salt)],
+    ...(request ? { call: callOf(request) } : {}),
+    saved: savedSubmission(!!saved, saved),
+    confirmRetirable: async () => { const now = loadLaunchSession()?.statuses[chainId]; return !!now && now.phase !== 'confirmed' },
   }
 }
 
@@ -248,11 +291,14 @@ export function sameSender(actual: Address | undefined, expected: Address): void
 
 export const LAUNCH_HELD_LINE = 'Finish or exit the pending launch first.'
 
-/** Whether the SDK holds a deployment or multisig setup of this launch on any of its chains (from storage, either wallet kind). */
+/**
+ * Whether any chain's deployment or setup may still be held, or settled with a result the launch
+ * hasn't recorded: the SDK's discard check. Such a launch is kept, with its exit, until it settles,
+ * the user takes that exit, or its result is recorded.
+ */
 export function launchHeldWrite(session: FundLaunchSession): boolean {
-  const placeholder = { to: '0x0000000000000000000000000000000000000000' as Address, data: '0x' as Hex }
-  return session.input.chainIds.some(chainId => [launchIntent(session.input.salt), multisigSetupIntent(session.input.salt)].some(namespace =>
-    [false, true].some(safe => holds.open({ chainId, account: session.input.sender, safe, namespace, call: placeholder }).peek().status !== 'clear')))
+  return session.input.chainIds.some(chainId => [launchScope(session, chainId, undefined, false), setupScope(session, chainId, undefined, false)]
+    .some(scope => scope && !attempts.canDiscard(scope)))
 }
 
 /** Only a plan that has never acquired an authorization can follow edited networks. */

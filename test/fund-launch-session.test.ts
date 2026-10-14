@@ -3,7 +3,7 @@ vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fix
 
 import { encodeFunctionData, zeroAddress, zeroHash, type Hex } from 'viem'
 import { buildFundLaunch } from '../src/lib/fund-contracts'
-import { FUND_LAUNCH_KEY, launchHold, launchIntent, multisigSetupIntent, archiveLaunch, canCancelLaunch, cancelUnsubmittedLaunch, decodeLaunchSession, discardUnsignedLaunch, encodeLaunchSession, refreshLaunchCreationFee, saveLaunch, sameSender, updateLaunchStatus, type FundLaunchSession } from '../src/lib/fund-launch-session'
+import { FUND_LAUNCH_KEY, launchScope, launchIntent, multisigSetupIntent, archiveLaunch, canCancelLaunch, cancelUnsubmittedLaunch, decodeLaunchSession, discardUnsignedLaunch, encodeLaunchSession, refreshLaunchCreationFee, saveLaunch, sameSender, updateLaunchStatus, type FundLaunchSession, type LaunchStatus } from '../src/lib/fund-launch-session'
 
 const owner = '0x1111111111111111111111111111111111111111' as const
 const salt = `0x${'12'.repeat(32)}` as Hex
@@ -24,7 +24,7 @@ describe('durable FUND deployment journal', () => {
   it('rejects invalid salts, owners, fees, networks, metadata and progress records', () => {
     const changes = [
       { salt: zeroHash }, { owner: zeroAddress }, { mustStartAtOrAfter: -1 },
-      { chainIds: [8453, 84532] }, { chainIds: [8453, 8453] }, { projectUri: 'ipfs://' },
+      { chainIds: [8453, 8453] }, { projectUri: 'ipfs://' },
       { creationFees: { 8453: -1n, 10: 0n } },
     ]
     for (const change of changes) expect(() => decodeLaunchSession(encodeLaunchSession({ ...session(), input: { ...session().input, ...change } }))).toThrow()
@@ -343,13 +343,24 @@ describe('what a relayed launch chain may read as the finalized chain moves on',
 
 describe('a launch write saved before SDK holds', () => {
   const request = () => buildFundLaunch(session().input).requests.find(item => item.chainId === 8453)!
-  it('is held by the launch, with its hash, its Safe proposal or its saved nonce as evidence', () => {
-    const held = launchHold(launchIntent(salt), owner, request(), { hash, safe: false })
-    expect(held.input).toEqual({ chainId: 8453, account: owner, safe: false, namespace: launchIntent(salt), call: { to: request().address, data: encodeFunctionData(request()), value: request().value } })
-    expect(held.evidence).toEqual({ hash })
-    expect(launchHold(launchIntent(salt), owner, request(), { hash, safe: true }).evidence).toEqual({ safe: { safeTxHash: hash } })
-    expect(launchHold(launchIntent(salt), owner, request(), { nonce: '4', fromBlock: '900' }).evidence).toEqual({ nonce: 4n, fromBlock: 900n })
-    expect(launchHold(launchIntent(salt), owner, request(), {}).evidence).toEqual({})
+  const at = (status: LaunchStatus) => ({ ...session(), statuses: { ...session().statuses, 8453: status } })
+  it('is recovered by the launch, with its hash, its Safe proposal or its saved nonce as evidence', () => {
+    const scope = launchScope(at({ phase: 'pending', hash, safe: false }), 8453, request(), false)!
+    expect(scope).toMatchObject({ chainId: 8453, account: owner, safe: false, namespaces: [launchIntent(salt)], call: { to: request().address, data: encodeFunctionData(request()), value: request().value }, saved: { started: true, hash } })
+    expect(launchScope(at({ phase: 'pending', hash, safe: true }), 8453, request(), false)!.saved).toEqual({ started: true, safeTxHash: hash })
+    expect(launchScope(at({ phase: 'signing', nonce: '4', fromBlock: '900' }), 8453, request(), false)!.saved).toEqual({ started: true, nonce: 4n, fromBlock: 900n })
+    // Nothing the record saved says it was sent: the launch's hold alone says.
+    expect(launchScope(at({ phase: 'ready' }), 8453, request(), false)!.saved).toEqual({ started: false })
+    // A chain reopened by the user's exit or check keeps that attempt's evidence.
+    expect(launchScope(at({ phase: 'ready', releasedHash: hash }), 8453, request(), false)!.saved).toEqual({ started: true, hash })
+    expect(launchScope(at({ phase: 'confirmed', hash, projectId: '5' }), 8453, request(), false)).toBeNull()
     expect(multisigSetupIntent(salt)).not.toBe(launchIntent(salt))
+  })
+  it('loads a saved launch its builder now refuses, so its saved writes recover before anything is built (gap 4)', () => {
+    const unbuildable = { ...session(), input: { ...session().input, chainIds: [8453, 84532], creationFees: { 8453: 0n, 84532: 0n } } }
+    expect(() => buildFundLaunch(unbuildable.input)).toThrow()
+    const decoded = decodeLaunchSession(encodeLaunchSession({ ...unbuildable, statuses: { 8453: { phase: 'pending', hash }, 84532: { phase: 'ready' } } }))
+    // Its recovery needs only what was saved: no request.
+    expect(launchScope(decoded, 8453, undefined, false)).toMatchObject({ namespaces: [launchIntent(salt)], saved: { started: true, hash } })
   })
 })

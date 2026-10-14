@@ -278,9 +278,9 @@ describe('project administrative writes', () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(0) })
       await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })
       expect(handle.phase).toBe('submitted')
-      expect(handle.held).toBeNull()
-      // The next look is not contended: the exit appears.
+      // The watch's own next look is not contended: the exit appears.
       await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
+      expect(looks).toBeGreaterThan(1)
       expect(handle.held).toMatchObject({ label: expect.stringContaining('I checked my wallet') })
       expect(button('I checked my wallet. Send again')).toBeDefined()
     } finally { spy.mockRestore(); vi.useRealTimers() }

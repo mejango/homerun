@@ -3,7 +3,8 @@
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import type { Project721Tier } from '@bananapus/nana-sdk-core/v6'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useSavedAttempt } from '@/hooks/held-binding'
 import { isAddressEqual, type PublicClient } from 'viem'
 import { useWallet } from '@/hooks/useWallet'
 import { useSafeTx, txPhaseLabel } from '@/hooks/useSafeTx'
@@ -15,14 +16,13 @@ import {
   type ProjectShopWriteState,
 } from '@/lib/project-shop-write'
 import {
-  clearShopWriteSession, confirmShopWriteStep, dropShopWritePending, readShopWriteSession, shopPendingHold, shopStepIntent,
+  clearShopWriteSession, confirmShopWriteStep, dropShopWritePending, readShopWriteSession, shopStepAttempt, shopStepIntent,
   shopWriteSessionKey, startShopWriteSession, restoreShopWritePermissions, abandonShopWriteSession, shopWriteRequestIndex, shopWriteRequestIndices,
   verifyShopWriteProgress, withShopWriteLock, type ShopWriteSession,
 } from '@/lib/project-shop-session'
-import { adoptLegacyWrite, recoverFromHold } from '@/lib/write-hold'
-import { HeldNotice } from '@/components/ui/HeldWriteExit'
-import { useLegacyAdoption } from '@/hooks/useLegacyAdoption'
-import { CheckRequired } from '@/components/ui/CheckRequired'
+import { attempts } from '@/lib/write-hold'
+import { HeldNotice, retiringExit } from '@/components/ui/HeldWriteExit'
+import { SavedAttemptNotice } from '@/components/ui/SavedAttemptNotice'
 import { ShopItemEditor, type ShopItemEditorState } from '@/components/ShopItemEditor'
 import { ModalShell } from '@/components/ui/ModalShell'
 
@@ -85,54 +85,49 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
     return () => { cancelled = true }
   }, [client, session])
 
-  /** A step its hold settled that couldn't be authenticated here: checked again, or closed by the user's check. */
-  const [stepCheck, setStepCheck] = useState(false), [recheck, setRecheck] = useState(0)
   /** The step this screen sent or adopted: what its settled execution is recorded against. */
   const sent = useRef<{ session: string; step: number; safe: boolean; afterBlock: bigint } | null>(null)
   const track = tx.track
-  const adoption = useLegacyAdoption()
-  const adopt = adoption.run
-  // A step the journal saved as pending before SDK holds is adopted into its hold, then dropped from the
-  // journal; with none, the next step's hold is shown if it holds a send, whatever the shop's state now.
+  // The update's next step recovers through the SDK before anything is reviewed: a held step shows
+  // with its exit (a pending submission the journal saved before SDK holds goes once the hold has it),
+  // one that settled while away is verified and recorded before the next, one nothing can show asks.
+  const step = session ? shopWriteRequestIndex(session) : null
+  const attempt = useMemo(() => client && session && step !== null ? shopStepAttempt(client, localStorage, session, step) : null, [client, session, step])
+  const recovery = useSavedAttempt({ recovery: attempts, attempt, client, checkNext: 'Close this update' })
+  const { outcome } = recovery
   useEffect(() => {
-    if (!client || !ready) return
-    const captured = session
-    let cancelled = false
-    void adopt(async () => {
-      if (!captured) return
-      if (!captured.pending) {
-        const step = shopWriteRequestIndex(captured)
-        // A step this screen already follows is shown already.
-        if (step === null || sent.current) return
-        const intent = { chainId: captured.plan.snapshot.chainId, account: captured.plan.snapshot.account, namespace: shopStepIntent(captured, step) }
-        const held = await track(projectShopWriteRequest(captured.plan, step), { reviewedAccount: intent.account, recoveryNamespace: intent.namespace, heldOnly: true })
-        // The step it holds is the one its settlement is recorded against; its prerequisites bound the receipt.
-        if (!cancelled && held && held.status !== 'clear' && !sent.current) { sent.current = { session: captured.id, step, safe: held.record.safe, afterBlock: 0n }; return }
-        if (held?.status !== 'clear') return
-        // A step its hold settled while the page was away is verified and recorded before the next one; one not shown here waits for the user's check.
-        const result = await recoverFromHold(intent, settledHash => !settledHash ? Promise.resolve(null) : withShopWriteLock(key, async () => {
-          const confirm = (safe: boolean) => confirmShopWriteStep(client, localStorage, key, captured, { safe, hash: settledHash, afterBlock: 0n }, settledHash)
-          return confirm(false).catch(() => confirm(true))
-        }))
-        if (cancelled) return
-        if (result.status === 'done') { setSession(result.value.session); setCheckedProgress(`${result.value.session.id}:${result.value.session.completed.length}`); window.dispatchEvent(new Event(SESSION_EVENT)); await invalidate() }
-        else if (result.status === 'check') setStepCheck(true)
-        return
-      }
-      await withShopWriteLock(key, async () => {
-        const pending = shopPendingHold(captured)
-        if (!pending) return
-        const { adopted } = await adoptLegacyWrite(pending.input, pending.evidence, client)
-        // The journal keeps the step until its attempt is the hold's.
-        const next = adopted ? dropShopWritePending(localStorage, key, captured) : captured
-        if (cancelled) return
-        sent.current = { session: next.id, step: pending.step, safe: !!pending.input.safe, afterBlock: BigInt(captured.pending!.afterBlock) }
-        if (adopted) { setSession(next); window.dispatchEvent(new Event(SESSION_EVENT)) }
-        await track(projectShopWriteRequest(next.plan, pending.step), { reviewedAccount: next.plan.snapshot.account, recoveryNamespace: pending.input.namespace, safe: pending.input.safe })
-      })
-    }).catch(reason => { if (!cancelled) setStorageError(message(reason)) })
-    return () => { cancelled = true }
-  }, [adopt, client, invalidate, key, ready, recheck, session, track])
+    if (!outcome || !client || !session || step === null || !attempt) return
+    const captured = session, scope = attempt
+    if (outcome.status === 'held') {
+      const record = outcome.state.record
+      sent.current = { session: captured.id, step, safe: record.safe, afterBlock: captured.pending ? BigInt(captured.pending.afterBlock) : 0n }
+      track(projectShopWriteRequest(captured.plan, step), { reviewedAccount: captured.plan.snapshot.account, recoveryNamespace: shopStepIntent(captured, step), safe: record.safe, reservation: record.id })
+      // The hold has the journal's pending submission now: the journal keeps only the plan and completed steps.
+      if (captured.pending) void withShopWriteLock(key, async () => { setSession(dropShopWritePending(localStorage, key, captured)); window.dispatchEvent(new Event(SESSION_EVENT)) }).catch(reason => setStorageError(message(reason)))
+    } else if (outcome.status === 'done' && outcome.result === 'success' && outcome.authenticated) {
+      void withShopWriteLock(key, async () => {
+        const { hash, safe } = outcome.value
+        const result = await confirmShopWriteStep(client, localStorage, key, captured, { safe, hash: captured.pending?.hash ?? hash, afterBlock: 0n }, hash)
+        setSession(result.session); setCheckedProgress(`${result.session.id}:${result.session.completed.length}`)
+        window.dispatchEvent(new Event(SESSION_EVENT))
+        // Recorded: the step's settlement is followed.
+        await attempts.retire(scope, { by: 'settled', hash })
+        await invalidate()
+      }).catch(reason => setError(message(reason)))
+    } else if (outcome.status === 'none' && outcome.retired === 'check') {
+      // The user checked a step this screen couldn't show: the update closes without claiming it, and nothing is sent again.
+      void withShopWriteLock(key, async () => { abandonShopWriteSession(localStorage, key, captured); changed() })
+        .then(() => { tx.reset(); setOpen(false); setError(null); setProgress('Closed without confirming its last step. Check the shop before updating it again.') })
+        .catch(reason => setError(message(reason)))
+    } else if ((outcome.status === 'none' && outcome.retired) || (outcome.status === 'done' && outcome.result === 'failed')) {
+      // Released, rejected or reverted: the pending submission is history, and the step can be reviewed again.
+      if (captured.pending) void withShopWriteLock(key, async () => { setSession(dropShopWritePending(localStorage, key, captured)); window.dispatchEvent(new Event(SESSION_EVENT)) }).catch(reason => setStorageError(message(reason)))
+    }
+  // Each outcome is handled once, against the journal as it is now.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [outcome])
+  /** The next step can be reviewed only once its recovery says nothing ran. */
+  const recovered = !attempt || (!!outcome && (outcome.status === 'none' || (outcome.status === 'done' && outcome.result === 'failed')))
 
   // The SDK's hold settled the step: its exact execution is verified and recorded before the next one.
   const settledReceipt = tx.phase === 'success' ? tx.receipt : null
@@ -159,7 +154,7 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
 
   const snapshot = state.data
   const canStart = ready && !storageError && !session && !unavailable && !state.isError && !!snapshot && !!address && isAddressEqual(snapshot.account, address)
-  const busy = working || tx.busy || tx.phase === 'review' || !adoption.ready
+  const busy = working || tx.busy || tx.phase === 'review' || !recovered
   /** A step is with the wallet, the chain or a Safe: nothing else is reviewed meanwhile. */
   const stepActive = tx.busy || tx.phase === 'review' || tx.phase === 'submitted' || tx.phase === 'success'
   const indices = session ? shopWriteRequestIndices(session) : []
@@ -210,23 +205,12 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
             remember()
           },
           beforeWrite: async () => {
-            await adoption.wait()
             const currentBlock = await client.getBlock({ blockTag: 'latest' })
             if (currentBlock.number === null) throw new Error('The latest block could not be read.')
             if (currentBlock.number < prerequisiteBlock) throw new Error('The network has not caught up with the previous shop transaction. Try again shortly.')
           },
         })
       })
-    } catch (reason) { setError(message(reason)) }
-    finally { action.current = false; setWorking(false) }
-  }
-  /** The user checked a step this screen couldn't authenticate: the update closes without claiming it, and nothing is sent again. */
-  async function abandon() {
-    if (!session || action.current) return
-    action.current = true; setWorking(true)
-    try {
-      await withShopWriteLock(key, async () => { abandonShopWriteSession(localStorage, key, session); changed() })
-      setStepCheck(false); tx.reset(); setOpen(false); setError(null); setProgress('Closed without confirming its last step. Check the shop before updating it again.')
     } catch (reason) { setError(message(reason)) }
     finally { action.current = false; setWorking(false) }
   }
@@ -276,8 +260,8 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
         : session ? <>
           {!stepActive && session.completed.length === 0 && <button type="button" className="ds-button ds-button-secondary" disabled={busy} onClick={() => void finish()}>Cancel update</button>}
           {!stepActive && !session.restoring && session.completed.length === 1 && session.plan.requestKinds.join(',') === 'grant,create,restore' && <button type="button" className="ds-button ds-button-secondary" disabled={busy || !accountMatches} onClick={() => void restore()}>Cancel creation and restore permissions</button>}
-          {stepCheck && <CheckRequired line="Check this shop step before going on." action="I checked it. Close this update" retry={() => { setStepCheck(false); setRecheck(value => value + 1) }} onChecked={() => void abandon()} />}
-          {(!stepActive || tx.phase === 'submitted') && !stepCheck && <button type="button" className="ds-button ds-button-primary" disabled={busy || !accountMatches || checkedProgress !== progressKey || !!storageError} onClick={() => void submit()}>{txPhaseLabel(tx.phase, { idle: 'Review transaction', pending: 'Waiting for confirmation…' })}</button>}
+          <SavedAttemptNotice attempt={recovery} />
+          {(!stepActive || tx.phase === 'submitted') && recovered && <button type="button" className="ds-button ds-button-primary" disabled={busy || !accountMatches || checkedProgress !== progressKey || !!storageError} onClick={() => void submit()}>{txPhaseLabel(tx.phase, { idle: 'Review transaction', pending: 'Waiting for confirmation…' })}</button>}
         </> : !working && <button type="button" className="ds-button ds-button-secondary" onClick={() => { setOpen(false); if (retryDraft) setEditor(retryDraft) }}>{retryDraft ? 'Back to items' : 'Close'}</button>}
     </div>}>
       <div className="grid gap-4 text-sm">
@@ -285,7 +269,7 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
           <p>{session.restoring ? 'Cancel shop creation by restoring the deployer’s previous permissions. Confirm the restoration transaction to finish.' : session.plan.notice}</p>
           <ol className="list-decimal space-y-3 pl-5">{indices.map((requestIndex, index) => <li key={requestIndex}>{session.plan.requests[requestIndex].label}<span className="ml-2">{index < session.completed.length ? checkedProgress === progressKey ? 'Confirmed' : 'Verifying…' : index === session.completed.length ? stepActive ? 'Waiting for confirmation' : 'Ready' : 'Next'}</span></li>)}</ol>
           {!accountMatches && !complete && <p>Connect {session.plan.snapshot.account} to continue this update.</p>}
-          {tx.phase === 'submitted' && <HeldNotice tx={tx} />}
+          {tx.phase === 'submitted' && <HeldNotice tx={{ notice: tx.notice, held: retiringExit(tx.held, recovery.retire) }} />}
           {tx.phase === 'pending' && <p>Submitted. Waiting for onchain confirmation…</p>}
           {complete && <p>{session.restoring ? 'The previous permissions have been restored. Shop creation was cancelled.' : session.plan.snapshot.mode === 'create' ? 'The shop and first items are created. They become available when the attached ruleset is active.' : 'Your inventory changes are confirmed onchain.'}</p>}
         </>}

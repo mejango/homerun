@@ -3,9 +3,8 @@ import { MappableAsset, parseSuckerDeployerConfig, type JBChainId } from '@banan
 import { decodeFunctionData, encodeFunctionData, getAddress, isAddress, isAddressEqual, zeroAddress, zeroHash, type Address, type Hex, type PublicClient } from 'viem'
 import { FUND_CHAIN_IDS, type FundTransaction } from './fund-contracts'
 import { homerunDeployerAbi, INITIAL_INCOME_SUPPLY, registeredHomerunDeployer } from './income-contracts'
-import { writeIntentKey, type ReviewedWriteRecoveryInput, type ReviewedWriteRecoveryRecord } from '@bananapus/nana-sdk-core/review'
-import { verifyStickyExecution, type StickyPending, type StickyStorage } from './sticky-session'
-import type { LegacyWriteEvidence } from './write-hold'
+import { writeIntentKey, type ReviewedWriteRecoveryRecord, type SavedAttempt } from '@bananapus/nana-sdk-core/review'
+import { savedRecordAttempt, verifyStickyExecution, type StickyPending, type StickyStorage } from './sticky-session'
 
 export type IncomeLaunchPending = StickyPending & {
   kind: 'income-launch'
@@ -155,15 +154,41 @@ export function incomeLaunchFromHold(record: ReviewedWriteRecoveryRecord, projec
   }), incomeLaunchSessionKey(record.chainId, projectId))
 }
 
-/** A journal record from before SDK holds, as the hold it is adopted into. */
-export function incomeLaunchHold(record: IncomeLaunchPending): { request: FundTransaction; input: ReviewedWriteRecoveryInput; evidence: LegacyWriteEvidence } {
+/** A launch's exact request, from its record. */
+export function incomeLaunchRequest(record: IncomeLaunchPending): FundTransaction {
   const { functionName, args } = decodeFunctionData({ abi: homerunDeployerAbi, data: record.data })
-  const value = BigInt(record.value)
-  return {
-    request: { chainId: record.chainId, address: record.target, abi: homerunDeployerAbi, functionName, args, value } as FundTransaction,
-    input: { chainId: record.chainId, account: record.holder, safe: record.safe, namespace: incomeLaunchIntent(BigInt(record.projectId)), call: { to: record.target, data: record.data, value } },
-    evidence: { submittedAt: record.submittedAt, ...(record.hash ? record.safe ? { safe: { safeTxHash: record.hash } } : { hash: record.hash } : {}) },
+  return { chainId: record.chainId, address: record.target, abi: homerunDeployerAbi, functionName, args, value: BigInt(record.value) } as FundTransaction
+}
+
+/** What a recovered INCOME launch proves: the launch it was verified as, its transaction and its INCOME project. */
+export type IncomeLaunchProof = { record: IncomeLaunchPending; hash: Hex; incomeProjectId: bigint }
+
+/**
+ * A network's INCOME launch as the SDK's saved-attempt recovery reads it: the plan's saved
+ * completion (proven again on every load), else a launch the journal saved before SDK holds, else
+ * this FUND's launch hold alone (saved as unsent: the hold has any send). `verify` is the domain
+ * check of one transaction (none while the plan's snapshot can't load); with no record, an account's
+ * own launcher call names the launch. `confirmRetirable` is the plan's strict re-read.
+ */
+export function incomeLaunchAttempt(client: PublicClient, chainId: number, projectId: bigint, account: Address, safe: boolean,
+  saved: { completion?: { hash: Hex; record: IncomeLaunchPending }; pending: IncomeLaunchPending | null },
+  verify: ((record: IncomeLaunchPending, hash: Hex) => Promise<bigint>) | undefined, confirmRetirable: () => Promise<boolean>): SavedAttempt<IncomeLaunchProof> {
+  const record = saved.completion ? { ...saved.completion.record, hash: saved.completion.record.hash ?? saved.completion.hash } : saved.pending
+  const namespace = incomeLaunchIntent(projectId)
+  const authenticate: SavedAttempt<IncomeLaunchProof>['authenticate'] = async hash => {
+    if (!hash) return { result: 'unknown', reason: 'No saved launch transaction to check.' }
+    if (!verify) return { result: 'unknown', reason: 'The plan’s snapshot is needed to check this launch.' }
+    let launch = record
+    if (!launch) {
+      const transaction = await client.getTransaction({ hash })
+      if (!transaction.to) return { result: 'not-this', reason: 'It has no launcher call.' }
+      launch = incomeLaunchFromHold({ version: 1, id: 'settled', chainId, account: transaction.from, safe: false, call: { to: transaction.to, data: transaction.input, value: transaction.value.toString() } }, projectId)
+      launch = { ...launch, phase: 'pending', hash }
+    }
+    return { result: 'proven', value: { record: launch, hash, incomeProjectId: await verify(launch, hash) } }
   }
+  return record ? savedRecordAttempt({ ...record }, namespace, authenticate, confirmRetirable)
+    : { chainId, account, safe, namespaces: [namespace], saved: { started: false }, confirmRetirable, authenticate }
 }
 
 export function exportIncomeLaunchPending(record: IncomeLaunchPending): string {

@@ -1,6 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSavedAttempt } from '@/hooks/held-binding'
 import { useRouter } from 'next/navigation'
 import { getPublicClient, getAccount } from '@wagmi/core'
 import { jbProjectsAbi, type JBChainId } from '@bananapus/nana-sdk-core'
@@ -11,16 +12,15 @@ import { useSafeTx } from '@/hooks/useSafeTx'
 import { wagmiConfig } from '@/providers/Providers'
 import CreateFlow, { type CreateValues } from './CreateFlow'
 import { buildFundLaunch, type FundTransaction } from '@/lib/fund-contracts'
-import { FUND_LAUNCH_KEY, canCancelLaunch, launchHeldWrite, launchHold, launchIntent, multisigSetupIntent, cancelUnsubmittedLaunch, discardUnsignedLaunch, decodeLaunchSession, encodeLaunchSession, saveLaunch, updateLaunchStatus, refreshLaunchCreationFee, archiveLaunch, loadLaunchSession, sameSender, type FundLaunchSession, type LaunchStatus } from '@/lib/fund-launch-session'
+import { FUND_LAUNCH_KEY, canCancelLaunch, launchHeldWrite, launchIntent, launchScope, multisigSetupIntent, setupScope, cancelUnsubmittedLaunch, discardUnsignedLaunch, decodeLaunchSession, encodeLaunchSession, saveLaunch, updateLaunchStatus, refreshLaunchCreationFee, archiveLaunch, loadLaunchSession, sameSender, type FundLaunchSession, type LaunchStatus } from '@/lib/fund-launch-session'
 import { checkLaunchDeployment, fundLaunchFailed, verifyFundLaunch, verifyFailedFundLaunch, verifyReturnedFundWriteFailure } from '@/lib/fund-launch-verification'
 import { publishFundProjectMetadata } from '@/lib/publish-fund-project-metadata'
 import { resolveCreateMultisigs, checkCreateMultisigs, verifyCreatedMultisigs, multisigDeploymentRequest, multisigReview } from '@/lib/create-multisig'
 import { readableError } from '@/lib/readable-error'
-import { transactionMessage, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
-import { adoptLegacyWrite, recoverFromHold } from '@/lib/write-hold'
-import { HeldNotice } from '@/components/ui/HeldWriteExit'
-import { CheckRequired } from '@/components/ui/CheckRequired'
-import { useLegacyAdoption } from '@/hooks/useLegacyAdoption'
+import { transactionMessage, type SavedAttempt, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
+import { adoptSavedNonce, attempts, callOf } from '@/lib/write-hold'
+import { HeldNotice, retiringExit } from '@/components/ui/HeldWriteExit'
+import { SavedAttemptNotice } from '@/components/ui/SavedAttemptNotice'
 import { launchRequestsDead, runRelayrLaunch } from '@/lib/fund-launch-relayr'
 import { displayChainName } from '@/lib/chainDisplay'
 import { SUPPORTED_CHAINS } from '@/lib/chains'
@@ -36,120 +36,159 @@ function publicClient(chainId: number): PublicClient {
   if (!client) throw new Error('No RPC client is configured for this chain.')
   return client as PublicClient
 }
-function LaunchChain({ session, request, status, update, refreshFee, runId = 0, onStopped, onFeedback }: {
+function LaunchChain({ session, chainId, request, status, update, refreshFee, runId = 0, onStopped, onFeedback }: {
   runId?: number
   /** The run ended here: `awaiting` when this chain's hold still follows its send, so its success may continue the run. */
   onStopped?: (awaiting?: boolean) => void
   onFeedback?: (phase: string, error: string) => void
-  session: FundLaunchSession; request: FundTransaction; status: LaunchStatus; update: (status: LaunchStatus, expectedPhase?: LaunchStatus['phase'], expectedStatus?: LaunchStatus) => void; refreshFee: (fee: bigint) => void
+  session: FundLaunchSession; chainId: number
+  /** This chain's deployment request; none while the saved launch can't be built (its recovery still runs). */
+  request?: FundTransaction
+  status: LaunchStatus; update: (status: LaunchStatus, expectedPhase?: LaunchStatus['phase'], expectedStatus?: LaunchStatus) => void; refreshFee: (fee: bigint) => void
 }) {
-  const tx = useSafeTx(request.chainId)
-  const setupTx = useSafeTx(request.chainId)
+  const tx = useSafeTx(chainId)
+  const setupTx = useSafeTx(chainId)
   const [error, setError] = useState('')
   const [verifying, setVerifying] = useState(false)
   useEffect(() => { onFeedback?.(setupTx.busy || setupTx.phase === 'review' ? setupTx.phase : tx.phase, error || tx.error || setupTx.error || '') }, [tx.phase, tx.error, setupTx.phase, setupTx.busy, setupTx.error, error, onFeedback])
-  const verifyLock = useRef(false)
-  const chain = SUPPORTED_CHAINS.find(value => value.id === request.chainId)!
-  const sender = session.input.sender, plans = session.input.multisigs ?? []
+  const chain = SUPPORTED_CHAINS.find(value => value.id === chainId)!
+  const sender = session.input.sender
+  const plans = useMemo(() => session.input.multisigs ?? [], [session.input.multisigs])
+  const savedLaunch = encodeLaunchSession(session)
   const launchKey = launchIntent(session.input.salt), setupKey = multisigSetupIntent(session.input.salt)
-  /** Verify a launch's execution and record its project or proven failure; throws when it can't be shown. */
-  const settleLaunch = async (hash: Hex, safe: boolean, knownExecutionHash?: Hex) => {
-    const client = publicClient(request.chainId)
-    const saved = loadLaunchSession()
-    let previous = saved?.statuses[request.chainId]
-    if (saved?.input.salt !== session.input.salt || !previous || previous.phase === 'confirmed') throw new Error('The saved launch changed. Reload its progress before checking this transaction.')
-    const executionHash = knownExecutionHash ?? (safe ? await waitForSafeExecutionHash(request.chainId, hash, { pollingIntervalMs: 5000, signal: AbortSignal.timeout(60_000) }) : hash)
-    const receipt = await client.getTransactionReceipt({ hash: executionHash })
-    // Authenticated first: the saved launch changes only once its outcome is proven, so a failed check leaves it as it was.
-    const failed = fundLaunchFailed(receipt, session.input, safe, hash)
-    let projectId: bigint | null = null
-    if (failed) {
-      // A hash the hold settled came from the wallet; a saved one counts only if the wallet returned it.
-      await verifyReturnedFundWriteFailure(client, request, session.input, receipt, { hash, safe, walletReturned: previous.hash === hash ? previous.walletReturned : true })
-      await verifyFailedFundLaunch(client, request, session.input, receipt, safe, hash)
-    } else projectId = await verifyFundLaunch(client, request, session.input, receipt, safe)
-    // A chain still ready or reopened (a recovered hashless attempt the hold settled) records its attempt as pending first.
-    if (previous.phase !== 'pending') {
-      const attempt: LaunchStatus = { phase: 'pending', hash, safe, walletReturned: true }
+  const label = `Launch ${session.name} FUND on ${chain.name}`
+  const setupRequest = useMemo(() => { try { return plans.length ? multisigDeploymentRequest(chainId, plans) : undefined } catch { return undefined } }, [chainId, plans])
+  const client = useMemo(() => publicClient(chainId) as WriteHoldClient, [chainId])
+
+  // This chain's deployment and multisig setup recover through the SDK before anything is sent: a held
+  // write shows with its exit, one that settled while away is verified and recorded, one nothing can
+  // show asks the user. Recovery reads only the saved launch, never a rebuilt request.
+  const launchAttempt = useMemo((): SavedAttempt<{ projectId: bigint; hash: Hex; safe: boolean }> | null => {
+    const scope = launchScope(session, chainId, request, isSafeConnection(wagmiConfig))
+    return scope && { ...scope, authenticate: async hash => {
+      if (!hash) return { result: 'unknown', reason: 'No saved deployment transaction to check.' }
+      if (!request) return { result: 'unknown', reason: 'This launch can no longer be built here.' }
+      const receipt = await publicClient(chainId).getTransactionReceipt({ hash })
+      if (receipt.status !== 'success') return { result: 'not-this', reason: 'The deployment reverted.' }
+      // An account's own deployment, else a Safe's execution of it.
+      let reason: unknown
+      for (const safe of status.safe === undefined ? [false, true] : [status.safe]) {
+        try { return { result: 'proven', value: { projectId: await verifyFundLaunch(publicClient(chainId), request, session.input, receipt, safe), hash, safe } } }
+        catch (cause) { reason = cause }
+      }
+      return { result: 'unknown', reason: message(reason) }
+    } }
+  // The saved launch record is the attempt.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chainId, request, savedLaunch, status])
+  const setupAttempt = useMemo((): SavedAttempt<true> | null => {
+    const scope = setupScope(session, chainId, setupRequest, isSafeConnection(wagmiConfig))
+    return scope && { ...scope, authenticate: async () => (await verifyCreatedMultisigs(publicClient(chainId), plans, true))
+      ? { result: 'proven', value: true } : { result: 'unknown', reason: 'The planned Safes are not all deployed.' } }
+  // The saved launch record is the attempt.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chainId, setupRequest, savedLaunch, status])
+  // A write saved before SDK holds with only its nonce goes into its hold first, so the hold can find it on chain.
+  const nonceOnly = (saved?: { hash?: Hex; nonce?: string; fromBlock?: string }) => !!saved && !saved.hash && saved.nonce !== undefined
+  const legacyNonces = [nonceOnly(status.phase === 'signing' ? status : undefined) ? 'launch' : '', nonceOnly(status.multisigSetup) ? 'setup' : ''].join()
+  const [adopted, setAdopted] = useState<string | null>(null)
+  useEffect(() => {
+    let stopped = false
+    const evidence = (saved: { nonce?: string; fromBlock?: string }) => ({ nonce: BigInt(saved.nonce!), ...(saved.fromBlock !== undefined ? { fromBlock: BigInt(saved.fromBlock) } : {}) })
+    void (async () => {
+      if (status.phase === 'signing' && nonceOnly(status) && request) await adoptSavedNonce({ chainId, account: sender, safe: status.safe ?? false, namespace: launchKey, call: callOf(request) }, evidence(status), client)
+      if (nonceOnly(status.multisigSetup) && setupRequest) await adoptSavedNonce({ chainId, account: sender, safe: status.multisigSetup!.safe, namespace: setupKey, call: callOf(setupRequest) }, evidence(status.multisigSetup!), client)
+    })().finally(() => { if (!stopped) setAdopted(legacyNonces) })
+    return () => { stopped = true }
+  // The saved nonces decide; the adoption reads what is saved.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [legacyNonces])
+  const ready = adopted === legacyNonces
+  const launch = useSavedAttempt({ recovery: attempts, attempt: ready ? launchAttempt : null, client, checkNext: 'Deploy again' })
+  const setup = useSavedAttempt({ recovery: attempts, attempt: ready ? setupAttempt : null, client, checkNext: 'Create multisigs again' })
+  const { track } = tx, trackSetup = setupTx.track
+  /** Record this chain's verified result; a chain still ready records its attempt as pending first. */
+  const record = (next: LaunchStatus) => {
+    const current = loadLaunchSession()?.statuses[chainId]
+    if (!current || current.phase === 'confirmed') return
+    let previous = current
+    if (previous.phase !== 'pending' && next.phase !== 'ready' && next.phase !== 'pending') {
+      const attempt: LaunchStatus = { phase: 'pending', hash: next.hash!, safe: next.safe, walletReturned: true }
       update(attempt, undefined, previous)
       previous = attempt
     }
-    if (failed) update({ phase: 'reverted', hash, executionHash, safe, walletReturned: true }, undefined, previous)
-    else update({ phase: 'confirmed', hash, executionHash, safe, walletReturned: true, projectId: projectId!.toString() }, undefined, previous)
+    update(next, previous.phase === 'signing' ? 'signing' : undefined, previous)
   }
-  const verify = async (hash: Hex, safe: boolean, knownExecutionHash?: Hex) => {
-    if (verifyLock.current) return
-    verifyLock.current = true; setVerifying(true); setError('')
-    try { await settleLaunch(hash, safe, knownExecutionHash) }
-    catch (cause) { setError(`Confirmation is unresolved. Keep this launch saved and check again. ${message(cause)}`) }
-    finally { verifyLock.current = false; setVerifying(false) }
-  }
-  /** A settled deployment or setup this screen couldn't authenticate: nothing deploys again without the user's check. */
-  const [checkRequired, setCheckRequired] = useState(false)
-  const checkRef = useRef(false)
-  checkRef.current = checkRequired
-
-  // An attempt the launch record saved before SDK holds is adopted into its hold, and the record drops it.
-  const { track } = tx, trackSetup = setupTx.track
-  const unproven = status.phase === 'reverted' && status.walletReturned !== true
-  const legacy = status.phase === 'signing' || unproven || (status.phase === 'pending' && !!status.hash && !status.executionHash) || !!status.multisigSetup
-  const adoption = useLegacyAdoption(), adopt = adoption.run
   useEffect(() => {
-    let stopped = false
-    void adopt(async () => {
-      const client = publicClient(request.chainId) as WriteHoldClient
-      const current = loadLaunchSession()?.statuses[request.chainId]
+    const outcome = launch.outcome
+    if (!outcome) return
+    try {
+      const current = loadLaunchSession()?.statuses[chainId]
       if (!current || current.phase === 'confirmed') return
-      const setupRequest = multisigDeploymentRequest(request.chainId, plans)
-      if (!legacy) {
-        // Nothing saved from before SDK holds: whatever the launch's holds hold is shown, whatever the launch's state now,
-        // and what they settled while the page was away is authenticated before anything deploys again.
-        if (plans.length) {
-          const held = await trackSetup({ ...setupRequest, label: 'Create project multisigs' }, { reviewedAccount: sender, recoveryNamespace: setupKey, heldOnly: true })
-          if (held?.status === 'clear') {
-            const setup = await recoverFromHold({ chainId: request.chainId, account: sender, namespace: setupKey }, async settledHash => {
-              if (!settledHash) return null
-              if (!(await verifyCreatedMultisigs(client as PublicClient, plans, true))) throw new Error('The settled multisig setup did not create the planned Safes.')
-              return true
-            })
-            if (setup.status === 'check' && !stopped) setCheckRequired(true)
-          }
-        }
-        const held = await track({ ...request, label: `Launch ${session.name} FUND on ${chain.name}` }, { reviewedAccount: sender, recoveryNamespace: launchKey, heldOnly: true })
-        if (held?.status !== 'clear') return
-        const launch = await recoverFromHold({ chainId: request.chainId, account: sender, namespace: launchKey }, async settledHash => {
-          if (!settledHash) return null
-          // An account's own deployment, else a Safe's execution of it.
-          try { await settleLaunch(settledHash, false, settledHash) } catch { await settleLaunch(settledHash, true, settledHash) }
-          return true
-        })
-        if (launch.status === 'check' && !stopped) setCheckRequired(true)
-        return
+      if (outcome.status === 'held') {
+        track(request ? { ...request, label } : { chainId, call: { ...outcome.state.record.call, value: BigInt(outcome.state.record.call.value) } }, { reviewedAccount: sender, recoveryNamespace: launchKey, safe: outcome.state.record.safe, reservation: outcome.state.record.id })
+        // The hold has a legacy hashless attempt, or an unproven failure, now: the record follows it.
+        if (current.phase === 'signing') record({ phase: 'ready' })
+        else if (current.phase === 'reverted' && current.walletReturned !== true) record({ phase: 'pending', hash: current.hash!, safe: current.safe })
+      } else if (outcome.status === 'done' && outcome.result === 'success' && outcome.authenticated) {
+        const { projectId, hash, safe } = outcome.value
+        record({ phase: 'confirmed', hash: current.hash ?? hash, executionHash: hash, safe, walletReturned: true, projectId: projectId.toString() })
+      } else if (outcome.status === 'done' && outcome.result === 'failed' && current.phase !== 'reverted') {
+        record({ phase: 'reverted', hash: current.hash ?? outcome.hash, executionHash: outcome.hash, safe: current.safe ?? false, walletReturned: true })
+      } else if (outcome.status === 'none' && outcome.retired && current.phase !== 'ready') {
+        // The user's exit or check (or the wallet's rejection) retired it: the chain reopens, keeping that attempt's evidence.
+        record({ phase: 'ready', ...(current.hash ? { releasedHash: current.hash } : {}), ...(current.multisigSetup ? { multisigSetup: current.multisigSetup } : {}) })
       }
-      let next: LaunchStatus = current
-      if (current.multisigSetup) {
-        const held = launchHold(setupKey, sender, setupRequest, current.multisigSetup)
-        const { adopted } = await adoptLegacyWrite(held.input, held.evidence, client)
-        if (!stopped) await trackSetup({ ...setupRequest, label: 'Create project multisigs' }, { reviewedAccount: sender, recoveryNamespace: setupKey, safe: held.input.safe })
-        // The record keeps the setup until its attempt is the hold's.
-        if (adopted) next = { ...next, multisigSetup: undefined }
-      }
-      const reopened = current.phase === 'signing' || (current.phase === 'reverted' && current.walletReturned !== true)
-      if (reopened || current.phase === 'pending') {
-        // A failure without the wallet's hash says nothing of the attempt itself: it is held without one.
-        const held = launchHold(launchKey, sender, request, current.phase === 'reverted' ? { safe: current.safe } : current)
-        const { adopted } = await adoptLegacyWrite(held.input, held.evidence, client)
-        if (!stopped) await track({ ...request, label: `Launch ${session.name} FUND on ${chain.name}` }, { reviewedAccount: sender, recoveryNamespace: launchKey, safe: held.input.safe })
-        // An attempt without the wallet's hash is the hold's alone once adopted; a saved hash stays this chain's pending launch.
-        if (reopened && adopted) next = { phase: 'ready', ...(next.multisigSetup ? { multisigSetup: next.multisigSetup } : {}) }
-      }
-      if (next !== current) update(next, current.phase === 'signing' ? 'signing' : undefined, current)
-    }).catch(cause => { if (!stopped) setError(message(cause)) })
-    return () => { stopped = true }
-  // The saved record decides when there is something to adopt; the adoption reads what is saved.
+    } catch (cause) { setError(message(cause)) }
+  // Each outcome is handled once, against the record as it is now.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [legacy])
+  }, [launch.outcome])
+  useEffect(() => {
+    const outcome = setup.outcome
+    if (!outcome) return
+    try {
+      const current = loadLaunchSession()?.statuses[chainId]
+      if (outcome.status === 'held') {
+        trackSetup(setupRequest ? { ...setupRequest, label: 'Create project multisigs' } : { chainId, call: { ...outcome.state.record.call, value: BigInt(outcome.state.record.call.value) } }, { reviewedAccount: sender, recoveryNamespace: setupKey, safe: outcome.state.record.safe, reservation: outcome.state.record.id })
+      } else if (outcome.status === 'done' && outcome.result === 'success' && outcome.authenticated && !current?.multisigSetup) {
+        void setup.retire({ by: 'settled', ...(outcome.hash ? { hash: outcome.hash } : {}) })
+      }
+      // The record keeps a setup from before SDK holds only until the hold has it, it settled, or it was retired.
+      if (current?.multisigSetup && current.phase !== 'confirmed' && (outcome.status === 'held' || outcome.status === 'done' || (outcome.status === 'none' && outcome.retired))) {
+        const { multisigSetup: _setup, ...rest } = current
+        void _setup
+        update(rest as LaunchStatus, current.phase === 'signing' ? 'signing' : undefined, current)
+      }
+    } catch (cause) { setError(message(cause)) }
+  // Each outcome is handled once, against the record as it is now.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setup.outcome])
+  /** Sends wait until both recoveries say nothing is in flight or unexplained: none ran, or it ran and is recorded. */
+  const launchClear = ready && (!launchAttempt || !!launch.outcome && (launch.outcome.status === 'none' || (launch.outcome.status === 'done' && launch.outcome.result === 'failed')))
+  const setupClear = ready && (!setupAttempt || !!setup.outcome && (setup.outcome.status === 'none' || (setup.outcome.status === 'done' && (setup.outcome.result === 'failed' || setup.outcome.authenticated))))
+  const clearRef = useRef(false)
+  clearRef.current = launchClear && setupClear
 
+  /** Verify a settled execution of this chain's launch and record its project or proven failure. */
+  const verify = async (hash: Hex, safe: boolean, executionHash: Hex) => {
+    if (!request) return
+    setVerifying(true); setError('')
+    try {
+      const client = publicClient(chainId)
+      const receipt = await client.getTransactionReceipt({ hash: executionHash })
+      if (fundLaunchFailed(receipt, session.input, safe, hash)) {
+        // A hash the hold settled came from the wallet; a saved one counts only if the wallet returned it.
+        const previous = loadLaunchSession()?.statuses[chainId]
+        await verifyReturnedFundWriteFailure(client, request, session.input, receipt, { hash, safe, walletReturned: previous?.hash === hash ? previous.walletReturned : true })
+        await verifyFailedFundLaunch(client, request, session.input, receipt, safe, hash)
+        record({ phase: 'reverted', hash, executionHash, safe, walletReturned: true })
+      } else {
+        const projectId = await verifyFundLaunch(client, request, session.input, receipt, safe)
+        record({ phase: 'confirmed', hash, executionHash, safe, walletReturned: true, projectId: projectId.toString() })
+      }
+    } catch (cause) { setError(`Confirmation is unresolved. Keep this launch saved and check again. ${message(cause)}`) }
+    finally { setVerifying(false) }
+  }
   // Only the SDK's hold settling this chain's launch (or its final revert) lets its execution be verified and recorded.
   const settled = tx.phase === 'success' || tx.phase === 'error' ? tx.receipt : null
   useEffect(() => {
@@ -159,33 +198,25 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settled])
 
-  /** The SDK's exit, which also reopens a pending launch the chain never placed, and ends the run. */
-  const launchHeld = {
-    notice: tx.notice,
-    held: tx.held && { ...tx.held, release: () => {
-      tx.held!.release()
-      onStopped?.(false)
-      const current = loadLaunchSession()?.statuses[request.chainId]
-      if (current?.phase === 'pending') { try { update({ phase: 'ready' }, 'pending', current) } catch (cause) { setError(message(cause)) } }
-    } },
-  }
+  /** The SDK's exit; once it releases, the saved attempt is retired, the run ends, and the recovery reopens the chain. */
+  const launchHeld = { notice: tx.notice, held: retiringExit(tx.held, launch.retire, () => onStopped?.(false)) }
+  const setupHeld = { notice: setupTx.notice, held: retiringExit(setupTx.held, setup.retire, () => onStopped?.(false)) }
 
   async function ensureMultisigs() {
     if (!plans.length) return
-    const client = publicClient(request.chainId)
+    if (!setupRequest) throw new Error('This launch’s multisigs can no longer be built here.')
+    const client = publicClient(chainId)
     await checkCreateMultisigs(client, plans)
     if (await verifyCreatedMultisigs(client, plans, true)) return
-    const setupRequest = multisigDeploymentRequest(request.chainId, plans)
     const safe = isSafeConnection(wagmiConfig)
     const hash = await setupTx.send({ ...setupRequest, label: 'Create project multisigs' }, {
       reviewedAccount: sender,
       recoveryNamespace: setupKey,
-      beforeWrite: adoption.wait,
       reviewNotice: multisigReview(plans),
       reverify: async () => { sameSender(getAccount(wagmiConfig).address, sender); await checkCreateMultisigs(client, plans) },
     })
     if (!hash) throw new Error('Multisig creation has not completed. Continue when ready.')
-    const executionHash = safe ? await waitForSafeExecutionHash(request.chainId, hash, { pollingIntervalMs: 5000, signal: AbortSignal.timeout(60_000) }) : hash
+    const executionHash = safe ? await waitForSafeExecutionHash(chainId, hash, { pollingIntervalMs: 5000, signal: AbortSignal.timeout(60_000) }) : hash
     const receipt = await client.waitForTransactionReceipt({ hash: executionHash, timeout: 60_000 })
     const result = safe
       ? await readSafeAppExecution({ client, receipt, safe: sender, proposalHash: hash, calls: [{ to: setupRequest.address, data: encodeFunctionData(setupRequest), value: setupRequest.value ?? 0n }] })
@@ -203,49 +234,36 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
   async function submitLaunch() {
     setError('')
     try {
-      // Recovery of anything held or settled for this launch finishes first; then the saved launch must still offer a send.
-      await adoption.wait()
-      const opened = loadLaunchSession()?.statuses[request.chainId]
+      if (!request) throw new Error('This launch can no longer be built here. Its saved transactions are still checked above.')
+      const opened = loadLaunchSession()?.statuses[chainId]
       const sendable = () => {
-        const current = loadLaunchSession()?.statuses[request.chainId]
-        if (checkRef.current) throw new Error('Check this network’s FUND deployment before deploying again.')
+        const current = loadLaunchSession()?.statuses[chainId]
+        if (!clearRef.current) throw new Error('Check this network’s FUND deployment before deploying again.')
         if (!current || !['ready', 'reverted'].includes(current.phase) || JSON.stringify(current) !== JSON.stringify(opened)) throw new Error('This network’s launch changed. Review its progress before deploying.')
       }
       sendable()
       sameSender(getAccount(wagmiConfig).address, sender)
       await ensureMultisigs()
       const safe = isSafeConnection(wagmiConfig)
-      const hash = await tx.send({ ...request, label: `Launch ${session.name} FUND on ${chain.name}` }, {
+      const hash = await tx.send({ ...request, label }, {
         reviewedAccount: sender,
         recoveryNamespace: launchKey,
-        // At the final boundary: recovery done, and the saved launch exactly as it was when this send began.
-        beforeWrite: async () => { await adoption.wait(); sendable() },
+        // At the final boundary: recovery clear, and the saved launch exactly as it was when this send began.
+        beforeWrite: async () => { sendable() },
         reverify: async () => {
           sameSender(getAccount(wagmiConfig).address, sender)
-          await checkLaunchDeployment(publicClient(request.chainId), request)
-          await verifyCreatedMultisigs(publicClient(request.chainId), plans)
+          await checkLaunchDeployment(publicClient(chainId), request)
+          await verifyCreatedMultisigs(publicClient(chainId), plans)
         },
         reviewNotice: 'Creates only the FUND fundraising Juicebox. The owner can change future rules. INCOME, Owner success tokens, and asset withdrawals are not created by this transaction.',
       })
       if (!hash) return
       // The hold follows it from here; its settlement, not a receipt read now, confirms the launch.
-      const previous = loadLaunchSession()?.statuses[request.chainId]
+      const previous = loadLaunchSession()?.statuses[chainId]
       if (previous && previous.phase !== 'pending') update({ phase: 'pending', hash, safe, walletReturned: true }, undefined, previous)
     } catch (cause) { setError(message(cause)) }
   }
-  /** Ask this chain's hold about its saved pending launch: what it settles is what the launch records. */
-  async function checkHold() {
-    setError('')
-    try {
-      const current = loadLaunchSession()?.statuses[request.chainId]
-      if (current?.phase === 'pending' && current.hash) {
-        const held = launchHold(launchKey, sender, request, current)
-        await adoptLegacyWrite(held.input, held.evidence, publicClient(request.chainId) as WriteHoldClient)
-      }
-      await track({ ...request, label: `Launch ${session.name} FUND on ${chain.name}` }, { reviewedAccount: sender, recoveryNamespace: launchKey, safe: current?.safe })
-    } catch (cause) { setError(message(cause)) }
-  }
-  async function launch() {
+  async function launchNow() {
     if (!navigator.locks) { setError('This browser cannot coordinate a resumable deployment. Open this launch in a browser with Web Locks support.'); return }
     await navigator.locks.request(`homerun:fund-launch:${session.input.salt}`, { ifAvailable: true }, async lock => {
       if (!lock) { setError('Another tab is reviewing this launch. Finish that review first.'); return }
@@ -257,9 +275,9 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
     if (!runId || lastRun.current === runId) return
     lastRun.current = runId
     void (async () => {
-      if (status.phase === 'pending' && status.hash) await checkHold()
-      else if (status.phase === 'ready' || status.phase === 'reverted') await launch()
-      const phase = loadLaunchSession()?.statuses[request.chainId]?.phase
+      if (status.phase === 'pending' && status.hash) await launch.recover()
+      else if (status.phase === 'ready' || status.phase === 'reverted') await launchNow()
+      const phase = loadLaunchSession()?.statuses[chainId]?.phase
       if (phase !== 'confirmed') onStopped?.(phase === 'pending')
     })().catch(() => onStopped?.(false))
   // One explicit Create/Continue gesture starts each destination once.
@@ -271,13 +289,14 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
     <h3>{chain.name}</h3>
     <p role="status">{status.phase === 'confirmed' ? 'FUND deployment verified onchain.' : status.phase === 'pending' ? status.safe ? 'Safe proposal awaiting execution.' : 'Transaction submitted; confirmation pending.' : status.phase === 'reverted' ? 'The deployment reverted. No project was created by this transaction.' : 'Ready for transaction review.'}</p>
     {status.hash && <p><a target="_blank" rel="noreferrer" href={status.executionHash || !status.safe ? `${chain.blockExplorers.default.url}/tx/${status.executionHash ?? status.hash}` : 'https://app.safe.global/transactions/queue'}>{status.safe && !status.executionHash ? 'View Safe queue' : 'View transaction'}: {status.hash.slice(0, 12)}…</a></p>}
-    {status.phase === 'confirmed' && <a className="create-primary" href={projectPath(request.chainId, status.projectId!)}>Open FUND project ↗</a>}
-    {(status.phase === 'ready' || status.phase === 'reverted') && <button type="button" disabled={tx.busy || setupTx.busy || tx.phase === 'review' || setupTx.phase === 'review' || verifying || sending || !adoption.ready || checkRequired} onClick={() => void launch()}>Review and deploy FUND</button>}
-    {status.phase === 'pending' && status.hash && <button type="button" disabled={verifying} onClick={() => void checkHold()}>{verifying ? 'Checking execution…' : 'Check confirmation'}</button>}
-    {checkRequired && <CheckRequired line="Check this network’s FUND deployment before deploying again." action="I checked it. Deploy again" onChecked={() => setCheckRequired(false)} />}
-    {setupTx.phase === 'submitted' && <div role="status"><HeldNotice tx={{ notice: setupTx.notice, held: setupTx.held && { ...setupTx.held, release: () => { setupTx.held!.release(); onStopped?.(false) } } }} /></div>}
+    {status.phase === 'confirmed' && <a className="create-primary" href={projectPath(chainId, status.projectId!)}>Open FUND project ↗</a>}
+    {(status.phase === 'ready' || status.phase === 'reverted') && <button type="button" disabled={!request || tx.busy || setupTx.busy || tx.phase === 'review' || setupTx.phase === 'review' || verifying || sending || !launchClear || !setupClear} onClick={() => void launchNow()}>Review and deploy FUND</button>}
+    {status.phase === 'pending' && status.hash && <button type="button" disabled={verifying || launch.recovering} onClick={() => void launch.recover()}>{verifying || launch.recovering ? 'Checking execution…' : 'Check confirmation'}</button>}
+    <SavedAttemptNotice attempt={launch} />
+    <SavedAttemptNotice attempt={setup} title="Create project multisigs" />
+    {setupTx.phase === 'submitted' && <div role="status"><HeldNotice tx={setupHeld} /></div>}
     {tx.phase === 'submitted' && <div role="status"><HeldNotice tx={launchHeld} /></div>}
-    {['ready', 'reverted'].includes(status.phase) && <button type="button" disabled={tx.busy || tx.phase === 'review'} onClick={() => void publicClient(request.chainId).readContract({ address: v6Address('JBProjects', request.chainId as JBChainId), abi: jbProjectsAbi, functionName: 'creationFee' }).then(refreshFee).catch(cause => setError(message(cause)))}>Refresh deployment fee</button>}
+    {request && ['ready', 'reverted'].includes(status.phase) && <button type="button" disabled={tx.busy || tx.phase === 'review'} onClick={() => void publicClient(chainId).readContract({ address: v6Address('JBProjects', chainId as JBChainId), abi: jbProjectsAbi, functionName: 'creationFee' }).then(refreshFee).catch(cause => setError(message(cause)))}>Refresh deployment fee</button>}
     {(error || tx.error || setupTx.error) && <p role="alert">{transactionMessage(error || tx.error || setupTx.error || '')}</p>}
   </section>
 }
@@ -392,9 +411,11 @@ export function FundDeploy({ values, onLockChange, importedRecord, onRecordUsed 
     } catch (cause) { setError(message(cause)) }
     finally { setPreparing(false) }
   }
+  // A launch whose requests can't be built (its chain support changed, say) still mounts each chain, so its saved writes recover.
   let requests: FundTransaction[] = []
   let invalid = ''
   if (session) { try { requests = buildFundLaunch(session.input).requests } catch (cause) { invalid = message(cause) } }
+  const requestOf = (chainId: number) => requests.find(request => request.chainId === chainId)
   const download = () => {
     if (!session) return
     const url = URL.createObjectURL(new Blob([encodeLaunchSession(session)], { type: 'application/json' }))
@@ -479,7 +500,7 @@ export function FundDeploy({ values, onLockChange, importedRecord, onRecordUsed 
     {!session && error && <button type="button" onClick={() => setError('')}>Try again</button>}
     {session && <details className="fund-launch-recovery" open={launchHeldWrite(session) || undefined}><summary>Deployment recovery</summary>
         <><p>{session.name}. Owner <code>{session.input.owner}</code>. This saved launch retains its original settings.</p><button type="button" onClick={download}>Download deployment record</button>
-          {session.transport !== 'relayr' && session.transport !== 'intent' && requests.map(request => <LaunchChain key={`${session.input.salt}:${request.chainId}`} session={session} request={request} status={session.statuses[request.chainId]} runId={running && activeChain === request.chainId ? runId : 0} onStopped={stopDirect} onFeedback={directFeedback} update={(status, expectedPhase, expectedStatus) => setSession(updateLaunchStatus(session.input.salt, request.chainId, status, expectedPhase, expectedStatus))} refreshFee={fee => setSession(refreshLaunchCreationFee(session.input.salt, request.chainId, fee))} />)}
+          {session.transport !== 'relayr' && session.transport !== 'intent' && session.input.chainIds.map(chainId => <LaunchChain key={`${session.input.salt}:${chainId}`} session={session} chainId={chainId} request={requestOf(chainId)} status={session.statuses[chainId]} runId={running && activeChain === chainId ? runId : 0} onStopped={stopDirect} onFeedback={directFeedback} update={(status, expectedPhase, expectedStatus) => setSession(updateLaunchStatus(session.input.salt, chainId, status, expectedPhase, expectedStatus))} refreshFee={fee => setSession(refreshLaunchCreationFee(session.input.salt, chainId, fee))} />)}
           {complete && <button type="button" onClick={() => { try { archiveLaunch(session.input.salt); setSession(null); setProgress('') } catch (cause) { setError(message(cause)) } }}>Finish this launch and start another</button>}
         </>
     </details>}

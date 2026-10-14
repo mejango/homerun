@@ -10,6 +10,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { encodeFunctionData, type Address } from 'viem'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { installRecoveryLocks } from './runtime/write-recovery-fixture'
+import { checkedItLabel, HELD_SUCCESS_LINE, SAVED_ATTEMPT_CHECK_LINE } from '@bananapus/nana-sdk-core/review'
 
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@wagmi/core', async importOriginal => {
@@ -38,7 +39,7 @@ vi.mock('@/lib/project-payers', async importOriginal => ({
 
 import { wallet } from './support/fake-wallet'
 import { ProjectPayerAddresses } from '@/components/ProjectPayerAddresses'
-import { buildPayerTransaction, payerAttemptKey, type PayerAttempt } from '@/lib/project-payers'
+import { buildPayerTransaction, payerAttemptKey, payerIntent, type PayerAttempt } from '@/lib/project-payers'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const KEY = payerAttemptKey(1, 7n)
@@ -80,14 +81,14 @@ it('refuses the same deployment after a lost wallet reply until the user takes t
   expect(wallet.writeContract).toHaveBeenCalledTimes(2)
 })
 
-it('adopts a saved attempt with no hash from the payer journal: the journal goes, and only the exit lets it be sent again', async () => {
+it('asks for the user’s check on a saved attempt with no hash from the payer journal, and only that check lets it be sent again', async () => {
   localStorage.setItem(KEY, JSON.stringify(legacy()))
   await render()
+  // Nothing proves what it did: no send until the user says they checked it.
+  expect(host.textContent).toContain(SAVED_ATTEMPT_CHECK_LINE)
+  expect(button('Review payer creation')!.matches(':disabled')).toBe(true)
+  await click(checkedItLabel('Review payer creation'))
   expect(localStorage.getItem(KEY)).toBeNull()
-  expect(button(EXIT)).toBeDefined()
-  await click('Review payer creation')
-  expect(wallet.writeContract).not.toHaveBeenCalled()
-  await click(EXIT)
   await click('Review payer creation')
   expect(wallet.writeContract).toHaveBeenCalledOnce()
 })
@@ -144,3 +145,34 @@ it('shows a held payer deployment with custom settings after a reload, with noth
   } finally { factory.check = async () => ({ acceptsNative: true }) }
 })
 
+
+it('gap 2: a saved attempt whose hash the hold refuses as another write asks for the check, never reopening the send', async () => {
+  const hash = `0x${'ab'.repeat(32)}` as const
+  // The saved hash is some other call: the hold refuses to adopt it.
+  wallet.client.getTransaction.mockImplementation(async () => ({ hash, chainId: 1, from: ALICE, to: '0x9999999999999999999999999999999999999999', input: '0x12345678', value: 0n, nonce: 3, blockHash: null, blockNumber: null, transactionIndex: null }) as never)
+  localStorage.setItem(KEY, JSON.stringify(legacy({ phase: 'submitted', hash })))
+  await render()
+  expect(host.textContent).toContain(SAVED_ATTEMPT_CHECK_LINE)
+  expect(button('Review payer creation')!.matches(':disabled')).toBe(true)
+  await click(checkedItLabel('Review payer creation'))
+  await click('Review payer creation')
+  expect(wallet.writeContract).toHaveBeenCalledOnce()
+})
+
+it('gap 8: a payer deployment that settled while away is shown and followed, and the next one sends once', async () => {
+  await render()
+  await click('Review payer creation')
+  expect(wallet.writeContract).toHaveBeenCalledOnce()
+  await act(async () => root.unmount()); root = createRoot(host); cache.clear()
+  // The chain places it and the SDK settles it while the page is away.
+  const hash = `0x${'1'.padStart(64, '0')}` as `0x${string}`
+  await act(async () => { wallet.confirm(hash) })
+  const { holds } = await import('@/lib/write-hold')
+  const hold = holds.open({ chainId: 1, account: ALICE, safe: false, namespace: payerIntent(7n), call: { to: ALICE, data: '0x' } })
+  expect(await hold.onReceipt(await wallet.client.getTransactionReceipt({ hash }) as never, wallet.client as never)).toMatchObject({ status: 'clear', settled: { result: 'success' } })
+  await render()
+  // Its result is shown and followed, never hidden behind a separate send.
+  expect(host.textContent).toContain(HELD_SUCCESS_LINE)
+  await click('Review payer creation')
+  expect(wallet.writeContract).toHaveBeenCalledTimes(2)
+})

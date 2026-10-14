@@ -11,6 +11,7 @@ import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import type { Address } from 'viem'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { installRecoveryLocks } from './runtime/write-recovery-fixture'
+import { checkedItLabel, HELD_SUCCESS_LINE, SAVED_ATTEMPT_CHECK_LINE } from '@bananapus/nana-sdk-core/review'
 
 const m = vi.hoisted(() => ({ read: vi.fn() }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
@@ -104,19 +105,18 @@ it('refuses the same step after a lost wallet reply until the user takes the exi
   expect(wallet.writeContract).toHaveBeenCalledTimes(2)
 })
 
-it('adopts a step the journal saved as pending before SDK holds: the journal drops it, and only the exit sends it again', async () => {
+it('asks for the user’s check on a hashless step the journal saved as pending before SDK holds: that check closes the update without sending', async () => {
   startShopWriteSession(localStorage, KEY, plan())
   const saved = JSON.parse(localStorage.getItem(KEY)!)
   localStorage.setItem(KEY, JSON.stringify({ ...saved, pending: { safe: false, afterBlock: '100', startedAt: Date.now() - 31 * 60_000 } }))
   await render()
-  expect(JSON.parse(localStorage.getItem(KEY)!).pending).toBeUndefined()
   await click('Resume shop update')
-  expect(button(EXIT)).toBeDefined()
-  await click('Review transaction')
+  // Nothing proves what it did: the step isn't offered until the user says they checked it.
+  expect(host.textContent).toContain(SAVED_ATTEMPT_CHECK_LINE)
+  expect(button('Review transaction')).toBeUndefined()
+  await click(checkedItLabel('Close this update'))
+  expect(localStorage.getItem(KEY)).toBeNull()
   expect(wallet.writeContract).not.toHaveBeenCalled()
-  await click(EXIT)
-  await click('Review transaction')
-  expect(wallet.writeContract).toHaveBeenCalledOnce()
 })
 
 it('shows a held step and its exit after a reload, even when the shop can no longer be read', async () => {
@@ -175,15 +175,16 @@ it('records a step its hold settled while the page was away, and never sends it 
   expect(wallet.writeContract).toHaveBeenCalledOnce()
 })
 
-it('asks for a check when a step settled while away cannot be shown, and its exit closes the update without sending', async () => {
+it('keeps a step that settled while away as done when it cannot be shown: never a check, never sent again, never closed', async () => {
   // Placed at a block before the plan's snapshot: this screen can't show it as the plan's step.
   await settleAway(10n)
-  expect(host.textContent).toContain('Check this shop step before going on.')
+  // A settled success always wins: it went through, and its only action is to check again.
+  expect(host.textContent).toContain(HELD_SUCCESS_LINE)
+  expect(host.textContent).not.toContain(SAVED_ATTEMPT_CHECK_LINE)
   expect(button('Review transaction')).toBeUndefined()
-  await click('I checked it. Close this update')
-  expect(localStorage.getItem(KEY)).toBeNull()
-  // The usable next step: a new update can start.
-  expect(button('Add items for sale')?.disabled, host.textContent ?? '').toBe(false)
+  await click('Check again')
+  expect(button('Review transaction')).toBeUndefined()
+  expect(localStorage.getItem(KEY)).not.toBeNull()
   expect(wallet.writeContract).toHaveBeenCalledOnce()
 })
 

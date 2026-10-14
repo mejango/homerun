@@ -48,7 +48,9 @@ beforeEach(() => {
   installTestGlobal('EventSource', blockedNetworkConstructor('EventSource'))
 })
 
-afterEach(() => {
+afterEach(async () => {
+  // Each test is a page of its own: the SDK's held writes, their polls and this tab's lock queues end with it.
+  ;(await import('@bananapus/nana-sdk-core/testing')).resetWriteHoldsForTests()
   vi.useRealTimers()
   vi.restoreAllMocks()
   vi.unstubAllEnvs()

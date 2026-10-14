@@ -22,7 +22,7 @@ export function installRecoveryLocks() {
  * reservation pointer, `:settled` settlement and `:released:` exit markers), and none the user released.
  */
 export const recoveryRecords = () => Object.keys(localStorage)
-  .filter(key => key.startsWith('nana-sdk:reviewed-write:v') && !/:(latest|settled)$|:released:/.test(key))
+  .filter(key => key.startsWith('nana-sdk:reviewed-write:v') && !/:(latest|settled|rejected)$|:released:/.test(key))
   .map(key => ({ key, record: JSON.parse(localStorage.getItem(key)!) }))
   .filter(({ key, record }) => localStorage.getItem(`${key}:released:${record.id}`) === null)
   .map(({ record }) => record)

@@ -49,13 +49,13 @@ import {
 import {
   clearStickyPending,
   readStickyPending,
+  savedRecordAttempt,
   stickySessionKey,
   verifyStickyExecution,
   type StickyPending,
   type StickyStorage,
 } from "./sticky-session";
-import { writeIntentKey, type ReviewedWriteRecoveryInput, type ReviewedWriteRecoveryRecord } from "@bananapus/nana-sdk-core/review";
-import type { LegacyWriteEvidence } from "./write-hold";
+import { writeIntentKey, type ReviewedWriteRecoveryRecord, type SavedAttempt } from "@bananapus/nana-sdk-core/review";
 
 export const stickyCreateAbi = parseAbi([
   "function deployStickyFor(address stakedToken,string name,string symbol,string projectUri,uint256 cashOutTaxRate,address[] granters,bool soulbound) payable returns (uint256 projectId)",
@@ -753,23 +753,35 @@ export function stickyCreationRecord(
   };
 }
 
-/** A creation the journal saved before SDK holds: the request it was, and the hold it is adopted into. */
-export function stickyCreationHold(record: StickyPending): {
-  request: FundTransaction;
-  input: ReviewedWriteRecoveryInput;
-  evidence: LegacyWriteEvidence;
-} {
+/** A creation's exact request, from its saved record. */
+export function stickyCreationRequest(record: StickyPending): FundTransaction {
   const { functionName, args } = decodeFunctionData({ abi: stickyCreateAbi, data: record.data });
-  const value = BigInt(record.value);
-  return {
-    request: { chainId: record.chainId, address: record.target, abi: stickyCreateAbi, functionName, args, value },
-    input: {
-      chainId: record.chainId, account: record.holder, safe: record.safe,
-      namespace: stickyCreateIntent(BigInt(record.projectId)),
-      call: { to: record.target, data: record.data, value },
-    },
-    evidence: { submittedAt: record.submittedAt, ...(record.hash ? record.safe ? { safe: { safeTxHash: record.hash } } : { hash: record.hash } : {}) },
+  return { chainId: record.chainId, address: record.target, abi: stickyCreateAbi, functionName, args, value: BigInt(record.value) } as FundTransaction;
+}
+
+/** What a recovered Sticky creation proves: the record it was verified against, and the project it created. */
+export type StickyCreationProof = { record: StickyPending; projectId: bigint };
+
+/**
+ * This FUND's Sticky creation as the SDK's saved-attempt recovery reads it: the saved completion
+ * (re-proven on every load), else a record the journal saved before SDK holds, else the FUND's
+ * creation hold alone (saved as unsent: the hold has any send). `authenticate` proves one
+ * transaction is this FUND's creation; with no record, an account's own factory call names it.
+ * `confirmRetirable` refuses while a completion is saved.
+ */
+export function stickyCreationAttempt(client: PublicClient, storage: StickyStorage, chainId: number, fundProjectId: bigint, account: Address, safe: boolean, saved: { completed: StickyCreatedRecord | null; pending: StickyPending | null },
+  verify: typeof verifyStickyCreationExecution = verifyStickyCreationExecution): SavedAttempt<StickyCreationProof> {
+  const record = saved.completed ? { ...saved.completed.pending, hash: saved.completed.pending.hash ?? saved.completed.executionHash } : saved.pending;
+  const namespace = stickyCreateIntent(fundProjectId);
+  const confirmRetirable = async () => !readStickyCreated(storage, chainId, fundProjectId);
+  const authenticate: SavedAttempt<StickyCreationProof>["authenticate"] = async hash => {
+    if (!hash) return { result: "unknown", reason: "No saved creation transaction to check." };
+    const proven = record ?? stickyCreationFromTransaction(await client.getTransaction({ hash }), chainId, fundProjectId);
+    const result = await verify(client, proven, hash);
+    return result.status === "confirmed" ? { result: "proven", value: { record: proven, projectId: result.projectId } } : { result: "not-this", reason: "The creation reverted." };
   };
+  return record ? savedRecordAttempt(record, namespace, authenticate, confirmRetirable)
+    : { chainId, account, safe, namespaces: [namespace], saved: { started: false }, confirmRetirable, authenticate };
 }
 /** The creation an SDK hold holds, as the record its settled execution is verified against. */
 export function stickyCreationFromHold(record: ReviewedWriteRecoveryRecord, fundProjectId: bigint): StickyPending {

@@ -39,6 +39,7 @@ import { wallet } from './support/fake-wallet'
 import { StickyHolder } from '@/components/StickyHolder'
 import { quoteStickyStake, readStickyProjectState, type StickyProjectState } from '@/lib/sticky-state'
 import { stickySessionKey } from '@/lib/sticky-session'
+import { checkedItLabel, HELD_RELEASE_LABEL, SAVED_ATTEMPT_CHECK_LINE } from '@bananapus/nana-sdk-core/review'
 
 const HOLDER = '0x1111111111111111111111111111111111111111' as Address
 const FUND = '0x2222222222222222222222222222222222222222' as Address
@@ -94,7 +95,7 @@ it('refuses the same approval after a lost wallet reply until the user takes the
   expect(wallet.writeContract).toHaveBeenCalledTimes(2)
 })
 
-it('adopts an approval the Sticky journal saved as pending before SDK holds: the journal goes, and only the exit sends it again', async () => {
+it('asks for the user’s check on an approval the Sticky journal saved without a hash before SDK holds, and sends again only after it', async () => {
   const key = stickySessionKey(1, 9n, HOLDER)
   localStorage.setItem(key, JSON.stringify({
     version: 1, id: '11111111-1111-4111-8111-111111111111', chainId: 1, projectId: '9', holder: HOLDER, target: FUND,
@@ -102,13 +103,15 @@ it('adopts an approval the Sticky journal saved as pending before SDK holds: the
     label: 'Approve FUND', safe: false, submittedAt: Date.now() - 31 * 60_000, afterBlock: '99',
   }))
   await render()
-  expect(localStorage.getItem(key)).toBeNull()
-  expect(host.textContent).not.toContain('Saved transaction')
-  expect(button(EXIT)).toBeDefined()
+  // Nothing proves what it did: no holder action is sent until the user says they checked it.
+  expect(host.textContent).toContain(SAVED_ATTEMPT_CHECK_LINE)
   await click('Use available FUND')
-  await click('Review FUND approval')
+  const review = button('Review FUND approval')
+  expect(!review || review.matches(':disabled')).toBe(true)
+  await click(checkedItLabel())
+  expect(localStorage.getItem(key)).toBeNull()
   expect(wallet.writeContract).not.toHaveBeenCalled()
-  await click(EXIT)
+  await click('Use available FUND')
   await click('Review FUND approval')
   expect(wallet.writeContract).toHaveBeenCalledOnce()
 })
@@ -123,8 +126,9 @@ it('shows a held holder action and its exit after a reload, even when the Sticky
   await act(async () => root.unmount()); root = createRoot(host); cache.clear()
   await render()
   expect(button('Review FUND approval')).toBeUndefined()
-  expect(button(EXIT), host.textContent ?? '').toBeDefined()
-  await click(EXIT)
-  expect(button(EXIT)).toBeUndefined()
+  // The app-wide notice of the holder's holds offers the release.
+  expect(button(HELD_RELEASE_LABEL), host.textContent ?? '').toBeDefined()
+  await click(HELD_RELEASE_LABEL)
+  expect(button(HELD_RELEASE_LABEL)).toBeUndefined()
 })
 

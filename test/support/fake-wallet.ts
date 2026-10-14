@@ -3,7 +3,7 @@ import { encodeFunctionData, type Abi, type Address, type Hex } from 'viem'
 import { vi } from 'vitest'
 
 type Receipt = { status: 'success' | 'reverted'; blockNumber: bigint; blockHash: Hex; transactionHash: Hex; transactionIndex: number; from: Address; to: Address; logs: [] }
-type WrittenTransaction = { hash: Hex; chainId: number; from: Address; to: Address; input: Hex; value: bigint; blockHash: Hex | null; blockNumber: bigint | null; transactionIndex: number | null }
+type WrittenTransaction = { hash: Hex; chainId: number; from: Address; to: Address; nonce: number; input: Hex; value: bigint; blockHash: Hex | null; blockNumber: bigint | null; transactionIndex: number | null }
 
 /** The hash the fake wallet answers its `n`th write (from 1) with. */
 export function sentHash(n: number): Hex {
@@ -38,7 +38,7 @@ function createFakeWallet() {
   const writeContract = vi.fn(async (request: { address: Address; account: Address; chainId: number; abi: Abi; functionName: string; args: readonly unknown[]; value?: bigint }) => {
     const hash = sentHash((sentCount += 1))
     chainId = request.chainId
-    transactions.set(hash, { hash, chainId, from: request.account, to: request.address,
+    transactions.set(hash, { hash, chainId, from: request.account, to: request.address, nonce: sentCount - 1,
       input: encodeFunctionData(request), value: request.value ?? 0n, blockHash: null, blockNumber: null, transactionIndex: null })
     return hash
   })

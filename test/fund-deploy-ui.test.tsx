@@ -8,6 +8,8 @@ import type { CreateValues } from '../src/components/CreateFlow'
 import { buildFundLaunch } from '../src/lib/fund-contracts'
 import { FUND_LAUNCH_KEY, decodeLaunchSession, launchIntent, multisigSetupIntent, saveLaunch, updateLaunchStatus, type FundLaunchSession } from '../src/lib/fund-launch-session'
 import { safeExecutionLog } from './support/safe-logs'
+import { installRecoveryLocks } from './runtime/write-recovery-fixture'
+import { checkedItLabel, SAVED_ATTEMPT_CHECK_LINE } from '@bananapus/nana-sdk-core/review'
 import type { TxRequest } from '../src/hooks/useSafeTx'
 import { multisigDeploymentRequest, predictMultisig, type CreateMultisig } from '../src/lib/create-multisig'
 
@@ -24,7 +26,6 @@ vi.mock('@/components/CreateFlow', () => ({ default: () => null }))
 vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => runtime.safe, useSafeConnection: () => false, waitForSafeExecutionHash: runtime.waitSafe }))
 vi.mock('@/lib/create-multisig', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/create-multisig')>(), checkCreateMultisigs: runtime.checkMultisigs, verifyCreatedMultisigs: runtime.verifyMultisigs }))
 vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({ phase: runtime.txPhase, receipt: runtime.txReceipt, isSafe: false, busy: false, error: runtime.txError, submissionHash: runtime.submissionHash, send: runtime.send, track: runtime.track, reset: vi.fn() }) }))
-vi.mock('@/lib/write-hold', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/write-hold')>(), adoptLegacyWrite: runtime.adopt }))
 vi.mock('@/lib/publish-fund-project-metadata', () => ({ publishFundProjectMetadata: runtime.publish }))
 vi.mock('@/lib/fund-launch-verification', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/fund-launch-verification')>(), checkLaunchDeployment: runtime.checkDeployment, verifyFundLaunch: (...args: unknown[]) => runtime.verifyLaunch(...args) }))
 vi.mock('@/lib/fund-launch-relayr', () => ({ runRelayrLaunch: runtime.relayr, launchRequestsDead: runtime.requestsDead }))
@@ -59,11 +60,11 @@ describe('Create submission recovery', () => {
     runtime.submissionHash = undefined
     runtime.safe = false
     runtime.send.mockReset()
-    runtime.track.mockReset(); runtime.adopt.mockReset().mockResolvedValue({ adopted: true, state: { status: 'held-no-hash' } })
+    runtime.track.mockReset()
     runtime.waitSafe.mockReset(); runtime.waitReceipt.mockReset(); runtime.checkMultisigs.mockReset().mockResolvedValue(undefined); runtime.verifyMultisigs.mockReset().mockResolvedValue(true)
     runtime.getTransaction.mockReset(); runtime.getTransactionReceipt.mockReset()
     runtime.readContract.mockResolvedValue(0n); runtime.getBlock.mockReset().mockResolvedValue({ timestamp: 1000n }); runtime.publish.mockResolvedValue({ cid: 'bafkreimetadata' }); runtime.checkDeployment.mockResolvedValue(undefined)
-    Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: async (_name: string, _options: unknown, callback: (lock: object) => Promise<void>) => callback({}) } })
+    installRecoveryLocks()
     saveLaunch({ version: 1, name: 'Test asset', input: { owner, sender: owner, chainIds: [8453], projectUri: 'ipfs://bafkreimetadata', tokenName: 'House FUND', ticker: 'HOUSE', salt, mustStartAtOrAfter: 0, creationFees: { 8453: 0n } }, statuses: { 8453: { phase: 'ready' } } })
     host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   })
@@ -88,11 +89,16 @@ describe('Create submission recovery', () => {
       return plan
     }
 
+    const button = (text: string) => [...host.querySelectorAll('button')].find(item => item.textContent === text)
+    async function checked(label: string) {
+      await vi.waitFor(() => expect(host.textContent).toContain(SAVED_ATTEMPT_CHECK_LINE))
+      await act(async () => button(label)!.click())
+    }
+
     it('adopts a hashless launch with its saved nonce into the launch’s hold, and the record reopens', async () => {
       updateLaunchStatus(salt, 8453, { phase: 'signing', safe: false, attemptId: ATTEMPT, nonce: '5', fromBlock: '90' })
       await render()
       await vi.waitFor(() => expect(saved().statuses[8453]).toEqual({ phase: 'ready' }))
-      expect(runtime.adopt).toHaveBeenCalledWith(expect.objectContaining({ chainId: 8453, account: owner, safe: false, namespace: launchIntent(salt), call: expect.objectContaining({ to: request().address }) }), { nonce: 5n, fromBlock: 90n }, expect.anything())
       expect(runtime.track).toHaveBeenCalledWith(expect.objectContaining({ chainId: 8453 }), expect.objectContaining({ reviewedAccount: owner, recoveryNamespace: launchIntent(salt) }))
       expect(runtime.send).not.toHaveBeenCalled()
     })
@@ -110,29 +116,58 @@ describe('Create submission recovery', () => {
       await vi.waitFor(() => expect(saved().statuses[8453]).toMatchObject({ phase: 'confirmed', hash: FOUND, projectId: '42' }))
     })
 
-    it('adopts a saved pending hash into the hold and keeps it this chain’s pending launch', async () => {
+    it('keeps a saved pending hash this chain’s pending launch while it can’t be read, and sends nothing', async () => {
       updateLaunchStatus(salt, 8453, { phase: 'pending', safe: false, hash: FOUND, walletReturned: true })
       runtime.getTransactionReceipt.mockRejectedValue(new Error('receipt unavailable'))
       await render()
-      await vi.waitFor(() => expect(runtime.adopt).toHaveBeenCalledWith(expect.objectContaining({ namespace: launchIntent(salt) }), { hash: FOUND }, expect.anything()))
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)) })
       expect(saved().statuses[8453]).toMatchObject({ phase: 'pending', hash: FOUND })
+      expect(button('Review and deploy FUND')).toBeUndefined()
+      expect(runtime.send).not.toHaveBeenCalled()
     })
 
-    it('adopts a legacy failure without the wallet’s hash as a hashless attempt, and the record reopens', async () => {
-      const current = saved()
+    it('asks for the user’s check on a legacy failure without the wallet’s hash, and that check reopens the record with its evidence', async () => {
+      const current = saved(), hash = `0x${'ee'.repeat(32)}` as Hex
       localStorage.clear()
-      saveLaunch({ ...current, statuses: { 8453: { phase: 'reverted', hash: `0x${'ee'.repeat(32)}` } } })
+      saveLaunch({ ...current, statuses: { 8453: { phase: 'reverted', hash } } })
       await render()
-      await vi.waitFor(() => expect(saved().statuses[8453]).toEqual({ phase: 'ready' }))
-      expect(runtime.adopt).toHaveBeenCalledWith(expect.objectContaining({ namespace: launchIntent(salt) }), {}, expect.anything())
+      await checked(checkedItLabel('Deploy again'))
+      // Reopened, the chain keeps the retired attempt's hash, so its recovery still reads as retired.
+      await vi.waitFor(() => expect(saved().statuses[8453]).toEqual({ phase: 'ready', releasedHash: hash }))
+      await render()
+      expect(host.textContent).not.toContain(SAVED_ATTEMPT_CHECK_LINE)
     })
 
-    it.each([{ safe: false, attemptId: ATTEMPT, nonce: '5', fromBlock: '90' }, { safe: true, hash: FOUND, walletReturned: true as const }])('adopts a saved multisig setup into the setup’s hold, and the record drops it: %o', async setup => {
-      const plan = withMultisig(setup)
+    it('treats a multisig setup saved with its nonce as done once its Safes exist, and the record drops it', async () => {
+      withMultisig({ safe: false, attemptId: ATTEMPT, nonce: '5', fromBlock: '90' })
+      await render()
+      // The setup's own search: every planned Safe is deployed.
+      await vi.waitFor(() => expect(saved().statuses[8453]).toEqual({ phase: 'ready' }))
+      expect(host.textContent).not.toContain(SAVED_ATTEMPT_CHECK_LINE)
+    })
+
+    it('adopts a multisig setup saved with its nonce whose Safes are missing into the setup’s hold, and the record drops it', async () => {
+      runtime.verifyMultisigs.mockResolvedValue(false)
+      withMultisig({ safe: false, attemptId: ATTEMPT, nonce: '5', fromBlock: '90' })
       await render()
       await vi.waitFor(() => expect(saved().statuses[8453]).toEqual({ phase: 'ready' }))
-      expect(runtime.adopt).toHaveBeenCalledWith(expect.objectContaining({ safe: setup.safe, namespace: multisigSetupIntent(salt), call: expect.objectContaining({ to: multisigDeploymentRequest(8453, [plan]).address }) }),
-        setup.hash ? { safe: { safeTxHash: FOUND } } : { nonce: 5n, fromBlock: 90n }, expect.anything())
+      expect(runtime.track).toHaveBeenCalledWith(expect.objectContaining({ chainId: 8453 }), expect.objectContaining({ recoveryNamespace: multisigSetupIntent(salt) }))
+    })
+
+    it('asks for the user’s check on a multisig setup saved with neither hash nor nonce whose Safes are missing, and the record drops it once checked', async () => {
+      runtime.verifyMultisigs.mockResolvedValue(false)
+      withMultisig({ safe: false, attemptId: ATTEMPT })
+      await render()
+      await checked(checkedItLabel('Create multisigs again'))
+      await vi.waitFor(() => expect(saved().statuses[8453]).toEqual({ phase: 'ready' }))
+      expect(runtime.send).not.toHaveBeenCalled()
+    })
+
+    it('moves a saved multisig setup proposal into the setup’s hold, and the record drops it', async () => {
+      withMultisig({ safe: true, hash: FOUND, walletReturned: true })
+      await render()
+      await vi.waitFor(() => expect(saved().statuses[8453]).toEqual({ phase: 'ready' }))
+      expect(runtime.track).toHaveBeenCalledWith(expect.objectContaining({ chainId: 8453 }), expect.objectContaining({ recoveryNamespace: multisigSetupIntent(salt), safe: true }))
     })
   })
 
@@ -242,15 +277,30 @@ describe('Create submission recovery', () => {
     expect(saved().statuses[8453]).toEqual({ phase: 'ready' })
   })
 
-  it.each(['legacy hash', 'nonfinal failure', 'proven failure'])('reopens only a wallet-recorded finalized Safe launch failure: %s', async kind => {
+  function savedSafeFailure(kind: string) {
     const proposal = `0x${'ef'.repeat(32)}` as Hex, execution = `0x${'cd'.repeat(32)}` as Hex
     const session = saved()
     localStorage.clear()
     saveLaunch({ ...session, statuses: { 8453: { phase: 'pending', hash: proposal, executionHash: execution, safe: true, ...(kind !== 'legacy hash' ? { walletReturned: true as const } : {}) } } })
-    const request = buildFundLaunch(session.input).requests[0]
-    failedSafeReceipt(request, proposal, execution, kind)
+    failedSafeReceipt(buildFundLaunch(session.input).requests[0], proposal, execution, kind)
+    return { proposal, execution }
+  }
+
+  it.each(['legacy hash', 'proven failure'])('reopens a Safe launch whose proposal the hold proves failed at a final block: %s', async kind => {
+    savedSafeFailure(kind)
     await act(async () => root.render(<FundDeploy values={{} as CreateValues} />))
-    const check = [...host.querySelectorAll('button')].find(item => item.textContent === 'Check confirmation')!
+    // The SDK's hold authenticates the proposal's own failed execution, final: it can't run again.
+    await vi.waitFor(() => expect(saved().statuses[8453].phase).toBe('reverted'))
+    expect(host.textContent).toContain('The deployment reverted. No project was created by this transaction.')
+    expect(host.textContent).toContain('Review and deploy FUND')
+    expect(runtime.send).not.toHaveBeenCalled()
+  })
+
+  it('keeps a Safe launch whose failure is not final yet pending, and its check unresolved', async () => {
+    const { proposal } = savedSafeFailure('nonfinal failure')
+    await act(async () => root.render(<FundDeploy values={{} as CreateValues} />))
+    const check = [...host.querySelectorAll('button')].find(item => item.textContent === 'Check confirmation')
+    if (!check) throw new Error(host.textContent ?? '')
     await act(async () => check.click())
     // Checking asks the launch's hold; only what it settles is verified and recorded.
     expect(runtime.track).toHaveBeenLastCalledWith(expect.objectContaining({ chainId: 8453 }), expect.objectContaining({ recoveryNamespace: launchIntent(salt), safe: true }))
@@ -258,15 +308,9 @@ describe('Create submission recovery', () => {
     runtime.txPhase = 'error'; runtime.txReceipt = await runtime.getTransactionReceipt(); runtime.submissionHash = proposal
     await act(async () => root.render(<FundDeploy values={{} as CreateValues} />))
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
-    if (kind === 'proven failure') {
-      expect(saved().statuses[8453].phase).toBe('reverted')
-      expect(host.textContent).toContain('The deployment reverted. No project was created by this transaction.')
-      expect(host.textContent).toContain('Review and deploy FUND')
-    } else {
-      expect(saved().statuses[8453].phase).toBe('pending')
-      expect(host.textContent).toContain('Confirmation is unresolved')
-      expect(host.textContent).not.toContain('Review and deploy FUND')
-    }
+    expect(saved().statuses[8453].phase).toBe('pending')
+    expect(host.textContent).toContain('Confirmation is unresolved')
+    expect(host.textContent).not.toContain('Review and deploy FUND')
   })
 
   it('requires onchain verification of confirmations restored from a file', async () => {
@@ -289,11 +333,12 @@ describe('Create submission recovery', () => {
     const record = JSON.stringify(imported, (_key, value) => typeof value === 'bigint' ? value.toString() : value)
     localStorage.clear()
     await act(async () => root.render(<FundDeploy importedRecord={record} />))
-    // The restored setup's proposal is adopted into its hold, and the record keeps only the unproven launch hash.
-    await vi.waitFor(() => expect(saved().statuses[8453].multisigSetup).toBeUndefined())
+    // The restored setup recovers on its own (its Safes exist), and the record keeps only the unproven launch hash.
+    await vi.waitFor(() => expect(saved().statuses[8453].multisigSetup, host.textContent ?? '').toBeUndefined())
     expect(saved().statuses[8453]).toMatchObject({ phase: 'pending', hash })
     expect(saved().statuses[8453].walletReturned).toBeUndefined()
-    expect(runtime.adopt).toHaveBeenCalledWith(expect.objectContaining({ namespace: multisigSetupIntent(salt) }), { safe: { safeTxHash: hash } }, expect.anything())
+    // The launch hash can't be shown as this wallet's attempt: only the user's check reopens it.
+    expect(host.textContent).toContain(SAVED_ATTEMPT_CHECK_LINE)
     expect(runtime.send).not.toHaveBeenCalled()
     expect(host.textContent).not.toContain('Review and deploy FUND')
   })

@@ -1,15 +1,13 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { encodeFunctionData, type Address, type Hex } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { useSafeTx, type TxRequest } from './useSafeTx'
 import { useWallet } from './useWallet'
-import { useWriteHoldWatch } from './useWriteHoldWatch'
-import { sameShownHold } from '@/lib/write-hold'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { WRITE_EXIT_LABEL, browserLocks, writeExitMessage, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
+import { WRITE_EXIT_LABEL, browserLocks, createHeldWriteView, hidesShownExit, writeExitMessage, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
 import {
   adoptLegacyProjectAdminRecord, noteProjectAdminAccount, otherProjectAdminHolds, projectAdminLockName, projectAdminNamespace, pruneProjectAdminAccounts, type ProjectAdminHold,
 } from '@/lib/project-admin-reservation'
@@ -159,14 +157,26 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
       setOtherHold(current => current?.hold !== shown.hold ? current : holds[0] ?? null)
     } catch { /* The next look asks again. */ }
   }, [chainId, client, projectId])
-  useWriteHoldWatch(otherHold?.hold, client as WriteHoldClient | undefined, state => {
-    if (!otherHold || exiting.current === otherHold.hold) return
-    if (state.status === 'clear') void rescan(otherHold)
-    else if (!sameShownHold(state, otherHold.state)) setOtherHold({ hold: otherHold.hold, state })
-  }, { shown: otherHold?.state })
+  // Watched through the SDK's held-write view: its events, a checked read now, on focus and every poll.
+  const otherHandle = otherHold?.hold
+  const otherView = useMemo(() => otherHandle && client
+    ? createHeldWriteView(otherHandle, { client: client as WriteHoldClient, follow: false, pollMs: 15_000 }) : null, [otherHandle, client])
+  const shownOther = useRef(otherHold)
+  shownOther.current = otherHold
+  useEffect(() => {
+    if (!otherView) return
+    const unsubscribe = otherView.subscribe(() => {
+      const shown = shownOther.current, state = otherView.get().state
+      if (!shown || !state || exiting.current === shown.hold || hidesShownExit(shown.state, state)) return
+      if (state.status === 'clear') void rescan(shown)
+      else setOtherHold(current => current?.hold === shown.hold ? { hold: shown.hold, state } : current)
+    })
+    const stop = otherView.start()
+    return () => { unsubscribe(); stop() }
+  }, [otherView, rescan])
   const phase = otherHold ? 'submitted' as const : tx.phase
-  const exitOther = useCallback(async () => {
-    if (!otherHold || !client) return
+  const exitOther = useCallback(async (): Promise<boolean> => {
+    if (!otherHold || !client) return false
     try {
       // The hold asks the chain again as the exit is taken, for the state the user saw.
       exiting.current = otherHold.hold
@@ -174,10 +184,11 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
         .finally(() => { exiting.current = null })
       if (released || state.status === 'clear') { setOtherHold(null); setError(null) }
       else setOtherHold({ hold: otherHold.hold, state })
-    } catch (reason) { setError(errorMessage(reason)) }
+      return released
+    } catch (reason) { setError(errorMessage(reason)); return false }
   }, [client, otherHold])
   const held = tx.held ?? (otherHold?.state.exit ? {
-    line: otherHold.state.line, warning: 'warning' in otherHold.state && otherHold.state.warning ? otherHold.state.warning : writeExitMessage(otherHold.state.record.call),
+    kind: 'exit' as const, line: otherHold.state.line, warning: 'warning' in otherHold.state && otherHold.state.warning ? otherHold.state.warning : writeExitMessage(otherHold.state.record.call),
     label: WRITE_EXIT_LABEL, release: exitOther,
   } : null)
   const pending = phase === 'pending' || phase === 'submitted'
