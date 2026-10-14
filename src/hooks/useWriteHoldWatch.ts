@@ -37,6 +37,8 @@ export function useWriteHoldWatch(
     if (!hold) return
     let live = true
     let checking = false
+    /** The chain's last answer here: the same exit again (another flow's check of this hold) is shown, not asked again. */
+    let answered: WriteHoldState | null = null
     // The same state without its exit (a replay, or a check that lost the lock and read the saved
     // state) never hides an exit the screen shows: only a changed chain answer (another status,
     // record or reservation) does.
@@ -53,13 +55,13 @@ export function useWriteHoldWatch(
       if (!current || checking) return
       checking = true
       void hold.state(current)
-        .then(state => { if (live && !hidesShownExit(state)) onStateRef.current(state) }, () => {})
+        .then(state => { answered = state; if (live && !hidesShownExit(state)) onStateRef.current(state) }, () => {})
         .finally(() => { checking = false })
     }
     // The SDK replays the hold's latest state as it subscribes, so a state reported before is not missed.
     // One that offers an exit is asked of the chain first.
     const stop = hold.subscribe(state => {
-      if (state.status !== 'clear' && state.exit) { check(); return }
+      if (state.status !== 'clear' && state.exit && !(answered && answered.status !== 'clear' && answered.exit && sameShownHold(state, answered))) { check(); return }
       if (!hidesShownExit(state)) onStateRef.current(state)
     })
     recheckRef.current = check
