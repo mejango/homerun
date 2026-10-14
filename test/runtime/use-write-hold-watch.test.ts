@@ -61,4 +61,22 @@ describe('useWriteHoldWatch', () => {
     expect(seen).toEqual([now])
     await act(async () => renderer.unmount())
   })
+
+  it("shows one flow's chain answer to every flow on the hold without asking the chain again", async () => {
+    // As the SDK does, a check's answer also reaches every subscriber, after the check returns.
+    const listeners = new Set<(state: WriteHoldState) => void>()
+    const hold = {
+      subscribe: vi.fn((next: (state: WriteHoldState) => void) => { listeners.add(next); return () => { listeners.delete(next) } }),
+      state: vi.fn(async () => { setTimeout(() => { for (const next of [...listeners]) next(unproven) }, 0); return unproven }),
+    } as unknown as WriteHoldHandle
+    const seen: string[] = []
+    function Watch({ name }: { name: string }) { useWriteHoldWatch(hold, {} as never, () => seen.push(name), { checkNow: true }); return null }
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => { renderer = TestRenderer.create(createElement('div', null, createElement(Watch, { name: 'a' }), createElement(Watch, { name: 'b' }))) })
+    await act(async () => { for (let tick = 0; tick < 20; tick += 1) await new Promise(resolve => setTimeout(resolve, 0)) })
+    expect(seen).toEqual(expect.arrayContaining(['a', 'b']))
+    // Each flow asks once; neither answer sends the other back to the chain.
+    expect(vi.mocked(hold.state).mock.calls.length).toBe(2)
+    await act(async () => renderer.unmount())
+  })
 })
