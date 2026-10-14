@@ -900,6 +900,67 @@ describe('useSafeTx', () => {
     expect(hook.ref.current!.held).toMatchObject({ label: WRITE_EXIT_LABEL })
   })
 
+  describe('a journal record from before SDK holds', () => {
+    const intentKey = writeIntentKey('journal-test', { project: 7n })
+    const call = () => ({ to: BOB, data: encodeFunctionData({ abi: ABI, functionName: 'transfer', args: [BOB, 5n] }), value: 7n })
+
+    it('is adopted with its hash and shown pending without a send, and the same write is refused', async () => {
+      const { adoptLegacyWrite } = await import('@/lib/write-hold')
+      // The saved hash is still pending, and it is this exact call.
+      mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => ({ hash, from: ALICE, to: BOB, nonce: 5, blockNumber: null, chainId: 10,
+        input: call().data, value: 7n }))
+      await adoptLegacyWrite({ chainId: 10, account: ALICE, safe: false, namespace: intentKey, call: call() }, { hash: HASH, submittedAt: Date.now() }, mocks.publicClient as never)
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.track(request, { ...reviewedByAlice, recoveryNamespace: intentKey }) })
+      expect(hook.ref.current).toMatchObject({ phase: 'pending', hash: HASH, held: null })
+      await act(async () => { hook.ref.current!.reset() })
+      await act(async () => { await hook.ref.current!.send(request, { ...reviewedByAlice, recoveryNamespace: intentKey }) })
+      expect(mocks.writeContract).not.toHaveBeenCalled()
+    })
+
+    it('is adopted without a hash and gets the warned exit; only accepting it sends again', async () => {
+      const { adoptLegacyWrite } = await import('@/lib/write-hold')
+      await adoptLegacyWrite({ chainId: 10, account: ALICE, safe: false, namespace: intentKey, call: call() }, { submittedAt: Date.now() - 31 * 60_000 }, mocks.publicClient as never)
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.track(request, { ...reviewedByAlice, recoveryNamespace: intentKey }) })
+      expect(hook.ref.current).toMatchObject({ phase: 'submitted', confirmationUncertain: true })
+      expect(hook.ref.current!.held).toMatchObject({ label: WRITE_EXIT_LABEL })
+      await act(async () => { await hook.ref.current!.send(request, { ...reviewedByAlice, recoveryNamespace: intentKey }) })
+      expect(mocks.writeContract).not.toHaveBeenCalled()
+      await act(async () => { await hook.ref.current!.held!.release() })
+      await act(async () => { await hook.ref.current!.send(request, { ...reviewedByAlice, recoveryNamespace: intentKey }) })
+      expect(mocks.writeContract).toHaveBeenCalledOnce()
+    })
+
+    it('is adopted already mined: tracking it delivers its verified receipt to the flow', async () => {
+      const { adoptLegacyWrite } = await import('@/lib/write-hold')
+      // The saved hash is this exact call, mined successfully before the reload.
+      mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => ({ hash, from: ALICE, to: BOB, nonce: 5, chainId: 10,
+        input: call().data, value: 7n, blockHash: BLOCK_HASH, blockNumber: 77n, transactionIndex: 0 }))
+      mocks.receipt = { data: canonicalReceipt('success'), isError: false }
+      const adopted = await adoptLegacyWrite({ chainId: 10, account: ALICE, safe: false, namespace: intentKey, call: call() }, { hash: HASH, submittedAt: Date.now() }, mocks.publicClient as never)
+      expect(adopted).toMatchObject({ adopted: true, state: { status: 'clear', settled: { result: 'success', hash: HASH } } })
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.track(request, { ...reviewedByAlice, recoveryNamespace: intentKey }) })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(hook.ref.current).toMatchObject({ phase: 'success' })
+      expect(hook.ref.current!.receipt?.transactionHash).toBe(HASH)
+    })
+
+    it('is adopted once: a second adoption leaves the first hold as it is', async () => {
+      const { adoptLegacyWrite } = await import('@/lib/write-hold')
+      const input = { chainId: 10, account: ALICE, safe: false, namespace: intentKey, call: call() }
+      await adoptLegacyWrite(input, { submittedAt: Date.now() }, mocks.publicClient as never)
+      const again = await adoptLegacyWrite(input, { hash: HASH, submittedAt: Date.now() }, mocks.publicClient as never)
+      expect(again.state.status).toBe('held-no-hash')
+      // Held without that hash, it is not that attempt: its journal stays.
+      expect(again.adopted).toBe(false)
+      expect((await adoptLegacyWrite(input, { submittedAt: Date.now() }, mocks.publicClient as never)).adopted).toBe(true)
+      // One write, and the mirror the SDK keeps at its exact call for older readers.
+      expect(recoveryRecords().filter(record => !record.mirrorOf)).toHaveLength(1)
+    })
+  })
+
   it('does not treat a rejection-looking transport message as a definite wallet rejection', async () => {
     mocks.writeContract.mockRejectedValueOnce(new Error('User rejected: transport connection lost'))
     const hook = await renderHook()
@@ -1171,46 +1232,6 @@ describe('useSafeTx', () => {
     await act(async () => { finish(true); await pending })
     expect(mocks.writeContract).not.toHaveBeenCalled()
     expect(recoveryRecords()).toHaveLength(0)
-  })
-
-  it('awaits a typed domain hash handoff and does not open a second generic journal', async () => {
-    const events: string[] = []
-    mocks.writeContract.mockImplementationOnce(async () => {
-      events.push('write')
-      expect(recoveryRecords()).toHaveLength(0)
-      return HASH
-    })
-    const hook = await renderHook()
-    await act(async () => {
-      await hook.ref.current!.send(request, { ...reviewedByAlice, durableRecovery: {
-        reserve: () => { events.push('reserve') },
-        releaseUnsubmitted: () => { events.push('released') },
-        submitted: async (hash, safe) => {
-          expect(hash).toBe(HASH)
-          expect(safe).toBe(false)
-          await Promise.resolve()
-          events.push('stored')
-        },
-      } })
-      events.push('returned')
-    })
-    expect(events).toEqual(['reserve', 'write', 'stored', 'returned'])
-  })
-
-  it('returns a known hash after a domain storage failure without invoking rejection cleanup', async () => {
-    const releaseUnsubmitted = vi.fn()
-    const hook = await renderHook()
-    let returned: Hex | null = null
-    await act(async () => {
-      returned = await hook.ref.current!.send(request, { ...reviewedByAlice, durableRecovery: {
-        reserve: vi.fn(), releaseUnsubmitted,
-        submitted: () => { throw { code: 4001, message: 'Storage callback failed' } },
-      } })
-    })
-    expect(returned).toBe(HASH)
-    expect(hook.ref.current).toMatchObject({ phase: 'pending', submissionHash: HASH })
-    expect(releaseUnsubmitted).not.toHaveBeenCalled()
-    expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 
   it('persists a wallet reply received after reset without reopening the old review', async () => {

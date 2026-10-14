@@ -1,14 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { formatUnits, isAddressEqual, type Hex, type PublicClient } from "viem";
+import { formatUnits, isAddressEqual, zeroAddress, type Hex, type PublicClient } from "viem";
 import { useWallet } from "@/hooks/useWallet";
 import { txPhaseLabel, useSafeTx } from "@/hooks/useSafeTx";
-import { wagmiConfig } from "@/providers/Providers";
-import {
-  isSafeConnection,
-  waitForSafeExecutionHash,
-} from "@/lib/safe-connector";
 import { jbCenterIpfs } from "@/lib/jbcenter-ipfs";
 import { explorerTxUrl } from "@/lib/chainDisplay";
 import {
@@ -16,17 +11,19 @@ import {
   parseFundGlobalManifest,
 } from "@/lib/fund-global-manifest";
 import type { FundProjectState } from "@/lib/fund-state";
+import { type StickyPending } from "@/lib/sticky-session";
+import { adoptLegacyWrite, recoverFromHold } from "@/lib/write-hold";
+import { HeldNotice } from "@/components/ui/HeldWriteExit";
+import { CheckRequired } from "@/components/ui/CheckRequired";
+import { useLegacyAdoption } from "@/hooks/useLegacyAdoption";
 import {
-  recordStickyHash,
-  releaseStickyUnsubmitted,
-  stickySessionKey,
-  type StickyPending,
-} from "@/lib/sticky-session";
-import {
-  adoptStickyCreationProposal,
-  beginStickyCreationSubmission,
   clearStickyCreationPending,
   prepareStickyCreate,
+  stickyCreateIntent,
+  stickyCreationHold,
+  stickyCreationFromHold,
+  stickyCreationFromTransaction,
+  stickyCreationRecord,
   readStickyCreated,
   readStickyCreationPending,
   saveStickyCreated,
@@ -68,12 +65,10 @@ export function StickyCreate({
   const [preparing, setPreparing] = useState(false),
     [verifying, setVerifying] = useState(false),
     [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState<StickyPending | null>(null),
-    [completed, setCompleted] = useState<StickyCreatedRecord | null>(null),
+  const [completed, setCompleted] = useState<StickyCreatedRecord | null>(null),
     [storageError, setStorageError] = useState<string | null>(null),
     [loadedScope, setLoadedScope] = useState<string | null>(null);
-  const [executionHash, setExecutionHash] = useState(""),
-    [verifiedId, setVerifiedId] = useState<{
+  const [verifiedId, setVerifiedId] = useState<{
       scope: string;
       id: bigint;
     } | null>(null);
@@ -98,14 +93,6 @@ export function StickyCreate({
   useEffect(() => {
     const refresh = () => {
       try {
-        setPending(
-          readStickyCreationPending(
-            localStorage,
-            state.chainId,
-            state.projectId,
-            address,
-          ),
-        );
         setCompleted(
           readStickyCreated(localStorage, state.chainId, state.projectId),
         );
@@ -152,18 +139,10 @@ export function StickyCreate({
             throw new Error(
               "A different Sticky creation is already saved for this FUND. Resolve both executions before continuing.",
             );
-          const unresolved = readStickyCreationPending(
-            localStorage,
-            record.chainId,
-            BigInt(record.projectId),
-            record.holder,
-          );
-          if (unresolved && JSON.stringify(unresolved) !== JSON.stringify(record))
-            throw new Error("The saved Sticky creation changed during verification. Keep its current record and check again.");
-          if (!existing)
+          if (!existing) {
             saveStickyCreated(localStorage, record, hash, result.projectId);
-          if (unresolved) clearStickyCreationPending(localStorage, record);
-          if (!existing || unresolved) changed();
+            changed();
+          }
           if (liveScope.current === `${record.chainId}:${record.projectId}`) {
             setVerifying(false);
             setVerifiedId({ scope: liveScope.current, id: result.projectId });
@@ -178,8 +157,6 @@ export function StickyCreate({
             throw new Error(
               "The saved completed creation has no successful execution.",
             );
-          clearStickyCreationPending(localStorage, record);
-          changed();
           if (liveScope.current === `${record.chainId}:${record.projectId}`) {
             setVerifying(false);
             setError(
@@ -192,59 +169,113 @@ export function StickyCreate({
     [client],
   );
 
-  // A known hash is recoverable after refresh, including Safe proposals that have not executed yet.
+  // A completed creation is rechecked on load: its saved project ID is shown only once proven again.
   useEffect(() => {
-    if (loadedScope !== walletScope || storageError) return;
-    const record = completed?.pending ?? pending;
-    const hash = completed?.executionHash ?? pending?.hash;
-    if (!record || !hash) return;
-    if (completed && notified.current === `${record.chainId}:${hash}`) return;
-    const controller = new AbortController();
+    if (loadedScope !== walletScope || storageError || !completed) return;
+    const record = completed.pending,
+      hash = completed.executionHash;
+    if (notified.current === `${record.chainId}:${hash}`) return;
     let cancelled = false;
     setVerifying(true);
-    void (async () => {
-      const execution = completed
-        ? hash
-        : record.safe
-          ? await waitForSafeExecutionHash(record.chainId, hash, {
-              signal: controller.signal,
-            })
-          : hash;
-      if (!completed && !record.safe)
-        await client.waitForTransactionReceipt({
-          hash: execution,
-          timeout: 120_000,
-        });
-      if (!cancelled) await recover(record, execution, completed?.projectId);
-    })()
+    // A saved creation goes through its hold: it waits while the hold holds a write, is checked on the hold's
+    // settled transaction, and only with no hold record on the saved call itself.
+    void recoverFromHold(
+      { chainId: record.chainId, account: record.holder, namespace: stickyCreateIntent(BigInt(record.projectId)) },
+      async (settledHash) => { await recover(record, settledHash ?? hash, completed.projectId); return true; },
+    )
+      .then((result) => {
+        if (result.status === "held") throw new Error("Its transaction is still pending. It shows once it settles.");
+        if (result.status === "check") throw new Error(result.reason);
+      })
       .catch((reason) => {
         if (!cancelled)
-          setError(
-            `The saved creation is still unresolved. ${message(reason)}`,
-          );
+          setError(`The saved creation is still unresolved. ${message(reason)}`);
       })
       .finally(() => {
         if (!cancelled) setVerifying(false);
       });
     return () => {
       cancelled = true;
-      controller.abort();
     };
-  }, [
-    client,
-    completed,
-    loadedScope,
-    pending,
-    recover,
-    storageError,
-    walletScope,
-  ]);
+  }, [completed, loadedScope, recover, storageError, walletScope]);
+
+  /** The creation this screen sent or adopted: what its settled execution is verified against. */
+  const sent = useRef<StickyPending | null>(null);
+  /** A creation the hold settled that couldn't be authenticated here: no other is created without the user's check. */
+  const [unchecked, setUnchecked] = useState(false);
+  const track = tx.track;
+  const adoption = useLegacyAdoption();
+  const adopt = adoption.run;
+  // A creation the journal saved as pending before SDK holds is adopted into its hold, then its records go;
+  // with none, a creation the SDK holds for this FUND is shown, whatever this FUND's state now.
+  useEffect(() => {
+    if (loadedScope !== walletScope) return;
+    let cancelled = false;
+    void adopt(async () => {
+      const record = readStickyCreationPending(localStorage, state.chainId, state.projectId, address);
+      if (!record) {
+        if (!address || sent.current) return;
+        const intent = { chainId: state.chainId, account: address, namespace: stickyCreateIntent(state.projectId) };
+        // Asking the hold lets it settle what the chain placed while this page was away.
+        const held = await track({ chainId: state.chainId, call: { to: zeroAddress, data: "0x" } }, { reviewedAccount: address, recoveryNamespace: intent.namespace, heldOnly: true });
+        if (!cancelled && held && held.status !== "clear") { sent.current = stickyCreationFromHold(held.record, state.projectId); return; }
+        if (readStickyCreated(localStorage, state.chainId, state.projectId)) return;
+        // A creation the hold settled with success is recorded from its own transaction before creation reopens;
+        // one not shown here (a Safe's execution, or an unanswered read) waits for the user's check.
+        const result = await recoverFromHold(intent, async (settledHash) => {
+          if (!settledHash) return null;
+          const transaction = await client.getTransaction({ hash: settledHash });
+          await recover(stickyCreationFromTransaction(transaction, state.chainId, state.projectId), settledHash);
+          return true;
+        });
+        if (result.status === "check" && !cancelled) setUnchecked(true);
+        return;
+      }
+      const { request, input, evidence } = stickyCreationHold(record);
+      const { adopted } = await adoptLegacyWrite(input, evidence, client);
+      // The records stay until the attempt is the hold's.
+      if (adopted) { clearStickyCreationPending(localStorage, record); changed(); }
+      if (cancelled) return;
+      sent.current = record;
+      await track({ ...request, label: "Create Sticky SHARE for this FUND project" }, { reviewedAccount: record.holder, recoveryNamespace: input.namespace, safe: record.safe });
+    }).catch((reason) => {
+      if (!cancelled) setStorageError(message(reason));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [address, adopt, client, loadedScope, recover, state.chainId, state.projectId, track, walletScope]);
+
+  // The SDK's hold settled the creation: its exact execution and the live project are verified and saved.
+  const settled = tx.phase === "success" ? tx.receipt : null,
+    submissionHash = tx.submissionHash;
+  useEffect(() => {
+    const record = sent.current;
+    if (!settled || !record) return;
+    let cancelled = false;
+    setVerifying(true);
+    void recover({ ...record, ...(submissionHash ? { hash: submissionHash } : {}) }, settled.transactionHash)
+      .then(() => {
+        sent.current = null;
+      })
+      .catch((reason) => {
+        if (!cancelled) setError(`The creation confirmed, but could not be verified yet. ${message(reason)}`);
+      })
+      .finally(() => {
+        if (!cancelled) setVerifying(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [recover, settled, submissionHash]);
 
   const owner = !!address && isAddressEqual(address, state.owner);
   const blockers = stickyCreateBlockers(state);
-  const busy = preparing || verifying || tx.busy || tx.phase === "review";
+  const busy = preparing || verifying || tx.busy || tx.phase === "review" || !adoption.ready;
+  /** The creation is with the wallet, the chain or a Safe: no other is prepared meanwhile. */
+  const creating = tx.busy || tx.phase === "submitted" || tx.phase === "success";
   const recoveryLocked =
-    loadedScope !== walletScope || !!storageError || !!pending || !!completed;
+    loadedScope !== walletScope || !!storageError || !!completed || creating;
   const verified = verifiedId?.scope === scope ? verifiedId.id : null;
 
   async function prepare() {
@@ -321,19 +352,10 @@ export function StickyCreate({
       return;
     const reviewed = prepared,
       captured = identity;
-    let saved: StickyPending | null = null;
-    const persistSubmitted = async (hash: Hex, safe?: boolean) => {
-      await navigator.locks.request(`homerun-sticky-create:${scope}`, () => {
-        if (!saved || (safe !== undefined && saved.safe !== safe))
-          throw new Error("The saved Sticky creation does not match the submitted wallet write.");
-        if (saved.hash === hash) return;
-        saved = recordStickyHash(localStorage, stickySessionKey(saved.chainId, BigInt(saved.projectId), saved.holder), hash, saved);
-        changed();
-      });
-    };
     setError(null);
     try {
-      const hash = await tx.send(
+      sent.current = stickyCreationRecord(reviewed, reviewed.fund.owner, tx.isSafe);
+      await tx.send(
         {
           ...reviewed.request,
           label: "Create Sticky SHARE for this FUND project",
@@ -341,6 +363,7 @@ export function StickyCreate({
         {
           // Prepared for the FUND owner of that moment: only that account may send it.
           reviewedAccount: reviewed.fund.owner,
+          recoveryNamespace: stickyCreateIntent(reviewed.fund.projectId),
           reviewNotice:
             "This creates a separate Juicebox staking project and SHARE token, owned permanently by the stock Sticky factory. It moves no FUND and deploys no INCOME. SHARE transfers are locked; unstaking uses zero cash-out tax and current backing. Rewards use snapshot balances, not streak age; zero-tax staking permits short-lived snapshot participation. The initial INCOME snapshot predates this creation.",
           reverify: async () => {
@@ -370,95 +393,22 @@ export function StickyCreate({
                 "The FUND snapshot, factory or creation fee changed. Prepare a fresh review.",
               );
           },
-          onExistingProposal: async (proposal) => {
-            if (captured !== liveIdentity.current)
-              throw new Error("The creation context changed before recovering its proposal.");
-            if (!navigator.locks)
-              throw new Error("Use a browser with Web Locks support to coordinate creation across tabs.");
-            await navigator.locks.request(`homerun-sticky-create:${scope}`, () => {
-              saved = adoptStickyCreationProposal(localStorage, reviewed, address, proposal);
-              changed();
-            });
-          },
-          durableRecovery: {
-            reserve: async () => {
-              if (liveUnavailable.current)
-                throw new Error(
-                  "FUND verification is unavailable. Refresh before creating SHARE.",
-                );
-              if (captured !== liveIdentity.current)
-                throw new Error("The creation context changed before signing.");
-              if (!navigator.locks)
-                throw new Error(
-                  "Use a browser with Web Locks support to coordinate creation across tabs.",
-                );
-              await navigator.locks.request(
-                `homerun-sticky-create:${scope}`,
-                async () => {
-                  if ((await client.getChainId()) !== reviewed.fund.chainId)
-                    throw new Error("The creation RPC changed networks.");
-                  const block = await client.getBlock({ blockTag: "latest" });
-                  if (block.number === null || !block.hash)
-                    throw new Error(
-                      "A mined block is required before submission.",
-                    );
-                  if (
-                    liveUnavailable.current ||
-                    captured !== liveIdentity.current
-                  )
-                    throw new Error(
-                      "FUND verification or the creation context changed before signing.",
-                    );
-                  saved = beginStickyCreationSubmission(
-                    localStorage,
-                    reviewed,
-                    address,
-                    isSafeConnection(wagmiConfig),
-                    block.number,
-                  );
-                  changed();
-                },
+          beforeWrite: async () => {
+            await adoption.wait();
+            if (liveUnavailable.current)
+              throw new Error(
+                "FUND verification is unavailable. Refresh before creating SHARE.",
               );
-            },
-            releaseUnsubmitted: async () => {
-              if (!saved) return;
-              await navigator.locks.request(`homerun-sticky-create:${scope}`, () => {
-                if (!saved) return;
-                releaseStickyUnsubmitted(localStorage, stickySessionKey(saved.chainId, BigInt(saved.projectId), saved.holder), saved);
-                clearStickyCreationPending(localStorage, saved);
-                saved = null;
-                changed();
-              });
-            },
-            submitted: persistSubmitted,
+            if (captured !== liveIdentity.current)
+              throw new Error("The creation context changed before signing.");
           },
         },
       );
-      if (hash) await persistSubmitted(hash);
     } catch (reason) {
       setError(message(reason));
     }
   }
-  async function verifyManual() {
-    const record = completed?.pending ?? pending;
-    if (!record || !/^0x[\da-fA-F]{64}$/.test(executionHash)) {
-      setError(
-        "Enter the actual onchain execution transaction hash. A Safe proposal hash is not an execution hash.",
-      );
-      return;
-    }
-    setVerifying(true);
-    setError(null);
-    try {
-      await recover(record, executionHash as Hex, completed?.projectId);
-    } catch (reason) {
-      setError(message(reason));
-    } finally {
-      setVerifying(false);
-    }
-  }
-  const explorer =
-    completed?.executionHash ?? (!pending?.safe ? pending?.hash : undefined);
+  const explorer = completed?.executionHash ?? tx.hash ?? undefined;
   const explorerLink = explorer ? explorerTxUrl(state.chainId, explorer) : null;
   return (
     <section
@@ -471,43 +421,26 @@ export function StickyCreate({
         Sticky custody. Creation uses the stock Sticky factory; holders choose
         whether to stake afterward.
       </p>
+      {/* A held creation shows with its exit whatever else is saved. */}
+      {tx.phase === "submitted" && (
+        <div className="mt-4 rounded border border-[#bfc9b5] p-4 text-sm">
+          <HeldNotice tx={tx} />
+        </div>
+      )}
       {verified ? (
         <p role="status" className="mt-4">
           Sticky project {verified.toString()} is confirmed and verified.
         </p>
-      ) : completed || pending ? (
+      ) : completed ? (
         <div className="mt-4 rounded border border-[#bfc9b5] p-4 text-sm">
-          <p>
-            {completed
-              ? "Rechecking the saved Sticky creation."
-              : pending?.safe
-                ? "The Safe creation proposal is saved. SHARE is created only after its execution is verified."
-                : pending?.hash
-                  ? "The saved creation is awaiting verified execution."
-                  : "The wallet may have submitted this creation. Its recovery record is saved; another creation is blocked."}
-          </p>
-          <p className="mt-3">
-            Keep this record. Check the wallet history for its execution hash if
-            automatic confirmation is unavailable.
-          </p>
-          <label className="mt-4 grid gap-2">
-            Execution transaction hash
-            <input
-              className="min-h-12 min-w-0 rounded border border-[#bfc9b5] bg-white px-3"
-              value={executionHash}
-              onChange={(event) => setExecutionHash(event.target.value)}
-              placeholder="0x…"
-            />
-          </label>
-          <button
-            type="button"
-            className="btn-secondary mt-3 min-h-11 px-5"
-            disabled={verifying}
-            onClick={() => void verifyManual()}
-          >
-            {verifying ? "Verifying execution…" : "Verify saved creation"}
-          </button>
+          <p>Rechecking the saved Sticky creation.</p>
         </div>
+      ) : tx.phase === "submitted" ? null : unchecked ? (
+        <CheckRequired line="Check this FUND’s Sticky creation before creating again." action="I checked it. Create again" onChecked={() => setUnchecked(false)} />
+      ) : tx.phase === "pending" || tx.phase === "success" ? (
+        <p role="status" className="mt-4 text-sm">
+          Submitted. Waiting for onchain confirmation…
+        </p>
       ) : (
         <>
           {launchUnavailable && (
@@ -610,7 +543,6 @@ export function StickyCreate({
             View creation transaction
           </a>
         )}
-        {pending && !pending.hash && tx.submissionHash && <p className="break-all">{pending.safe ? "Safe proposal" : "Submitted transaction"}: <code>{tx.submissionHash}</code></p>}
       </div>
     </section>
   );

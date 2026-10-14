@@ -14,30 +14,34 @@ const runtime = vi.hoisted(() => ({
   safe: false, receipt: 'pending' as 'pending' | 'confirmed' | 'reverted',
   send: vi.fn(), reset: vi.fn(), read: vi.fn(), prepare: vi.fn(), reverify: vi.fn(),
   inventory: vi.fn(), customers: vi.fn(), metadata: vi.fn(), waitSafe: vi.fn(), viewAs: vi.fn(),
-  readSession: vi.fn(), start: vi.fn(), begin: vi.fn(), adopt: vi.fn(), record: vi.fn(), reject: vi.fn(),
+  readSession: vi.fn(), start: vi.fn(), drop: vi.fn(), adoptLegacy: vi.fn(), track: vi.fn(),
   confirm: vi.fn(), verify: vi.fn(), clear: vi.fn(), restore: vi.fn(), lock: vi.fn(),
+  phase: 'idle', txReceipt: null as null | { transactionHash: Hex },
   saved: new Map<string, ShopWriteSession>(), client: { getBlock: vi.fn() },
 }))
 
 vi.mock('wagmi', () => ({ usePublicClient: () => runtime.client }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.account }) }))
 vi.mock('@/hooks/useSafeTx', () => ({
-  useSafeTx: () => ({ phase: 'idle', busy: false, error: null, isSafe: runtime.safe, send: runtime.send, reset: runtime.reset }),
+  useSafeTx: () => ({ phase: runtime.phase, receipt: runtime.txReceipt, hash: runtime.txReceipt?.transactionHash ?? null, submissionHash: runtime.txReceipt ? HASH : null,
+    busy: false, error: null, notice: runtime.phase === 'submitted' ? 'Your earlier transaction hasn’t confirmed yet. Check your wallet.' : null, held: null,
+    isSafe: runtime.safe, send: runtime.send, reset: runtime.reset, track: runtime.track }),
   txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,
 }))
 vi.mock('@/lib/viewAs', () => ({ assertNoViewAs: runtime.viewAs }))
-vi.mock('@/lib/safe-connector', () => ({ waitForSafeExecutionHash: runtime.waitSafe }))
+vi.mock('@/lib/write-hold', () => ({ adoptLegacyWrite: runtime.adoptLegacy }))
 vi.mock('@/lib/project-shop-write', () => ({
   readProjectShopWriteState: runtime.read,
   prepareProjectShopWrite: runtime.prepare,
   reverifyProjectShopWrite: runtime.reverify,
   projectShopWriteRequest: (plan: PreparedProjectShopWrite, index: number) => plan.requests[index],
 }))
-vi.mock('@/lib/project-shop-session', () => ({
+vi.mock('@/lib/project-shop-session', async importOriginal => ({
+  shopStepIntent: (await importOriginal<typeof import('@/lib/project-shop-session')>()).shopStepIntent,
+  shopPendingHold: (captured: ShopWriteSession) => captured.pending ? { step: captured.completed.length, input: { chainId: 8453, account: captured.plan.snapshot.account, safe: captured.pending.safe, namespace: 'intent:shop-step:fixture', call: { to: HOOK, data: '0x', value: 0n } }, evidence: { submittedAt: captured.pending.startedAt } } : null,
   shopWriteSessionKey: (chainId: number, projectId: bigint) => `${chainId}:${projectId}`,
   readShopWriteSession: runtime.readSession, startShopWriteSession: runtime.start,
-  adoptShopWriteProposal: runtime.adopt, beginShopWriteSubmission: runtime.begin, recordShopWriteHash: runtime.record,
-  rejectShopWriteSubmission: runtime.reject, confirmShopWriteExecution: runtime.confirm,
+  dropShopWritePending: runtime.drop, confirmShopWriteStep: runtime.confirm,
   verifyShopWriteProgress: runtime.verify, clearShopWriteSession: runtime.clear, withShopWriteLock: runtime.lock,
   restoreShopWritePermissions: runtime.restore,
   shopWriteRequestIndices: (captured: ShopWriteSession) => captured.restoring ? [0, 2] : captured.plan.requests.map((_request, index) => index),
@@ -119,18 +123,13 @@ beforeEach(() => {
   runtime.client.getBlock.mockReset().mockResolvedValue({ number: 110n })
   runtime.readSession.mockReset().mockImplementation((_storage, key) => runtime.saved.get(key) ?? null)
   runtime.start.mockReset().mockImplementation((_storage, key, prepared) => store(key, session(prepared)))
-  runtime.begin.mockReset().mockImplementation((_storage, key, captured, options) => store(key, {
-    ...captured, pending: { afterBlock: options.afterBlock.toString(), safe: options.safe, startedAt: Date.now() },
-  }))
-  runtime.adopt.mockReset().mockImplementation(async (_client, _storage, key, captured, proposal) => store(key, {
-    ...captured, pending: { afterBlock: captured.plan.snapshot.blockNumber.toString(), safe: true, startedAt: Date.now(), hash: proposal.proposalHash },
-  }))
-  runtime.record.mockReset().mockImplementation((_storage, key, captured, hash) => store(key, { ...captured, pending: { ...captured.pending, hash } }))
-  runtime.reject.mockReset().mockImplementation((_storage, key, captured) => { const { pending: _pending, ...next } = captured; return store(key, next) })
-  runtime.confirm.mockReset().mockImplementation(async (_client: PublicClient, _storage: ShopWriteStorage, key: string, captured: ShopWriteSession, executionHash: Hex) => {
-    if (runtime.receipt === 'pending') throw new Error('Transaction receipt is not available yet')
-    const { pending, ...previous } = captured
-    const next = runtime.receipt === 'reverted' ? previous : { ...previous, completed: [...previous.completed, { submission: pending!, executionHash }] }
+  runtime.drop.mockReset().mockImplementation((_storage, key, captured) => { const { pending: _pending, ...next } = captured; return store(key, next) })
+  runtime.adoptLegacy.mockReset().mockResolvedValue({ adopted: true, state: { status: 'held-no-hash' } })
+  runtime.track.mockReset().mockResolvedValue(undefined)
+  runtime.phase = 'idle'; runtime.txReceipt = null
+  runtime.confirm.mockReset().mockImplementation(async (_client: PublicClient, _storage: ShopWriteStorage, key: string, captured: ShopWriteSession, submission: { safe: boolean; hash?: Hex; afterBlock: bigint }, executionHash: Hex) => {
+    const saved = { safe: submission.safe, afterBlock: submission.afterBlock.toString(), startedAt: Date.now(), ...(submission.hash ? { hash: submission.hash } : {}) }
+    const next = runtime.receipt === 'reverted' ? captured : { ...captured, completed: [...captured.completed, { submission: saved, executionHash }] }
     store(key, next)
     runtime.client.getBlock.mockResolvedValue({ number: 112n })
     return { session: next, status: runtime.receipt }
@@ -139,15 +138,16 @@ beforeEach(() => {
   runtime.clear.mockReset().mockImplementation((_storage, key) => runtime.saved.delete(key))
   runtime.restore.mockReset().mockImplementation((_storage, key, captured) => store(key, { ...captured, restoring: true }))
   runtime.lock.mockReset().mockImplementation(async (_key, task) => task())
+  // The SDK's hold settles the step on its receipt when the chain has one: the phase turns success.
   runtime.send.mockReset().mockImplementation(async (request: TxRequest, options: TxSendOptions) => {
     await options.reverify?.(request)
-    await options.durableRecovery!.reserve()
-    expect(runtime.saved.get(KEY)?.pending).toMatchObject({ safe: runtime.safe })
-    await options.durableRecovery!.submitted(HASH, runtime.safe)
-    expect(runtime.saved.get(KEY)?.pending?.hash).toBe(HASH)
+    await options.beforeWrite?.()
+    expect(options.recoveryNamespace).toMatch(/^intent:shop-step:/)
+    if (runtime.receipt !== 'pending') { runtime.phase = 'success'; runtime.txReceipt = { transactionHash: EXECUTION } }
+    else runtime.phase = 'pending'
     return HASH
   })
-  runtime.reset.mockReset()
+  runtime.reset.mockReset().mockImplementation(() => { runtime.phase = 'idle'; runtime.txReceipt = null })
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 1 })
   vi.stubGlobal('CSS', { escape: (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, '\\$&') })
   HTMLElement.prototype.scrollIntoView = vi.fn()
@@ -200,22 +200,6 @@ async function reviewNext() {
 }
 
 describe('live project shop management', () => {
-  it('adopts a queued proposal into recovery and keeps the next creation step locked', async () => {
-    await draft()
-    runtime.safe = true
-    runtime.send.mockImplementation(async (request: TxRequest, options: TxSendOptions) => {
-      await options.onExistingProposal?.({ proposalHash: HASH, call: { to: request.address, data: encodeFunctionData(request), value: request.value ?? 0n } })
-      await options.durableRecovery!.submitted(HASH, true)
-      return HASH
-    })
-    await reviewNext()
-    await settled(() => expect(runtime.saved.get(KEY)?.pending).toMatchObject({ safe: true, hash: HASH }))
-    expect(runtime.adopt).toHaveBeenCalledOnce()
-    expect(runtime.begin).not.toHaveBeenCalled()
-    expect(runtime.saved.get(KEY)?.completed).toEqual([])
-    expect(findButton('Review transaction')).toBeUndefined()
-    expect(runtime.send).toHaveBeenCalledOnce()
-  })
   it('reviews the first items, executes every exact creation step, and only finishes after restoration is confirmed', async () => {
     await draft()
     const prepared: PreparedProjectShopWrite = await runtime.prepare.mock.results[0].value
@@ -245,7 +229,7 @@ describe('live project shop management', () => {
     expect(host.textContent).not.toContain('grant step')
     await reviewNext()
     expect(runtime.send.mock.calls[0][0]).toMatchObject({ address: HOOK, args: [7n, 0n] })
-    expect(runtime.saved.get(KEY)?.pending?.hash).toBe(HASH)
+    expect(runtime.saved.get(KEY)?.completed).toHaveLength(0)
     expect(findButton('Done')).toBeUndefined()
   })
 
@@ -313,54 +297,29 @@ describe('live project shop management', () => {
     expect(runtime.send).not.toHaveBeenCalled()
   })
 
-  it('preserves an uncertain wallet submission across phase changes and permits only explicit execution recovery', async () => {
-    existing()
-    runtime.send.mockImplementation(async (request: TxRequest, options: TxSendOptions) => {
-      await options.reverify?.(request); await options.durableRecovery!.reserve()
-      throw new Error('Wallet connection closed before returning a hash')
-    })
-    await draft(); await reviewNext()
-    await settled(() => expect(host.textContent).toContain('Wallet connection closed before returning a hash'))
-    expect(runtime.saved.get(KEY)?.pending).toMatchObject({ afterBlock: '110' })
-    expect(runtime.saved.get(KEY)?.pending?.hash).toBeUndefined()
-    expect(findButton('Review transaction')).toBeUndefined()
-    expect(findButton('Cancel update')).toBeUndefined()
-    expect(findButton('Done')).toBeUndefined()
-    expect(runtime.reject).not.toHaveBeenCalled()
-
-    await render(9n)
-    expect(findButton('Resume shop update')).toBeUndefined()
-    await render(7n)
-    await settled(() => expect(findButton('Resume shop update')).toBeDefined())
-    await click('Resume shop update')
-    expect(findButton('Review transaction')).toBeUndefined()
-    await input(field('Execution transaction hash'), EXECUTION)
-    await click('Check execution')
-    expect(host.textContent).toContain('Transaction receipt is not available yet')
-    expect(runtime.saved.get(KEY)?.completed).toHaveLength(0)
-    runtime.receipt = 'confirmed'
-    await click('Check execution')
-    await settled(() => expect(findButton('Done')).toBeDefined())
-    expect(runtime.saved.get(KEY)?.completed[0].executionHash).toBe(EXECUTION)
-    expect(runtime.send).toHaveBeenCalledOnce()
+  it('adopts a step the journal saved as pending before SDK holds into its hold, and drops it from the journal', async () => {
+    const prepared = plan(snapshot({ mode: 'existing' }), ['adjust'])
+    runtime.saved.set(KEY, session(prepared, { pending: { safe: true, afterBlock: '110', startedAt: 1_800_000_000_000, hash: HASH } }))
+    await render()
+    await settled(() => expect(runtime.track).toHaveBeenCalledOnce())
+    expect(runtime.adoptLegacy).toHaveBeenCalledWith(expect.objectContaining({ account: WALLET, safe: true }), { submittedAt: 1_800_000_000_000 }, runtime.client)
+    expect(runtime.saved.get(KEY)?.pending).toBeUndefined()
+    expect(runtime.track).toHaveBeenCalledWith(prepared.requests[0], expect.objectContaining({ reviewedAccount: WALLET, safe: true }))
   })
 
-  it('keeps a Safe proposal pending until its onchain execution is verified', async () => {
-    const prepared = plan(snapshot({ mode: 'existing' }), ['adjust'])
-    runtime.saved.set(KEY, session(prepared, { pending: { safe: true, afterBlock: '110', startedAt: Date.now(), hash: HASH } }))
+  it('shows a held step with the shared line, and records it only once the hold settles its execution', async () => {
+    existing()
+    runtime.send.mockImplementation(async (request: TxRequest, options: TxSendOptions) => { await options.reverify?.(request); runtime.phase = 'submitted'; return null })
+    await draft(); await reviewNext()
     await render()
-    await settled(() => expect(runtime.waitSafe).toHaveBeenCalledWith(8453, HASH, expect.objectContaining({ signal: expect.any(AbortSignal) })))
-    await click('Resume shop update')
-    expect(host.textContent).toContain('Proposed to Safe. Execution is required before the next step.')
-    expect(findButton('Done')).toBeUndefined()
+    await settled(() => expect(host.textContent).toContain('hasn’t confirmed yet. Check your wallet.'))
     expect(runtime.confirm).not.toHaveBeenCalled()
-    expect(host.querySelector(`a[href*="${HASH}"]`)).toBeNull()
-    runtime.receipt = 'confirmed'
-    await input(field('Execution transaction hash'), EXECUTION)
-    await click('Check execution')
+    expect(findButton('Cancel update')).toBeUndefined()
+    expect(findButton('Done')).toBeUndefined()
+    runtime.receipt = 'confirmed'; runtime.phase = 'success'; runtime.txReceipt = { transactionHash: EXECUTION }
+    await render()
     await settled(() => expect(host.textContent).toContain('Your inventory changes are confirmed onchain.'))
-    expect(runtime.confirm).toHaveBeenCalledWith(runtime.client, localStorage, KEY, expect.objectContaining({ pending: expect.objectContaining({ hash: HASH, safe: true }) }), EXECUTION)
-    expect(host.querySelector(`a[href*="${EXECUTION}"]`)).not.toBeNull()
+    expect(runtime.confirm).toHaveBeenCalledWith(runtime.client, localStorage, KEY, expect.anything(), expect.objectContaining({ safe: false, hash: HASH }), EXECUTION)
   })
 
   it('blocks the next reviewed step if the connected account changes', async () => {
@@ -377,8 +336,7 @@ describe('live project shop management', () => {
     runtime.reverify.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('Shop permissions changed since review'))
     await reviewNext()
     expect(host.textContent).toContain('Shop permissions changed since review')
-    expect(runtime.begin).not.toHaveBeenCalled()
-    expect(runtime.saved.get(KEY)?.pending).toBeUndefined()
+    expect(runtime.saved.get(KEY)?.completed).toHaveLength(0)
     expect(findButton('Done')).toBeUndefined()
   })
 

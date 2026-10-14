@@ -1,8 +1,8 @@
 import { type Address, type Hex } from 'viem'
-import { assertSafeProposalCall, type ExistingSafeProposal } from './sticky-session'
+import { writeIntentKey, type ReviewedWriteRecoveryInput } from '@bananapus/nana-sdk-core/review'
+import { callOf, holds, type LegacyWriteEvidence } from './write-hold'
 import type { LaunchRelayrJournal } from './fund-launch-relayr'
-import { buildFundLaunch, type FundLaunchInput } from './fund-contracts'
-import { withPrewalletReservation } from './prewallet-reservation'
+import { buildFundLaunch, type FundLaunchInput, type FundTransaction } from './fund-contracts'
 
 export const FUND_LAUNCH_KEY = 'homerun:fund-launch:v1'
 export type LaunchStatus = {
@@ -16,7 +16,7 @@ export type LaunchStatus = {
   /** The account's next nonce and the block it was read at, saved before the wallet opened so the chain can place a lost reply. */
   nonce?: string
   fromBlock?: string
-  /** Recorded by the wallet submission callback or authenticated Safe adoption. */
+  /** Recorded when the wallet returned the hash. */
   walletReturned?: true
   safe?: boolean
   /** Actual receipt hash, kept separate from a pending Safe proposal identifier. */
@@ -136,15 +136,18 @@ function frozenInput(session: FundLaunchSession): string {
 }
 
 const transitions: Record<LaunchStatus['phase'], readonly LaunchStatus['phase'][]> = {
-  ready: ['ready', 'signing'],
+  // A wallet-returned hash records a direct launch as pending; the SDK's hold owns the write until then.
+  ready: ['ready', 'signing', 'pending'],
   authorized: ['authorized', 'signing', 'confirmed', 'reverted', 'expired', 'unresolved'],
   unresolved: ['unresolved', 'signing', 'confirmed', 'reverted', 'expired'],
   // Until a chain is confirmed, what its request is found to have done can change as the finalized chain moves on.
   expired: ['expired', 'signing', 'unresolved', 'reverted'],
   signing: ['signing', 'pending', 'confirmed', 'reverted', 'authorized', 'unresolved', 'expired'],
-  pending: ['pending', 'confirmed', 'reverted'],
+  // The user's exit from a held write (one the chain never placed) reopens it.
+  pending: ['pending', 'confirmed', 'reverted', 'ready'],
   confirmed: ['confirmed'],
-  reverted: ['reverted', 'signing', 'unresolved', 'expired'],
+  // A failure without the wallet's hash reopens once its attempt is adopted into the SDK's hold.
+  reverted: ['reverted', 'signing', 'pending', 'ready', 'unresolved', 'expired'],
 }
 
 function assertTransition(previous: LaunchStatus, next: LaunchStatus, cancelled = false): void {
@@ -154,20 +157,18 @@ function assertTransition(previous: LaunchStatus, next: LaunchStatus, cancelled 
   if (previous.phase === 'pending' && next.phase === 'pending' && (next.hash !== previous.hash || next.safe !== previous.safe)) throw new Error('Verify the pending transaction before submitting or recording another.')
 }
 
-function persistLaunch(session: FundLaunchSession, options: { cancelledChainId?: number; adoption?: { chainId: number; previous: string } } = {}): FundLaunchSession {
+function persistLaunch(session: FundLaunchSession, options: { cancelledChainId?: number } = {}): FundLaunchSession {
   const validated = decodeLaunchSession(encodeLaunchSession(session))
   const existing = localStorage.getItem(FUND_LAUNCH_KEY)
-  if (options.adoption && !existing) throw new Error('The saved launch is missing. Restore its deployment record before adopting a proposal.')
   if (existing) {
     const previous = decodeLaunchSession(existing)
-    if (options.adoption && encodeLaunchSession(previous) !== options.adoption.previous) throw new Error('Launch progress changed elsewhere. Reload the saved record before adopting its proposal.')
     if (previous.input.salt !== validated.input.salt) throw new Error('Another FUND launch is already saved. Finish that launch before preparing another.')
     if ((previous.transport ?? 'direct') !== (validated.transport ?? 'direct') && !(validated.transport === 'relayr' && !previous.relayr && Object.values(previous.statuses).every(status => status.phase === 'ready' && !status.multisigSetup))) throw new Error('A submitted launch cannot change transport.')
     if (previous.intentId && previous.intentId !== validated.intentId) throw new Error('A published project cannot be replaced.')
     if (previous.relayr?.published && !validated.relayr) throw new Error('Published authorizations must be retained for recovery.')
     if (frozenInput(previous) !== frozenInput(validated)) throw new Error('A saved launch plan is immutable. Finish it before changing deployment parameters.')
     for (const chainId of previous.input.chainIds) {
-      if (options.adoption?.chainId !== chainId) assertTransition(previous.statuses[chainId], validated.statuses[chainId], options.cancelledChainId === chainId)
+      assertTransition(previous.statuses[chainId], validated.statuses[chainId], options.cancelledChainId === chainId)
       if (previous.input.creationFees[chainId] !== validated.input.creationFees[chainId] && !['ready', 'reverted'].includes(previous.statuses[chainId].phase) && !(validated.transport === 'relayr' && validated.relayr?.phase === 'signing')) throw new Error('A submitted or unresolved deployment fee cannot change.')
     }
   }
@@ -179,18 +180,24 @@ function persistLaunch(session: FundLaunchSession, options: { cancelledChainId?:
 export function saveLaunch(session: FundLaunchSession, options: { cancelledChainId?: number } = {}): FundLaunchSession {
   return persistLaunch(session, { cancelledChainId: options.cancelledChainId })
 }
-/** Only an exact already-authorized call can advance a ready/reverted immutable plan directly to pending. */
-export function adoptFundLaunchProposal(salt: Hex, chainId: number, proposal: ExistingSafeProposal): FundLaunchSession {
-  const session = requireLaunch(salt)
-  const previous = session.statuses[chainId]
-  if ((session.transport ?? 'direct') !== 'direct' || !previous || !['ready', 'reverted'].includes(previous.phase))
-    throw new Error('Only an unsubmitted or reverted direct deployment can adopt an existing Safe proposal.')
-  const request = buildFundLaunch(session.input).requests.find(item => item.chainId === chainId)
-  if (!request) throw new Error('This chain is not part of the saved launch.')
-  assertSafeProposalCall(request, proposal)
-  const status: LaunchStatus = { phase: 'pending', safe: true, hash: proposal.proposalHash, walletReturned: true, attemptId: globalThis.crypto.randomUUID(),
-    ...(previous.multisigSetup ? { multisigSetup: previous.multisigSetup } : {}) }
-  return persistLaunch({ ...session, statuses: { ...session.statuses, [chainId]: status } }, { adoption: { chainId, previous: encodeLaunchSession(session) } })
+// TODO(SDK 2.38): switch to the SDK's launchIntent.
+/** A direct launch's write on each chain is held by the launch it belongs to. */
+export function launchIntent(salt: Hex): string {
+  return writeIntentKey('fund-launch', { launch: salt })
+}
+/** The launch's multisig setup on each chain is held by the launch too. */
+export function multisigSetupIntent(salt: Hex): string {
+  return writeIntentKey('fund-multisigs', { launch: salt })
+}
+
+/** A write a launch record saved before SDK holds, as the hold it is adopted into: its hash, or the nonce read before the wallet opened. */
+export function launchHold(namespace: string, sender: Address, request: FundTransaction, saved: { hash?: Hex; safe?: boolean; nonce?: string; fromBlock?: string }): { input: ReviewedWriteRecoveryInput; evidence: LegacyWriteEvidence } {
+  const safe = saved.safe ?? false
+  return {
+    input: { chainId: request.chainId, account: sender, safe, namespace, call: callOf(request) },
+    evidence: saved.hash ? safe ? { safe: { safeTxHash: saved.hash } } : { hash: saved.hash }
+      : { ...(saved.nonce !== undefined ? { nonce: BigInt(saved.nonce) } : {}), ...(saved.fromBlock !== undefined ? { fromBlock: BigInt(saved.fromBlock) } : {}) },
+  }
 }
 
 function requireLaunch(salt: Hex): FundLaunchSession {
@@ -202,7 +209,7 @@ function requireLaunch(salt: Hex): FundLaunchSession {
 }
 
 /** Merge one chain's result into the latest record, not a stale React closure. */
-export function updateLaunchStatus(salt: Hex, chainId: number, status: LaunchStatus, expectedPhase?: LaunchStatus['phase'], expectedStatus?: LaunchStatus, prewallet = false): FundLaunchSession {
+export function updateLaunchStatus(salt: Hex, chainId: number, status: LaunchStatus, expectedPhase?: LaunchStatus['phase'], expectedStatus?: LaunchStatus): FundLaunchSession {
   const session = requireLaunch(salt)
   if (!session.input.chainIds.includes(chainId)) throw new Error('This chain is not part of the saved launch.')
   if (expectedPhase && session.statuses[chainId].phase !== expectedPhase) throw new Error('This deployment is already being handled. Reload its progress before continuing.')
@@ -211,13 +218,7 @@ export function updateLaunchStatus(salt: Hex, chainId: number, status: LaunchSta
     throw new Error('This deployment changed in another tab. Keep its saved transaction and reload before continuing.')
   }
   const next = { ...session, statuses: { ...session.statuses, [chainId]: status } }
-  const write = () => saveLaunch(next, { cancelledChainId: expectedPhase === 'signing' && status.phase === 'ready' ? chainId : undefined })
-  if (!prewallet) return write()
-  const previous = session.statuses[chainId]
-  const reservingLaunch = status.phase === 'signing' && !status.hash && !!status.attemptId && status.attemptId !== previous.attemptId
-  const reservingSetup = !previous.multisigSetup && !!status.multisigSetup?.attemptId && !status.multisigSetup.hash
-  if (!reservingLaunch && !reservingSetup) throw new Error('Only a new pre-wallet launch or setup can reserve recovery.')
-  return withPrewalletReservation(localStorage, FUND_LAUNCH_KEY, localStorage.getItem(FUND_LAUNCH_KEY), encodeLaunchSession(next), write)
+  return saveLaunch(next, { cancelledChainId: expectedPhase === 'signing' && status.phase === 'ready' ? chainId : undefined })
 }
 
 export function refreshLaunchCreationFee(salt: Hex, chainId: number, creationFee: bigint): FundLaunchSession {
@@ -245,10 +246,19 @@ export function sameSender(actual: Address | undefined, expected: Address): void
   if (actual?.toLowerCase() !== expected.toLowerCase()) throw new Error('Reconnect the wallet that prepared this launch. Every linked deployment must use the same sender.')
 }
 
+export const LAUNCH_HELD_LINE = 'Finish or exit the pending launch first.'
+
+/** Whether the SDK holds a deployment or multisig setup of this launch on any of its chains (from storage, either wallet kind). */
+export function launchHeldWrite(session: FundLaunchSession): boolean {
+  const placeholder = { to: '0x0000000000000000000000000000000000000000' as Address, data: '0x' as Hex }
+  return session.input.chainIds.some(chainId => [launchIntent(session.input.salt), multisigSetupIntent(session.input.salt)].some(namespace =>
+    [false, true].some(safe => holds.open({ chainId, account: session.input.sender, safe, namespace, call: placeholder }).peek().status !== 'clear')))
+}
+
 /** Only a plan that has never acquired an authorization can follow edited networks. */
 export function discardUnsignedLaunch(salt: Hex): boolean {
   const session = requireLaunch(salt)
-  if (session.intentId) return false
+  if (session.intentId || launchHeldWrite(session)) return false
   if (!Object.values(session.statuses).every(status => status.phase === 'ready' && !status.multisigSetup)
     || session.relayr?.signed.length || session.relayr?.superseded?.length
     || session.relayr?.published || session.relayr?.quote || session.relayr?.paymentHash
@@ -279,6 +289,8 @@ export async function cancelUnsubmittedLaunch(salt: Hex, requestsDead?: (session
     await navigator.locks.request(`homerun:fund-launch:${salt}`, { ifAvailable: true }, async directLock => {
       if (!directLock) throw new Error('Finish or close the active wallet request before cancelling.')
       const session = requireLaunch(salt)
+      // A held deployment or setup keeps its launch, and its exit, until it settles or the user takes that exit.
+      if (launchHeldWrite(session)) throw new Error(LAUNCH_HELD_LINE)
       if (!canCancelLaunch(session)) throw new Error('This launch may already be submitted. Resume it to check its execution before starting another.')
       if (session.relayr?.published && !(await requestsDead?.(session))) throw new Error('A request of this launch can still run. Resume it to check it before cancelling.')
       localStorage.setItem(`${FUND_LAUNCH_KEY}:cancelled:${salt}`, encodeLaunchSession(session))

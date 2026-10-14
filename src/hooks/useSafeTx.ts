@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from '
 import { getAccount } from '@wagmi/core'
 import {
   BaseError,
-  encodeFunctionData,
   isHash,
   type Abi,
   type Address,
@@ -26,7 +25,7 @@ import {
   WriteHeldError, WriteHoldBusyError, WriteHoldNonceError, WriteHoldStaleReviewError,
   type ReviewedWriteRecoveryRecord, type WriteHeldState, type WriteHoldClient, type WriteHoldGate, type WriteHoldHandle, type WriteHoldState,
 } from '@bananapus/nana-sdk-core/review'
-import { holds } from '@/lib/write-hold'
+import { callOf, holds } from '@/lib/write-hold'
 import { hasSafeService } from '@bananapus/nana-sdk-core/safe-service'
 import { getViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import {
@@ -109,12 +108,6 @@ export type TxSendOptions = {
    * attempt with another amount then holds a new one (a project's updates, say).
    */
   recoveryNamespace?: string
-  /** An existing domain journal owns this write, including its returned hash. */
-  durableRecovery?: {
-    reserve: () => unknown | Promise<unknown>
-    releaseUnsubmitted: () => unknown | Promise<unknown>
-    submitted: (hash: Hex, safe: boolean) => unknown | Promise<unknown>
-  }
   /**
    * The exact request was already rendered in a parent confirmation surface.
    * This skips only the second app-owned review; account checks, revalidation,
@@ -150,19 +143,6 @@ export function txPhaseLabel(
   if (phase === 'signing') return labels.confirm ?? 'Confirm in your wallet…'
   if (phase === 'pending') return labels.pending
   return labels.idle
-}
-
-/** The call a contract write request makes. */
-function callOf(request: Pick<TxRequest, 'address' | 'abi' | 'functionName' | 'args' | 'value'>): SafeAppCall {
-  return {
-    to: request.address,
-    data: encodeFunctionData({
-      abi: request.abi,
-      functionName: request.functionName,
-      args: request.args as unknown[],
-    }),
-    value: request.value,
-  }
 }
 
 /** A friendly one-line message out of a viem/wagmi error. */
@@ -509,6 +489,8 @@ export function useSafeTx(chainId: number) {
   const exiting = useRef(false)
   /** A write with a durable domain journal has no generic hold; its wallet may still have lost the reply. */
   const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null)
+  /** The receipt of a write the hold settled where this flow didn't follow it (adopted, or another tab's). */
+  const [settledReceipt, setSettledReceipt] = useState<TransactionReceipt | null>(null)
   useEffect(() => {
     mounted.current = true
     return () => { mounted.current = false; generation.current += 1 }
@@ -643,6 +625,11 @@ export function useSafeTx(chainId: number) {
         // This flow's call settled on evidence it didn't follow itself: only its verified result shows.
         if ('hash' in ended) {
           tracked.current = ended.hash
+          // Its verified receipt reaches the flow's own settlement, as a followed send's does.
+          const settledHash = ended.hash
+          void client.getTransactionReceipt({ hash: settledHash }).then(found => {
+            if (mounted.current && tracked.current === settledHash && found) setSettledReceipt(found as TransactionReceipt)
+          }, () => undefined)
           if (ended.result === 'success') setPhase('success')
           else { setError(WRITE_HOLD_REVERTED_LINE); setPhase('error') }
         } else { setError(SAFE_PROPOSAL_EXPIRED); setPhase('error') }
@@ -753,14 +740,14 @@ export function useSafeTx(chainId: number) {
       setHold(null)
       setHeld(null)
       setRecoveryNotice(null)
+      setSettledReceipt(null)
       // Read once: the review, the sent gas and the proposal tracking must all
       // agree on whether a Safe proposes this call.
       const viaSafe = isSafeConnection(wagmiConfig)
       const account = options.reviewedAccount
       const connectorUid = getAccount(wagmiConfig).connector?.uid
       // Where the browser refuses to store a hold, the tab's memory holds it, and the review says so.
-      const reviewNotice = [options.reviewNotice, options.durableRecovery ? null : holds.reviewLine()].filter(Boolean).join('\n\n') || undefined
-      let walletUncertain = false
+      const reviewNotice = [options.reviewNotice, holds.reviewLine()].filter(Boolean).join('\n\n') || undefined
       let current: WriteHoldHandle | undefined
       try {
         /** The exact call simulated and sent, which a Safe execution must run. */
@@ -774,18 +761,17 @@ export function useSafeTx(chainId: number) {
             throw new Error('The reviewed transaction changed. Review it again.')
           }
         }
-        // A domain journal owns its write's returned hash; every other write is held by the SDK.
-        current = options.durableRecovery ? undefined : holds.open({
+        // Every write is held by the SDK.
+        const hold = holds.open({
           ...input, ...(options.recoveryNamespace ? { namespace: options.recoveryNamespace } : {}),
         })
-        if (current) {
-          holdAt.current = at
-          setHold(current)
-          // The call's last write settled where this flow didn't see it (another tab, or before a
-          // reload): a settled write is finished, so its result is only a notice, and this send goes out.
-          const before = current.peek()
-          if (before.status === 'clear' && before.settled && 'hash' in before.settled) setSettledNotice(settledLine(before.settled))
-        }
+        current = hold
+        holdAt.current = at
+        setHold(hold)
+        // The call's last write settled where this flow didn't see it (another tab, or before a
+        // reload): a settled write is finished, so its result is only a notice, and this send goes out.
+        const before = hold.peek()
+        if (before.status === 'clear' && before.settled && 'hash' in before.settled) setSettledNotice(settledLine(before.settled))
         const execute = async (gate?: WriteHoldGate) => {
           assertCurrent()
           if (viaSafe) {
@@ -813,7 +799,6 @@ export function useSafeTx(chainId: number) {
               tracked.current = existing.proposalHash
               await gate?.beforeSend(existing.call)
               gate?.afterSubmit(existing.proposalHash)
-              await options.durableRecovery?.submitted(existing.proposalHash, true)
               assertCurrent()
               inFlightRef.current = false
               setShownKey(key)
@@ -864,26 +849,20 @@ export function useSafeTx(chainId: number) {
               await options.beforeWrite?.()
               assertCurrent()
               assertReviewedRequest()
-              await options.durableRecovery?.reserve()
               await gate?.beforeSend()
             },
             onBeforeWriteAborted: async () => {
               gate?.onRejected()
-              await options.durableRecovery?.releaseUnsubmitted()
               await options.onBeforeWriteAborted?.()
             },
             onWriteRejected: async () => {
               gate?.onRejected()
-              await options.durableRecovery?.releaseUnsubmitted()
               await options.onWriteRejected?.()
             },
-            onWriteUncertain: () => { walletUncertain = true },
             onWriteSubmitted: async (submittedHash: Hex) => {
-              walletUncertain = true
               if (!isHash(submittedHash)) throw new Error(SAFE_REPLY_UNREADABLE)
               tracked.current = submittedHash
               gate?.afterSubmit(submittedHash)
-              await options.durableRecovery?.submitted(submittedHash, viaSafe)
             },
             // Simulation is the safety gate: the exact reviewed call, args, and
             // value must succeed before a signature is requested. Only the
@@ -939,7 +918,7 @@ export function useSafeTx(chainId: number) {
           return txHash
         }
         sending.current = true
-        return current ? await current.send(publicClient, execute) : await execute()
+        return await hold.send(publicClient, execute)
       } catch (e) {
         sending.current = false
         const submitted = e instanceof SubmittedContractWriteError && typeof e.hash === 'string' && isHash(e.hash) ? e : undefined
@@ -984,18 +963,6 @@ export function useSafeTx(chainId: number) {
             apply(now, publicClient)
             return now.record.hash ?? null
           }
-        } else if (submitted) {
-          const hash = submitted.hash as Hex
-          tracked.current = hash
-          if (viaSafe) setShownKey(recordProposal({ chainId: request.chainId, safe: account,
-            call: callOf(request), proposalHash: hash }, publicClient, true))
-          else setHash(hash)
-          setPhase('pending')
-          return hash
-        } else if (walletUncertain) {
-          setRecoveryNotice(writeHeldMessage())
-          setPhase('submitted')
-          return null
         }
         if (e instanceof TransactionReviewCancelledError) {
           setPhase('idle')
@@ -1010,6 +977,40 @@ export function useSafeTx(chainId: number) {
     },
     [isConnected, isCenterWallet, publicClient, switchChainAsync, writeContractAsync, apply],
   )
+
+  /**
+   * Show the hold of a write this flow didn't send in this page: one sent before a reload, or a
+   * journal record adopted into its hold. Nothing is sent; the hold's state is shown with its line
+   * and exit, a hash is followed, and a send of the same write is refused while it holds.
+   */
+  /**
+   * Show a hold without sending: an adopted journal write, or (with `heldOnly`) whatever the
+   * intent holds now, found from its namespace alone. Returns the hold's state.
+   */
+  const track = useCallback(async (request: TxRequest | { chainId: number; call: { to: Address; data: Hex; value?: bigint } }, options: Pick<TxSendOptions, 'reviewedAccount' | 'recoveryNamespace'> & { safe?: boolean; heldOnly?: boolean }) => {
+    if (!publicClient || inFlightRef.current) return null
+    const at = generation.current
+    // Discovery asks for either kind of wallet when none is named: a Safe's hold is its own.
+    const safes = options.heldOnly && options.safe === undefined ? [false, true] : [options.safe ?? isSafeConnection(wagmiConfig)]
+    let current!: WriteHoldHandle
+    let state: WriteHoldState | null = null
+    for (const safe of safes) {
+      current = holds.open({
+        chainId: request.chainId, account: options.reviewedAccount, safe,
+        call: 'call' in request ? request.call : callOf(request),
+        ...(options.recoveryNamespace ? { namespace: options.recoveryNamespace } : {}),
+      })
+      state = await current.state(publicClient).catch(() => null)
+      if (state?.status !== 'clear') break
+    }
+    // Found nothing held: the flow stays as it is.
+    if (options.heldOnly && state?.status === 'clear') return state
+    if (generation.current !== at) return state
+    holdAt.current = at
+    setHold(current)
+    if (state) apply(state, publicClient)
+    return state
+  }, [publicClient, apply])
 
   /**
    * Clear this flow's state, as a new review opens. A Safe proposal stays in
@@ -1030,6 +1031,7 @@ export function useSafeTx(chainId: number) {
     setHash(null)
     setShownKey(null)
     setRecoveryNotice(null)
+    setSettledReceipt(null)
     setHold(null)
     setHeld(null)
   }, [])
@@ -1068,7 +1070,7 @@ export function useSafeTx(chainId: number) {
     submissionHash: shownKey ? (proposal?.proposalHash ?? null) : hash,
     safeProposalHash: awaitingProposal,
     safeNonceGuidance: awaitingProposal ? SAFE_NONCE_GUIDANCE : null,
-    receipt: held ? null : shownKey ? (proposal?.receipt ?? null) : (receiptData ?? null),
+    receipt: held ? null : shownKey ? (proposal?.receipt ?? null) : (receiptData ?? settledReceipt ?? null),
     /** A write the chain has not placed, with the user's one exit; null otherwise. */
     held: held?.exit
       ? { line: held.line, warning: 'warning' in held && held.warning ? held.warning : writeExitMessage(held.record.call), label: WRITE_EXIT_LABEL, release }
@@ -1078,6 +1080,7 @@ export function useSafeTx(chainId: number) {
       ? proposal?.phase === 'unproven' || (proposal?.phase === 'awaiting' && !!proposal.message)
       : watchGaveUp),
     send,
+    track,
     reset,
     dismiss,
   }

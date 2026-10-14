@@ -4,9 +4,8 @@ import { decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodeFunct
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({ bendystraw: vi.fn() }))
 vi.mock('../src/lib/bendystraw', () => ({ bendystraw: mocks.bendystraw }))
-import { adoptPayerProposal, buildPayerTransaction, checkPayerFactory, decodePayerAttempt, getProjectPayerAddresses, payerAttemptIdentity, payerAttemptKey, persistPayerAttempt, verifyPayerReceipt, type PayerAttempt, type ProjectPayerRow } from '../src/lib/project-payers'
+import { buildPayerTransaction, checkPayerFactory, decodePayerAttempt, getProjectPayerAddresses, payerAttemptHold, payerIntent, verifyPayerReceipt, type PayerAttempt, type ProjectPayerRow } from '../src/lib/project-payers'
 import { safeExecutionLog } from './support/safe-logs'
-import { failReservationReadback } from './support/reservation-storage'
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111' as Address
 const PAYER = '0x2222222222222222222222222222222222222222' as Address
@@ -19,23 +18,6 @@ const safeAbi = parseAbi(['function execTransaction(address to,uint256 value,byt
 function attempt(): PayerAttempt {
   return { version: 1, settings: { chainId: 1, projectId: '7', beneficiary: zeroAddress, owner: zeroAddress, addToBalance: false, memo: 'Homerun' }, account: ACCOUNT, safe: false, phase: 'submitted', hash: HASH, afterBlock: '99' }
 }
-it.each([undefined, 'replacement'])('restores only its exact failed pre-wallet payer reservation (%s)', replacement => {
-  const values = new Map<string, string>()
-  const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value) }, removeItem: (key: string) => { values.delete(key) } }
-  const key = payerAttemptKey(1, 7n), previous = persistPayerAttempt(storage, 1, 7n, { ...attempt(), phase: 'reverted' }, null)
-  const next = { ...attempt(), id: crypto.randomUUID(), phase: 'signing' as const, hash: undefined }
-  expect(() => persistPayerAttempt(failReservationReadback(storage, key, { replacement }), 1, 7n, next, previous, true)).toThrow()
-  expect(storage.getItem(key)).toBe(replacement ?? previous)
-})
-it('never overwrites or clears a payer attempt replaced by another tab', () => {
-  const values = new Map<string, string>()
-  const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value) }, removeItem: (key: string) => { values.delete(key) } }
-  const original = persistPayerAttempt(storage, 1, 7n, attempt(), null)
-  const newer = persistPayerAttempt(storage, 1, 7n, { ...attempt(), afterBlock: '100' }, original)
-  expect(() => persistPayerAttempt(storage, 1, 7n, null, original)).toThrow(/changed in another tab/)
-  expect(() => persistPayerAttempt(storage, 1, 7n, attempt(), original)).toThrow(/changed in another tab/)
-  expect(storage.getItem(payerAttemptKey(1, 7n))).toBe(newer)
-})
 function event(name: string, values: Record<string, unknown>, address = JB_PROJECT_PAYER_DEPLOYER, abi = jbProjectPayerDeployerAbi as readonly unknown[]) {
   const item = getAbiItem({ abi: abi as readonly AbiEvent[], name }) as AbiEvent
   return { address, transactionHash: HASH, blockHash: BLOCK, blockNumber: 100n, transactionIndex: 0, removed: false, data: encodeAbiParameters(item.inputs.filter(input => !input.indexed), item.inputs.filter(input => !input.indexed).map(input => values[input.name!])), topics: encodeEventTopics({ abi: [item], eventName: name, args: values }) } as unknown as TransactionReceipt['logs'][number]
@@ -76,10 +58,14 @@ describe('stock project payer transaction and recovery', () => {
     const saved = { ...attempt(), safe: true, hash: PROPOSAL, executionHash: HASH }
     expect(decodePayerAttempt(JSON.stringify(saved), 1, 7n)).toEqual(saved)
   })
-  it('binds cached proof identity to every immutable attempt input, excluding its recorded outcome', () => {
-    const original = attempt(), identity = payerAttemptIdentity(original)
-    expect(payerAttemptIdentity({ ...original, phase: 'confirmed', payer: PAYER })).toBe(identity)
-    for (const change of [{ account: PAYER }, { safe: true }, { afterBlock: '100' }, { hash: PROPOSAL }, { executionHash: PROPOSAL }, { id: '11111111-1111-4111-8111-111111111111' }, { settings: { ...original.settings, memo: 'Other memo' } }, { settings: { ...original.settings, beneficiary: PAYER } }, { settings: { ...original.settings, owner: PAYER } }, { settings: { ...original.settings, addToBalance: true } }]) expect(payerAttemptIdentity({ ...original, ...change })).not.toBe(identity)
+  it('holds a deployment by the settings the user chose, and adopts a saved attempt with its own evidence', () => {
+    const original = attempt(), key = payerIntent(7n)
+    // Held by the project alone: any settings for it share the hold.
+    expect(payerAttemptHold({ ...original, settings: { ...original.settings, memo: 'Other memo', addToBalance: true } }).input.namespace).toBe(key)
+    expect(payerIntent(8n)).not.toBe(key)
+    expect(payerAttemptHold(original)).toMatchObject({ input: { chainId: 1, account: ACCOUNT, safe: false, namespace: key }, evidence: { hash: HASH } })
+    expect(payerAttemptHold({ ...original, safe: true, hash: PROPOSAL, executionHash: HASH }).evidence).toEqual({ safe: { safeTxHash: PROPOSAL } })
+    expect(payerAttemptHold({ ...original, phase: 'signing', hash: undefined }).evidence).toEqual({})
   })
   it.each([{ phase: 'unknown' }, { hash: '0x12' }, { account: zeroAddress }, { safe: 'false' }, { afterBlock: '-1' }, { afterBlock: undefined }, { phase: 'confirmed', payer: zeroAddress }, { settings: { ...attempt().settings, chainId: 10 } }, { settings: { ...attempt().settings, projectId: '8' } }])('rejects unsafe or foreign saved attempts %#', change => {
     expect(() => decodePayerAttempt(JSON.stringify({ ...attempt(), ...change }), 1, 7n)).toThrow()
@@ -231,22 +217,5 @@ describe('indexed payer address listing', () => {
     mocks.bendystraw.mockResolvedValue({ projectPayers: { totalCount: 2, items: [row] } })
     await expect(getProjectPayerAddresses(1, 7n)).rejects.toThrow('incomplete')
     await expect(getProjectPayerAddresses(1, BigInt(Number.MAX_SAFE_INTEGER) + 1n)).rejects.toThrow('project ID')
-  })
-})
-
-
-describe('existing payer Safe proposal adoption', () => {
-  it('creates historical recovery facts while retaining exact proposal proof', async () => {
-    const f = fixture(); safe(f)
-    const record = adoptPayerProposal({ ...attempt(), phase: 'signing', hash: undefined, afterBlock: '200' }, { proposalHash: PROPOSAL, call: { to: f.request.address, data: encodeFunctionData(f.request) } })
-    expect(record).toMatchObject({ phase: 'submitted', safe: true, afterBlock: '0', hash: PROPOSAL })
-    expect(record.settings).toEqual(attempt().settings)
-    await expect(verifyPayerReceipt(f.rpc, record, f.receipt)).resolves.toEqual({ status: 'confirmed', payer: PAYER })
-    await expect(verifyPayerReceipt(f.rpc, { ...record, hash: OTHER_PROPOSAL }, f.receipt)).rejects.toThrow()
-  })
-  it('refuses replacing pending recovery or changing the factory call', () => {
-    const f = fixture(), proposal = { proposalHash: PROPOSAL, call: { to: f.request.address, data: encodeFunctionData(f.request) } }
-    expect(() => adoptPayerProposal(attempt(), proposal)).toThrow('already recorded')
-    expect(() => adoptPayerProposal({ ...attempt(), phase: 'signing', hash: undefined }, { ...proposal, call: { ...proposal.call, to: ACCOUNT } })).toThrow('does not match')
   })
 })

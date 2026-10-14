@@ -30,17 +30,13 @@ import {
   readStickyProjectState,
   type StickyProjectState,
 } from "../src/lib/sticky-state";
+import { stickySessionKey, type StickyPending, type StickyStorage } from "../src/lib/sticky-session";
 import {
-  recordStickyHash,
-  stickySessionKey,
-  type StickyPending,
-  type StickyStorage,
-} from "../src/lib/sticky-session";
-import {
-  adoptStickyCreationProposal,
-  beginStickyCreationSubmission,
   clearStickyCreationPending,
   prepareStickyCreate,
+  stickyCreateIntent,
+  stickyCreationHold,
+  stickyCreationRecord,
   readStickyCreated,
   readStickyCreationPending,
   saveStickyCreated,
@@ -49,7 +45,6 @@ import {
   verifyStickyCreationExecution,
 } from "../src/lib/sticky-create";
 import { StickyCreate } from "../src/components/StickyCreate";
-import { failReservationReadback } from "./support/reservation-storage";
 
 vi.mock("../src/lib/fund-state", async (original) => ({
   ...(await original<typeof import("../src/lib/fund-state")>()),
@@ -64,9 +59,9 @@ const connected = vi.hoisted(() => ({ address: undefined as string | undefined }
 vi.mock("../src/hooks/useWallet", () => ({
   useWallet: () => ({ address: connected.address ?? OWNER }),
 }));
-const engine = vi.hoisted(() => ({ send: vi.fn() }));
+const engine = vi.hoisted(() => ({ send: vi.fn(), track: vi.fn() }));
 vi.mock("../src/hooks/useSafeTx", () => ({
-  useSafeTx: () => ({ phase: "idle", busy: false, error: null, send: engine.send }),
+  useSafeTx: () => ({ phase: "idle", busy: false, error: null, isSafe: false, send: engine.send, track: engine.track }),
   txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,
 }));
 vi.mock("../src/providers/Providers", () => ({ wagmiConfig: {} }));
@@ -439,7 +434,8 @@ const input = () => ({
 });
 beforeEach(() => {
   localStorage.clear();
-  Object.defineProperty(navigator, "locks", { configurable: true, value: { request: vi.fn(async (_name: string, callback: () => unknown) => callback()) } });
+  // Both lock forms: the app's (name, callback) and the SDK hold's (name, options, callback).
+  Object.defineProperty(navigator, "locks", { configurable: true, value: { request: vi.fn(async (name: string, options: unknown, callback?: (lock: unknown) => unknown) => typeof options === "function" ? options({ name }) : callback!({ name })) } });
   connected.address = undefined;
   registry.StickyDeployer = { 1: DEPLOYER };
   registry.JBTokenDistributor = { 1: DISTRIBUTOR };
@@ -774,13 +770,7 @@ async function pendingFixture() {
   const { client } = clientFixture(),
     prepared = await prepareStickyCreate(client, input()),
     storage = storageFixture();
-  const record = beginStickyCreationSubmission(
-    storage,
-    prepared,
-    OWNER,
-    false,
-    120n,
-  );
+  const record = stickyCreationRecord(prepared, OWNER, false);
   return { client, prepared, storage, record };
 }
 function executionClient(
@@ -848,37 +838,26 @@ function executionClient(
   } as unknown as PublicClient;
 }
 describe("creation recovery and duplicate protection", () => {
-  it.each(["pointer", "pending"])("cleans failed pre-wallet %s persistence without removing replacements", async kind => {
-    const { prepared } = await pendingFixture();
-    const pointer = "homerun:sticky:create-pending:v1:1:7", key = stickySessionKey(1, 7n, OWNER);
-    for (const replacement of [undefined, "replacement"]) {
-      const storage = storageFixture(), target = kind === "pointer" ? pointer : key;
-      expect(() => beginStickyCreationSubmission(failReservationReadback(storage, target, { replacement }), prepared, OWNER, false, 120n)).toThrow();
-      expect(storage.getItem(target)).toBe(replacement ?? null);
-      if (replacement === undefined) {
-        expect(storage.getItem(key)).toBeNull();
-        expect(storage.getItem(pointer)).toBeNull();
-      }
-    }
-  });
-  it("saves exact calldata before submission and blocks another wallet from bypassing the pending creation", async () => {
-    const { storage, record, prepared } = await pendingFixture();
-    expect(readStickyCreationPending(storage, 1, 7n, SHARE)).toEqual(record);
-    expect(() =>
-      beginStickyCreationSubmission(storage, prepared, SHARE, false, 121n),
-    ).toThrow("already has a saved");
-    recordStickyHash(storage, stickySessionKey(1, 7n, OWNER), EXECUTION);
-    expect(readStickyCreationPending(storage, 1, 7n)?.hash).toBe(EXECUTION);
-  });
-  it("keeps completed creation after clearing pending so reload cannot create again", async () => {
-    const { storage, record, prepared } = await pendingFixture();
+  it("keeps a completed creation so a reload rechecks it instead of creating again", async () => {
+    const { storage, record } = await pendingFixture();
     saveStickyCreated(storage, record, EXECUTION, 9n);
+    expect(readStickyCreated(storage, 1, 7n)?.projectId).toBe("9");
+  });
+  it("holds a creation by its FUND, and adopts one the journal saved before SDK holds with its own evidence", async () => {
+    const { prepared, record } = await pendingFixture();
+    expect(stickyCreateIntent(7n)).not.toBe(stickyCreateIntent(8n));
+    const saved = { ...record, safe: true, hash: EXECUTION };
+    expect(stickyCreationHold(saved)).toMatchObject({
+      request: { chainId: 1, address: prepared.request.address, functionName: "deployStickyFor", value: prepared.request.value },
+      input: { chainId: 1, account: OWNER, safe: true, namespace: stickyCreateIntent(7n), call: { to: prepared.request.address, data: encodeFunctionData(prepared.request), value: prepared.request.value } },
+      evidence: { submittedAt: record.submittedAt, safe: { safeTxHash: EXECUTION } },
+    });
+    const storage = storageFixture(), key = stickySessionKey(1, 7n, OWNER);
+    storage.setItem("homerun:sticky:create-pending:v1:1:7", key);
+    storage.setItem(key, JSON.stringify(record));
+    expect(readStickyCreationPending(storage, 1, 7n, SHARE)).toEqual(record);
     clearStickyCreationPending(storage, record);
     expect(readStickyCreationPending(storage, 1, 7n, OWNER)).toBeNull();
-    expect(readStickyCreated(storage, 1, 7n)?.projectId).toBe("9");
-    expect(() =>
-      beginStickyCreationSubmission(storage, prepared, OWNER, false, 150n),
-    ).toThrow("already has a saved");
   });
   it("fails closed on a malformed completion record", () => {
     const storage = storageFixture();
@@ -943,52 +922,11 @@ describe("creation recovery and duplicate protection", () => {
       ),
     ).rejects.toThrow("current project block changed");
   });
-  it("retains the unknown-submission lock after the component reloads", async () => {
-    const { client, prepared } = await pendingFixture();
-    beginStickyCreationSubmission(localStorage, prepared, OWNER, false, 120n);
-    const container = document.createElement("div"),
-      root = createRoot(container),
-      onCreated = vi.fn();
-    try {
-      await act(async () => {
-        root.render(
-          createElement(StickyCreate, {
-            state: fundState(),
-            client,
-            manifest: manifest(),
-            launchUnavailable: true,
-            onCreated,
-          }),
-        );
-      });
-      expect(container.textContent).toContain("wallet may have submitted");
-      expect(container.textContent).not.toContain("Prepare Sticky creation");
-      expect(onCreated).not.toHaveBeenCalled();
-    } finally {
-      await act(async () => root.unmount());
-    }
-  });
-  it("withdraws its pending creation when the write stops before the wallet", async () => {
+  it("sends a creation under its FUND's intent through the shared write hold", async () => {
     const { client } = clientFixture(),
       container = document.createElement("div"),
       root = createRoot(container);
-    Object.defineProperty(navigator, "locks", {
-      configurable: true,
-      value: { request: async (_name: string, callback: () => unknown) => callback() },
-    });
-    let marked = false;
-    engine.send.mockImplementation(
-      async (
-        _request: unknown,
-        options: { durableRecovery: { reserve: () => Promise<void>; releaseUnsubmitted: () => Promise<void> } },
-      ) => {
-        await options.durableRecovery.reserve();
-        marked = !!readStickyCreationPending(localStorage, 1, 7n);
-        // A Safe connection that changes at the write: nothing reaches the wallet.
-        await options.durableRecovery.releaseUnsubmitted();
-        return null;
-      },
-    );
+    engine.send.mockResolvedValue(null);
     const click = async (label: string) => {
       const button = [...container.querySelectorAll("button")].find(
         (node) => node.textContent === label,
@@ -1015,13 +953,13 @@ describe("creation recovery and duplicate protection", () => {
       await click("Prepare Sticky creation");
       await click("Review Sticky creation");
       expect(engine.send).toHaveBeenCalledOnce();
-      expect(marked).toBe(true);
-      expect(readStickyCreationPending(localStorage, 1, 7n)).toBeNull();
+      const options = engine.send.mock.calls[0][1];
+      expect(options.recoveryNamespace).toBe(stickyCreateIntent(7n));
       // Sent as the FUND owner the creation was prepared for.
-      expect(engine.send.mock.calls[0][1].reviewedAccount).toBe(OWNER);
+      expect(options.reviewedAccount).toBe(OWNER);
+      expect(readStickyCreationPending(localStorage, 1, 7n)).toBeNull();
     } finally {
       await act(async () => root.unmount());
-      Reflect.deleteProperty(navigator, "locks");
       localStorage.clear();
     }
   });
@@ -1093,6 +1031,31 @@ describe("creation recovery and duplicate protection", () => {
       await act(async () => root.unmount());
     }
   });
+  it("does not show a saved creation as confirmed while its hold still holds a write", async () => {
+    const { client, record } = await pendingFixture();
+    saveStickyCreated(localStorage, record, EXECUTION, 9n);
+    const verifiedClient = executionClient(client, record);
+    // The creation's hold holds an unresolved write: the saved completion waits for it.
+    const { adoptLegacyWrite } = await import("../src/lib/write-hold");
+    const adoptedHold = await adoptLegacyWrite({ chainId: 1, account: record.holder, safe: false, namespace: stickyCreateIntent(7n), call: { to: record.target, data: record.data, value: BigInt(record.value) } }, { submittedAt: Date.now() }, {
+      getChainId: async () => 1, getBlockNumber: async () => 90n, getTransactionCount: async () => 5,
+      getBlock: async () => ({ number: 100n, hash: `0x${"ef".repeat(32)}`, timestamp: 1_000n }), getTransaction: async () => null, getTransactionReceipt: async () => null,
+    } as never);
+    expect(adoptedHold.state.status, JSON.stringify(adoptedHold.state, (_k, v) => typeof v === "bigint" ? String(v) : v)).toBe("held-no-hash");
+    const container = document.createElement("div"),
+      root = createRoot(container),
+      onCreated = vi.fn();
+    try {
+      await act(async () => {
+        root.render(createElement(StickyCreate, { state: fundState(), client: verifiedClient, manifest: null, launchUnavailable: true, onCreated }));
+      });
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+      expect(onCreated).not.toHaveBeenCalled();
+      expect(container.textContent).not.toContain("Sticky project 9 is confirmed and verified");
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
   it("revalidates completed creation with no manifest and reports it once without a recovery loop", async () => {
     const { client, record } = await pendingFixture();
     saveStickyCreated(localStorage, record, EXECUTION, 9n);
@@ -1140,50 +1103,5 @@ describe("creation recovery and duplicate protection", () => {
     } finally {
       await act(async () => root.unmount());
     }
-  });
-});
-
-describe("existing Sticky creation proposal adoption", () => {
-  it("retains the prepared snapshot and FUND-wide lock with the exact proposal hash", async () => {
-    const { prepared } = await pendingFixture(),
-      storage = storageFixture();
-    const proposal = {
-      proposalHash: EXECUTION,
-      call: {
-        to: prepared.request.address,
-        data: encodeFunctionData(prepared.request),
-        value: prepared.request.value,
-      },
-    };
-    const record = adoptStickyCreationProposal(
-      storage,
-      prepared,
-      OWNER,
-      proposal,
-    );
-    expect(record).toMatchObject({
-      safe: true,
-      hash: EXECUTION,
-      afterBlock: prepared.fund.blockNumber.toString(),
-    });
-    expect(readStickyCreationPending(storage, 1, 7n, SHARE)).toEqual(record);
-    expect(() =>
-      adoptStickyCreationProposal(storage, prepared, SHARE, proposal),
-    ).toThrow("already has a saved");
-  });
-  it("rejects a different prepared call without creating a pointer or pending record", async () => {
-    const { prepared } = await pendingFixture(),
-      storage = storageFixture();
-    expect(() =>
-      adoptStickyCreationProposal(storage, prepared, OWNER, {
-        proposalHash: EXECUTION,
-        call: {
-          to: SHARE,
-          data: encodeFunctionData(prepared.request),
-          value: prepared.request.value,
-        },
-      }),
-    ).toThrow("does not match");
-    expect(readStickyCreationPending(storage, 1, 7n)).toBeNull();
   });
 });

@@ -1,16 +1,21 @@
 /** Durable duplicate protection. Recovery state can block a write, but can never prove execution. */
 import {
+  decodeFunctionData,
   encodeFunctionData,
+  erc20Abi,
   isAddress,
   isAddressEqual,
+  parseAbi,
   zeroHash,
   type Address,
   type Hex,
   type PublicClient,
 } from "viem";
 import type { FundTransaction } from "./fund-contracts";
-import { withPrewalletReservation } from "./prewallet-reservation";
-import { verifyReviewedWriteReceipt } from "@bananapus/nana-sdk-core/review";
+import { verifyReviewedWriteReceipt, writeIntentKey, type ReviewedWriteRecoveryInput } from "@bananapus/nana-sdk-core/review";
+import { jbControllerAbi, jbMultiTerminalAbi } from "@bananapus/nana-sdk-core";
+import type { TxRequest } from "@/hooks/useSafeTx";
+import type { LegacyWriteEvidence } from "./write-hold";
 import {
   heldCall,
   type SafeAppCall,
@@ -35,6 +40,59 @@ export type StickyPending = {
   hash?: Hex;
 };
 export type StickyStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
+/** The holder's Sticky actions, each held under its own intent while unresolved. */
+const STICKY_ACTIONS: Record<string, string> = {
+  claimTokensFor: "sticky-claim-credits",
+  approve: "sticky-approve",
+  pay: "sticky-stake",
+  cashOutTokensOf: "sticky-unstake",
+  beginVesting: "sticky-rewards-vest",
+  collectVestedRewards: "sticky-rewards-collect",
+};
+const STICKY_ABI = [...jbControllerAbi, ...jbMultiTerminalAbi, ...erc20Abi, ...parseAbi([
+  "function beginVesting(address token, uint256[] tokenIds, address[] tokens)",
+  "function collectVestedRewards(address token, uint256[] tokenIds, address[] tokens, address beneficiary)",
+])];
+
+/**
+ * A holder action's hold: the Sticky project and the action, one at a time. Its amounts and quoted
+ * minimums are left out, so a retry of the action is held while one is unresolved.
+ * TODO(SDK 2.38): the SDK's shared builder.
+ */
+export function stickyIntent(projectId: bigint, functionName: string): string {
+  const action = STICKY_ACTIONS[functionName];
+  if (!action) throw new Error(`Unknown Sticky action: ${functionName}`);
+  return writeIntentKey(action, { project: projectId });
+}
+
+/** Every holder action's intent, with what it does: the fixed set a reload looks through for held writes. */
+const STICKY_ACTION_LABELS: Record<string, string> = {
+  claimTokensFor: "Claim FUND credits", approve: "Approve FUND", pay: "Stake FUND",
+  cashOutTokensOf: "Unstake SHARE", beginVesting: "Start vesting INCOME", collectVestedRewards: "Collect vested INCOME",
+};
+export function stickyHeldIntents(projectId: bigint): { namespace: string; label: string }[] {
+  return Object.keys(STICKY_ACTIONS).map(functionName => ({ namespace: stickyIntent(projectId, functionName), label: STICKY_ACTION_LABELS[functionName] }));
+}
+
+/** A record the Sticky journal saved before SDK holds: the request it was, and the hold it is adopted into. */
+export function stickyPendingHold(record: StickyPending): {
+  request: TxRequest;
+  input: ReviewedWriteRecoveryInput;
+  evidence: LegacyWriteEvidence;
+} {
+  const { functionName, args } = decodeFunctionData({ abi: STICKY_ABI, data: record.data });
+  const value = BigInt(record.value);
+  return {
+    request: { chainId: record.chainId, address: record.target, abi: STICKY_ABI, functionName, args: args ?? [], value, label: record.label },
+    input: {
+      chainId: record.chainId, account: record.holder, safe: record.safe,
+      namespace: stickyIntent(BigInt(record.projectId), functionName),
+      call: { to: record.target, data: record.data, value },
+    },
+    evidence: { submittedAt: record.submittedAt, ...(record.hash ? record.safe ? { safe: { safeTxHash: record.hash } } : { hash: record.hash } : {}) },
+  };
+}
 const HASH = /^0x[\da-fA-F]{64}$/;
 export type ExistingSafeProposal = { proposalHash: Hex; call: SafeAppCall };
 /** Exact immutable plans remain exact; raw journals may retain a shared SDK-recognized earlier stamp. */
@@ -115,141 +173,6 @@ export function readStickyPending(
       "Sticky recovery data does not match this wallet and project. Resolve it before another action.",
     );
   return value;
-}
-function persistStickySubmission(
-  storage: StickyStorage,
-  key: string,
-  request: FundTransaction,
-  projectId: bigint,
-  holder: Address,
-  safe: boolean,
-  label: string,
-  afterBlock: bigint,
-  proposal?: ExistingSafeProposal,
-): StickyPending {
-  if (readStickyPending(storage, key))
-    throw new Error(
-      "A Sticky transaction may already be pending. Verify its execution before submitting another.",
-    );
-  if (afterBlock < 0n)
-    throw new Error("A mined prerequisite block is required.");
-  const record: StickyPending = {
-    version: 1,
-    id: crypto.randomUUID(),
-    chainId: request.chainId,
-    projectId: projectId.toString(),
-    holder,
-    target: request.address,
-    data: encodeFunctionData({
-      abi: request.abi,
-      functionName: request.functionName,
-      args: request.args,
-    }),
-    value: (request.value ?? 0n).toString(),
-    label,
-    safe,
-    submittedAt: Date.now(),
-    afterBlock: afterBlock.toString(),
-    ...(proposal
-      ? {
-          target: proposal.call.to,
-          data: proposal.call.data,
-          value: (proposal.call.value ?? 0n).toString(),
-          hash: proposal.proposalHash,
-        }
-      : {}),
-  };
-  if (key !== stickySessionKey(record.chainId, projectId, holder))
-    throw new Error("The Sticky recovery identity changed.");
-  const raw = JSON.stringify(record);
-  const write = () => {
-    storage.setItem(key, raw);
-    if (storage.getItem(key) !== raw)
-      throw new Error("The browser could not save Sticky transaction recovery data.");
-    return record;
-  };
-  return proposal ? write() : withPrewalletReservation(storage, key, null, raw, write);
-}
-export function beginStickySubmission(
-  storage: StickyStorage,
-  key: string,
-  request: FundTransaction,
-  projectId: bigint,
-  holder: Address,
-  safe: boolean,
-  label: string,
-  afterBlock: bigint,
-): StickyPending {
-  return persistStickySubmission(
-    storage,
-    key,
-    request,
-    projectId,
-    holder,
-    safe,
-    label,
-    afterBlock,
-  );
-}
-/** A known proposal hash binds historical execution; an unknown write must still use beginStickySubmission. */
-export function adoptStickyProposal(
-  storage: StickyStorage,
-  key: string,
-  request: FundTransaction,
-  projectId: bigint,
-  holder: Address,
-  label: string,
-  proposal: ExistingSafeProposal,
-  afterBlock = 0n,
-): StickyPending {
-  assertSafeProposalCall(request, proposal, true);
-  return persistStickySubmission(
-    storage,
-    key,
-    request,
-    projectId,
-    holder,
-    true,
-    label,
-    afterBlock,
-    proposal,
-  );
-}
-export function recordStickyHash(
-  storage: StickyStorage,
-  key: string,
-  hash: Hex,
-  expected?: StickyPending,
-): StickyPending {
-  if (!HASH.test(hash))
-    throw new Error("Invalid transaction or Safe proposal hash.");
-  const record = readStickyPending(storage, key);
-  if (!record)
-    throw new Error("The pending Sticky transaction record is missing.");
-  if (expected && JSON.stringify(record) !== JSON.stringify(expected) && JSON.stringify(record) !== JSON.stringify({ ...expected, hash }))
-    throw new Error("The saved Sticky transaction changed before its hash could be recorded.");
-  if (record.hash && record.hash.toLowerCase() !== hash.toLowerCase())
-    throw new Error("A different Sticky transaction hash is already saved.");
-  if (record.hash?.toLowerCase() === hash.toLowerCase()) return record;
-  const next = { ...record, hash };
-  const serialized = JSON.stringify(next);
-  storage.setItem(key, serialized);
-  if (storage.getItem(key) !== serialized)
-    throw new Error("The browser could not save the Sticky transaction hash.");
-  return next;
-}
-/** Only the exact hashless attempt can be withdrawn before a wallet submission. */
-export function releaseStickyUnsubmitted(
-  storage: StickyStorage,
-  key: string,
-  record: StickyPending,
-): void {
-  const current = readStickyPending(storage, key);
-  if (record.hash || current?.hash || JSON.stringify(current) !== JSON.stringify(record))
-    throw new Error("The saved Sticky transaction changed or was submitted. Keep it pending until its execution is verified.");
-  clearStickyPending(storage, key, record);
-  if (storage.getItem(key) !== null)
-    throw new Error("The browser could not clear the unsubmitted Sticky transaction.");
 }
 /** Release only the exact matching record; another tab may already have advanced to a new action. */
 export function clearStickyPending(

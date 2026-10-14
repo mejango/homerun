@@ -16,7 +16,7 @@ const runtime = vi.hoisted(() => ({
 }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.account }) }))
-vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({ phase: 'idle', busy: false, send: runtime.send }), txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle }))
+vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({ phase: 'idle', busy: false, send: runtime.send, track: async () => null }), txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle }))
 vi.mock('@/components/FundAssetWithdrawals', () => ({ FundAssetWithdrawals: ({ onConfigureAllowance }: { onConfigureAllowance: typeof runtime.configure }) => { runtime.configure = onConfigureAllowance; return null } }))
 vi.mock('@/lib/fund-state', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/fund-state')>(), readFundProjectState: async () => runtime.state }))
 vi.mock('@tanstack/react-query', () => ({
@@ -150,7 +150,7 @@ describe('FUND success allocation belongs to the owner', () => {
     await expectRetryHeldByIntent(first, retry, writeIntentKey('fund-ruleset', { project: 7n, action: 'finish-success-minting' }))
   })
 
-  it('holds an asset allowance by its chosen terms, so a retry after a preserved field changed is held by the first', async () => {
+  it('holds an asset allowance by its terminal and token, so a retry after a preserved field changed is held by the first', async () => {
     const TERMINAL = v6Address('JBMultiTerminal', 8453)
     const USDC = USDC_ADDRESSES[8453]!
     const CURRENCY = Number(BigInt(USDC) & 0xffffffffn)
@@ -159,7 +159,6 @@ describe('FUND success allocation belongs to the owner', () => {
       const context = { token: USDC, terminal: TERMINAL, decimals: 6, currency: CURRENCY, symbol: 'USDC', balance: 0n, surplus: 0n, surplusAllowances: [] }
       Object.assign(next, { accountingContexts: [context] })
       Object.assign(next.rulesetSnapshot, { accountingContexts: [context] })
-      const configuration = next.rulesetSnapshot.configuration!
       return next
     }
     runtime.state = withContext()
@@ -171,6 +170,6 @@ describe('FUND success allocation belongs to the owner', () => {
     await render()
     await act(async () => { await runtime.configure!({ amount: 5_000_000n, currency: CURRENCY, contextIndex: 0 }) })
     const [first, retry] = sent()
-    await expectRetryHeldByIntent(first, retry, writeIntentKey('fund-allowance', { project: 7n, terminal: intent.address(TERMINAL), token: intent.address(USDC), currency: CURRENCY, amount: 5_000_000n }))
+    await expectRetryHeldByIntent(first, retry, writeIntentKey('fund-allowance', { project: 7n, terminal: intent.address(TERMINAL), token: intent.address(USDC) }))
   })
 })

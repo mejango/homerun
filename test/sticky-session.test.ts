@@ -11,19 +11,16 @@ import {
   type PublicClient,
 } from "viem";
 import {
-  adoptStickyProposal,
   assertSafeProposalCall,
-  beginStickySubmission,
   clearStickyPending,
   readStickyPending,
-  recordStickyHash,
-  releaseStickyUnsubmitted,
+  stickyIntent,
+  stickyPendingHold,
   stickySessionKey,
   verifyStickyExecution,
   type StickyPending,
 } from "../src/lib/sticky-session";
 import { safeExecutionLog } from "./support/safe-logs";
-import { failReservationReadback } from "./support/reservation-storage";
 
 const HOLDER = "0x1111111111111111111111111111111111111111",
   TARGET = "0x2222222222222222222222222222222222222222",
@@ -38,11 +35,6 @@ const request = {
   args: [OTHER, 100n],
 };
 const key = stickySessionKey(1, 9n, HOLDER);
-it.each([undefined, "replacement"])("cleans only its exact failed pre-wallet Sticky reservation (%s)", replacement => {
-  const storage = memory(), broken = failReservationReadback(storage, key, { replacement });
-  expect(() => beginStickySubmission(broken, key, request, 9n, HOLDER, false, "Approve FUND", 100n)).toThrow();
-  expect(storage.getItem(key)).toBe(replacement ?? null);
-});
 const safeAbi = parseAbi([
   "function execTransaction(address to,uint256 value,bytes data,uint8 operation,uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,address gasToken,address refundReceiver,bytes signatures) payable returns (bool success)",
   "event ExecutionSuccess(bytes32 txHash,uint256 payment)",
@@ -60,17 +52,12 @@ function memory() {
     },
   };
 }
+/** What the Sticky journal saved before SDK holds: the shape each execution is verified against. */
 function saved(safe = false): StickyPending {
-  return beginStickySubmission(
-    memory(),
-    key,
-    request,
-    9n,
-    HOLDER,
-    safe,
-    "Approve FUND",
-    100n,
-  );
+  return {
+    version: 1, id: "11111111-1111-4111-8111-111111111111", chainId: 1, projectId: "9", holder: HOLDER, target: TARGET,
+    data: encodeFunctionData(request), value: "0", label: "Approve FUND", safe, submittedAt: 1_000, afterBlock: "100",
+  };
 }
 function clientFor(
   record: StickyPending,
@@ -148,20 +135,6 @@ function clientFor(
   } as unknown as PublicClient;
 }
 describe("Sticky durable submission recovery", () => {
-  it('distinguishes identical attempts even when the clock does not advance', () => {
-    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
-    try {
-      const storage = memory()
-      const first = beginStickySubmission(storage, key, request, 9n, HOLDER, false, 'Approve FUND', 100n)
-      releaseStickyUnsubmitted(storage, key, first)
-      const second = beginStickySubmission(storage, key, request, 9n, HOLDER, false, 'Approve FUND', 100n)
-      expect(second.submittedAt).toBe(first.submittedAt)
-      expect(second.id).not.toBe(first.id)
-      expect(() => recordStickyHash(storage, key, HASH, first)).toThrow(/changed/)
-      expect(() => clearStickyPending(storage, key, first)).toThrow(/changed/)
-      expect(readStickyPending(storage, key)).toEqual(second)
-    } finally { now.mockRestore() }
-  })
   it('holds a hashless attempt despite a later matching failure', async () => {
     const record = saved()
     await expect(verifyStickyExecution(clientFor(record, { reverted: true }), record, HASH)).rejects.toThrow(/historical failure/)
@@ -174,34 +147,6 @@ describe("Sticky durable submission recovery", () => {
     const record = { ...saved(), hash: BLOCK_HASH }
     await expect(verifyStickyExecution(clientFor(record), record, HASH)).rejects.toThrow(/saved Sticky transaction hash/)
   })
-  it("persists the exact payload before signing and blocks a duplicate after reopening", () => {
-    const storage = memory(),
-      record = beginStickySubmission(
-        storage,
-        key,
-        request,
-        9n,
-        HOLDER,
-        false,
-        "Approve FUND",
-        100n,
-      );
-    expect(readStickyPending(storage, key)).toEqual(record);
-    expect(() =>
-      beginStickySubmission(
-        storage,
-        key,
-        request,
-        9n,
-        HOLDER,
-        false,
-        "Approve FUND",
-        100n,
-      ),
-    ).toThrow(/already be pending/);
-    recordStickyHash(storage, key, HASH);
-    expect(readStickyPending(storage, key)?.hash).toBe(HASH);
-  });
   it("fails closed on corrupt or mismatched local data", () => {
     const storage = memory();
     storage.setItem(key, "{oops");
@@ -209,38 +154,10 @@ describe("Sticky durable submission recovery", () => {
     storage.setItem(key, JSON.stringify({ ...saved(), holder: OTHER }));
     expect(() => readStickyPending(storage, key)).toThrow(/does not match/);
   });
-  it("withdraws only the exact unsubmitted attempt and retains submitted hashes", () => {
-    const storage = memory();
-    const record = beginStickySubmission(storage, key, request, 9n, HOLDER, false, "Approve FUND", 100n);
-    releaseStickyUnsubmitted(storage, key, record);
-    expect(readStickyPending(storage, key)).toBeNull();
-    const next = beginStickySubmission(storage, key, request, 9n, HOLDER, false, "Approve FUND", 100n);
-    const submitted = recordStickyHash(storage, key, HASH, next);
-    expect(() => releaseStickyUnsubmitted(storage, key, next)).toThrow(/changed or was submitted/);
-    expect(() => releaseStickyUnsubmitted(storage, key, submitted)).toThrow(/changed or was submitted/);
-    expect(readStickyPending(storage, key)).toEqual(submitted);
-  });
-  it("cannot overwrite or release a replaced attempt with the same call and timestamp", () => {
-    const storage = memory();
-    const record = beginStickySubmission(storage, key, request, 9n, HOLDER, false, "Approve FUND", 100n);
-    const replacement = { ...record, afterBlock: "101" };
-    storage.setItem(key, JSON.stringify(replacement));
-    expect(() => recordStickyHash(storage, key, HASH, record)).toThrow(/changed before its hash/);
-    expect(() => releaseStickyUnsubmitted(storage, key, record)).toThrow(/changed or was submitted/);
-    expect(readStickyPending(storage, key)).toEqual(replacement);
-  });
   it("does not clear a newer submission record from another tab", () => {
     const storage = memory(),
-      record = beginStickySubmission(
-        storage,
-        key,
-        request,
-        9n,
-        HOLDER,
-        false,
-        "Approve FUND",
-        100n,
-      );
+      record = saved();
+    storage.setItem(key, JSON.stringify(record));
     storage.setItem(
       key,
       JSON.stringify({ ...record, submittedAt: record.submittedAt + 1 }),
@@ -248,13 +165,6 @@ describe("Sticky durable submission recovery", () => {
     expect(() => clearStickyPending(storage, key, record)).toThrow(/changed/);
     expect(readStickyPending(storage, key)).not.toBeNull();
   });
-  it('does not clear a record whose wallet identity arrived while its earlier proof was pending', () => {
-    const storage = memory()
-    const record = beginStickySubmission(storage, key, request, 9n, HOLDER, false, 'Approve FUND', 100n)
-    recordStickyHash(storage, key, HASH, record)
-    expect(() => clearStickyPending(storage, key, record)).toThrow(/changed/)
-    expect(readStickyPending(storage, key)?.hash).toBe(HASH)
-  })
   it("verifies the exact EOA payload and fresh canonical receipt", async () => {
     const record = { ...saved(), hash: HASH };
     await expect(
@@ -346,96 +256,30 @@ describe("Sticky Safe execution events", () => {
   });
 });
 
-describe("existing Safe proposal adoption", () => {
-  it("persists the known hash atomically and accepts historical execution only for that exact proposal", async () => {
-    const storage = memory();
-    const proposal = {
-      proposalHash: HASH,
-      call: { to: TARGET, data: encodeFunctionData(request), value: 0n },
-    };
-    const record = adoptStickyProposal(
-      storage,
-      key,
-      request,
-      9n,
-      HOLDER,
-      "Approve FUND",
-      proposal,
-    );
-    expect(readStickyPending(storage, key)).toEqual(record);
-    expect(record).toMatchObject({ safe: true, hash: HASH, afterBlock: "0" });
-    await expect(
-      verifyStickyExecution(clientFor(record, { old: true }), record, HASH),
-    ).resolves.toBe("confirmed");
-    await expect(
-      verifyStickyExecution(clientFor(record, { noEvent: true }), record, HASH),
-    ).rejects.toThrow("proposal hash");
-    expect(() =>
-      adoptStickyProposal(
-        storage,
-        key,
-        request,
-        9n,
-        HOLDER,
-        "Approve FUND",
-        proposal,
-      ),
-    ).toThrow("already be pending");
+describe("a Sticky record from before SDK holds", () => {
+  it("is adopted under its action's intent with its own evidence", () => {
+    const record = { ...saved(true), hash: HASH, submittedAt: 1_800_000_000_000 };
+    expect(stickyPendingHold(record)).toMatchObject({
+      request: { chainId: 1, address: TARGET, functionName: "approve", value: 0n, label: "Approve FUND" },
+      input: { chainId: 1, account: HOLDER, safe: true, namespace: stickyIntent(9n, "approve"), call: { to: TARGET, data: encodeFunctionData(request), value: 0n } },
+      evidence: { submittedAt: 1_800_000_000_000, safe: { safeTxHash: HASH } },
+    });
+    expect(stickyPendingHold(saved()).evidence).toEqual({ submittedAt: 1_000 });
   });
-  it("retains the original Permit2 expiration while rejecting any changed authorization", () => {
+  it("holds each holder action on its own, one at a time per Sticky project", () => {
+    const actions = ["claimTokensFor", "approve", "pay", "cashOutTokensOf", "beginVesting", "collectVestedRewards"];
+    expect(new Set(actions.map(action => stickyIntent(9n, action))).size).toBe(actions.length);
+    expect(stickyIntent(9n, "pay")).not.toBe(stickyIntent(10n, "pay"));
+    expect(() => stickyIntent(9n, "transfer")).toThrow("Unknown Sticky action");
+  });
+  it("matches a Safe proposal only to its exact call, Permit2 expiration included", () => {
     const abi = parseAbi([
       "function approve(address token,address spender,uint160 amount,uint48 expiration)",
     ]);
     const renewed = { ...request, abi, args: [TARGET, OTHER, 100n, 2000] };
     const original = { ...renewed, args: [TARGET, OTHER, 100n, 1000] };
-    const proposal = {
-      proposalHash: HASH,
-      call: { to: TARGET, data: encodeFunctionData(original) },
-    };
-    const record = adoptStickyProposal(
-      memory(),
-      key,
-      renewed,
-      9n,
-      HOLDER,
-      "Permit FUND",
-      proposal,
-    );
-    expect(record.data).toBe(encodeFunctionData(original));
-    expect(() => assertSafeProposalCall(renewed, proposal)).toThrow(
-      "does not match",
-    );
-    expect(() =>
-      adoptStickyProposal(
-        memory(),
-        key,
-        { ...renewed, args: [TARGET, OTHER, 101n, 2000] },
-        9n,
-        HOLDER,
-        "Permit FUND",
-        proposal,
-      ),
-    ).toThrow("does not match");
-  });
-  it("rejects missing or mismatched evidence before writing storage", () => {
-    const storage = memory(),
-      call = { to: TARGET, data: encodeFunctionData(request), value: 0n };
-    for (const proposal of [
-      { proposalHash: `0x${"00".repeat(32)}` as Hex, call },
-      { proposalHash: HASH, call: { ...call, to: OTHER } },
-      { proposalHash: HASH, call: { ...call, value: 1n } },
-    ])
-      expect(() =>
-        adoptStickyProposal(
-          storage,
-          key,
-          request,
-          9n,
-          HOLDER,
-          "Approve FUND",
-          proposal,
-        ),
-      ).toThrow();
-    expect(storage.getItem(key)).toBeNull();
+    const proposal = { proposalHash: HASH, call: { to: TARGET, data: encodeFunctionData(original) } };
+    expect(() => assertSafeProposalCall(original, proposal)).not.toThrow();
+    expect(() => assertSafeProposalCall({ ...renewed, args: [TARGET, OTHER, 101n, 2000] }, proposal)).toThrow("does not match");
   });
 });

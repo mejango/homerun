@@ -1,8 +1,8 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { encodeAbiParameters, encodeEventTopics, encodeFunctionData, type Address, type Hex, type PublicClient } from 'viem'
-import type { TxRequest, TxSendOptions } from '../src/hooks/useSafeTx'
+import { encodeAbiParameters, encodeEventTopics, type Address, type Hex, type PublicClient } from 'viem'
+import type { TxSendOptions } from '../src/hooks/useSafeTx'
 import type { FundProjectState } from '../src/lib/fund-state'
 import type { FundGlobalManifest } from '../src/lib/fund-global-manifest'
 
@@ -11,12 +11,13 @@ const runtime = vi.hoisted(() => ({
   helper: '0x2222222222222222222222222222222222222222' as Address | null,
   clients: new Map<number, PublicClient>(), funds: new Map<number, FundProjectState>(), bindings: new Map<number, bigint>(),
   bindingError: false, blockers: [] as string[], safe: false, manifest: null as FundGlobalManifest | null,
-  send: vi.fn(), snapshot: vi.fn(), history: vi.fn(), prepare: vi.fn(), pinMedia: vi.fn(), pinJson: vi.fn(),
+  tx: { phase: 'idle', submissionHash: null as Hex | null, receipt: null as { transactionHash: Hex } | null },
+  send: vi.fn(), track: vi.fn(), snapshot: vi.fn(), history: vi.fn(), prepare: vi.fn(), pinMedia: vi.fn(), pinJson: vi.fn(),
   readBinding: vi.fn(), allocation: vi.fn(), verify: vi.fn(), waitSafe: vi.fn(), invalidate: vi.fn(), fetch: vi.fn(),
 }))
 vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: runtime.account }), getPublicClient: (_config: unknown, options: {chainId: number}) => runtime.clients.get(options.chainId) }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.account }) }))
-vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({ phase: 'idle', busy: false, safeProposalHash: null, error: null, send: runtime.send }), txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle }))
+vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({ ...runtime.tx, busy: false, error: null, send: runtime.send, track: runtime.track }), txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle }))
 vi.mock('@tanstack/react-query', () => { const cache = { invalidateQueries: runtime.invalidate }; return { keepPreviousData: (data: unknown) => data, useQuery: ({ queryKey }: {queryKey: [string, number, string]}) => ({ data: queryKey[0] === 'income-launch-fund' ? runtime.funds.get(queryKey[1]) : runtime.bindings.get(queryKey[1]) ?? null, isError: queryKey[0] === 'income-binding' && runtime.bindingError, isPending: false }), useQueryClient: () => cache } })
 vi.mock('@/components/IncomeProject', () => ({ IncomeProject: ({ chainId, projectId }: {chainId: number; projectId: bigint}) => <div>Existing INCOME {chainId}/{projectId.toString()}</div> }))
 vi.mock('@/lib/income-contracts', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/income-contracts')>(), registeredHomerunDeployer: () => runtime.helper }))
@@ -32,14 +33,12 @@ vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 import { IncomeLaunch, type PlannedIncomeAllocation } from '../src/components/IncomeLaunch'
 import { serializeFundGlobalManifest } from '../src/lib/fund-global-manifest'
 import { homerunDeployerAbi } from '../src/lib/income-contracts'
-import { beginIncomeLaunchSubmission, incomeLaunchSessionKey, readIncomeLaunchPending, type IncomeLaunchPending } from '../src/lib/income-launch-session'
+import { incomeLaunchIntent, incomeLaunchRecord } from '../src/lib/income-launch-session'
 import { readIncomeGlobalDraft, saveIncomeGlobalDraft, serializeIncomeGlobalDraft } from '../src/lib/income-global-launch-draft'
 import { displayChainName } from '../src/lib/chainDisplay'
 import { BLOCK_HASH, CHAIN_IDS, FUND_IDS, HELPER, OWNER, TOKEN, fundState, globalDraft, globalManifest, globalSnapshot, hashFor, launchInput, launchPlan } from './fixtures/income-global-launch'
 
-const KEY = incomeLaunchSessionKey(8453, 7n)
-type Callbacks = { reverify: () => Promise<unknown>; durableRecovery: NonNullable<TxSendOptions['durableRecovery']> }
-function pending() { return readIncomeLaunchPending(localStorage, KEY) }
+type Callbacks = Pick<Required<TxSendOptions>, 'reverify' | 'beforeWrite' | 'recoveryNamespace' | 'reviewedAccount'>
 function draft() { return readIncomeGlobalDraft(localStorage, 8453, 7n)! }
 function eventReceipt(chainId: number) {
   const local = runtime.manifest!.allocations.find(entry => entry.chainId === chainId)!
@@ -55,7 +54,7 @@ describe('global INCOME launch flow', () => {
   let host: HTMLDivElement, root: Root
   beforeEach(() => {
     localStorage.clear(); vi.clearAllMocks()
-    runtime.account = OWNER; runtime.helper = HELPER; runtime.bindingError = false; runtime.blockers = []; runtime.safe = false; runtime.manifest = globalManifest(); runtime.bindings.clear(); runtime.clients.clear(); runtime.funds.clear()
+    runtime.tx = { phase: 'idle', submissionHash: null, receipt: null }; runtime.account = OWNER; runtime.helper = HELPER; runtime.bindingError = false; runtime.blockers = []; runtime.safe = false; runtime.manifest = globalManifest(); runtime.bindings.clear(); runtime.clients.clear(); runtime.funds.clear()
     for (const chainId of CHAIN_IDS) { runtime.funds.set(chainId, fundState(chainId)); runtime.clients.set(chainId, { getChainId: async () => chainId, getBlock: async () => ({ number: 200n, hash: BLOCK_HASH, timestamp: BigInt(1000 + chainId) }), getTransactionReceipt: async () => eventReceipt(chainId) } as unknown as PublicClient) }
     runtime.send.mockResolvedValue(null); runtime.snapshot.mockResolvedValue(globalSnapshot()); runtime.history.mockImplementation(async (_clients, value) => value)
     runtime.prepare.mockImplementation(async (_client, input) => launchPlan(input)); runtime.pinMedia.mockImplementation(async file => { runtime.manifest = JSON.parse(await readFile(file)); return { cid: 'global-snapshot' } }); runtime.pinJson.mockResolvedValue({ cid: 'global-metadata' })
@@ -72,9 +71,11 @@ describe('global INCOME launch flow', () => {
   async function click(text: string, scope: ParentNode = host) { await act(async () => { button(text, scope).click(); await Promise.allSettled(runtime.pinMedia.mock.results.filter(result => result.type === 'return').map(result => result.value)) }) }
   async function frozen() { await render(); await click('Create global ownership snapshot'); await click('Publish snapshot'); await click('Save shared launch plan') }
   async function ready(chainId = 8453) { await frozen(); await click(`Prepare ${displayChainName(chainId)} INCOME`); await act(async () => (section(chainId).querySelector('input[type="checkbox"]') as HTMLInputElement).click()) }
-  function savedPending(chainId = 8453) { const index = CHAIN_IDS.indexOf(chainId as typeof CHAIN_IDS[number]); return beginIncomeLaunchSubmission(localStorage, incomeLaunchSessionKey(chainId, FUND_IDS[index]), launchPlan(launchInput(draft(), chainId as 8453, runtime.manifest!)).request, FUND_IDS[index], OWNER, false, 200n) }
+  function savedPending(chainId = 8453) { const index = CHAIN_IDS.indexOf(chainId as typeof CHAIN_IDS[number]); return incomeLaunchRecord(launchPlan(launchInput(draft(), chainId as 8453, runtime.manifest!)).request, FUND_IDS[index], OWNER, false, 200n) }
+  /** The SDK's hold reports the sent launch as `phase`, with its submission and settled receipt. */
+  async function holdReports(phase: string, submissionHash: Hex | null, executionHash?: Hex) { runtime.tx = { phase, submissionHash, receipt: executionHash ? { transactionHash: executionHash } : null }; await render() }
+  async function settle(executionHash = hashFor(8453)) { await ready(); await click('Review Base deployment'); await holdReports('success', executionHash, executionHash) }
   async function setInput(field: HTMLInputElement, value: string) { await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, value); field.dispatchEvent(new Event('input', { bubbles: true })) }) }
-  async function hashInput(value: string, chainId = 8453) { await setInput(section(chainId).querySelector('input[placeholder="0x…"]') as HTMLInputElement, value) }
   async function upload(field: Element, json: string) { Object.defineProperty(field, 'files', { configurable: true, value: [{ size: json.length, text: async () => json }] }); await act(async () => field.dispatchEvent(new Event('change', { bubbles: true }))) }
   function restorePlan() { saveIncomeGlobalDraft(localStorage, globalDraft()) }
   function reservedInput() {
@@ -212,35 +213,14 @@ describe('global INCOME launch flow', () => {
     expect(host.textContent).toContain('0% reserved for the owner’s split, 100% to payers')
   })
 
-  it('clears an unknown submission only after explicit wallet rejection', async () => {
-    runtime.send.mockImplementation(async (_request, callbacks: Callbacks) => { await callbacks.durableRecovery.reserve(); callbacks.durableRecovery.releaseUnsubmitted(); return null })
-    await ready(); await click('Review Base deployment'); expect(pending()).toBeNull()
-  })
-
-  it('withdraws the unknown submission when the write stops before the wallet', async () => {
-    // A Safe connection that changes at the write: nothing reaches the wallet.
-    let marked = false
-    runtime.send.mockImplementation(async (_request, callbacks: Callbacks) => { await callbacks.durableRecovery.reserve(); marked = !!pending(); callbacks.durableRecovery.releaseUnsubmitted(); return null })
+  it('sends as the FUND owner under the FUND launch intent', async () => {
     await ready(); await click('Review Base deployment')
-    expect(marked).toBe(true)
-    expect(pending()).toBeNull()
-    // Sent as the FUND owner the deployment was prepared for.
-    expect(runtime.send.mock.calls[0][1].reviewedAccount).toBe(runtime.account)
+    expect(runtime.send.mock.calls[0][1]).toMatchObject({ reviewedAccount: runtime.account, recoveryNamespace: incomeLaunchIntent(7n) })
   })
 
   it('rejects changed encoded request or fee before recording a write', async () => {
-    runtime.send.mockImplementation(async (_request, callbacks: Callbacks) => { runtime.prepare.mockImplementationOnce(async (_client, input) => ({ ...launchPlan(input), request: { ...launchPlan(input).request, value: 2n } })); await callbacks.reverify(); await callbacks.durableRecovery.reserve(); return null })
-    await ready(); await click('Review Base deployment'); expect(host.textContent).toContain('deployment changed'); expect(pending()).toBeNull()
-  })
-
-  it('blocks a different tab’s pending attempt after an earlier review', async () => {
-    await ready(); savedPending(); await click('Review Base deployment')
-    expect(runtime.send).not.toHaveBeenCalled(); expect(host.textContent).toContain('already be pending')
-  })
-
-  it('requires Web Locks before opening wallet review', async () => {
-    await ready(); Object.defineProperty(navigator, 'locks', { configurable: true, value: undefined }); await click('Review Base deployment')
-    expect(runtime.send).not.toHaveBeenCalled(); expect(host.textContent).toContain('Web Locks')
+    runtime.send.mockImplementation(async (request, callbacks: Callbacks) => { runtime.prepare.mockImplementationOnce(async (_client, input) => ({ ...launchPlan(input), request: { ...launchPlan(input).request, value: 2n } })); await callbacks.reverify(request); return null })
+    await ready(); await click('Review Base deployment'); expect(host.textContent).toContain('deployment changed')
   })
 
   it('keeps every network section mounted across wallet changes and binding read failures', async () => {
@@ -250,25 +230,22 @@ describe('global INCOME launch flow', () => {
   })
 
   it('counts only the network whose receipt, binding, and recorded allocation have all verified', async () => {
-    await ready(); const record = savedPending(); await act(async () => window.dispatchEvent(new Event('homerun-income-launch-recovery')))
-    await hashInput(hashFor(8453)); await click('Check execution', section())
-    expect(runtime.verify).toHaveBeenCalledWith(runtime.clients.get(8453), record, hashFor(8453)); expect(pending()).toBeNull()
+    await settle()
+    expect(runtime.verify).toHaveBeenCalledWith(runtime.clients.get(8453), expect.objectContaining({ holder: OWNER, safe: false, hash: hashFor(8453) }), hashFor(8453))
     expect(host.textContent).toContain('1 of 4 networks confirmed'); expect(host.textContent).not.toContain('Every network’s deployment')
     expect(draft().chains.find(row => row.chainId === 8453)?.execution?.hash).toBe(hashFor(8453))
     expect(host.textContent).toContain('Existing INCOME 8453/10')
   })
 
-  it('retains pending recovery when the recorded allocation cannot be read', async () => {
-    await ready(); savedPending(); runtime.allocation.mockRejectedValue(new Error('Initial allocation RPC unavailable')); await act(async () => window.dispatchEvent(new Event('homerun-income-launch-recovery')))
-    await hashInput(hashFor(8453)); await click('Check execution', section())
-    expect(pending()).not.toBeNull(); expect(host.textContent).toContain('Initial allocation RPC unavailable'); expect(host.textContent).toContain('0 of 4')
+  it('keeps checking a settled launch whose recorded allocation cannot be read yet', async () => {
+    runtime.allocation.mockRejectedValue(new Error('Initial allocation RPC unavailable')); await settle()
+    expect(draft().chains.find(row => row.chainId === 8453)?.execution).toBeUndefined(); expect(host.textContent).toContain('Initial allocation RPC unavailable'); expect(host.textContent).toContain('0 of 4')
     expect(runtime.allocation).toHaveBeenCalledWith(runtime.clients.get(8453), { chainId: 8453, incomeProjectId: 10n, fundProjectId: 7n })
   })
 
   it('refuses a deployment whose recorded owner allocation differs from the frozen plan', async () => {
-    await ready(); savedPending(); runtime.allocation.mockImplementation(async (_client, {chainId}) => ({ ...allocation(chainId), pending: 1n })); await act(async () => window.dispatchEvent(new Event('homerun-income-launch-recovery')))
-    await hashInput(hashFor(8453)); await click('Check execution', section())
-    expect(pending()).not.toBeNull(); expect(host.textContent).toContain('does not match the published manifest')
+    runtime.allocation.mockImplementation(async (_client, {chainId}) => ({ ...allocation(chainId), pending: 1n })); await settle()
+    expect(draft().chains.find(row => row.chainId === 8453)?.execution).toBeUndefined(); expect(host.textContent).toContain('does not match the published manifest')
   })
 
   it('restores downloaded ownership history and republishes the exact imported bytes', async () => {
@@ -289,36 +266,19 @@ describe('global INCOME launch flow', () => {
     for (const chainId of CHAIN_IDS) section(chainId); expect(runtime.history).not.toHaveBeenCalled()
   })
 
-  it('adopts a queued Safe launch into durable recovery without a new submission', async () => {
-    runtime.safe = true
-    runtime.waitSafe.mockRejectedValue(new Error('Still awaiting signatures'))
-    runtime.send.mockImplementation(async (request: TxRequest, options: TxSendOptions) => {
-      await options.onExistingProposal?.({ proposalHash: hashFor(8453), call: { to: request.address, data: encodeFunctionData(request), value: request.value ?? 0n } })
-      await options.durableRecovery!.submitted(hashFor(8453), true)
-      return hashFor(8453)
-    })
-    await ready(); await click('Review Base deployment')
-    expect(pending()).toMatchObject({ safe: true, hash: hashFor(8453) })
-    expect(runtime.send).toHaveBeenCalledOnce()
-    expect(runtime.verify).not.toHaveBeenCalled()
-    expect(button('Review Base deployment').closest('fieldset')?.disabled).toBe(true)
-  })
-
   it('never treats a Safe proposal as a confirmed local deployment', async () => {
-    runtime.safe = true; const proposal = BLOCK_HASH; let execute!: (hash: Hex) => void
-    runtime.waitSafe.mockImplementation(() => new Promise<Hex>(resolve => { execute = resolve }))
-    runtime.send.mockImplementation(async (_request, callbacks: Callbacks) => { await callbacks.durableRecovery.reserve(); await callbacks.durableRecovery.submitted(proposal, true); expect(pending()?.hash).toBe(proposal); return proposal })
-    await ready(); await click('Review Base deployment')
-    expect(pending()?.hash).toBe(proposal); expect(pending()?.safe).toBe(true); expect(runtime.verify).not.toHaveBeenCalled(); expect(host.textContent).toContain('0 of 4')
-    await act(async () => execute(hashFor(8453)))
-    expect(runtime.verify).toHaveBeenCalledWith(runtime.clients.get(8453), expect.objectContaining({ hash: proposal, safe: true }), hashFor(8453)); expect(pending()).toBeNull(); expect(host.textContent).toContain('1 of 4')
+    runtime.safe = true; const proposal = BLOCK_HASH
+    await ready(); await click('Review Base deployment'); await holdReports('pending', proposal)
+    expect(runtime.verify).not.toHaveBeenCalled(); expect(host.textContent).toContain('0 of 4')
+    await holdReports('success', proposal, hashFor(8453))
+    expect(runtime.verify).toHaveBeenCalledWith(runtime.clients.get(8453), expect.objectContaining({ hash: proposal, safe: true }), hashFor(8453)); expect(host.textContent).toContain('1 of 4')
   })
 
   it('opens only one wallet review on immediate repeated clicks', async () => {
     let finish!: () => void; const submitted = new Promise<void>(resolve => { finish = resolve })
-    runtime.send.mockImplementation(async (_request, callbacks: Callbacks) => { await callbacks.durableRecovery.reserve(); await submitted; return null })
+    runtime.send.mockImplementation(async () => { await submitted; return null })
     await ready(); const deploy = button('Review Base deployment'); await act(async () => { deploy.click(); deploy.click(); await Promise.resolve() })
-    expect(runtime.send).toHaveBeenCalledOnce(); await act(async () => finish()); expect(pending()?.phase).toBe('unknown')
+    expect(runtime.send).toHaveBeenCalledOnce(); await act(async () => finish())
   })
 
   it('reverifies restored completed receipts rather than trusting the saved completion count', async () => {
@@ -328,6 +288,19 @@ describe('global INCOME launch flow', () => {
     runtime.verify.mockImplementation(async (client: PublicClient) => { if (await client.getChainId() === 10) throw new Error('RPC unavailable'); return 'confirmed' })
     await render()
     expect(host.textContent).toContain('3 of 4 networks confirmed'); expect(host.textContent).not.toContain('Every network’s deployment'); expect(runtime.verify).toHaveBeenCalled()
+  })
+
+  it('does not count a saved completed network while its launch hold still holds a write', async () => {
+    restorePlan(); let shared = draft()
+    for (const chainId of CHAIN_IDS) { const record = savedPending(chainId); shared = { ...shared, chains: shared.chains.map(row => row.chainId === chainId ? { ...row, execution: { hash: hashFor(chainId), record } } : row) } }
+    saveIncomeGlobalDraft(localStorage, shared)
+    // Base's launch is held unresolved: its saved completion waits for the hold.
+    const { adoptLegacyWrite } = await import('../src/lib/write-hold')
+    const base = savedPending(8453)
+    await adoptLegacyWrite({ chainId: 8453, account: OWNER, safe: false, namespace: incomeLaunchIntent(7n), call: { to: base.target, data: base.data, value: BigInt(base.value) } }, {}, runtime.clients.get(8453) as never)
+    await render()
+    expect(host.textContent).toContain('3 of 4 networks confirmed')
+    expect(runtime.verify).not.toHaveBeenCalledWith(runtime.clients.get(8453), expect.anything(), hashFor(8453))
   })
 
   it('confirms all four recorded allocations, including the empty one, before declaring completion', async () => {
@@ -355,22 +328,15 @@ describe('global INCOME launch flow', () => {
     expect(host.textContent).toContain('Existing INCOME 8453/10'); expect(runtime.send).not.toHaveBeenCalled()
   })
 
-  it('disables new launch controls while retaining pending execution recovery', async () => {
-    await ready(); savedPending(); await act(async () => window.dispatchEvent(new Event('homerun-income-launch-recovery'))); await render(true)
-    expect(button('Review Base deployment').closest('fieldset')?.disabled).toBe(true)
-    await hashInput(hashFor(8453)); expect(button('Check execution', section()).disabled).toBe(false); await click('Check execution', section())
-    expect(host.textContent).toContain('1 of 4 networks confirmed'); expect(host.textContent).toContain('Existing INCOME 8453/10')
-  })
-
   it('rechecks parent launch eligibility immediately before submitting an already reviewed transaction', async () => {
     let callbacks!: Callbacks, finish!: () => void
     runtime.send.mockImplementation(async (_request, options: Callbacks) => { callbacks = options; await new Promise<void>(resolve => { finish = resolve }); return null })
     await ready(); await act(async () => { button('Review Base deployment').click(); await Promise.resolve() }); await render(true)
-    await expect(callbacks.durableRecovery.reserve()).rejects.toThrow('Refresh the FUND state'); expect(pending()).toBeNull(); await act(async () => finish())
+    await expect(callbacks.beforeWrite()).rejects.toThrow('Refresh the FUND state'); await act(async () => finish())
   })
 
   it('retains foreign or unconfirmed execution attempts without claiming completion', async () => {
-    await ready(); const record: IncomeLaunchPending = savedPending(); runtime.verify.mockRejectedValue(new Error('Execution does not match saved call')); await act(async () => window.dispatchEvent(new Event('homerun-income-launch-recovery')))
-    await hashInput(hashFor(8453)); await click('Check execution', section()); expect(pending()?.sessionId).toBe(record.sessionId); expect(runtime.allocation).not.toHaveBeenCalled(); expect(host.textContent).toContain('0 of 4')
+    runtime.verify.mockRejectedValue(new Error('Execution does not match saved call')); await settle()
+    expect(draft().chains.find(row => row.chainId === 8453)?.execution).toBeUndefined(); expect(runtime.allocation).not.toHaveBeenCalled(); expect(host.textContent).toContain('0 of 4')
   })
 })
