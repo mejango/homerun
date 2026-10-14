@@ -56,15 +56,16 @@ function sameAttempt(record: { hash?: string; call: { to: string; data: string; 
 }
 
 /**
- * The hash a hold for this intent settled with success, from either kind of wallet, or null when
- * it holds something, settled otherwise, or has no settlement saved: completion is the hold's to say.
+ * What a hold for this intent says of its write, from either kind of wallet: it still holds one
+ * (`held`), it settled one with success (`settled`, with its hash), or it keeps no such record (`none`:
+ * never written here, cleared from storage, replaced by a later write, or settled otherwise).
  */
-export async function settledSuccessHash(intent: { chainId: number; account: Address; namespace: string }, client: WriteHoldClient): Promise<`0x${string}` | null> {
+export async function holdOutcome(intent: { chainId: number; account: Address; namespace: string }, client: WriteHoldClient): Promise<{ status: 'held' } | { status: 'settled'; hash: `0x${string}` } | { status: 'none' }> {
+  let settled: `0x${string}` | null = null
   for (const safe of [false, true]) {
     const state = await holds.open({ ...intent, safe, call: { to: '0x0000000000000000000000000000000000000000', data: '0x' } }).state(client)
-    if (state.status !== 'clear') return null
-    if (state.settled && 'hash' in state.settled && state.settled.result === 'success') return state.settled.hash
+    if (state.status !== 'clear') return { status: 'held' }
+    if (!settled && state.settled && 'hash' in state.settled && state.settled.result === 'success') settled = state.settled.hash
   }
-  return null
+  return settled ? { status: 'settled', hash: settled } : { status: 'none' }
 }
-
