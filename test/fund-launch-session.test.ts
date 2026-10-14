@@ -3,8 +3,7 @@ vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fix
 
 import { encodeFunctionData, zeroAddress, zeroHash, type Hex } from 'viem'
 import { buildFundLaunch } from '../src/lib/fund-contracts'
-import { adoptFundLaunchProposal, FUND_LAUNCH_KEY, archiveLaunch, canCancelLaunch, cancelUnsubmittedLaunch, decodeLaunchSession, discardUnsignedLaunch, encodeLaunchSession, refreshLaunchCreationFee, saveLaunch, sameSender, updateLaunchStatus, type FundLaunchSession } from '../src/lib/fund-launch-session'
-import { failReservationReadback } from './support/reservation-storage'
+import { FUND_LAUNCH_KEY, launchHold, launchIntent, multisigSetupIntent, archiveLaunch, canCancelLaunch, cancelUnsubmittedLaunch, decodeLaunchSession, discardUnsignedLaunch, encodeLaunchSession, refreshLaunchCreationFee, saveLaunch, sameSender, updateLaunchStatus, type FundLaunchSession } from '../src/lib/fund-launch-session'
 
 const owner = '0x1111111111111111111111111111111111111111' as const
 const salt = `0x${'12'.repeat(32)}` as Hex
@@ -16,20 +15,6 @@ function session(): FundLaunchSession {
 beforeEach(() => localStorage.clear())
 
 describe('durable FUND deployment journal', () => {
-  it.each(['launch', 'setup'] as const)('rolls back only its exact %s reservation after a failed readback', kind => {
-    for (const replacement of [undefined, 'replacement']) {
-      const storage = localStorage
-      storage.clear()
-      const previous = saveLaunch(session()).statuses[8453], raw = storage.getItem(FUND_LAUNCH_KEY)
-      const attemptId = crypto.randomUUID()
-      const next = kind === 'launch' ? { phase: 'signing' as const, safe: false, attemptId }
-        : { phase: 'ready' as const, multisigSetup: { safe: false, attemptId } }
-      vi.stubGlobal('localStorage', failReservationReadback(storage, FUND_LAUNCH_KEY, { replacement }))
-      try { expect(() => updateLaunchStatus(salt, 8453, next, previous.phase, previous, true)).toThrow() }
-      finally { vi.unstubAllGlobals() }
-      expect(storage.getItem(FUND_LAUNCH_KEY)).toBe(replacement ?? raw)
-    }
-  })
   it('roundtrips exact fees without converting user text into bigint', () => {
     expect(decodeLaunchSession(encodeLaunchSession(session()))).toEqual(session())
     const legacy = JSON.parse(encodeLaunchSession(session()))
@@ -108,14 +93,18 @@ describe('durable FUND deployment journal', () => {
       expect(decodeLaunchSession(localStorage.getItem(FUND_LAUNCH_KEY)!).statuses[8453]).toEqual(second)
     } finally { clock.mockRestore() }
   })
-  it('never resets a pending transaction or replaces a confirmed project', () => {
+  it('never replaces a pending transaction or a confirmed project', () => {
     saveLaunch(session())
-    updateLaunchStatus(salt, 8453, { phase: 'signing' }, 'ready')
     updateLaunchStatus(salt, 8453, { phase: 'pending', hash, safe: false })
-    expect(() => updateLaunchStatus(salt, 8453, { phase: 'ready' })).toThrow()
     expect(() => updateLaunchStatus(salt, 8453, { phase: 'pending', hash: otherHash, safe: false })).toThrow(/pending transaction/)
     updateLaunchStatus(salt, 8453, { phase: 'confirmed', hash, projectId: '17' })
     expect(() => updateLaunchStatus(salt, 8453, { phase: 'confirmed', hash, projectId: '18' })).toThrow(/cannot be replaced/)
+    expect(() => updateLaunchStatus(salt, 8453, { phase: 'ready' })).toThrow()
+  })
+  it('reopens a pending launch, as the exit from its held write does', () => {
+    saveLaunch(session())
+    const pending = updateLaunchStatus(salt, 8453, { phase: 'pending', hash, safe: false }).statuses[8453]
+    expect(updateLaunchStatus(salt, 8453, { phase: 'ready' }, 'pending', pending).statuses[8453]).toEqual({ phase: 'ready' })
   })
   it('does not withdraw a multisig attempt whose hash was recorded by another tab', () => {
     saveLaunch(session())
@@ -352,33 +341,15 @@ describe('what a relayed launch chain may read as the finalized chain moves on',
 })
 
 
-describe('existing FUND Safe proposal adoption', () => {
-  const proposalFor = (saved: FundLaunchSession) => {
-    const request = buildFundLaunch(saved.input).requests.find(item => item.chainId === 8453)!
-    return { proposalHash: hash, call: { to: request.address, data: encodeFunctionData(request), value: request.value } }
-  }
-  it('adopts a ready exact immutable plan without a signing transition or changing another chain', () => {
-    const original = saveLaunch(session())
-    updateLaunchStatus(salt, 10, { phase: 'signing' })
-    expect(() => updateLaunchStatus(salt, 8453, { phase: 'pending', hash, safe: true })).toThrow('changed elsewhere')
-    const adopted = adoptFundLaunchProposal(salt, 8453, proposalFor(original))
-    expect(adopted.statuses[8453]).toEqual({ phase: 'pending', hash, safe: true, walletReturned: true, attemptId: expect.any(String) })
-    expect(adopted.statuses[10].phase).toBe('signing')
-    expect(adopted.input).toEqual(original.input)
-    expect(decodeLaunchSession(localStorage.getItem(FUND_LAUNCH_KEY)!)).toEqual(adopted)
-    expect(() => adoptFundLaunchProposal(salt, 8453, proposalFor(original))).toThrow('Only an unsubmitted')
-  })
-  it('adopts after a proven reverted attempt but refuses a different plan, hash or transport', () => {
-    const original = saveLaunch(session()), proposal = proposalFor(original)
-    for (const changed of [{ ...proposal, proposalHash: zeroHash }, { ...proposal, call: { ...proposal.call, value: 0n } }])
-      expect(() => adoptFundLaunchProposal(salt, 8453, changed)).toThrow()
-    expect(decodeLaunchSession(localStorage.getItem(FUND_LAUNCH_KEY)!)).toEqual(original)
-    updateLaunchStatus(salt, 8453, { phase: 'signing' })
-    updateLaunchStatus(salt, 8453, { phase: 'pending', hash: otherHash })
-    updateLaunchStatus(salt, 8453, { phase: 'reverted', hash: otherHash })
-    expect(adoptFundLaunchProposal(salt, 8453, proposal).statuses[8453]).toEqual({ phase: 'pending', safe: true, hash, walletReturned: true, attemptId: expect.any(String) })
-    localStorage.clear()
-    saveLaunch({ ...session(), transport: 'intent' })
-    expect(() => adoptFundLaunchProposal(salt, 8453, proposal)).toThrow('direct deployment')
+describe('a launch write saved before SDK holds', () => {
+  const request = () => buildFundLaunch(session().input).requests.find(item => item.chainId === 8453)!
+  it('is held by the launch, with its hash, its Safe proposal or its saved nonce as evidence', () => {
+    const held = launchHold(launchIntent(salt), owner, request(), { hash, safe: false })
+    expect(held.input).toEqual({ chainId: 8453, account: owner, safe: false, namespace: launchIntent(salt), call: { to: request().address, data: encodeFunctionData(request()), value: request().value } })
+    expect(held.evidence).toEqual({ hash })
+    expect(launchHold(launchIntent(salt), owner, request(), { hash, safe: true }).evidence).toEqual({ safe: { safeTxHash: hash } })
+    expect(launchHold(launchIntent(salt), owner, request(), { nonce: '4', fromBlock: '900' }).evidence).toEqual({ nonce: 4n, fromBlock: 900n })
+    expect(launchHold(launchIntent(salt), owner, request(), {}).evidence).toEqual({})
+    expect(multisigSetupIntent(salt)).not.toBe(launchIntent(salt))
   })
 })

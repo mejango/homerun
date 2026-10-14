@@ -6,14 +6,12 @@ vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fix
 import { encodeFunctionData, parseAbi, zeroAddress, type Hex } from 'viem'
 import type { CreateValues } from '../src/components/CreateFlow'
 import { buildFundLaunch } from '../src/lib/fund-contracts'
-import { FUND_LAUNCH_KEY, decodeLaunchSession, saveLaunch, updateLaunchStatus, type FundLaunchSession } from '../src/lib/fund-launch-session'
+import { FUND_LAUNCH_KEY, decodeLaunchSession, launchIntent, multisigSetupIntent, saveLaunch, updateLaunchStatus, type FundLaunchSession } from '../src/lib/fund-launch-session'
 import { safeExecutionLog } from './support/safe-logs'
-import type { TxRequest, TxSendOptions } from '../src/hooks/useSafeTx'
+import type { TxRequest } from '../src/hooks/useSafeTx'
 import { multisigDeploymentRequest, predictMultisig, type CreateMultisig } from '../src/lib/create-multisig'
-import { failReservationReadback } from './support/reservation-storage'
-import { WRITE_EXIT_LABEL, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
 
-const runtime = vi.hoisted(() => ({ txError: '' as string, submissionHash: undefined as Hex | undefined, safe: false, send: vi.fn(), readContract: vi.fn(), getBlock: vi.fn(), getTransaction: vi.fn(), getTransactionReceipt: vi.fn(), waitReceipt: vi.fn(), waitSafe: vi.fn(), checkMultisigs: vi.fn(), verifyMultisigs: vi.fn(), publish: vi.fn(), checkDeployment: vi.fn(), relayr: vi.fn(), requestsDead: vi.fn(), prove: vi.fn(), evidence: vi.fn() }))
+const runtime = vi.hoisted(() => ({ txError: '' as string, submissionHash: undefined as Hex | undefined, safe: false, send: vi.fn(), track: vi.fn(), adopt: vi.fn(), readContract: vi.fn(), getBlock: vi.fn(), getTransaction: vi.fn(), getTransactionReceipt: vi.fn(), waitReceipt: vi.fn(), waitSafe: vi.fn(), checkMultisigs: vi.fn(), verifyMultisigs: vi.fn(), publish: vi.fn(), checkDeployment: vi.fn(), relayr: vi.fn(), requestsDead: vi.fn() }))
 const navigate = vi.hoisted(() => ({ replace: vi.fn() }))
 vi.mock('next/navigation', () => ({ useRouter: () => navigate }))
 const owner = '0x1111111111111111111111111111111111111111' as const
@@ -25,15 +23,14 @@ vi.mock('@/components/WalletButton', () => ({ WalletButton: () => <span>Wallet</
 vi.mock('@/components/CreateFlow', () => ({ default: () => null }))
 vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => runtime.safe, useSafeConnection: () => false, waitForSafeExecutionHash: runtime.waitSafe }))
 vi.mock('@/lib/create-multisig', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/create-multisig')>(), checkCreateMultisigs: runtime.checkMultisigs, verifyCreatedMultisigs: runtime.verifyMultisigs }))
-vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({ phase: 'idle', busy: false, error: runtime.txError, submissionHash: runtime.submissionHash, send: runtime.send, reset: vi.fn() }) }))
-vi.mock('@/lib/fund-launch-recovery', () => ({ proveLostLaunchWrite: runtime.prove, readLaunchNonceEvidence: runtime.evidence }))
+vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({ phase: 'idle', busy: false, error: runtime.txError, submissionHash: runtime.submissionHash, send: runtime.send, track: runtime.track, reset: vi.fn() }) }))
+vi.mock('@/lib/write-hold', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/write-hold')>(), adoptLegacyWrite: runtime.adopt }))
 vi.mock('@/lib/publish-fund-project-metadata', () => ({ publishFundProjectMetadata: runtime.publish }))
 vi.mock('@/lib/fund-launch-verification', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/fund-launch-verification')>(), checkLaunchDeployment: runtime.checkDeployment }))
 vi.mock('@/lib/fund-launch-relayr', () => ({ runRelayrLaunch: runtime.relayr, launchRequestsDead: runtime.requestsDead }))
 import { FundDeploy } from '../src/components/LiveCreate'
 import CreateSuccess from '../src/components/CreateSuccess'
 
-type Callbacks = { durableRecovery: { reserve: () => unknown | Promise<unknown>; releaseUnsubmitted: () => unknown | Promise<unknown> } }
 function saved(): FundLaunchSession {
   return decodeLaunchSession(localStorage.getItem(FUND_LAUNCH_KEY)!)
 }
@@ -61,8 +58,7 @@ describe('Create submission recovery', () => {
     runtime.submissionHash = undefined
     runtime.safe = false
     runtime.send.mockReset()
-    runtime.evidence.mockReset().mockResolvedValue({})
-    runtime.prove.mockReset().mockResolvedValue({ status: 'pending' })
+    runtime.track.mockReset(); runtime.adopt.mockReset().mockResolvedValue({ status: 'held-no-hash' })
     runtime.waitSafe.mockReset(); runtime.waitReceipt.mockReset(); runtime.checkMultisigs.mockReset().mockResolvedValue(undefined); runtime.verifyMultisigs.mockReset().mockResolvedValue(true)
     runtime.getTransaction.mockReset(); runtime.getTransactionReceipt.mockReset()
     runtime.readContract.mockResolvedValue(0n); runtime.getBlock.mockReset().mockResolvedValue({ timestamp: 1000n }); runtime.publish.mockResolvedValue({ cid: 'bafkreimetadata' }); runtime.checkDeployment.mockResolvedValue(undefined)
@@ -77,116 +73,53 @@ describe('Create submission recovery', () => {
     await act(async () => button.click())
   }
 
-  describe('a wallet reply lost before its hash was saved', () => {
+  describe('a write the launch record saved before SDK holds', () => {
     const ATTEMPT = '11111111-1111-4111-8111-111111111111'
     const FOUND = `0x${'cd'.repeat(32)}` as Hex
-    const exit = () => [...host.querySelectorAll('button')].find(item => item.textContent === WRITE_EXIT_LABEL)
-    const holdSigning = () => updateLaunchStatus(salt, 8453, { phase: 'signing', safe: false, attemptId: ATTEMPT, nonce: '5', fromBlock: '90' })
     const render = () => act(async () => root.render(<FundDeploy values={{} as CreateValues} />))
-
-    it('saves the account’s next nonce with the pre-wallet marker', async () => {
-      runtime.evidence.mockResolvedValue({ nonce: '5', fromBlock: '90' })
-      runtime.send.mockImplementation(async (_request: unknown, options: Callbacks) => { await options.durableRecovery.reserve(); return null })
-      await launch()
-      expect(saved().statuses[8453]).toMatchObject({ phase: 'signing', nonce: '5', fromBlock: '90' })
-    })
-
-    it('finds the exact deployment from the chain, records its hash and verifies it, with nothing to paste', async () => {
-      holdSigning()
-      runtime.prove.mockResolvedValue({ status: 'sent', hash: FOUND })
-      runtime.getTransactionReceipt.mockRejectedValue(new Error('receipt unavailable'))
-      await render()
-      await vi.waitFor(() => expect(saved().statuses[8453]).toMatchObject({ phase: 'pending', hash: FOUND, walletReturned: true }))
-      await vi.waitFor(() => expect(runtime.getTransactionReceipt).toHaveBeenCalledWith({ hash: FOUND }))
-      expect(runtime.prove.mock.calls[0][1]).toMatchObject({ sender: owner, attemptId: ATTEMPT, nonce: '5', fromBlock: '90' })
-      expect(runtime.send).not.toHaveBeenCalled()
-    })
-
-    it('stays held when the chain cannot place it, with one line and the exit', async () => {
-      holdSigning()
-      await render()
-      await vi.waitFor(() => expect(host.textContent).toContain(writeHeldMessage('launch')))
-      expect(saved().statuses[8453].phase).toBe('signing')
-      expect(runtime.send).not.toHaveBeenCalled()
-      await act(async () => exit()!.click())
-      expect(saved().statuses[8453]).toEqual({ phase: 'ready' })
-    })
-
-    it('refuses the exit when the saved attempt or hash is no longer the one the user saw', async () => {
-      holdSigning()
-      await render()
-      await vi.waitFor(() => expect(exit()).toBeTruthy())
-      // Another tab recorded the hash after this tab last drew the held line.
-      updateLaunchStatus(salt, 8453, { phase: 'pending', safe: false, attemptId: ATTEMPT, hash: FOUND, walletReturned: true })
-      await act(async () => exit()!.click())
-      expect(saved().statuses[8453]).toMatchObject({ phase: 'pending', hash: FOUND })
-      expect(host.textContent).toMatch(/saved launch changed/i)
-    })
-
-    it('offers a pasted hash only as the fallback, and records nothing unless it verifies', async () => {
-      holdSigning()
-      runtime.getTransactionReceipt.mockRejectedValue(new Error('receipt unavailable'))
-      await render()
-      await vi.waitFor(() => expect(exit()).toBeTruthy())
-      const input = host.querySelector<HTMLInputElement>('input[name="launch-hash"]')!
-      const check = [...host.querySelectorAll('button')].find(item => item.textContent === 'Check transaction')!
-      expect(check.disabled).toBe(true)
-      await act(async () => {
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, FOUND)
-        input.dispatchEvent(new Event('input', { bubbles: true }))
-      })
-      await act(async () => check.click())
-      expect(runtime.getTransactionReceipt).toHaveBeenCalledWith({ hash: FOUND })
-      expect(saved().statuses[8453].hash).toBeUndefined()
-      expect(saved().statuses[8453].phase).toBe('signing')
-    })
-
-    it('keeps a hashless multisig setup held, with the exit, when the matching Safes were deployed by another sender', async () => {
+    const request = () => buildFundLaunch(saved().input).requests[0]
+    function withMultisig(multisigSetup: NonNullable<FundLaunchSession['statuses'][number]['multisigSetup']>) {
       const policy = { owners: [owner, '0x2222222222222222222222222222222222222222' as const], threshold: 2, saltNonce: salt, proxyCreationCode: '0x6000' as Hex }
       const plan: CreateMultisig = { ...policy, role: 'operator', address: predictMultisig(policy) }
       const current = saved()
       localStorage.clear()
-      saveLaunch({ ...current, input: { ...current.input, operator: plan.address, multisigs: [plan] }, statuses: { 8453: { phase: 'ready', multisigSetup: { safe: false, attemptId: ATTEMPT } } } })
-      runtime.verifyMultisigs.mockResolvedValue(true)
-      await render()
-      await vi.waitFor(() => expect(host.textContent).toContain(writeHeldMessage('multisig setup')))
-      expect(saved().statuses[8453].multisigSetup).toEqual({ safe: false, attemptId: ATTEMPT })
-      expect(exit()).toBeDefined()
-    })
-
-    it('holds a hashless multisig setup the chain cannot place, with the exit', async () => {
-      const policy = { owners: [owner, '0x2222222222222222222222222222222222222222' as const], threshold: 2, saltNonce: salt, proxyCreationCode: '0x6000' as Hex }
-      const plan: CreateMultisig = { ...policy, role: 'operator', address: predictMultisig(policy) }
-      const current = saved()
-      localStorage.clear()
-      saveLaunch({ ...current, input: { ...current.input, operator: plan.address, multisigs: [plan] }, statuses: { 8453: { phase: 'ready', multisigSetup: { safe: false, attemptId: ATTEMPT } } } })
-      runtime.verifyMultisigs.mockResolvedValue(false)
-      await render()
-      await vi.waitFor(() => expect(host.textContent).toContain(writeHeldMessage('multisig setup')))
-      await act(async () => exit()!.click())
-      expect(saved().statuses[8453]).toEqual({ phase: 'ready' })
-    })
-  })
-
-  it.each(['launch', 'setup'])('cleans failed %s reservation persistence before the wallet without a runtime cleanup callback', async kind => {
-    if (kind === 'setup') {
-      const policy = { owners: [owner, '0x2222222222222222222222222222222222222222' as const], threshold: 2, saltNonce: salt, proxyCreationCode: '0x6000' as Hex }
-      const plan: CreateMultisig = { ...policy, role: 'operator', address: predictMultisig(policy) }
-      const current = saved()
-      localStorage.clear()
-      saveLaunch({ ...current, input: { ...current.input, operator: plan.address, multisigs: [plan] } })
-      runtime.verifyMultisigs.mockResolvedValue(false)
+      saveLaunch({ ...current, input: { ...current.input, operator: plan.address, multisigs: [plan] }, statuses: { 8453: { phase: 'ready', multisigSetup } } })
+      return plan
     }
-    const writer = vi.fn(), storage = localStorage, original = storage.getItem(FUND_LAUNCH_KEY)
-    runtime.send.mockImplementation(async (_request: unknown, options: Callbacks) => { await options.durableRecovery.reserve(); writer(); return null })
-    vi.stubGlobal('localStorage', failReservationReadback(storage, FUND_LAUNCH_KEY))
-    try { await launch() }
-    finally { vi.unstubAllGlobals() }
-    expect(runtime.send).toHaveBeenCalledOnce()
-    expect(writer).not.toHaveBeenCalled()
-    expect(storage.getItem(FUND_LAUNCH_KEY)).toBe(original)
-    expect(saved().statuses[8453]).toEqual({ phase: 'ready' })
-    expect(host.textContent).toContain('Reservation readback failed')
+
+    it('adopts a hashless launch with its saved nonce into the launch’s hold, and the record reopens', async () => {
+      updateLaunchStatus(salt, 8453, { phase: 'signing', safe: false, attemptId: ATTEMPT, nonce: '5', fromBlock: '90' })
+      await render()
+      await vi.waitFor(() => expect(saved().statuses[8453]).toEqual({ phase: 'ready' }))
+      expect(runtime.adopt).toHaveBeenCalledWith(expect.objectContaining({ chainId: 8453, account: owner, safe: false, namespace: launchIntent(salt), call: expect.objectContaining({ to: request().address }) }), { nonce: 5n, fromBlock: 90n }, expect.anything())
+      expect(runtime.track).toHaveBeenCalledWith(expect.objectContaining({ chainId: 8453 }), expect.objectContaining({ reviewedAccount: owner, recoveryNamespace: launchIntent(salt) }))
+      expect(runtime.send).not.toHaveBeenCalled()
+    })
+
+    it('adopts a saved pending hash into the hold and keeps it this chain’s pending launch', async () => {
+      updateLaunchStatus(salt, 8453, { phase: 'pending', safe: false, hash: FOUND, walletReturned: true })
+      runtime.getTransactionReceipt.mockRejectedValue(new Error('receipt unavailable'))
+      await render()
+      await vi.waitFor(() => expect(runtime.adopt).toHaveBeenCalledWith(expect.objectContaining({ namespace: launchIntent(salt) }), { hash: FOUND }, expect.anything()))
+      expect(saved().statuses[8453]).toMatchObject({ phase: 'pending', hash: FOUND })
+    })
+
+    it('adopts a legacy failure without the wallet’s hash as a hashless attempt, and the record reopens', async () => {
+      const current = saved()
+      localStorage.clear()
+      saveLaunch({ ...current, statuses: { 8453: { phase: 'reverted', hash: `0x${'ee'.repeat(32)}` } } })
+      await render()
+      await vi.waitFor(() => expect(saved().statuses[8453]).toEqual({ phase: 'ready' }))
+      expect(runtime.adopt).toHaveBeenCalledWith(expect.objectContaining({ namespace: launchIntent(salt) }), {}, expect.anything())
+    })
+
+    it.each([{ safe: false, attemptId: ATTEMPT, nonce: '5', fromBlock: '90' }, { safe: true, hash: FOUND, walletReturned: true as const }])('adopts a saved multisig setup into the setup’s hold, and the record drops it: %o', async setup => {
+      const plan = withMultisig(setup)
+      await render()
+      await vi.waitFor(() => expect(saved().statuses[8453]).toEqual({ phase: 'ready' }))
+      expect(runtime.adopt).toHaveBeenCalledWith(expect.objectContaining({ safe: setup.safe, namespace: multisigSetupIntent(salt), call: expect.objectContaining({ to: multisigDeploymentRequest(8453, [plan]).address }) }),
+        setup.hash ? { safe: { safeTxHash: FOUND } } : { nonce: 5n, fromBlock: 90n }, expect.anything())
+    })
   })
 
   it('cancels an unsubmitted launch and preserves the setup draft', async () => {
@@ -276,134 +209,23 @@ describe('Create submission recovery', () => {
     expect(saved().statuses[8453].phase).toBe('ready')
     expect(host.textContent).not.toContain('Check your wallet history')
   })
-  it('adopts an existing Safe launch directly into pending recovery without a new signing transition', async () => {
+  it('records a wallet-returned Safe proposal as this chain’s pending launch', async () => {
     runtime.safe = true
     const hash = `0x${'cd'.repeat(32)}` as Hex
-    runtime.send.mockImplementation(async (request: TxRequest, options: TxSendOptions) => {
-      expect(saved().statuses[8453].phase).toBe('ready')
-      await options.onExistingProposal?.({ proposalHash: hash, call: { to: request.address, data: encodeFunctionData(request), value: request.value ?? 0n } })
-      await options.durableRecovery!.submitted(hash, true)
-      expect(saved().statuses[8453]).toMatchObject({ phase: 'pending', safe: true, hash, walletReturned: true })
-      return hash
-    })
+    runtime.waitSafe.mockRejectedValue(new Error('Still awaiting signatures'))
+    runtime.send.mockImplementation(async () => { expect(saved().statuses[8453].phase).toBe('ready'); return hash })
     await launch()
-    expect(saved().statuses[8453]).toMatchObject({ phase: 'pending', safe: true, hash })
+    expect(saved().statuses[8453]).toMatchObject({ phase: 'pending', safe: true, hash, walletReturned: true })
     expect(host.textContent).toContain('Safe proposal awaiting execution.')
     expect(host.textContent).not.toContain('FUND deployment verified onchain.')
     expect(runtime.send).toHaveBeenCalledOnce()
   })
 
-  it.each(['outer revert', 'missing event', 'different executed call', 'legacy hash', 'nonfinal failure', 'changed setup', 'proven failure'] as const)('preserves multisig recovery unless the exact Safe setup failed: %s', async kind => {
-    const proposal = `0x${'ec'.repeat(32)}` as Hex
-    const execution = kind === 'different executed call' ? proposal : `0x${'ed'.repeat(32)}` as Hex
-    const policy = { owners: [owner, '0x2222222222222222222222222222222222222222' as const], threshold: 2, saltNonce: salt, proxyCreationCode: '0x6000' as Hex }
-    const plan: CreateMultisig = { ...policy, role: 'operator', address: predictMultisig(policy) }
-    const current = saved()
-    localStorage.clear()
-    const setup = { safe: true, hash: proposal, ...(kind !== 'legacy hash' ? { walletReturned: true as const } : {}) }
-    saveLaunch({ ...current, input: { ...current.input, operator: plan.address, multisigs: [plan] }, statuses: { 8453: { phase: 'ready', multisigSetup: setup } } })
-    runtime.safe = true
-    runtime.waitSafe.mockResolvedValue(execution)
-    const request = multisigDeploymentRequest(8453, [plan])
-    failedSafeReceipt(request, proposal, execution, kind)
-    const replacement = { ...setup, hash: `0x${'fe'.repeat(32)}` as Hex }
-    if (kind === 'changed setup') {
-      const getBlock = runtime.getBlock.getMockImplementation()!
-      runtime.getBlock.mockImplementation(async args => {
-        if (args.blockTag === 'finalized') updateLaunchStatus(salt, 8453, { phase: 'ready', multisigSetup: replacement })
-        return getBlock(args)
-      })
-    }
+  it('sends under the launch’s intent as its saved sender, and records nothing before the wallet returns a hash', async () => {
+    runtime.send.mockImplementation(async () => { expect(saved().statuses[8453]).toEqual({ phase: 'ready' }); return null })
     await launch()
-    if (kind === 'proven failure') {
-      expect(saved().statuses[8453].multisigSetup).toBeUndefined()
-      expect(host.textContent).toContain('Multisig creation reverted')
-    } else {
-      expect(saved().statuses[8453].multisigSetup).toEqual(kind === 'changed setup' ? replacement : setup)
-      expect(host.textContent).toContain(kind === 'legacy hash' ? 'no recorded wallet-returned hash' : kind === 'nonfinal failure' ? 'Keep this action pending' : kind === 'changed setup' ? 'changed in another tab' : 'The multisig setup is unresolved')
-    }
-    expect(runtime.send).not.toHaveBeenCalled()
-    expect(saved().statuses[8453].phase).toBe('ready')
-    expect(runtime.verifyMultisigs).not.toHaveBeenCalled()
-  })
-
-  it('records an unknown attempt before the wallet write and preserves it after transport failure', async () => {
-    runtime.send.mockImplementation(async (_request: unknown, options: Callbacks) => {
-      await options.durableRecovery.reserve()
-      expect(saved().statuses[8453].phase).toBe('signing')
-      return null
-    })
-    await launch()
-    // Sent as the launch's saved sender, the account it was prepared for.
-    expect(runtime.send.mock.calls.at(-1)![1].reviewedAccount).toBe(saved().input.sender)
-    expect(saved().statuses[8453].phase).toBe('signing')
-    expect(host.textContent).toContain('Check your wallet history')
-    expect(host.textContent).not.toContain('Review and deploy FUND')
-    expect(host.textContent).not.toContain('I cancelled without submitting')
-    expect(host.textContent).not.toContain('I cancelled multisig setup without submitting')
-    expect(host.textContent).not.toContain('Verify this transaction')
-    expect(host.querySelector('input[type="checkbox"]')).toBeNull()
-  })
-
-  it('restores a ready launch only after the runtime proves explicit wallet rejection', async () => {
-    runtime.send.mockImplementation(async (_request: unknown, options: Callbacks) => {
-      await options.durableRecovery.reserve(); await options.durableRecovery.releaseUnsubmitted(); return null
-    })
-    await launch()
-    expect(saved().statuses[8453].phase).toBe('ready')
-    expect(host.textContent).not.toContain('Check your wallet history')
-  })
-
-  it('holds a hashless multisig setup without a pasted hash, cancellation or second wallet write', async () => {
-    const policy = { owners: [owner, '0x2222222222222222222222222222222222222222' as const], threshold: 2, saltNonce: salt, proxyCreationCode: '0x6000' as Hex }
-    const plan: CreateMultisig = { ...policy, role: 'operator', address: predictMultisig(policy) }
-    const current = saved()
-    localStorage.clear()
-    saveLaunch({ ...current, input: { ...current.input, operator: plan.address, multisigs: [plan] }, statuses: { 8453: { phase: 'ready', multisigSetup: { safe: true } } } })
-    runtime.submissionHash = `0x${'ee'.repeat(32)}` as Hex
-    await launch()
-    expect(saved().statuses[8453].multisigSetup).toEqual({ safe: true })
-    expect(runtime.send).not.toHaveBeenCalled()
-    expect(host.textContent).toContain('Check your wallet activity')
-    expect(host.textContent).toContain(runtime.submissionHash)
-    expect(host.textContent).not.toContain('Save setup hash')
-    expect(host.textContent).not.toContain('Discard and edit details')
-    expect(host.querySelector('input')).toBeNull()
-  })
-
-  it('holds legacy reverted launches whose recorded hash has no wallet provenance', async () => {
-    const current = saved()
-    localStorage.clear()
-    saveLaunch({ ...current, statuses: { 8453: { phase: 'reverted', hash: `0x${'ee'.repeat(32)}` } } })
-    await act(async () => root.render(<FundDeploy values={{} as CreateValues} />))
-    expect(host.textContent).not.toContain('Review and deploy FUND')
-    expect(host.textContent).toContain('no recorded wallet-returned hash')
-    const resume = [...host.querySelectorAll('button')].find(item => item.textContent === 'Continue creation')
-    if (resume) await act(async () => resume.click())
-    expect(runtime.send).not.toHaveBeenCalled()
-    expect(saved().statuses[8453].phase).toBe('reverted')
-  })
-
-  it('restores a ready launch when the write stops before the wallet', async () => {
-    runtime.send.mockImplementation(async (_request: unknown, options: Callbacks) => {
-      await options.durableRecovery.reserve(); await options.durableRecovery.releaseUnsubmitted(); return null
-    })
-    await launch()
-    expect(saved().statuses[8453].phase).toBe('ready')
-    expect(host.textContent).not.toContain('Check your wallet history')
-  })
-
-  it('records nothing when the wallet connection stops being the one the launch was read with', async () => {
-    let refused: unknown
-    runtime.send.mockImplementation(async (_request: unknown, options: Callbacks) => {
-      // A WalletConnect peer read lands: the connection now proposes to a Safe.
-      runtime.safe = true
-      try { await options.durableRecovery.reserve() } catch (error) { refused = error }
-      return null
-    })
-    await launch()
-    expect(refused).toEqual(new Error('Wallet connection changed. Review the transaction again.'))
-    expect(saved().statuses[8453].phase).toBe('ready')
+    expect(runtime.send.mock.calls.at(-1)![1]).toMatchObject({ reviewedAccount: saved().input.sender, recoveryNamespace: launchIntent(salt) })
+    expect(saved().statuses[8453]).toEqual({ phase: 'ready' })
   })
 
   it.each(['legacy hash', 'nonfinal failure', 'proven failure'])('reopens only a wallet-recorded finalized Safe launch failure: %s', async kind => {
@@ -427,20 +249,6 @@ describe('Create submission recovery', () => {
     }
   })
 
-  it('refuses a stale review when another tab has already recorded submission', async () => {
-    const write = vi.fn()
-    runtime.send.mockImplementation(async (_request: unknown, options: Callbacks) => {
-      updateLaunchStatus(salt, 8453, { phase: 'signing' }, 'ready')
-      await options.durableRecovery.reserve()
-      write()
-      return null
-    })
-    await launch()
-    expect(write).not.toHaveBeenCalled()
-    expect(saved().statuses[8453].phase).toBe('signing')
-    expect(host.textContent).toContain('already being handled')
-  })
-
   it('requires onchain verification of confirmations restored from a file', async () => {
     const imported = saved()
     imported.statuses[8453] = { phase: 'confirmed', hash: `0x${'ab'.repeat(32)}`, projectId: '19' }
@@ -461,9 +269,11 @@ describe('Create submission recovery', () => {
     const record = JSON.stringify(imported, (_key, value) => typeof value === 'bigint' ? value.toString() : value)
     localStorage.clear()
     await act(async () => root.render(<FundDeploy importedRecord={record} />))
-    expect(saved().statuses[8453]).toMatchObject({ phase: 'pending', hash, multisigSetup: { safe: true, hash } })
+    // The restored setup's proposal is adopted into its hold, and the record keeps only the unproven launch hash.
+    await vi.waitFor(() => expect(saved().statuses[8453].multisigSetup).toBeUndefined())
+    expect(saved().statuses[8453]).toMatchObject({ phase: 'pending', hash })
     expect(saved().statuses[8453].walletReturned).toBeUndefined()
-    expect(saved().statuses[8453].multisigSetup?.walletReturned).toBeUndefined()
+    expect(runtime.adopt).toHaveBeenCalledWith(expect.objectContaining({ namespace: multisigSetupIntent(salt) }), { safe: { safeTxHash: hash } }, expect.anything())
     expect(runtime.send).not.toHaveBeenCalled()
     expect(host.textContent).not.toContain('Review and deploy FUND')
   })
