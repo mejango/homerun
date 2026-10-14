@@ -2,7 +2,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { encodeFunctionData, erc20Abi, type Address } from "viem";
+import { encodeFunctionData, erc20Abi, getAddress, type Address } from "viem";
 import type { TxRequest, TxSendOptions } from "../src/hooks/useSafeTx";
 import { jbContractAddress, type JBChainId } from "@bananapus/nana-sdk-core";
 import { v6Address } from "@bananapus/nana-sdk-core/v6";
@@ -14,24 +14,17 @@ import {
   quoteStickyUnstake,
   type StickyProjectState,
 } from "../src/lib/sticky-state";
-import {
-  beginStickySubmission,
-  readStickyPending,
-  recordStickyHash,
-  stickySessionKey,
-  verifyStickyExecution,
-} from "../src/lib/sticky-session";
+import { readStickyPending, stickyIntent, stickySessionKey } from "../src/lib/sticky-session";
 
 const mocks = vi.hoisted(() => ({
   send: vi.fn(),
+  track: vi.fn(),
+  adoptLegacy: vi.fn(),
   client: {} as Record<string, unknown>,
   phase: "idle",
   receipt: null as null | { status: string; transactionHash: string; blockNumber: bigint },
 }));
-vi.mock("../src/lib/sticky-session", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../src/lib/sticky-session")>()),
-  verifyStickyExecution: vi.fn(),
-}));
+vi.mock("@/lib/write-hold", () => ({ adoptLegacyWrite: mocks.adoptLegacy }));
 vi.mock("@/hooks/useWallet", () => ({
   useWallet: () => ({
     address: "0x1111111111111111111111111111111111111111",
@@ -43,6 +36,7 @@ vi.mock("@/providers/Providers", () => ({ wagmiConfig: {} }));
 vi.mock("@/hooks/useSafeTx", () => ({
   useSafeTx: () => ({
     send: mocks.send,
+    track: mocks.track,
     phase: mocks.phase,
     busy: false,
     hash: mocks.receipt?.transactionHash ?? null,
@@ -149,151 +143,28 @@ afterEach(async () => {
   Reflect.deleteProperty(navigator, "locks");
 });
 describe("Sticky holder recovery and independent loading", () => {
-  it("adopts a queued credit claim into the holder journal without a new wallet attempt", async () => {
-    vi.mocked(readStickyProjectState).mockResolvedValue({ ...state, fundBalance: 0n, fundCreditBalance: 2n * 10n ** 18n });
-    const hash = `0x${"ab".repeat(32)}` as const;
+  it("adopts a transaction the journal saved before SDK holds into its hold, and shows it in its action's panel", async () => {
     const key = stickySessionKey(1, 9n, HOLDER);
-    Object.defineProperty(navigator, "locks", { configurable: true, value: { request: async (_name: string, callback: () => unknown) => callback() } });
-    mocks.send.mockImplementation(async (request: TxRequest, options: TxSendOptions) => {
-      await options.onExistingProposal?.({ proposalHash: hash, call: { to: request.address, data: encodeFunctionData(request), value: request.value ?? 0n } });
-      await options.durableRecovery!.submitted(hash, true);
-      return hash;
-    });
-    try {
-      await mount();
-      await act(async () => [...element.querySelectorAll("button")].find(button => button.textContent === "Use available FUND")!.click());
-      await settle();
-      await act(async () => [...element.querySelectorAll("button")].find(button => button.textContent === "Review credit claim")!.click());
-      expect(readStickyPending(localStorage, key)).toMatchObject({ safe: true, hash, afterBlock: "0" });
-      expect(mocks.send).toHaveBeenCalledOnce();
-      expect(verifyStickyExecution).not.toHaveBeenCalled();
-      expect([...element.querySelectorAll("button")].find(button => button.textContent === "Use available FUND")?.disabled).toBe(true);
-    } finally { Reflect.deleteProperty(navigator, "locks"); }
-  });
-  it("keeps an unknown wallet submission locked after remount", async () => {
-    const key = stickySessionKey(1, 9n, HOLDER);
-    beginStickySubmission(
-      localStorage,
-      key,
-      {
-        chainId: 1,
-        address: FUND,
-        abi: erc20Abi,
-        functionName: "approve",
-        args: [TERMINAL, 10n ** 18n],
-      },
-      9n,
-      HOLDER,
-      false,
-      "Approve FUND",
-      99n,
+    const data = encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [TERMINAL, 10n ** 18n] });
+    localStorage.setItem(key, JSON.stringify({
+      version: 1, id: "11111111-1111-4111-8111-111111111111", chainId: 1, projectId: "9", holder: HOLDER, target: FUND, data, value: "0",
+      label: "Approve FUND", safe: true, submittedAt: 1_800_000_000_000, afterBlock: "99", hash: `0x${"ab".repeat(32)}`,
+    }));
+    mocks.client = { getChainId: async () => 1 };
+    mocks.adoptLegacy.mockResolvedValue({ status: "pending-known-hash" });
+    await mount();
+    expect(mocks.adoptLegacy).toHaveBeenCalledWith(
+      { chainId: 1, account: HOLDER, safe: true, namespace: stickyIntent(9n, "approve"), call: { to: FUND, data, value: 0n } },
+      { submittedAt: 1_800_000_000_000, safe: { safeTxHash: `0x${"ab".repeat(32)}` } },
+      mocks.client,
     );
-    await mount();
-    expect(element.textContent).toContain("Wallet submission may have started");
-    const max = [...element.querySelectorAll("button")].find(
-      (button) => button.textContent === "Use available FUND",
-    )!;
-    expect(max.disabled).toBe(true);
-    await act(async () => root.unmount());
-    root = createRoot(element);
-    await mount();
-    expect(element.textContent).toContain("Saved transaction");
-    expect(
-      [...element.querySelectorAll("button")].find(
-        (button) => button.textContent === "Use available FUND",
-      )?.disabled,
-    ).toBe(true);
+    expect(readStickyPending(localStorage, key)).toBeNull();
+    expect(element.textContent).not.toContain("Saved transaction");
+    expect(mocks.track).toHaveBeenCalledOnce();
+    expect(mocks.track.mock.calls[0][0]).toMatchObject({ address: FUND, functionName: "approve", args: [getAddress(TERMINAL), 10n ** 18n] });
+    expect(mocks.track.mock.calls[0][1]).toEqual({ reviewedAccount: HOLDER, recoveryNamespace: stickyIntent(9n, "approve"), safe: true });
     expect(mocks.send).not.toHaveBeenCalled();
   });
-  it("withdraws its saved transaction when the write stops before the wallet", async () => {
-    vi.mocked(readStickyProjectState).mockResolvedValue({
-      ...state,
-      fundBalance: 0n,
-      fundCreditBalance: 2n * 10n ** 18n,
-    });
-    mocks.client = {
-      getChainId: async () => 1,
-      getBlock: async () => ({ number: 100n }),
-    };
-    Object.defineProperty(navigator, "locks", {
-      configurable: true,
-      value: { request: async (_name: string, callback: () => unknown) => callback() },
-    });
-    const key = stickySessionKey(1, 9n, HOLDER);
-    let marked = false;
-    mocks.send.mockImplementation(
-      async (
-        _request: unknown,
-        options: { durableRecovery: { reserve: () => Promise<void>; releaseUnsubmitted: () => Promise<void> } },
-      ) => {
-        await options.durableRecovery.reserve();
-        marked = !!readStickyPending(localStorage, key);
-        // A Safe connection that changes at the write: nothing reaches the wallet.
-        await options.durableRecovery.releaseUnsubmitted();
-        return null;
-      },
-    );
-    try {
-      await mount();
-      await act(async () =>
-        [...element.querySelectorAll("button")]
-          .find((button) => button.textContent === "Use available FUND")!
-          .click(),
-      );
-      await settle();
-      await act(async () =>
-        [...element.querySelectorAll("button")]
-          .find((button) => button.textContent === "Review credit claim")!
-          .click(),
-      );
-      expect(marked).toBe(true);
-      expect(readStickyPending(localStorage, key)).toBeNull();
-      // Sent as the holder whose credits it claims.
-      expect(mocks.send.mock.calls[0][1].reviewedAccount).toBe(HOLDER);
-    } finally {
-      Reflect.deleteProperty(navigator, "locks");
-    }
-  });
-  it.each([
-    ["a Safe execution whose call failed", "success", true],
-    ["a Safe execution's outer revert, which leaves its proposal live", "reverted", false],
-  ] as const)(
-    "resolves its saved transaction from the engine's failed receipt only for %s",
-    async (_, status, resolves) => {
-      const key = stickySessionKey(1, 9n, HOLDER);
-      const proposal = `0x${"ab".repeat(32)}` as const;
-      const execution = `0x${"cd".repeat(32)}` as const;
-      const saved = beginStickySubmission(
-        localStorage,
-        key,
-        { chainId: 1, address: FUND, abi: erc20Abi, functionName: "approve", args: [TERMINAL, 10n ** 18n] },
-        9n,
-        HOLDER,
-        true,
-        "Approve FUND",
-        99n,
-      );
-      recordStickyHash(localStorage, key, proposal);
-      vi.mocked(verifyStickyExecution).mockResolvedValue("reverted");
-      await mount();
-      // The engine then judges the execution failed: phase error, with its receipt.
-      mocks.phase = "error";
-      mocks.receipt = { status, transactionHash: execution, blockNumber: 101n };
-      await mount();
-      if (resolves) {
-        expect(verifyStickyExecution).toHaveBeenCalledWith(
-          mocks.client,
-          expect.objectContaining({ submittedAt: saved.submittedAt, hash: proposal }),
-          execution,
-        );
-        expect(readStickyPending(localStorage, key)).toBeNull();
-        expect(navigator.locks.request).toHaveBeenCalledWith(`sticky-submit:${key}`, expect.any(Function));
-      } else {
-        expect(verifyStickyExecution).not.toHaveBeenCalled();
-        expect(readStickyPending(localStorage, key)).not.toBeNull();
-      }
-    },
-  );
   it("renders balances and staking controls while reward history is still loading", async () => {
     vi.mocked(readStickyRewards).mockReturnValue(new Promise(() => {}));
     await mount(11n);
@@ -332,6 +203,9 @@ describe("Sticky holder recovery and independent loading", () => {
     expect(quoteStickyStake).not.toHaveBeenCalled();
     await act(async () => claim.click());
     expect(mocks.send).toHaveBeenCalledOnce();
+    // Held under the claim's own intent while unresolved, not its amount.
+    expect(mocks.send.mock.calls[0][1].recoveryNamespace).toBe(stickyIntent(9n, "claimTokensFor"));
+    expect(mocks.send.mock.calls[0][1].durableRecovery).toBeUndefined();
     expect(mocks.send.mock.calls[0][0]).toMatchObject({
       functionName: "claimTokensFor",
       args: [HOLDER, 7n, 2n * 10n ** 18n, HOLDER],

@@ -1,8 +1,11 @@
 /** Durable duplicate protection. Recovery state can block a write, but can never prove execution. */
 import {
+  decodeFunctionData,
   encodeFunctionData,
+  erc20Abi,
   isAddress,
   isAddressEqual,
+  parseAbi,
   zeroHash,
   type Address,
   type Hex,
@@ -10,7 +13,10 @@ import {
 } from "viem";
 import type { FundTransaction } from "./fund-contracts";
 import { withPrewalletReservation } from "./prewallet-reservation";
-import { verifyReviewedWriteReceipt } from "@bananapus/nana-sdk-core/review";
+import { verifyReviewedWriteReceipt, writeIntentKey, type ReviewedWriteRecoveryInput } from "@bananapus/nana-sdk-core/review";
+import { jbControllerAbi, jbMultiTerminalAbi } from "@bananapus/nana-sdk-core";
+import type { TxRequest } from "@/hooks/useSafeTx";
+import type { LegacyWriteEvidence } from "./write-hold";
 import {
   heldCall,
   type SafeAppCall,
@@ -35,6 +41,50 @@ export type StickyPending = {
   hash?: Hex;
 };
 export type StickyStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
+/** The holder's Sticky actions, each held under its own intent while unresolved. */
+const STICKY_ACTIONS: Record<string, string> = {
+  claimTokensFor: "sticky-claim-credits",
+  approve: "sticky-approve",
+  pay: "sticky-stake",
+  cashOutTokensOf: "sticky-unstake",
+  beginVesting: "sticky-rewards-vest",
+  collectVestedRewards: "sticky-rewards-collect",
+};
+const STICKY_ABI = [...jbControllerAbi, ...jbMultiTerminalAbi, ...erc20Abi, ...parseAbi([
+  "function beginVesting(address token, uint256[] tokenIds, address[] tokens)",
+  "function collectVestedRewards(address token, uint256[] tokenIds, address[] tokens, address beneficiary)",
+])];
+
+/**
+ * A holder action's hold: the Sticky project and the action, one at a time. Its amounts and quoted
+ * minimums are left out, so a retry of the action is held while one is unresolved.
+ * TODO(SDK 2.38): the SDK's shared builder.
+ */
+export function stickyIntent(projectId: bigint, functionName: string): string {
+  const action = STICKY_ACTIONS[functionName];
+  if (!action) throw new Error(`Unknown Sticky action: ${functionName}`);
+  return writeIntentKey(action, { project: projectId });
+}
+
+/** A record the Sticky journal saved before SDK holds: the request it was, and the hold it is adopted into. */
+export function stickyPendingHold(record: StickyPending): {
+  request: TxRequest;
+  input: ReviewedWriteRecoveryInput;
+  evidence: LegacyWriteEvidence;
+} {
+  const { functionName, args } = decodeFunctionData({ abi: STICKY_ABI, data: record.data });
+  const value = BigInt(record.value);
+  return {
+    request: { chainId: record.chainId, address: record.target, abi: STICKY_ABI, functionName, args: args ?? [], value, label: record.label },
+    input: {
+      chainId: record.chainId, account: record.holder, safe: record.safe,
+      namespace: stickyIntent(BigInt(record.projectId), functionName),
+      call: { to: record.target, data: record.data, value },
+    },
+    evidence: { submittedAt: record.submittedAt, ...(record.hash ? record.safe ? { safe: { safeTxHash: record.hash } } : { hash: record.hash } : {}) },
+  };
+}
 const HASH = /^0x[\da-fA-F]{64}$/;
 export type ExistingSafeProposal = { proposalHash: Hex; call: SafeAppCall };
 /** Exact immutable plans remain exact; raw journals may retain a shared SDK-recognized earlier stamp. */

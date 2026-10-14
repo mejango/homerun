@@ -6,12 +6,11 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import {
   formatUnits,
   isAddressEqual,
   type Address,
-  type Hex,
   type PublicClient,
 } from "viem";
 import { usePublicClient } from "wagmi";
@@ -40,18 +39,14 @@ import {
   type StickyRewardState,
 } from "@/lib/sticky-state";
 import {
-  adoptStickyProposal,
-  beginStickySubmission,
   clearStickyPending,
   readStickyPending,
-  recordStickyHash,
-  releaseStickyUnsubmitted,
+  stickyIntent,
+  stickyPendingHold,
   stickySessionKey,
-  verifyStickyExecution,
-  type StickyPending,
 } from "@/lib/sticky-session";
-import { isSafeConnection } from "@/lib/safe-connector";
-import { wagmiConfig } from "@/providers/Providers";
+import { adoptLegacyWrite } from "@/lib/write-hold";
+import { HeldNotice } from "@/components/ui/HeldWriteExit";
 
 export type StickyHolderProps = {
   chainId: JBChainId;
@@ -60,6 +55,9 @@ export type StickyHolderProps = {
   incomeProjectId?: bigint;
 };
 type StickyTx = ReturnType<typeof useSafeTx>;
+const STAKE_ACTIONS = ["claimTokensFor", "approve", "pay"] as const;
+const UNSTAKE_ACTIONS = ["cashOutTokensOf"] as const;
+const REWARD_ACTIONS = ["beginVesting", "collectVestedRewards"] as const;
 const units = (value: bigint) => formatUnits(value, 18);
 function reason(error: unknown) {
   return error instanceof Error
@@ -81,39 +79,46 @@ function duration(seconds: bigint) {
 }
 const inputClass =
   "min-h-12 w-full rounded border border-[#bfc9b5] bg-white px-3 text-base";
-const JOURNAL_EVENT = "homerun-sticky-recovery";
-function changedJournal() {
-  window.dispatchEvent(new Event(JOURNAL_EVENT));
-}
-function useStickyJournal(
+/** A Sticky action the journal saved before SDK holds, now in its hold: the request its screen shows. */
+type AdoptedSticky = {
+  request: TxRequest;
+  namespace: string;
+  account: Address;
+  safe: boolean;
+};
+const StickyAdoption = createContext<AdoptedSticky | null>(null);
+/**
+ * An action the Sticky journal saved as pending before SDK holds is adopted into its hold, with its
+ * hash or Safe proposal and its send time, and the journal record goes.
+ */
+function useStickyAdoption(
   chainId: number,
   projectId: bigint,
-  account?: Address,
+  account: Address | undefined,
+  client: PublicClient | undefined,
 ) {
-  const key = account ? stickySessionKey(chainId, projectId, account) : null;
-  const [pending, setPending] = useState<StickyPending | null>(null),
-    [error, setError] = useState<string | null>(null),
-    [readyKey, setReadyKey] = useState<string | null | undefined>(undefined);
+  const [adopted, setAdopted] = useState<AdoptedSticky | null>(null),
+    [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    function read() {
-      try {
-        setPending(key ? readStickyPending(localStorage, key) : null);
-        setError(null);
-      } catch (failure) {
-        setError(reason(failure));
-      } finally {
-        setReadyKey(key);
-      }
-    }
-    read();
-    window.addEventListener(JOURNAL_EVENT, read);
-    window.addEventListener("storage", read);
+    if (!account || !client) return;
+    const key = stickySessionKey(chainId, projectId, account);
+    let cancelled = false;
+    void (async () => {
+      const record = readStickyPending(localStorage, key);
+      if (!record) return;
+      const { request, input, evidence } = stickyPendingHold(record);
+      await adoptLegacyWrite(input, evidence, client);
+      clearStickyPending(localStorage, key, record);
+      if (!cancelled)
+        setAdopted({ request, namespace: input.namespace!, account: record.holder, safe: record.safe });
+    })().catch((failure) => {
+      if (!cancelled) setError(reason(failure));
+    });
     return () => {
-      window.removeEventListener(JOURNAL_EVENT, read);
-      window.removeEventListener("storage", read);
+      cancelled = true;
     };
-  }, [key]);
-  return { key, pending, error, ready: readyKey === key };
+  }, [account, chainId, client, projectId]);
+  return { adopted, error };
 }
 function Status({ tx, chainId }: { tx: StickyTx; chainId: number }) {
   const link =
@@ -121,7 +126,7 @@ function Status({ tx, chainId }: { tx: StickyTx; chainId: number }) {
   return (
     <div role="status" aria-live="polite" className="mt-4 break-words text-sm">
       {tx.phase === "submitted" ? (
-        <p>{tx.notice}</p>
+        <HeldNotice tx={tx} />
       ) : tx.phase === "pending" ? (
         <p>Submitted. Waiting for onchain confirmation…</p>
       ) : tx.phase === "success" ? (
@@ -137,21 +142,23 @@ function Status({ tx, chainId }: { tx: StickyTx; chainId: number }) {
     </div>
   );
 }
-function useStickyTx(state: StickyProjectState) {
+function useStickyTx(state: StickyProjectState, actions: readonly string[]) {
   const tx = useSafeTx(state.chainId),
     cache = useQueryClient(),
     previous = useRef<string | null>(null),
     prerequisite = useRef<bigint | undefined>(undefined);
-  const { address } = useWallet(),
-    client = usePublicClient({ chainId: state.chainId }) as
-      | PublicClient
-      | undefined;
-  const journal = useStickyJournal(
-    state.chainId,
-    state.stickyProjectId,
-    address,
-  );
-  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const adopted = useContext(StickyAdoption),
+    track = tx.track;
+  // An adopted journal record of one of this screen's actions is shown here, with its line and exit.
+  const shows = !!adopted && actions.includes(adopted.request.functionName);
+  useEffect(() => {
+    if (!adopted || !shows) return;
+    void track(adopted.request, {
+      reviewedAccount: adopted.account,
+      recoveryNamespace: adopted.namespace,
+      safe: adopted.safe,
+    });
+  }, [adopted, shows, track]);
   useEffect(() => {
     // The engine settled this receipt: it confirmed, reverted, or holds a Safe
     // execution whose call failed.
@@ -183,30 +190,8 @@ function useStickyTx(state: StickyProjectState) {
           state.rewards.incomeProjectId.toString(),
         ],
       });
-    // A Safe's reverted execution leaves its proposal live, so that record stays.
-    if (
-      client &&
-      journal.pending &&
-      journal.key &&
-      !(journal.pending.safe && tx.receipt.status !== "success")
-    ) {
-      const record = journal.pending,
-        key = journal.key;
-      void verifyStickyExecution(client, record, tx.receipt.transactionHash)
-        .then(async () => {
-          if (!navigator.locks) throw new Error("Use a browser with Web Locks support to coordinate Sticky recovery across tabs.");
-          await navigator.locks.request(`sticky-submit:${key}`, () => {
-            clearStickyPending(localStorage, key, record);
-            changedJournal();
-          });
-        })
-        .catch((failure) => setRecoveryError(reason(failure)));
-    }
   }, [
     cache,
-    client,
-    journal.key,
-    journal.pending,
     state.chainId,
     state.fundProjectId,
     state.stickyProjectId,
@@ -214,90 +199,14 @@ function useStickyTx(state: StickyProjectState) {
     tx.phase,
     tx.receipt,
   ]);
-  async function send(request: TxRequest, options: TxSendOptions) {
-    if (
-      !address ||
-      !client ||
-      !journal.key ||
-      !journal.ready ||
-      journal.error ||
-      journal.pending
-    )
-      throw new Error(
-        "Resolve the saved Sticky transaction before sending another action.",
-      );
-    let record: StickyPending | null = null;
-    const key = journal.key;
-    const persistSubmitted = async (hash: Hex, safe?: boolean) => {
-      await navigator.locks.request(`sticky-submit:${key}`, () => {
-        if (!record || (safe !== undefined && record.safe !== safe))
-          throw new Error("The saved Sticky transaction does not match the submitted wallet write.");
-        if (record.hash === hash) return;
-        record = recordStickyHash(localStorage, key, hash, record);
-        changedJournal();
-      });
-    };
-    const hash = await tx.send(request, {
+  /** Each action is held under its own intent while unresolved; its amounts and quotes are not part of it. */
+  function send(request: TxRequest, options: TxSendOptions) {
+    return tx.send(request, {
       ...options,
-      onExistingProposal: async (proposal) => {
-        if (!navigator.locks)
-          throw new Error("Use a browser with Web Locks support to coordinate Sticky recovery across tabs.");
-        await navigator.locks.request(`sticky-submit:${key}`, async () => {
-          record = adoptStickyProposal(localStorage, key, request, state.stickyProjectId, address, request.label ?? "Sticky transaction", proposal);
-          changedJournal();
-          await options.onExistingProposal?.(proposal);
-        });
-      },
-      durableRecovery: {
-        reserve: async () => {
-          if ((await client.getChainId()) !== state.chainId)
-            throw new Error("The Sticky RPC changed networks.");
-          const block = await client.getBlock({ blockTag: "latest" });
-          if (block.number === null)
-            throw new Error("A confirmed block is required before submission.");
-          const save = () => {
-            record = beginStickySubmission(
-              localStorage,
-              key,
-              request,
-              state.stickyProjectId,
-              address,
-              isSafeConnection(wagmiConfig),
-              request.label ?? "Sticky transaction",
-              block.number!,
-            );
-            changedJournal();
-          };
-          if (!navigator.locks)
-            throw new Error(
-              "This browser cannot coordinate Sticky transaction recovery across tabs. Use a browser with Web Locks support.",
-            );
-          await navigator.locks.request(`sticky-submit:${key}`, save);
-        },
-        releaseUnsubmitted: async () => {
-          if (!record) return;
-          await navigator.locks.request(`sticky-submit:${key}`, () => {
-            if (!record) return;
-            releaseStickyUnsubmitted(localStorage, key, record);
-            record = null;
-            changedJournal();
-          });
-        },
-        submitted: persistSubmitted,
-      },
+      recoveryNamespace: stickyIntent(state.stickyProjectId, request.functionName),
     });
-    if (hash) await persistSubmitted(hash);
-    return hash;
   }
-  return {
-    tx: {
-      ...tx,
-      send,
-      busy: tx.busy || !journal.ready || !!journal.pending || !!journal.error,
-      error: tx.error ?? journal.error ?? recoveryError,
-    },
-    prerequisite,
-  };
+  return { tx: { ...tx, send }, prerequisite };
 }
 async function fresh(
   client: PublicClient,
@@ -344,6 +253,7 @@ export function StickyHolder({
 }: StickyHolderProps) {
   const { address } = useWallet();
   const client = usePublicClient({ chainId }) as PublicClient | undefined;
+  const adoption = useStickyAdoption(chainId, stickyProjectId, address, client);
   const [page, setPage] = useState(0n),
     [lastState, setLastState] = useState<StickyProjectState | null>(null);
   const query = useQuery({
@@ -399,18 +309,17 @@ export function StickyHolder({
           </button>
         </div>
       )}
-      {client && (
-        <StickyRecovery
-          chainId={chainId}
-          projectId={stickyProjectId}
-          client={client}
-        />
+      {adoption.error && (
+        <p role="alert" className="mb-5 text-red-800">
+          {adoption.error}
+        </p>
       )}
       {state &&
         state.chainId === chainId &&
         state.fundProjectId === fundProjectId &&
         state.stickyProjectId === stickyProjectId &&
         client && (
+          <StickyAdoption.Provider value={adoption.adopted}>
           <fieldset
             key={`${chainId}:${fundProjectId}:${stickyProjectId}`}
             className="m-0 min-w-0 border-0 p-0"
@@ -494,6 +403,7 @@ export function StickyHolder({
               )}
             </div>
           </fieldset>
+          </StickyAdoption.Provider>
         )}
     </section>
   );
@@ -639,7 +549,7 @@ function StickyStake({
   client: PublicClient;
 }) {
   const { address } = useWallet(),
-    { tx, prerequisite } = useStickyTx(state);
+    { tx, prerequisite } = useStickyTx(state, STAKE_ACTIONS);
   const [input, setInput] = useState(""),
     [error, setError] = useState<string | null>(null),
     [preparing, setPreparing] = useState(false);
@@ -843,7 +753,7 @@ function StickyUnstake({
   client: PublicClient;
 }) {
   const { address } = useWallet(),
-    { tx } = useStickyTx(state);
+    { tx } = useStickyTx(state, UNSTAKE_ACTIONS);
   const [input, setInput] = useState(""),
     [error, setError] = useState<string | null>(null),
     [preparing, setPreparing] = useState(false);
@@ -984,7 +894,7 @@ export function StickyRewards({
   client: PublicClient;
 }) {
   const { address } = useWallet(),
-    { tx } = useStickyTx(state);
+    { tx } = useStickyTx(state, REWARD_ACTIONS);
   const [error, setError] = useState<string | null>(null),
     [preparing, setPreparing] = useState(false);
   const rewards = state.rewards,
@@ -1139,102 +1049,5 @@ export function StickyRewards({
       )}
       <Status tx={tx} chainId={state.chainId} />
     </section>
-  );
-}
-
-function StickyRecovery({
-  chainId,
-  projectId,
-  client,
-}: {
-  chainId: number;
-  projectId: bigint;
-  client: PublicClient;
-}) {
-  const { address } = useWallet(),
-    journal = useStickyJournal(chainId, projectId, address),
-    cache = useQueryClient();
-  const [execution, setExecution] = useState(""),
-    [error, setError] = useState<string | null>(null),
-    [busy, setBusy] = useState(false);
-  const pending = journal.pending;
-  async function recover() {
-    if (!pending || !journal.key) return;
-    const hash = execution.trim() || (!pending.safe ? pending.hash : null);
-    if (!hash || !/^0x[\da-fA-F]{64}$/.test(hash)) {
-      setError("Enter the onchain execution hash from your wallet or Safe.");
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      await verifyStickyExecution(client, pending, hash as `0x${string}`);
-      if (!navigator.locks) throw new Error("Use a browser with Web Locks support to coordinate Sticky recovery across tabs.");
-      await navigator.locks.request(`sticky-submit:${journal.key}`, () => {
-        clearStickyPending(localStorage, journal.key!, pending);
-        changedJournal();
-      });
-      void cache.invalidateQueries({
-        queryKey: ["sticky-project", chainId, projectId.toString()],
-      });
-    } catch (failure) {
-      setError(reason(failure));
-    } finally {
-      setBusy(false);
-    }
-  }
-  if (journal.error)
-    return (
-      <p role="alert" className="mb-5 text-red-800">
-        {journal.error}
-      </p>
-    );
-  if (!pending) return null;
-  return (
-    <div
-      className="mb-6 rounded border border-[#c4cdbb] bg-[#eef1e7] p-5"
-      aria-label="Pending Sticky transaction"
-    >
-      <h3 className="text-2xl">Saved transaction</h3>
-      <p className="mt-3 break-words">{pending.label}</p>
-      <p className="mt-3 text-sm">
-        {pending.hash
-          ? pending.safe
-            ? "A Safe proposal was submitted. It still needs execution."
-            : "A transaction was submitted. Its receipt still needs verification."
-          : "Wallet submission may have started, but no hash was returned. Check wallet history before continuing."}{" "}
-        Another Sticky action stays unavailable until this record is resolved.
-      </p>
-      {pending.hash && (
-        <p className="mt-3 break-all text-sm">
-          {pending.safe ? "Safe proposal" : "Transaction"}: {pending.hash}
-        </p>
-      )}
-      <label className="mt-4 grid gap-2 text-sm">
-        Onchain execution hash
-        <input
-          className={inputClass}
-          value={execution}
-          onChange={(event) => setExecution(event.target.value)}
-          placeholder={
-            pending.safe ? "Execution hash from Safe" : (pending.hash ?? "0x…")
-          }
-          autoComplete="off"
-        />
-      </label>
-      <button
-        type="button"
-        className="btn-secondary mt-4 min-h-11 px-5"
-        disabled={busy}
-        onClick={() => void recover()}
-      >
-        {busy ? "Checking execution…" : "Verify execution"}
-      </button>
-      {error && (
-        <p role="alert" className="mt-3 text-sm text-red-800">
-          {error}
-        </p>
-      )}
-    </div>
   );
 }
