@@ -670,7 +670,7 @@ export function useSafeTx(chainId: number) {
   // A held write ends on the chain's proof: the hold is watched, and asked while its state shows.
   useWriteHoldWatch(hold ?? undefined, publicClient as WriteHoldClient | undefined, state => {
     if (publicClient && holdAt.current === generation.current) apply(state, publicClient)
-  }, { checkNow: watching && !fresh })
+  }, { checkNow: watching && !fresh, shown: held })
 
   // A verified receipt releases the hold; a revert only once it is final.
   useEffect(() => {

@@ -7,6 +7,7 @@ import { usePublicClient } from 'wagmi'
 import { useSafeTx, type TxRequest } from './useSafeTx'
 import { useWallet } from './useWallet'
 import { useWriteHoldWatch } from './useWriteHoldWatch'
+import { sameShownHold } from '@/lib/write-hold'
 import { assertNoViewAs } from '@/lib/viewAs'
 import { WRITE_EXIT_LABEL, browserLocks, writeExitMessage, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
 import {
@@ -161,8 +162,8 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
   useWriteHoldWatch(otherHold?.hold, client as WriteHoldClient | undefined, state => {
     if (!otherHold || exiting.current === otherHold.hold) return
     if (state.status === 'clear') void rescan(otherHold)
-    else if (JSON.stringify(state.record) !== JSON.stringify(otherHold.state.record) || state.status !== otherHold.state.status) setOtherHold({ hold: otherHold.hold, state })
-  })
+    else if (!sameShownHold(state, otherHold.state)) setOtherHold({ hold: otherHold.hold, state })
+  }, { shown: otherHold?.state })
   const phase = otherHold ? 'submitted' as const : tx.phase
   const exitOther = useCallback(async () => {
     if (!otherHold || !client) return

@@ -259,6 +259,33 @@ describe('project administrative writes', () => {
     } finally { vi.useRealTimers() }
   })
 
+  it('shows the exit of another wallet\'s update once a check offers it, after the first look found the hold contended', async () => {
+    vi.useFakeTimers()
+    const { holds } = await import('@/lib/write-hold')
+    const open = holds.open
+    let looks = 0
+    // The first look runs while another tab holds the lock: the same state, but with no exit.
+    const spy = vi.spyOn(holds, 'open').mockImplementation((...args: Parameters<typeof open>) => {
+      const handle = open(...args)
+      return { ...handle, state: async (...state: Parameters<typeof handle.state>) => {
+        const now = await handle.state(...state)
+        return (looks += 1) === 1 && now.status !== 'clear' ? { ...now, exit: false } : now
+      } }
+    })
+    try {
+      await foreignHold()
+      await render()
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })
+      expect(handle.phase).toBe('submitted')
+      expect(handle.held).toBeNull()
+      // The next look is not contended: the exit appears.
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
+      expect(handle.held).toMatchObject({ label: expect.stringContaining('I checked my wallet') })
+      expect(button('I checked my wallet. Send again')).toBeDefined()
+    } finally { spy.mockRestore(); vi.useRealTimers() }
+  })
+
   it('register the account when an existing Safe proposal is adopted, under the project lock', async () => {
     await render()
     await vi.waitFor(() => expect(handle.ready).toBe(true))

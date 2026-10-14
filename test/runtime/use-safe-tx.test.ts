@@ -890,6 +890,16 @@ describe('useSafeTx', () => {
     expect(hook.ref.current).toMatchObject({ phase: 'error', error: WRITE_HOLD_STALE_REVIEW_LINE })
   })
 
+  it("keeps a shown exit when another tab's change replays the same state without it", async () => {
+    mocks.writeContract.mockRejectedValueOnce(new Error('Wallet reply was lost after broadcast'))
+    const hook = await renderHook()
+    await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+    expect(hook.ref.current!.held).toMatchObject({ label: WRITE_EXIT_LABEL })
+    // Another tab touches the saved holds: the SDK replays the saved state, which never carries an exit.
+    await act(async () => { window.dispatchEvent(new StorageEvent('storage', { key: 'nana-sdk:reviewed-write:other-tab' })) })
+    expect(hook.ref.current!.held).toMatchObject({ label: WRITE_EXIT_LABEL })
+  })
+
   it('does not treat a rejection-looking transport message as a definite wallet rejection', async () => {
     mocks.writeContract.mockRejectedValueOnce(new Error('User rejected: transport connection lost'))
     const hook = await renderHook()
