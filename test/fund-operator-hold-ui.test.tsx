@@ -45,7 +45,7 @@ vi.mock('@tanstack/react-query', async importOriginal => ({
 }))
 
 import { wallet } from './support/fake-wallet'
-import { deserializeRulesetRecovery, FundOperatorActions, serializeRulesetRecovery } from '../src/components/FundOperatorActions'
+import { allowanceIntent, deserializeRulesetRecovery, FundOperatorActions, serializeRulesetRecovery } from '../src/components/FundOperatorActions'
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111' as Address
 const ROOT = { chainId: 8453, projectId: 7n }
@@ -175,6 +175,20 @@ it('shows a held owner action and its exit after a reload, while its own button 
   runtime.states = [single(true)]
   await show(single(true)); await settle(); await settle()
   expect(button('Review pause')?.disabled).toBe(true)
+  expect(button(EXIT), host.textContent ?? '').toBeDefined()
+  await click(EXIT)
+  expect(button(EXIT)).toBeUndefined()
+})
+
+it('shows a held purchase-allowance write and its exit after a reload, with allowance configuration unavailable', async () => {
+  const TERMINAL = '0x3333333333333333333333333333333333333333' as Address, TOKEN = '0x4444444444444444444444444444444444444444' as Address
+  const current = { ...state(), linkedChainIds: [8453], accountingContexts: [{ terminal: TERMINAL, token: TOKEN, decimals: 6, currency: 1, symbol: 'USDC', balance: 0n, surplus: 0n, surplusAllowances: [] }],
+    permissions: { queueRulesets: false, mintTokens: false } } as unknown as FundProjectState
+  // An allowance change the wallet never answered for, from before the reload.
+  const { adoptLegacyWrite } = await import('@/lib/write-hold')
+  await adoptLegacyWrite({ chainId: 8453, account: ACCOUNT, safe: false, namespace: allowanceIntent(7n, { terminal: TERMINAL, token: TOKEN }), call: { to: TERMINAL, data: '0x12345678', value: 0n } }, {}, wallet.client as never)
+  await act(async () => root.render(<FundOperatorActions state={current} client={wallet.client as unknown as PublicClient} contextIndex={0} />))
+  await settle(); await settle()
   expect(button(EXIT), host.textContent ?? '').toBeDefined()
   await click(EXIT)
   expect(button(EXIT)).toBeUndefined()

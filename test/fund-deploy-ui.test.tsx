@@ -252,6 +252,12 @@ describe('Create submission recovery', () => {
     await act(async () => root.render(<FundDeploy values={{} as CreateValues} />))
     const check = [...host.querySelectorAll('button')].find(item => item.textContent === 'Check confirmation')!
     await act(async () => check.click())
+    // Checking asks the launch's hold; only what it settles is verified and recorded.
+    expect(runtime.track).toHaveBeenLastCalledWith(expect.objectContaining({ chainId: 8453 }), expect.objectContaining({ recoveryNamespace: launchIntent(salt), safe: true }))
+    expect(saved().statuses[8453].phase).toBe('pending')
+    runtime.txPhase = 'error'; runtime.txReceipt = await runtime.getTransactionReceipt(); runtime.submissionHash = proposal
+    await act(async () => root.render(<FundDeploy values={{} as CreateValues} />))
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
     if (kind === 'proven failure') {
       expect(saved().statuses[8453].phase).toBe('reverted')
       expect(host.textContent).toContain('The deployment reverted. No project was created by this transaction.')

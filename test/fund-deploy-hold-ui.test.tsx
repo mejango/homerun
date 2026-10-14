@@ -32,7 +32,11 @@ vi.mock('@/lib/transaction-review', async importOriginal => {
 vi.mock('@/lib/safe-connector', async importOriginal => ({ ...(await importOriginal<typeof import('@/lib/safe-connector')>()), isSafeConnection: () => false, useSafeConnection: () => false }))
 vi.mock('@/components/WalletButton', () => ({ WalletButton: () => null }))
 vi.mock('@/components/CreateFlow', () => ({ default: () => null }))
-vi.mock('@/lib/fund-launch-verification', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/fund-launch-verification')>(), checkLaunchDeployment: async () => undefined }))
+const verification = vi.hoisted(() => ({ launch: null as null | (() => Promise<bigint>) }))
+vi.mock('@/lib/fund-launch-verification', async importOriginal => {
+  const actual = await importOriginal<typeof import('../src/lib/fund-launch-verification')>()
+  return { ...actual, checkLaunchDeployment: async () => undefined, verifyFundLaunch: (...args: Parameters<typeof actual.verifyFundLaunch>) => verification.launch ? verification.launch() : actual.verifyFundLaunch(...args) }
+})
 vi.mock('@/lib/fund-launch-relayr', () => ({ runRelayrLaunch: vi.fn(), launchRequestsDead: vi.fn() }))
 
 import { wallet } from './support/fake-wallet'
@@ -64,7 +68,7 @@ beforeEach(() => {
   wallet.client.getChainId.mockImplementation(async () => 8453)
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); localStorage.clear() })
+afterEach(async () => { verification.launch = null; await act(async () => root.unmount()); host.remove(); localStorage.clear() })
 
 it('refuses another deployment after a lost wallet reply until the user takes the exit', async () => {
   save({ phase: 'ready' })
@@ -92,3 +96,39 @@ it('adopts a hashless attempt the launch record saved before SDK holds: the reco
   await click('Review and deploy FUND')
   expect(wallet.writeContract).toHaveBeenCalledOnce()
 })
+
+it('refuses to discard a launch whose deployment is held, and keeps its exit', async () => {
+  save({ phase: 'ready' })
+  wallet.writeContract.mockRejectedValueOnce(new Error('Wallet reply was lost after broadcast'))
+  await render()
+  await click('Review and deploy FUND')
+  expect(button(EXIT)).toBeDefined()
+  await click('Discard and edit details')
+  expect(localStorage.getItem(FUND_LAUNCH_KEY)).not.toBeNull()
+  expect(host.textContent).toContain('Finish or exit the pending launch first.')
+  expect(button(EXIT)).toBeDefined()
+  // A network change does not discard it either.
+  await act(async () => root.render(<FundDeploy values={{ networkEnvironment: 'production', networks: ['optimism'] } as unknown as CreateValues} />))
+  await settle(); await settle()
+  expect(localStorage.getItem(FUND_LAUNCH_KEY)).not.toBeNull()
+  expect(button(EXIT)).toBeDefined()
+})
+
+it('does not confirm a launch from a mined receipt until its hold settles', async () => {
+  save({ phase: 'ready' })
+  // The node has a receipt, and the domain checks would pass, but the transaction still reads as pending.
+  verification.launch = async () => 42n
+  const chainReceipt = wallet.client.getTransactionReceipt.getMockImplementation()!
+  wallet.client.getTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => ({ status: 'success', transactionHash: hash, blockNumber: 10n, blockHash: `0x${'0a'.repeat(32)}`, transactionIndex: 0, from: OWNER, to: OWNER, logs: [] }) as never)
+  await render()
+  await click('Review and deploy FUND')
+  expect(wallet.writeContract).toHaveBeenCalledOnce()
+  if (button('Check confirmation')) await click('Check confirmation')
+  expect(saved().phase).not.toBe('confirmed')
+  // The chain places it: the hold settles, and only then is the launch confirmed.
+  wallet.client.getTransactionReceipt.mockImplementation(chainReceipt)
+  await act(async () => { wallet.confirm(`0x${'1'.padStart(64, '0')}` as Hex) })
+  await settle(); await settle(); await settle()
+  expect(saved()).toMatchObject({ phase: 'confirmed', projectId: '42' })
+})
+

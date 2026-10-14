@@ -1,6 +1,6 @@
 import { type Address, type Hex } from 'viem'
 import { writeIntentKey, type ReviewedWriteRecoveryInput } from '@bananapus/nana-sdk-core/review'
-import { callOf, type LegacyWriteEvidence } from './write-hold'
+import { callOf, holds, type LegacyWriteEvidence } from './write-hold'
 import type { LaunchRelayrJournal } from './fund-launch-relayr'
 import { buildFundLaunch, type FundLaunchInput, type FundTransaction } from './fund-contracts'
 
@@ -246,10 +246,19 @@ export function sameSender(actual: Address | undefined, expected: Address): void
   if (actual?.toLowerCase() !== expected.toLowerCase()) throw new Error('Reconnect the wallet that prepared this launch. Every linked deployment must use the same sender.')
 }
 
+export const LAUNCH_HELD_LINE = 'Finish or exit the pending launch first.'
+
+/** Whether the SDK holds a deployment or multisig setup of this launch on any of its chains (from storage, either wallet kind). */
+export function launchHeldWrite(session: FundLaunchSession): boolean {
+  const placeholder = { to: '0x0000000000000000000000000000000000000000' as Address, data: '0x' as Hex }
+  return session.input.chainIds.some(chainId => [launchIntent(session.input.salt), multisigSetupIntent(session.input.salt)].some(namespace =>
+    [false, true].some(safe => holds.open({ chainId, account: session.input.sender, safe, namespace, call: placeholder }).peek().status !== 'clear')))
+}
+
 /** Only a plan that has never acquired an authorization can follow edited networks. */
 export function discardUnsignedLaunch(salt: Hex): boolean {
   const session = requireLaunch(salt)
-  if (session.intentId) return false
+  if (session.intentId || launchHeldWrite(session)) return false
   if (!Object.values(session.statuses).every(status => status.phase === 'ready' && !status.multisigSetup)
     || session.relayr?.signed.length || session.relayr?.superseded?.length
     || session.relayr?.published || session.relayr?.quote || session.relayr?.paymentHash
@@ -280,6 +289,8 @@ export async function cancelUnsubmittedLaunch(salt: Hex, requestsDead?: (session
     await navigator.locks.request(`homerun:fund-launch:${salt}`, { ifAvailable: true }, async directLock => {
       if (!directLock) throw new Error('Finish or close the active wallet request before cancelling.')
       const session = requireLaunch(salt)
+      // A held deployment or setup keeps its launch, and its exit, until it settles or the user takes that exit.
+      if (launchHeldWrite(session)) throw new Error(LAUNCH_HELD_LINE)
       if (!canCancelLaunch(session)) throw new Error('This launch may already be submitted. Resume it to check its execution before starting another.')
       if (session.relayr?.published && !(await requestsDead?.(session))) throw new Error('A request of this launch can still run. Resume it to check it before cancelling.')
       localStorage.setItem(`${FUND_LAUNCH_KEY}:cancelled:${salt}`, encodeLaunchSession(session))

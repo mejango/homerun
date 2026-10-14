@@ -11,7 +11,7 @@ import { useSafeTx } from '@/hooks/useSafeTx'
 import { wagmiConfig } from '@/providers/Providers'
 import CreateFlow, { type CreateValues } from './CreateFlow'
 import { buildFundLaunch, type FundTransaction } from '@/lib/fund-contracts'
-import { FUND_LAUNCH_KEY, canCancelLaunch, launchHold, launchIntent, multisigSetupIntent, cancelUnsubmittedLaunch, discardUnsignedLaunch, decodeLaunchSession, encodeLaunchSession, saveLaunch, updateLaunchStatus, refreshLaunchCreationFee, archiveLaunch, loadLaunchSession, sameSender, type FundLaunchSession, type LaunchStatus } from '@/lib/fund-launch-session'
+import { FUND_LAUNCH_KEY, canCancelLaunch, launchHeldWrite, launchHold, launchIntent, multisigSetupIntent, cancelUnsubmittedLaunch, discardUnsignedLaunch, decodeLaunchSession, encodeLaunchSession, saveLaunch, updateLaunchStatus, refreshLaunchCreationFee, archiveLaunch, loadLaunchSession, sameSender, type FundLaunchSession, type LaunchStatus } from '@/lib/fund-launch-session'
 import { checkLaunchDeployment, fundLaunchFailed, verifyFundLaunch, verifyFailedFundLaunch, verifyReturnedFundWriteFailure } from '@/lib/fund-launch-verification'
 import { publishFundProjectMetadata } from '@/lib/publish-fund-project-metadata'
 import { resolveCreateMultisigs, checkCreateMultisigs, verifyCreatedMultisigs, multisigDeploymentRequest, multisigReview } from '@/lib/create-multisig'
@@ -120,8 +120,8 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [legacy])
 
-  // The SDK's hold settled this chain's launch: its execution is verified and recorded.
-  const settled = tx.phase === 'success' ? tx.receipt : null
+  // Only the SDK's hold settling this chain's launch (or its final revert) lets its execution be verified and recorded.
+  const settled = tx.phase === 'success' || tx.phase === 'error' ? tx.receipt : null
   useEffect(() => {
     if (!settled || status.phase === 'confirmed') return
     void verify(tx.submissionHash ?? settled.transactionHash, status.safe ?? tx.isSafe, settled.transactionHash)
@@ -187,9 +187,21 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
         reviewNotice: 'Creates only the FUND fundraising Juicebox. The owner can change future rules. INCOME, Owner success tokens, and asset withdrawals are not created by this transaction.',
       })
       if (!hash) return
+      // The hold follows it from here; its settlement, not a receipt read now, confirms the launch.
       const previous = loadLaunchSession()?.statuses[request.chainId]
       if (previous && previous.phase !== 'pending') update({ phase: 'pending', hash, safe, walletReturned: true }, undefined, previous)
-      await verify(hash, safe)
+    } catch (cause) { setError(message(cause)) }
+  }
+  /** Ask this chain's hold about its saved pending launch: what it settles is what the launch records. */
+  async function checkHold() {
+    setError('')
+    try {
+      const current = loadLaunchSession()?.statuses[request.chainId]
+      if (current?.phase === 'pending' && current.hash) {
+        const held = launchHold(launchKey, sender, request, current)
+        await adoptLegacyWrite(held.input, held.evidence, publicClient(request.chainId) as WriteHoldClient)
+      }
+      await track({ ...request, label: `Launch ${session.name} FUND on ${chain.name}` }, { reviewedAccount: sender, recoveryNamespace: launchKey, safe: current?.safe })
     } catch (cause) { setError(message(cause)) }
   }
   async function launch() {
@@ -204,7 +216,7 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
     if (!runId || lastRun.current === runId) return
     lastRun.current = runId
     void (async () => {
-      if (status.phase === 'pending' && status.hash) await verify(status.hash, status.safe ?? false, status.executionHash)
+      if (status.phase === 'pending' && status.hash) await checkHold()
       else if (status.phase === 'ready' || status.phase === 'reverted') await launch()
       if (loadLaunchSession()?.statuses[request.chainId]?.phase !== 'confirmed') onStopped?.()
     })().catch(() => onStopped?.())
@@ -219,7 +231,7 @@ function LaunchChain({ session, request, status, update, refreshFee, runId = 0, 
     {status.hash && <p><a target="_blank" rel="noreferrer" href={status.executionHash || !status.safe ? `${chain.blockExplorers.default.url}/tx/${status.executionHash ?? status.hash}` : 'https://app.safe.global/transactions/queue'}>{status.safe && !status.executionHash ? 'View Safe queue' : 'View transaction'}: {status.hash.slice(0, 12)}…</a></p>}
     {status.phase === 'confirmed' && <a className="create-primary" href={projectPath(request.chainId, status.projectId!)}>Open FUND project ↗</a>}
     {(status.phase === 'ready' || status.phase === 'reverted') && <button type="button" disabled={tx.busy || setupTx.busy || tx.phase === 'review' || setupTx.phase === 'review' || verifying || sending || !adoption.ready} onClick={() => void launch()}>Review and deploy FUND</button>}
-    {status.phase === 'pending' && status.hash && <button type="button" disabled={verifying} onClick={() => void verify(status.hash!, status.safe ?? false, status.executionHash)}>{verifying ? 'Checking execution…' : 'Check confirmation'}</button>}
+    {status.phase === 'pending' && status.hash && <button type="button" disabled={verifying} onClick={() => void checkHold()}>{verifying ? 'Checking execution…' : 'Check confirmation'}</button>}
     {setupTx.phase === 'submitted' && <div role="status"><HeldNotice tx={setupTx} /></div>}
     {tx.phase === 'submitted' && <div role="status"><HeldNotice tx={launchHeld} /></div>}
     {['ready', 'reverted'].includes(status.phase) && <button type="button" disabled={tx.busy || tx.phase === 'review'} onClick={() => void publicClient(request.chainId).readContract({ address: v6Address('JBProjects', request.chainId as JBChainId), abi: jbProjectsAbi, functionName: 'creationFee' }).then(refreshFee).catch(cause => setError(message(cause)))}>Refresh deployment fee</button>}
@@ -404,7 +416,7 @@ export function FundDeploy({ values, onLockChange, importedRecord, onRecordUsed 
       </>}
     {(error || invalid) && <p role="alert">{transactionMessage(error || invalid)}</p>}
     {!session && error && <button type="button" onClick={() => setError('')}>Try again</button>}
-    {session && <details className="fund-launch-recovery"><summary>Deployment recovery</summary>
+    {session && <details className="fund-launch-recovery" open={launchHeldWrite(session) || undefined}><summary>Deployment recovery</summary>
         <><p>{session.name}. Owner <code>{session.input.owner}</code>. This saved launch retains its original settings.</p><button type="button" onClick={download}>Download deployment record</button>
           {session.transport !== 'relayr' && session.transport !== 'intent' && requests.map(request => <LaunchChain key={`${session.input.salt}:${request.chainId}`} session={session} request={request} status={session.statuses[request.chainId]} runId={running && activeChain === request.chainId ? runId : 0} onStopped={stopDirect} onFeedback={directFeedback} update={(status, expectedPhase, expectedStatus) => setSession(updateLaunchStatus(session.input.salt, request.chainId, status, expectedPhase, expectedStatus))} refreshFee={fee => setSession(refreshLaunchCreationFee(session.input.salt, request.chainId, fee))} />)}
           {complete && <button type="button" onClick={() => { try { archiveLaunch(session.input.salt); setSession(null); setProgress('') } catch (cause) { setError(message(cause)) } }}>Finish this launch and start another</button>}

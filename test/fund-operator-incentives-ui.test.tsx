@@ -150,7 +150,7 @@ describe('FUND success allocation belongs to the owner', () => {
     await expectRetryHeldByIntent(first, retry, writeIntentKey('fund-ruleset', { project: 7n, action: 'finish-success-minting' }))
   })
 
-  it('holds an asset allowance by its chosen terms, so a retry after a preserved field changed is held by the first', async () => {
+  it('holds an asset allowance by its terminal and token, so a retry after a preserved field changed is held by the first', async () => {
     const TERMINAL = v6Address('JBMultiTerminal', 8453)
     const USDC = USDC_ADDRESSES[8453]!
     const CURRENCY = Number(BigInt(USDC) & 0xffffffffn)
@@ -170,6 +170,6 @@ describe('FUND success allocation belongs to the owner', () => {
     await render()
     await act(async () => { await runtime.configure!({ amount: 5_000_000n, currency: CURRENCY, contextIndex: 0 }) })
     const [first, retry] = sent()
-    await expectRetryHeldByIntent(first, retry, writeIntentKey('fund-allowance', { project: 7n, terminal: intent.address(TERMINAL), token: intent.address(USDC), currency: CURRENCY, amount: 5_000_000n }))
+    await expectRetryHeldByIntent(first, retry, writeIntentKey('fund-allowance', { project: 7n, terminal: intent.address(TERMINAL), token: intent.address(USDC) }))
   })
 })

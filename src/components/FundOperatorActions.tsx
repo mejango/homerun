@@ -110,9 +110,12 @@ function rebuildPlan(plan: Pick<RulesetPlan, 'states' | 'action' | 'startsAt' | 
 function rulesetIntent(projectId: bigint, action: FundRulesetAction): string {
   return writeIntentKey('fund-ruleset', { project: projectId, action })
 }
-/** A purchase allowance is held by its project and the allowance the owner chose. */
-function allowanceIntent(projectId: bigint, allowance: FundAssetAllowance): string {
-  return writeIntentKey('fund-allowance', { project: projectId, terminal: intent.address(allowance.terminal), token: intent.address(allowance.token), currency: allowance.currency, amount: allowance.amount })
+/**
+ * A purchase allowance is held by its project, terminal and token alone: no entered terms, so its
+ * hold is found on load whatever can be configured now. A second edit waits while one is unresolved.
+ */
+export function allowanceIntent(projectId: bigint, allowance: Pick<FundAssetAllowance, 'terminal' | 'token'>): string {
+  return writeIntentKey('fund-allowance', { project: projectId, terminal: intent.address(allowance.terminal), token: intent.address(allowance.token) })
 }
 function planIntent(plan: RulesetPlan, projectId: bigint): string {
   const allowance = plan.allowances?.[0]
@@ -900,7 +903,10 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
           : <><p role="status" className="text-sm">Every ruleset transaction is confirmed. The new rules take effect at the shared activation time.</p><button type="button" className="btn-secondary min-h-10 w-fit px-4" onClick={closePlan}>Done</button></>}
     </section>}
 
-    {!linked && <HeldIntents chainId={state.chainId} account={address} intents={(Object.keys(RULESET_LABELS) as PlanAction[]).filter(action => action !== 'configure-asset-allowance').map(action => ({ namespace: rulesetIntent(state.projectId, action as FundRulesetAction), label: RULESET_LABELS[action] }))} />}
+    {!linked && <HeldIntents chainId={state.chainId} account={address} intents={[
+      ...(Object.keys(RULESET_LABELS) as PlanAction[]).filter(action => action !== 'configure-asset-allowance').map(action => ({ namespace: rulesetIntent(state.projectId, action as FundRulesetAction), label: RULESET_LABELS[action] })),
+      ...state.accountingContexts.map(context => ({ namespace: allowanceIntent(state.projectId, context), label: `Purchase allowance in ${context.symbol}` })),
+    ]} />}
     <section className="grid gap-4 border-t border-[var(--line)] pt-6" aria-labelledby="fund-campaign-controls">
       <h3 id="fund-campaign-controls" className="text-[15px] font-medium">Campaign controls</h3>
       <p className="text-sm">Pausing stops new contributions. Closing also disables FUND cash-outs while the purchase settles.</p>
