@@ -726,6 +726,8 @@ export function useSafeTx(chainId: number) {
       setShownKey(null)
       setPolledReceipt(null)
       tracked.current = null
+      // No exit is on screen for the send that starts now.
+      exitShown.current = false
       setHold(null)
       setHeld(null)
       setRecoveryNotice(null)
@@ -975,6 +977,7 @@ export function useSafeTx(chainId: number) {
     generation.current += 1
     inFlightRef.current = false
     tracked.current = null
+    exitShown.current = false
     setPhase('idle')
     setError(null)
     setHash(null)

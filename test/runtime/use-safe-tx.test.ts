@@ -785,6 +785,25 @@ describe('useSafeTx', () => {
     expect(first.ref.current!.phase).toBe('pending')
   })
 
+  it('says nothing about an earlier exit while another amount is reviewed and sent', async () => {
+    vi.useFakeTimers()
+    try {
+      mocks.writeContract.mockRejectedValueOnce(new Error('Wallet reply was lost after broadcast'))
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+      expect(hook.ref.current!.held).not.toBeNull()
+      let approve!: (approved: boolean) => void
+      mocks.requestReview.mockImplementationOnce(() => new Promise<boolean>(resolve => { approve = resolve }))
+      let sent!: Promise<unknown>
+      await act(async () => { sent = hook.ref.current!.send({ ...request, args: [BOB, 6n] }, reviewedByAlice) })
+      // The new amount's hold is asked while its review is open.
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
+      await act(async () => { approve(true); await sent })
+      expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+      expect(hook.ref.current).toMatchObject({ phase: 'pending', notice: null, confirmationUncertain: false })
+    } finally { vi.useRealTimers() }
+  })
+
   it('holds a whole action under its name, whatever the amount', async () => {
     mocks.writeContract.mockRejectedValueOnce(new Error('Wallet reply was lost after broadcast'))
     const hook = await renderHook()
