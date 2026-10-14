@@ -107,7 +107,8 @@ export async function otherProjectAdminHolds(storage: Store, client: PublicClien
     if (!saved) continue
     const { account: holder, safe, call } = parseReviewedWriteRecoveryRecord(saved)
     const hold = holds.open({ chainId, account: holder, safe, namespace, call })
-    const state = await hold.state(client).catch(() => hold.peek())
+    // Only the chain's answer may offer the exit: a saved state alone never does.
+    const state = await hold.state(client).catch(() => { throw new Error('Another wallet’s unresolved project update could not be checked. Try again shortly.') })
     if (state.status !== 'clear') found.push({ hold, state })
   }
   return found

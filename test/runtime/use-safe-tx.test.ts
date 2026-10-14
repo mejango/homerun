@@ -814,6 +814,30 @@ describe('useSafeTx', () => {
     expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 
+  it('keeps a lost reply held with no exit while the chain cannot be asked, and offers the exit only once it answers', async () => {
+    const { holds } = await import('@/lib/write-hold')
+    const open = holds.open
+    let chainUp = false
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    const spy = vi.spyOn(holds, 'open').mockImplementation(input => {
+      const handle = open(input)
+      return { ...handle, state: async (...args: Parameters<typeof handle.state>) => { if (!chainUp) throw new Error('RPC unavailable'); return handle.state(...args) } }
+    })
+    try {
+      mocks.writeContract.mockRejectedValueOnce(new Error('Wallet reply was lost after broadcast'))
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+      // Held, with its line, but no exit drawn from the saved record alone.
+      expect(hook.ref.current).toMatchObject({ phase: 'submitted', held: null, notice: writeHeldMessage(), confirmationUncertain: true })
+      expect(recoveryRecords()).toHaveLength(1)
+      // The chain answers at the next look: only then does the exit appear.
+      chainUp = true
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
+      expect(hook.ref.current!.held).toMatchObject({ label: WRITE_EXIT_LABEL })
+      expect(mocks.writeContract).toHaveBeenCalledOnce()
+    } finally { spy.mockRestore(); vi.useRealTimers() }
+  })
+
   it('does not treat a rejection-looking transport message as a definite wallet rejection', async () => {
     mocks.writeContract.mockRejectedValueOnce(new Error('User rejected: transport connection lost'))
     const hook = await renderHook()

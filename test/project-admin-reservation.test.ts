@@ -104,6 +104,16 @@ describe('the project reservation across accounts', () => {
     expect(holds[0].state).toMatchObject({ status: 'held-no-hash', exit: true })
   })
 
+  it('never offers the first account’s exit from a saved state when the chain could not be asked: the scan fails instead', async () => {
+    await hold(ALICE)
+    const { holds } = await import('@/lib/write-hold')
+    const open = holds.open
+    const spy = vi.spyOn(holds, 'open').mockImplementation(input => ({ ...open(input), state: async () => { throw new Error('RPC unavailable') } }))
+    try {
+      await expect(otherProjectAdminHolds(localStorage, client() as never, 8453, 7n, BOB)).rejects.toThrow('could not be checked')
+    } finally { spy.mockRestore() }
+  })
+
   it('does not hold the account that made it, which its own journal answers for', async () => {
     await hold(ALICE)
     expect(await otherProjectAdminHolds(localStorage, client() as never, 8453, 7n, ALICE)).toHaveLength(0)

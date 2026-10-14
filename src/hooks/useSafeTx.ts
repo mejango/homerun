@@ -950,9 +950,18 @@ export function useSafeTx(chainId: number) {
           return null
         }
         if (current) {
-          // A reply lost on its way stays held: whatever the hold keeps is shown, with its hash followed.
-          const now = await current.state(publicClient).catch(() => current!.peek())
-          if (now.status !== 'clear') {
+          // A reply lost on its way stays held: what the chain says of it is shown, with its hash followed.
+          const now = await current.state(publicClient).catch(() => null)
+          if (!now) {
+            // The chain couldn't be asked: it stays held with its line, and an exit waits for the chain's answer.
+            let saved: WriteHoldState | null = null
+            try { saved = current.peek() } catch { /* An unreadable record is held all the same. */ }
+            if (saved?.status !== 'clear') {
+              setRecoveryNotice(writeHeldMessage())
+              setPhase('submitted')
+              return saved?.record.hash ?? null
+            }
+          } else if (now.status !== 'clear') {
             apply(now, publicClient)
             return now.record.hash ?? null
           }
