@@ -8,12 +8,13 @@ import { incomeRepayCeiling, protectedIncomeMinimum, revLoansAbi, v6Address } fr
 import { readIncomeLoan, readIncomeProjectState, type IncomeLoanState, type IncomeProjectState } from './income-state'
 
 /**
- * The one hold name for repaying a loan, from the repay dialog or the loan tools: the loan and the
- * collateral the repayment returns, all of it when the repayment closes the loan. Its ceiling
- * accrues with time, so a retry is held by this, never by the calldata.
+ * The one hold name for repaying a loan, from the repay dialog or the loan tools: the project and the
+ * loan, nothing a quote derives. What a repayment returns depends on its quote (all of the collateral
+ * when it closes the loan), so a retry is held by the loan itself: while one repayment of a loan is
+ * unresolved, another needs the user's exit first.
  */
-export function loanRepaymentIntent(projectId: bigint, loanId: bigint, collateralReturned: bigint): string {
-  return writeIntentKey('loan-repay', { project: projectId, loan: loanId, collateral: collateralReturned })
+export function loanRepaymentIntent(projectId: bigint, loanId: bigint): string {
+  return writeIntentKey('loan-repay', { project: projectId, loan: loanId })
 }
 
 export type IncomeLoanToolInput = { client: PublicClient; state: IncomeProjectState; account: Address; loanId: bigint; minimumBlock?: bigint }

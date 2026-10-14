@@ -150,7 +150,7 @@ describe('INCOME loans like Juicebox Money', () => {
     expect(runtime.sends).toHaveLength(1)
     expect(runtime.sends[0].request.functionName).toBe('repayLoan')
     // Its ceiling accrues with time: a retry is held by the loan the user chose to repay.
-    expect(runtime.sends[0].options.recoveryNamespace).toBe(loanRepaymentIntent(state.projectId, 41n, 5n * UNIT))
+    expect(runtime.sends[0].options.recoveryNamespace).toBe(loanRepaymentIntent(state.projectId, 41n))
     expect(runtime.sends[0].request.value).toBe(4n * UNIT / 10n + 4n * UNIT / 10_000n)
   })
 
@@ -227,7 +227,7 @@ describe('INCOME loans like Juicebox Money', () => {
     runtime.partial = partialWith(201_400n)
     await reviewLoanChange()
     expect(runtime.sends.map(sent => sent.request.functionName)).toEqual(['repayLoan', 'repayLoan'])
-    await expectRetryHeldByIntent(runtime.sends[0], runtime.sends[1], loanRepaymentIntent(state.projectId, 41n, 2n * UNIT))
+    await expectRetryHeldByIntent(runtime.sends[0], runtime.sends[1], loanRepaymentIntent(state.projectId, 41n))
   })
 
   it('holds a full repayment by one key from either screen: started in the repay dialog, the loan tools\' retry is refused', async () => {
@@ -245,6 +245,20 @@ describe('INCOME loans like Juicebox Money', () => {
     await loanTools('partialRepay', '2')
     await reviewLoanChange()
     expect(runtime.sends.map(sent => sent.request.functionName)).toEqual(['repayLoan', 'repayLoan'])
-    await expectRetryHeldByIntent(runtime.sends[0], runtime.sends[1], loanRepaymentIntent(state.projectId, 41n, 5n * UNIT))
+    await expectRetryHeldByIntent(runtime.sends[0], runtime.sends[1], loanRepaymentIntent(state.projectId, 41n))
+  })
+
+  it('holds a repayment by its loan whatever its quote returns: 200 of 1,000 asked, a quote that closes the loan, then a retry that does not', async () => {
+    runtime.loan = usdcLoan(400_400n)
+    runtime.allowance = 10n ** 30n
+    await loanTools('partialRepay', '200')
+    // No remaining capacity: the contract would close the loan and return all 1,000.
+    runtime.partial = { ...partialWith(400_600n), collateralToReturn: 1_000n * UNIT, remainingPrincipal: 0n }
+    await reviewLoanChange()
+    // A fresh quote with capacity again: it returns the 200 asked.
+    runtime.partial = { ...partialWith(201_400n), collateralToReturn: 200n * UNIT }
+    await reviewLoanChange()
+    expect(runtime.sends.map(sent => sent.request.functionName)).toEqual(['repayLoan', 'repayLoan'])
+    await expectRetryHeldByIntent(runtime.sends[0], runtime.sends[1], loanRepaymentIntent(state.projectId, 41n))
   })
 })

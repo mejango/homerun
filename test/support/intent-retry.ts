@@ -45,3 +45,29 @@ export async function expectRetryHeldByIntent(first: SentWrite, retry: SentWrite
     localStorage.clear()
   }
 }
+
+/**
+ * Two different writes held under `namespaces[0]` and `namespaces[1]`: their names differ, and while
+ * the first is held after a lost wallet reply, the SDK's write hold lets the second reach the wallet.
+ */
+export async function expectNotHeldBy(first: SentWrite, other: SentWrite): Promise<void> {
+  expect(first.options.recoveryNamespace).toBeDefined()
+  expect(other.options.recoveryNamespace).not.toBe(first.options.recoveryNamespace)
+  installRecoveryLocks()
+  localStorage.clear()
+  const holds = createWriteHold({ storage: createHeldWriteStorage() })
+  const input = (sent: SentWrite) => ({ chainId: sent.request.chainId, account: sent.options.reviewedAccount, safe: false,
+    namespace: sent.options.recoveryNamespace, call: callOf(sent.request) })
+  try {
+    await expect(holds.open(input(first)).send(wallet.client as never, async gate => {
+      await gate.beforeSend()
+      throw new Error('Wallet reply was lost after broadcast')
+    })).rejects.toThrow('Wallet reply was lost')
+    const opened = vi.fn()
+    await holds.open(input(other)).send(wallet.client as never, async gate => { await gate.beforeSend(); opened() })
+    expect(opened).toHaveBeenCalledOnce()
+  } finally {
+    holds.dispose()
+    localStorage.clear()
+  }
+}

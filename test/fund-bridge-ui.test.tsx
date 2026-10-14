@@ -81,7 +81,7 @@ vi.mock('@/lib/project-bridge', async importOriginal => ({
 }))
 
 import { FundBridgeActions } from '../src/components/FundBridgeActions'
-import { expectRetryHeldByIntent } from './support/intent-retry'
+import { expectNotHeldBy, expectRetryHeldByIntent } from './support/intent-retry'
 
 let host: HTMLDivElement
 let root: Root
@@ -212,7 +212,34 @@ it('rechecks destination mint authority before source submission and permits ret
   expect(runtime.verifyDestinationMint).toHaveBeenCalledTimes(4)
   // Its minimum backing comes from a quote: a retry is held by the move the user chose.
   expect(runtime.send.mock.calls.at(-1)![1].recoveryNamespace).toBe(writeIntentKey('bridge-prepare', {
-    token: intent.address(runtime.route!.sourceToken), destination: 10, amount: 2n * 10n ** 18n, beneficiary: intent.address(runtime.address) }))
+    sourceProject: 17n, destinationProject: 9n, token: intent.address(runtime.route!.sourceToken), destination: 10,
+    amount: 2n * 10n ** 18n, beneficiary: intent.address(runtime.address) }))
+})
+
+it("prepares a move under its own projects, so another project's move with the same currency, chain, amount and beneficiary is not held by it", async () => {
+  const sends: { request: TxRequest; options: TxSendOptions }[] = []
+  runtime.send.mockImplementation(async (request: TxRequest, options: TxSendOptions) => { await options.reverify?.(); options.beforeWrite?.(); sends.push({ request, options }); return null })
+  await reviewApproval(2n * 10n ** 18n)
+  await act(async () => prepare().click())
+  await act(async () => root.unmount())
+  root = createRoot(host)
+  // Another FUND, bridged in the same currency to the same chain, through its own suckers.
+  const route = makeRoute()
+  runtime.route = { ...route, canPrepare: true, prepareIssue: undefined,
+    sourceSucker: '0x2222222222222222222222222222222222222299', destinationSucker: '0x3333333333333333333333333333333333333399',
+    source: { ...route.source, projectId: 18n, erc20Balance: 10n * 10n ** 18n }, destination: { ...route.destination, projectId: 11n } } as unknown as FundBridgeRoute
+  runtime.quote = { allowance: 2n * 10n ** 18n, minTokensReclaimed: 5_000_000n, netReclaimAmount: 5_100_000n }
+  await act(async () => { root.render(<FundBridgeActions state={runtime.route!.source} />) })
+  const input = [...host.querySelectorAll('label')].find(label => label.textContent?.startsWith('FUND to move'))!.querySelector('input')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '2')
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Review move')!.click())
+  await act(async () => prepare().click())
+  const prepared = sends.filter(sent => !sent.request.functionName.startsWith('approve'))
+  expect(prepared).toHaveLength(2)
+  await expectNotHeldBy(prepared[0], prepared[1])
 })
 
 it('closes an unproven Safe outer revert without counting its approval or releasing the bridge lock', async () => {

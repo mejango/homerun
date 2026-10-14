@@ -542,7 +542,10 @@ function BridgePreparation<State extends BridgeProjectState>({
         {
           reviewedAccount: address,
           // Its minimum backing comes from a quote: a retry is held by the move the user chose.
+          // The token is the backing currency, which other projects share: the projects identify the move.
           recoveryNamespace: writeIntentKey("bridge-prepare", {
+            sourceProject: fresh.source.projectId,
+            destinationProject: fresh.destination.projectId,
             token: intent.address(fresh.sourceToken),
             destination: fresh.destination.chainId,
             amount: count,
