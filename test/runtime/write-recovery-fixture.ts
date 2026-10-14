@@ -14,6 +14,12 @@ export function installRecoveryLocks() {
   } })
 }
 
+/**
+ * The held writes saved now: each record, without the SDK's markers beside it (its `:latest`
+ * reservation pointer, `:settled` settlement and `:released:` exit markers), and none the user released.
+ */
 export const recoveryRecords = () => Object.keys(localStorage)
-  .filter(key => key.startsWith('nana-sdk:reviewed-write:'))
-  .map(key => JSON.parse(localStorage.getItem(key)!))
+  .filter(key => key.startsWith('nana-sdk:reviewed-write:v') && !/:(latest|settled)$|:released:/.test(key))
+  .map(key => ({ key, record: JSON.parse(localStorage.getItem(key)!) }))
+  .filter(({ key, record }) => localStorage.getItem(`${key}:released:${record.id}`) === null)
+  .map(({ record }) => record)

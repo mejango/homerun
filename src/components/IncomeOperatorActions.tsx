@@ -11,6 +11,8 @@ import type { IncomeProjectState } from '@/lib/income-state'
 import { isOperatorWallet, OPERATOR_BURN_ADDRESS, PROJECT_OPERATOR_PROFILE_QUERY } from '@/lib/project-operator-profile'
 import { readableError } from '@/lib/readable-error'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
+// `intent` names this screen's saved Operator change here.
+import { intent as keyed, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 
 function message(error: unknown) { return readableError(error, 'The INCOME Operator could not be verified.') }
 
@@ -68,6 +70,8 @@ export function IncomeOperatorActions({ state, client }: { state: IncomeProjectS
       const rememberIntent = () => { setIntent({ snapshot: fresh, rulesetId: stage.rulesetId, recipient: target, account: address }) }
       await tx.send({ ...request, label: `Change ${stage.isCurrent ? 'current' : 'upcoming'} INCOME stage Operator` }, {
         reviewedAccount: address,
+        // The rebuilt splits copy every other recipient: a retry is held by the stage and the chosen Operator.
+        recoveryNamespace: writeIntentKey('income-operator', { project: state.projectId, stage: stage.rulesetId, recipient: keyed.address(target) }),
         reviewNotice: `On ${displayChainName(state.chainId)}, stage ${stage.rulesetId} will pay its Operator INCOME split to ${target} instead of ${previous}. Split percentages and all other recipients stay as currently configured. Owner authority stays with the current Owner. ${stage.isCurrent ? 'This also changes where pending reserved INCOME is distributed after execution.' : `This stage starts ${new Date(Number(stage.start) * 1_000).toLocaleString()}.`} ${otherStages ? `${otherStages} other stage${otherStages === 1 ? '' : 's'} still require${otherStages === 1 ? 's' : ''} a separate reviewed transaction to use the same Operator.` : 'This is the last remaining stage for this Operator on this chain.'}`,
         reverify: async () => {
           const latest = await readIncomeOperatorSnapshot(client, { chainId: state.chainId, projectId: state.projectId, account: address })

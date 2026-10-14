@@ -17,9 +17,11 @@ import { useSafeTx, type TxRequest } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { parseAmount } from '@/lib/fund-contracts'
-import { buildErc20ApproveRequest } from '@/lib/transaction-builders'
+import { approvalIntentKey, buildErc20ApproveRequest, canonicalDecimal, chosenOrAuto } from '@/lib/transaction-builders'
 import { prepareProjectPayQuote, readProjectPayTokenOptions } from '@/lib/project-pay-quote'
 import { swapDeadline } from '@/lib/safe-connector'
+// `intent` names this flow's own reviewed intent here.
+import { intent as keyed, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import dynamic from 'next/dynamic'
 import { readableError } from '@/lib/readable-error'
 import { refreshIndexedProject } from '@/lib/refresh-indexed'
@@ -62,7 +64,7 @@ async function paymentReceipt(client: PublicClient, hash: Hex) {
 
 /** FUND and INCOME share the reference clients' pay / direct-AMM execution
  * pipeline. The parent retains project-specific contract identity checks. */
-function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context: accountingContext, paused, blocked, quoteNeedsWallet, reservedPercent, rulesetId, verify, chainSelector, onBusyChange }: {
+function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context: accountingContext, currencyChosen = false, paused, blocked, quoteNeedsWallet, reservedPercent, rulesetId, verify, chainSelector, onBusyChange }: {
   chainSelector?: ReactNode; onBusyChange?: (busy: boolean) => void
   /** Why this wallet cannot pay; keeps the card but disables Pay. */
   blocked?: string
@@ -70,6 +72,8 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
   quoteNeedsWallet?: boolean
   chainId: JBChainId; projectId: bigint; tokenLabel: 'FUND' | 'INCOME'; title: string
   context: PaymentContext; paused: boolean; reservedPercent: number; rulesetId: string
+  /** The user picked the currency `context` is in; otherwise the page's default is keyed as such. */
+  currencyChosen?: boolean
   verify: (account: Address, minimumBlock?: bigint) => Promise<{ blockNumber: bigint }>
 }) {
   const checking = useContext(WritesChecking)
@@ -173,9 +177,9 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       const spender = deployment?.permit2 ?? latest.terminal
       const native = isAddressEqual(context.token, NATIVE_TOKEN)
       const reverify = async () => { guard(); const checked = await verify(address, latestBlock); guard(); latestBlock = checked.blockNumber; return checked }
-      const waitForApproval = async (action: PaymentTx, request: TxRequest) => {
+      const waitForApproval = async (action: PaymentTx, request: TxRequest, recoveryNamespace?: string) => {
         guard()
-        const hash = await action.send(request, { reviewedAccount: address, simulationBlockNumber: latestBlock, reverify })
+        const hash = await action.send(request, { reviewedAccount: address, simulationBlockNumber: latestBlock, reverify, ...(recoveryNamespace ? { recoveryNamespace } : {}) })
         if (!hash) throw new Error('Approval was cancelled. Nothing further was sent.')
         if (action.isSafe) { setStatus('Approval proposed to Safe. Execute it there, then continue the payment.'); return false }
         setStatus('Confirming approval onchain…')
@@ -185,11 +189,17 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
         guard()
         return true
       }
+      // One payment intent whichever route the quote picks; its approvals are that intent's steps.
+      // A chosen currency's decimals are fixed, so its units key the amount. A default currency can
+      // switch (ETH to USDC, say), and with it the units of the same typed amount: it keys as typed.
+      const chosen = currencyChosen || !!selectedToken
+      const payment = writeIntentKey('pay', { project: projectId, token: chosenOrAuto('token', keyed.address(context.token), chosen), amount: chosen ? count : canonicalDecimal(input) })
       if (!native) {
         const allowance = await client.readContract({ address: context.token, abi: erc20Abi, functionName: 'allowance', args: [address, spender], blockNumber: latestBlock })
         if (allowance < count) {
           setStatus(`Review ${context.symbol} access for ${swap ? 'the Uniswap route' : 'the payment terminal'}.`); setStage('approve')
-          if (!await waitForApproval(approval, { ...buildErc20ApproveRequest({ chainId, token: context.token, spender, amount: count }), label: `Approve exactly ${formatUnits(count, context.decimals)} ${context.symbol} for this payment` })) return
+          if (!await waitForApproval(approval, { ...buildErc20ApproveRequest({ chainId, token: context.token, spender, amount: count }), label: `Approve exactly ${formatUnits(count, context.decimals)} ${context.symbol} for this payment` },
+            approvalIntentKey(payment, { token: context.token, spender, step: 'token' }))) return
         }
       }
       let request: TxRequest
@@ -217,7 +227,9 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
             }
             if (onchain) {
               setStatus('Review the swap-router authorization.'); setStage('router')
-              if (!await waitForApproval(routerApproval, { ...buildPermit2ApproveTx({ chainId, token: context.token, amount: count, expiration: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60 }), label: 'Authorize the Uniswap swap router for this exact payment amount' })) return
+              if (!await waitForApproval(routerApproval, { ...buildPermit2ApproveTx({ chainId, token: context.token, amount: count, expiration: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60 }), label: 'Authorize the Uniswap swap router for this exact payment amount' },
+                // Its expiration is stamped now: a retry is held by the payment's router step.
+                approvalIntentKey(payment, { token: context.token, spender: deployment.universalRouter, step: 'router' }))) return
             }
           }
         }
@@ -230,6 +242,8 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       setStatus(`Review and execute the ${route} payment.`); setStage('pay')
       await tx.send({ ...request, label: `Pay ${formatUnits(count, context.decimals)} ${context.symbol} through ${route}; minimum ${formatUnits(latest.minimumTokenCount, 18)} ${tokenLabel}` }, {
         reviewedAccount: address,
+        // The route, minimum, deadline and signature are fresh each attempt: a retry is held by the payment the user chose.
+        recoveryNamespace: payment,
         simulationBlockNumber: latestBlock === undefined ? undefined : checked.blockNumber,
         reviewNotice: noTokens ? `You receive no ${tokenLabel} for this payment. This project allocates 100% of new tokens to its reserved recipients.` : [swap ? 'This route buys existing tokens on Uniswap. It does not add the payment to the project treasury or issue reserved tokens.' : null, latest.minimumTokenCount < minimum ? `The quote decreased. Your protected minimum is now ${formatUnits(latest.minimumTokenCount, 18)} ${tokenLabel}.` : null].filter(Boolean).join(' ') || undefined,
         reverify: async () => {

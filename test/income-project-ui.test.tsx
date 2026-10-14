@@ -25,7 +25,9 @@ const runtime = vi.hoisted(() => ({
   receipt: null as TransactionReceipt | null, safeProposalHash: null as Hex | null,
   readReserved: vi.fn(), queries: vi.fn(),
   invalidateQueries: vi.fn(), send: vi.fn(), readState: vi.fn(), autoIssuance: vi.fn(),
+  cashOutQuote: undefined as { minimumReturn: bigint } | undefined, prepareCashOut: vi.fn(),
 }))
+vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({ ...await importOriginal<typeof import('@bananapus/nana-sdk-core/v6')>(), prepareHookAwareCashOut: runtime.prepareCashOut }))
 vi.mock('@/components/ProjectParticipants', () => ({ ProjectParticipants: () => <span>Indexed holders</span> }))
 vi.mock('@/components/ProjectPayerAddresses', () => ({ ProjectPayerAddresses: () => <span>Project payer addresses</span> }))
 vi.mock('@/components/ProjectShop', () => ({ ProjectShop: ({ chainId, projectId, tokenLabel }: { chainId: number; projectId: bigint; tokenLabel: string }) => <span data-testid={`shop-${tokenLabel}`} data-chain-id={chainId} data-project-id={projectId.toString()}>Project shop</span> }))
@@ -63,6 +65,7 @@ vi.mock('@tanstack/react-query', () => ({
     : queryKey[0] === 'fund-project-metadata' ? { data: runtime.details[String(queryKey[1])], isError: false }
     : queryKey[0] === 'income-fund-binding' ? { data: runtime.discoveredFund, isError: runtime.discoveryError, refetch: vi.fn() }
     : queryKey[0] === 'project-pay' ? { data: { kind: 'pay', terminal: '0x3333333333333333333333333333333333333333', preview: runtime.payQuote, minimumTokenCount: runtime.payQuote.beneficiaryTokenCount * 99n / 100n, reservedTokenCount: runtime.payQuote.reservedTokenCount, blockNumber: 100n }, isError: false }
+    : queryKey[0] === 'income-cash-out' ? { data: runtime.cashOutQuote, isError: false }
     : queryKey[0] === 'income-reserved' ? { data: runtime.reserved, isError: runtime.reservedError, error: new Error('RPC unavailable'), refetch: vi.fn() }
     : queryKey[0] === 'income-reserved-receipt' ? { data: runtime.reservedReceipt, isError: !!runtime.reservedReceiptError, error: runtime.reservedReceiptError, refetch: vi.fn() }
       : { data: undefined, isError: false, isFetching: false }
@@ -70,6 +73,9 @@ vi.mock('@tanstack/react-query', () => ({
 }))
 
 import { IncomeProject } from '../src/components/IncomeProject'
+import { parseAbi } from 'viem'
+import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
+import { expectRetryHeldByIntent } from './support/intent-retry'
 
 function state(): IncomeProjectState {
   const terminal = '0x3333333333333333333333333333333333333333'
@@ -101,6 +107,7 @@ describe('INCOME transaction surfaces', () => {
     runtime.readReserved.mockReset(); runtime.invalidateQueries.mockClear(); runtime.queries.mockClear()
     runtime.reserved = undefined; runtime.reservedError = false; runtime.reservedReceipt = undefined; runtime.reservedReceiptError = null
     runtime.receipt = null; runtime.safeProposalHash = null
+    runtime.cashOutQuote = undefined; runtime.prepareCashOut.mockReset()
     runtime.query = { data: state(), isError: false, isPending: false, isFetching: false, isPlaceholderData: false, refetch: vi.fn() }
     runtime.payQuote = { beneficiaryTokenCount: 1n * 10n ** 18n, reservedTokenCount: 4n * 10n ** 18n }
     runtime.readState.mockImplementation(() => runtime.query.data)
@@ -124,6 +131,51 @@ describe('INCOME transaction surfaces', () => {
     expect(host.textContent).not.toContain('Market')
     expect(host.querySelector('[data-account-section="you"]')?.textContent).toContain('Cash out INCOME')
   })
+  it('cashes out under the chosen amount, and a retry with a fresh minimum is held by the first', async () => {
+    const terminal = '0x3333333333333333333333333333333333333333'
+    const token = '0x000000000000000000000000000000000000EEEe'
+    const cashOutAbi = parseAbi(['function cashOutTokensOf(address holder,uint256 projectId,uint256 cashOutCount,address tokenToReclaim,uint256 minTokensReclaimed,address beneficiary,bytes metadata) returns (uint256 reclaimAmount)'])
+    const preparedWith = (minimum: bigint) => ({ route: { minimumReturn: minimum }, transaction: { chainId: 1, address: terminal, abi: cashOutAbi, functionName: 'cashOutTokensOf',
+      args: [runtime.address, 7n, 2n * 10n ** 18n, token, minimum, runtime.address, '0x'] } })
+    runtime.cashOutQuote = { minimumReturn: 50n }
+    runtime.send.mockImplementation(async (request, options) => { await options?.reverify?.(request); return null })
+    await render()
+    await tab('Owners')
+    await tab('Accounts')
+    const panel = section('Cash out INCOME')
+    await setInput([...panel.querySelectorAll('label')].find(label => label.textContent?.startsWith('INCOME to cash out'))!.querySelector('input')!, '2')
+    const review = () => [...section('Cash out INCOME').querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Review cash-out')!
+    runtime.prepareCashOut.mockResolvedValueOnce(preparedWith(50n)).mockResolvedValueOnce(preparedWith(49n))
+    await act(async () => review().click())
+    await act(async () => review().click())
+    expect(runtime.send).toHaveBeenCalledTimes(2)
+    const [first, retry] = runtime.send.mock.calls.map(([request, options]) => ({ request, options }))
+    await expectRetryHeldByIntent(first, retry, writeIntentKey('cash-out', { project: 7n, token: 'auto:token', count: 2n * 10n ** 18n }))
+  })
+
+  it('holds a full-balance INCOME cash out by the choice of all, so a retry after the balance moved is held by the first', async () => {
+    const token = '0x000000000000000000000000000000000000EEEe'
+    const cashOutAbi = parseAbi(['function cashOutTokensOf(address holder,uint256 projectId,uint256 cashOutCount,address tokenToReclaim,uint256 minTokensReclaimed,address beneficiary,bytes metadata) returns (uint256 reclaimAmount)'])
+    runtime.prepareCashOut.mockImplementation(async (_client: unknown, { cashOutCount }: { cashOutCount: bigint }) => ({ route: { minimumReturn: 50n }, transaction: { chainId: 1,
+      address: '0x3333333333333333333333333333333333333333', abi: cashOutAbi, functionName: 'cashOutTokensOf', args: [runtime.address, 7n, cashOutCount, token, 50n, runtime.address, '0x'] } }))
+    runtime.cashOutQuote = { minimumReturn: 50n }
+    runtime.send.mockImplementation(async (request, options) => { await options?.reverify?.(request); return null })
+    const fullBalance = async (balance: bigint) => {
+      runtime.query = { ...runtime.query, data: { ...state(), totalBalance: balance, erc20Balance: balance } }
+      await render()
+      await tab('Owners')
+      await tab('Accounts')
+      const panel = section('Cash out INCOME')
+      await act(async () => [...panel.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Use full balance')!.click())
+      await act(async () => [...section('Cash out INCOME').querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Review cash-out')!.click())
+    }
+    await fullBalance(10n * 10n ** 18n)
+    await fullBalance(11n * 10n ** 18n)
+    expect(runtime.send).toHaveBeenCalledTimes(2)
+    const [first, retry] = runtime.send.mock.calls.map(([request, options]) => ({ request, options }))
+    await expectRetryHeldByIntent(first, retry, writeIntentKey('cash-out', { project: 7n, token: 'auto:token', max: true }))
+  })
+
   function section(title: string) { return [...host.querySelectorAll('section')].find(element => element.querySelector('h2, h3')?.textContent === title)! }
   function pendingReserved() {
     const current = state()

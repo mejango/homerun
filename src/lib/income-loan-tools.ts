@@ -3,8 +3,19 @@ import { NATIVE_TOKEN } from '@bananapus/nana-sdk-core'
 import { buildReallocateCollateralTx, buildRepayLoanTx, MIN_PREPAID_FEE_PERCENT } from '@bananapus/nana-sdk-core/v6'
 import { getAddress, isAddress, isAddressEqual, zeroAddress, type Address, type PublicClient } from 'viem'
 import type { FundTransaction } from './fund-contracts'
+import { writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import { incomeRepayCeiling, protectedIncomeMinimum, revLoansAbi, v6Address } from './income-contracts'
 import { readIncomeLoan, readIncomeProjectState, type IncomeLoanState, type IncomeProjectState } from './income-state'
+
+/**
+ * The one hold name for repaying a loan, from the repay dialog or the loan tools: the project and the
+ * loan, nothing a quote derives. What a repayment returns depends on its quote (all of the collateral
+ * when it closes the loan), so a retry is held by the loan itself: while one repayment of a loan is
+ * unresolved, another needs the user's exit first.
+ */
+export function loanRepaymentIntent(projectId: bigint, loanId: bigint): string {
+  return writeIntentKey('loan-repay', { project: projectId, loan: loanId })
+}
 
 export type IncomeLoanToolInput = { client: PublicClient; state: IncomeProjectState; account: Address; loanId: bigint; minimumBlock?: bigint }
 

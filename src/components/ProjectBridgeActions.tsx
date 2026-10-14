@@ -44,6 +44,7 @@ import {
 } from "@/lib/project-bridge";
 import { verifyFundBridgeReceipt } from "@/lib/fund-bridge-receipts";
 import { readableError } from "@/lib/readable-error";
+import { intent, writeIntentKey } from "@bananapus/nana-sdk-core/review";
 import { SAFE_PROPOSAL_UNCONFIRMED } from "@bananapus/nana-sdk-core/safe-service";
 
 const clientFor = jbCenterPublicClient;
@@ -540,6 +541,16 @@ function BridgePreparation<State extends BridgeProjectState>({
         },
         {
           reviewedAccount: address,
+          // Its minimum backing comes from a quote: a retry is held by the move the user chose.
+          // The token is the backing currency, which other projects share: the projects identify the move.
+          recoveryNamespace: writeIntentKey("bridge-prepare", {
+            sourceProject: fresh.source.projectId,
+            destinationProject: fresh.destination.projectId,
+            token: intent.address(fresh.sourceToken),
+            destination: fresh.destination.chainId,
+            amount: count,
+            beneficiary: intent.address(beneficiary),
+          }),
           reviewNotice: `Beneficiary: ${beneficiary}. At least ${formatUnits(minimum, fresh.sourceContext.decimals)} ${fresh.sourceContext.symbol} of treasury backing moves with your ${adapter.tokenLabel}. Relay and destination claim are separate transactions.`,
           simulationBlockNumber:
             minimumBlock === undefined ? undefined : fresh.source.blockNumber,
@@ -875,6 +886,11 @@ function BridgeMovements<State extends BridgeProjectState>({
           },
           {
             reviewedAccount: address,
+            // Its value, the bridge fee, is read fresh each attempt: a retry is held by the batch the user relays.
+            recoveryNamespace: writeIntentKey("bridge-relay", {
+              sucker: intent.address(current.sourceSucker),
+              token: intent.address(fresh.sourceToken),
+            }),
             reviewNotice: `This relays the current batch for this backing token. Maximum transaction value: ${formatUnits(value, 18)} ETH. Destination delivery and claims follow separately.`,
             reverify: async () => {
               const latest = await find();
@@ -900,6 +916,14 @@ function BridgeMovements<State extends BridgeProjectState>({
           },
           {
             reviewedAccount: address,
+            // Its proof is against the destination's latest inbox root, which a newer delivery
+            // changes: a retry is held by the exact leaf, never by the proof or root.
+            recoveryNamespace: writeIntentKey("bridge-claim", {
+              sucker: intent.address(current.destinationSucker),
+              token: intent.address(current.remoteToken),
+              leaf: current.leaf.index,
+              leafHash: intent.hex(current.leafHash),
+            }),
             reverify: async () => {
               const latest = await find();
               const prepared = buildProjectBridgeClaim(fresh, latest);

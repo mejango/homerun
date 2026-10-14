@@ -228,6 +228,8 @@ function ProjectActions({ chainId, projectId, intentId, indexedOwner, indexedRai
   const alsoDeploy = <DeployRemainingChains chainId={chainId} projectId={projectId.toString()} owner={state?.owner ?? (indexedOwner && isAddress(indexedOwner) ? indexedOwner : undefined)} intentId={intentId} />
   const { address } = useWallet()
   const [contextIndex, setContextIndex] = useState(0)
+  /** Whether the user picked the treasury currency, or it is the project's default. */
+  const [currencyChosen, setCurrencyChosen] = useState(false)
   const [paymentToken, setPaymentToken] = useState<'fund' | 'income'>('fund')
   const [accountAction, setAccountAction] = useState<'cashout' | 'tokens' | null>(null)
   const paymentChoice = useRef(false)
@@ -276,7 +278,7 @@ function ProjectActions({ chainId, projectId, intentId, indexedOwner, indexedRai
     tokenName: plan.tokenName, tokenSymbol: plan.tokenSymbol, ownerFundPercent: plan.operatorFundPercent,
     operatorSplitPercent: plan.operatorSplitPercent, fundHolderSplitPercent: plan.fundHolderSplitPercent,
   }} /> : null
-  const currency = context && <label className="grid gap-2 text-sm">FUND treasury currency<select value={contextIndex} onChange={event => setContextIndex(Number(event.target.value))} className="min-h-11 rounded border border-[#bfc9b5] bg-white px-3 pr-9">{state.accountingContexts.map((item, index) => <option key={`${item.terminal}:${item.token}`} value={index}>{item.symbol}</option>)}</select></label>
+  const currency = context && <label className="grid gap-2 text-sm">FUND treasury currency<select value={contextIndex} onChange={event => { setContextIndex(Number(event.target.value)); setCurrencyChosen(true) }} className="min-h-11 rounded border border-[#bfc9b5] bg-white px-3 pr-9">{state.accountingContexts.map((item, index) => <option key={`${item.terminal}:${item.token}`} value={index}>{item.symbol}</option>)}</select></label>
   const verified = <section aria-label="Verified project state" className="demo-section">
     <div className="flex flex-wrap items-baseline justify-between gap-3"><h2>Onchain</h2><button className="quiet-button" type="button" disabled={refreshing} onClick={refresh}>{refreshing ? 'Refreshing…' : 'Refresh'}</button></div>
     <Revalidating as="div" pending={unconfirmed}><dl className="demo-live-rows">
@@ -315,7 +317,7 @@ function ProjectActions({ chainId, projectId, intentId, indexedOwner, indexedRai
     notice={<>{alsoDeploy}{notice}{!supported && <p role="alert">This project uses contract settings outside Homerun’s verified FUND integration. Transactions are unavailable here. {state.issues.join(' ')}</p>}</>}
     payment={<>
       {income.projectId && <div className="mb-5 flex gap-3" role="group" aria-label="Payment token"><button type="button" className={paymentToken === 'fund' ? 'btn-primary' : 'btn-secondary'} aria-pressed={paymentToken === 'fund'} onClick={() => { paymentChoice.current = true; setPaymentToken('fund') }}>FUND</button><button type="button" className={paymentToken === 'income' ? 'btn-primary' : 'btn-secondary'} aria-pressed={paymentToken === 'income'} onClick={() => { paymentChoice.current = true; setPaymentToken('income') }}>INCOME</button></div>}
-      <div hidden={paymentToken !== 'fund'} onFocusCapture={() => { paymentChoice.current = true }}>{payGate(<>{context ? <FundPaymentNetworks state={state}>{(paymentState, paymentClient, selector, onBusyChange) => <PaymentPanel state={paymentState} client={paymentClient} contextIndex={paymentState.chainId === state.chainId ? contextIndex : 0} chainSelector={selector} onBusyChange={onBusyChange} />}</FundPaymentNetworks> : <p>No supported payment terminal was verified for this project.</p>}</>)}</div>
+      <div hidden={paymentToken !== 'fund'} onFocusCapture={() => { paymentChoice.current = true }}>{payGate(<>{context ? <FundPaymentNetworks state={state}>{(paymentState, paymentClient, selector, onBusyChange) => <PaymentPanel state={paymentState} client={paymentClient} contextIndex={paymentState.chainId === state.chainId ? contextIndex : 0} currencyChosen={paymentState.chainId === state.chainId && currencyChosen} chainSelector={selector} onBusyChange={onBusyChange} />}</FundPaymentNetworks> : <p>No supported payment terminal was verified for this project.</p>}</>)}</div>
       <div hidden={paymentToken !== 'income'}>{income.projectId && income.payment}</div>
     </>}
     activity={<><div hidden={paymentToken !== 'fund'}><ProjectActivity chainId={state.chainId} projectId={state.projectId} /></div><div hidden={paymentToken !== 'income'}>{income.activity}</div></>}
@@ -354,7 +356,7 @@ function ProjectActions({ chainId, projectId, intentId, indexedOwner, indexedRai
             </div>
           </dl>
           {/* Hidden, never unmounted: each form tracks its own submitted transaction. */}
-          <div hidden={accountAction !== 'cashout'} className="mt-6">{gate(context && <>{currency}<CashOutPanel state={state} client={client} contextIndex={contextIndex} /></>)}</div>
+          <div hidden={accountAction !== 'cashout'} className="mt-6">{gate(context && <>{currency}<CashOutPanel state={state} client={client} contextIndex={contextIndex} currencyChosen={currencyChosen} /></>)}</div>
           <div hidden={accountAction !== 'tokens'} className="mt-6">{gate(<fieldset disabled={!address} className="min-w-0 border-0 p-0"><HolderActions state={state} client={client} /></fieldset>)}</div>
         </section>
         {income.projectId && income.accountsYou}

@@ -6,6 +6,8 @@ import { parseAbi, type Address, type Hex } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FundProjectState } from '@/lib/fund-state'
 import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
+import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
+import { expectRetryHeldByIntent } from './support/intent-retry'
 
 const WALLET = '0x1111111111111111111111111111111111111111' as Address
 const OTHER_WALLET = '0x6666666666666666666666666666666666666666' as Address
@@ -87,6 +89,7 @@ describe('FUND holder actions confirm like Juicebox Money', () => {
     const [request, options] = runtime.tx.send.mock.calls[0] as [TxRequest, TxSendOptions]
     expect(request.label).toBe('Cash out 10 FUND for at least 8.9 USDC')
     expect(options.reviewNotice).toContain('down from 9 USDC')
+    expect(options.recoveryNamespace).toBe(writeIntentKey('cash-out', { project: state.projectId, token: 'auto:token', count: 10n * 10n ** 18n }))
     await expect(options.reverify!()).resolves.toBeUndefined()
     runtime.fresh = { ...state, erc20Balance: 1n }
     await expect(options.reverify!()).rejects.toThrow('Cash-out conditions changed')
@@ -98,6 +101,49 @@ describe('FUND holder actions confirm like Juicebox Money', () => {
     expect(runtime.tx.dismiss).toHaveBeenCalledOnce()
     expect(document.querySelector('[data-tx-confirm]')).toBeNull()
     expect(host.querySelector('input')!.value).toBe('')
+  })
+
+  it("holds a full-balance cash out by the choice of all, so a retry after the balance moved is held by the first", async () => {
+    const cashOutAbi = parseAbi(['function cashOutTokensOf(address holder,uint256 projectId,uint256 cashOutCount,address tokenToReclaim,uint256 minTokensReclaimed,address beneficiary,bytes metadata) returns (uint256 reclaimAmount)'])
+    runtime.prepare.mockImplementation(async (_client: unknown, { cashOutCount }: { cashOutCount: bigint }) => ({ route: { minimumReturn: 8_900_000n },
+      transaction: { chainId: 1, address: TERMINAL, abi: cashOutAbi, functionName: 'cashOutTokensOf', args: [WALLET, 7n, cashOutCount, USDC, 8_900_000n, WALLET, '0x'] } }))
+    const fullBalance = async (balance: bigint) => {
+      const current = { ...state, erc20Balance: balance } as FundProjectState
+      runtime.fresh = current
+      await render(<CashOutPanel state={current} client={{} as never} contextIndex={0} />)
+      await click('Use full balance'); await settle()
+      await click('Review cash-out'); await settle()
+      await click('Confirm & cash out'); await settle()
+      await click('Cancel'); await settle()
+    }
+    await fullBalance(100n * UNIT)
+    // The balance moved (credits claimed, a transfer in) while the first attempt is unresolved.
+    await fullBalance(101n * UNIT)
+    const [first, retry] = runtime.tx.send.mock.calls.map(([request, options]) => ({ request, options }))
+    await expectRetryHeldByIntent(first, retry, writeIntentKey('cash-out', { project: state.projectId, token: 'auto:token', max: true }))
+  })
+
+  it('holds a cash out in the default currency by that choice, so a retry after the default changed is held by the first, and keys a chosen one by its token', async () => {
+    const DAI = '0x8888888888888888888888888888888888888888' as const
+    const cashOutAbi = parseAbi(['function cashOutTokensOf(address holder,uint256 projectId,uint256 cashOutCount,address tokenToReclaim,uint256 minTokensReclaimed,address beneficiary,bytes metadata) returns (uint256 reclaimAmount)'])
+    runtime.prepare.mockImplementation(async (_client: unknown, { tokenToReclaim }: { tokenToReclaim: string }) => ({ route: { minimumReturn: 8_900_000n },
+      transaction: { chainId: 1, address: TERMINAL, abi: cashOutAbi, functionName: 'cashOutTokensOf', args: [WALLET, 7n, 10n * UNIT, tokenToReclaim, 8_900_000n, WALLET, '0x'] } }))
+    const cashOut = async (current: FundProjectState, currencyChosen?: boolean) => {
+      runtime.fresh = current
+      await render(<CashOutPanel state={current} client={{} as never} contextIndex={0} currencyChosen={currencyChosen} />)
+      await type('FUND to cash out', '10'); await settle()
+      await click('Review cash-out'); await settle()
+      await click('Confirm & cash out'); await settle()
+      await click('Cancel'); await settle()
+    }
+    await cashOut(state)
+    // The project's first treasury currency, the one shown by default, changed after the lost reply.
+    const reordered = { ...state, accountingContexts: [{ ...state.accountingContexts[0], token: DAI, symbol: 'DAI' }, ...state.accountingContexts] } as FundProjectState
+    await cashOut(reordered)
+    const [first, retry] = runtime.tx.send.mock.calls.map(([request, options]) => ({ request, options }))
+    await expectRetryHeldByIntent(first, retry, writeIntentKey('cash-out', { project: state.projectId, token: 'auto:token', count: 10n * UNIT }))
+    await cashOut(state, true)
+    expect(runtime.tx.send.mock.calls[2][1].recoveryNamespace).toBe(writeIntentKey('cash-out', { project: state.projectId, token: intent.address(USDC), count: 10n * UNIT }))
   })
 
   it('ends a Safe review on Done without claiming the cash out is confirmed', async () => {

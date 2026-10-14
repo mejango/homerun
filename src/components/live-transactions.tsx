@@ -1,11 +1,13 @@
 'use client'
 
 import { buildBurnTokensTx, getHookAwareCashOutQuote, prepareHookAwareCashOut } from '@bananapus/nana-sdk-core/v6'
+import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { erc20Abi, formatUnits, getAddress, isAddress, isAddressEqual, zeroAddress, type Address, type PublicClient } from 'viem'
 import { FundOperatorActions } from '@/components/FundOperatorActions'
 import { ProjectPayment } from '@/components/ProjectPayment'
+import { chosenOrAuto } from '@/lib/transaction-builders'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { useSafeTx, type TxRequest } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
@@ -132,12 +134,12 @@ async function freshState(client: PublicClient, state: FundProjectState, account
   return fresh
 }
 
-export function PaymentPanel({ state, client, contextIndex, chainSelector, onBusyChange }: { state: FundProjectState; client: PublicClient; contextIndex: number; chainSelector?: ReactNode; onBusyChange?: (busy: boolean) => void }) {
+export function PaymentPanel({ state, client, contextIndex, currencyChosen, chainSelector, onBusyChange }: { state: FundProjectState; client: PublicClient; contextIndex: number; currencyChosen?: boolean; chainSelector?: ReactNode; onBusyChange?: (busy: boolean) => void }) {
   const context = state.accountingContexts[contextIndex] ?? state.accountingContexts[0]
   const { address } = useWallet()
   // The hook reverts for anyone not on the list; say so before a doomed review instead of after.
   const blocked = state.allowlist && !state.allowlist.open && address && state.account && isAddressEqual(state.account, address) && state.allowlist.accountAllowed === false ? 'This wallet is not on the allowlist.' : undefined
-  return <ProjectPayment blocked={blocked} quoteNeedsWallet={!!state.allowlist && !state.allowlist.open} chainSelector={chainSelector} onBusyChange={onBusyChange} chainId={state.chainId} projectId={state.projectId} tokenLabel="FUND" title="Contribute" context={context} paused={state.metadata.pausePay} reservedPercent={state.metadata.reservedPercent} rulesetId={state.ruleset.id.toString()} verify={async (account, minimumBlock) => {
+  return <ProjectPayment currencyChosen={currencyChosen} blocked={blocked} quoteNeedsWallet={!!state.allowlist && !state.allowlist.open} chainSelector={chainSelector} onBusyChange={onBusyChange} chainId={state.chainId} projectId={state.projectId} tokenLabel="FUND" title="Contribute" context={context} paused={state.metadata.pausePay} reservedPercent={state.metadata.reservedPercent} rulesetId={state.ruleset.id.toString()} verify={async (account, minimumBlock) => {
     const current = await freshState(client, state, account, minimumBlock)
     const active = current.accountingContexts.find(item => isAddressEqual(item.token, context.token) && isAddressEqual(item.terminal, context.terminal))
     if (!active || active.decimals !== context.decimals || active.currency !== context.currency || current.metadata.pausePay || current.ruleset.id !== state.ruleset.id) throw new Error('The payment terminal or project rules changed. Refresh and review the payment again.')
@@ -146,11 +148,14 @@ export function PaymentPanel({ state, client, contextIndex, chainSelector, onBus
   }} />
 }
 
-type CashOutPlan = { count: bigint; minimum: bigint; request: TxRequest; reviewNotice?: string }
+type CashOutPlan = { count: bigint; minimum: bigint; request: TxRequest; reviewNotice?: string; max: boolean }
 
-export function CashOutPanel({ state, client, contextIndex }: { state: FundProjectState; client: PublicClient; contextIndex: number }) {
+/** `currencyChosen`: the user picked the treasury currency; otherwise the default is keyed as such. */
+export function CashOutPanel({ state, client, contextIndex, currencyChosen = false }: { state: FundProjectState; client: PublicClient; contextIndex: number; currencyChosen?: boolean }) {
   const { address } = useWallet()
   const [amount, setAmount] = useState('')
+  /** The user chose their full balance, not a typed amount: the hold keeps that choice. */
+  const [max, setMax] = useState(false)
   const tx = useProjectTransaction(state)
   const confirm = useConfirmPlan<CashOutPlan>(tx)
   const context = state.accountingContexts[contextIndex] ?? state.accountingContexts[0]
@@ -170,7 +175,7 @@ export function CashOutPanel({ state, client, contextIndex }: { state: FundProje
     if (prepared.route.minimumReturn <= 0n) throw new Error('No positive protected return is available for this amount.')
     const minimum = prepared.route.minimumReturn
     return {
-      count, minimum,
+      count, minimum, max,
       request: { ...prepared.transaction, label: `Cash out ${units(count)} FUND for at least ${units(minimum, context.decimals)} ${context.symbol}` },
       reviewNotice: minimum < quote.data!.minimumReturn ? `The quote changed. You will receive at least ${units(minimum, context.decimals)} ${context.symbol}, down from ${units(quote.data!.minimumReturn, context.decimals)} ${context.symbol}.` : undefined,
     }
@@ -178,6 +183,9 @@ export function CashOutPanel({ state, client, contextIndex }: { state: FundProje
   const send = () => confirm.run((plan, account) => tx.send(plan.request, {
     reviewedAccount: account,
     reviewNotice: plan.reviewNotice,
+    // Its minimum comes from a fresh quote: a retry is held by the cash out the user chose, all of
+    // the balance when they chose that, whatever it is by the retry.
+    recoveryNamespace: writeIntentKey('cash-out', { project: state.projectId, token: chosenOrAuto('token', intent.address(context.token), currencyChosen), ...(plan.max ? { max: true } : { count: plan.count }) }),
     reverify: async () => {
       const latest = await freshState(client, state, account)
       if (latest.metadata.cashOutTaxRate >= 10_000 || plan.count > latest.creditBalance + latest.erc20Balance) throw new Error('Cash-out conditions changed during review. Refresh and try again.')
@@ -192,8 +200,8 @@ export function CashOutPanel({ state, client, contextIndex }: { state: FundProje
   ] : []
   return <ActionSection title="Cash out FUND">
     <p className="mb-5 text-sm">Burn FUND for its share of available treasury funds. This is also how onchain refunds and asset-sale proceeds are claimed. A quote includes the current cash-out rules and protocol fees.</p>
-    <Input label="FUND to cash out" value={amount} onChange={setAmount} />
-    {address && <button className="mt-2 text-sm underline" type="button" onClick={() => setAmount(units(total))}>Use full balance</button>}
+    <Input label="FUND to cash out" value={amount} onChange={value => { setMax(false); setAmount(value) }} />
+    {address && <button className="mt-2 text-sm underline" type="button" onClick={() => { setAmount(units(total)); setMax(true) }}>Use full balance</button>}
     {state.metadata.cashOutTaxRate >= 10_000 ? <p className="mt-4">Cash-outs are disabled by the current ruleset.</p> : quote.data ? <p className="mt-4 text-sm">At least {units(quote.data.minimumReturn, context.decimals)} {context.symbol} at 1% maximum slippage.</p> : <p className="mt-4 text-sm">{quote.isFetching ? 'Reading a protected cash-out quote…' : 'Enter an amount to see the available return.'}</p>}
     {count > total && <p className="mt-3 text-sm">This exceeds your FUND balance.</p>}
     {quote.isError && <p className="mt-3 text-sm" role="alert">A protected cash-out quote is unavailable. {errorMessage(quote.error)}</p>}

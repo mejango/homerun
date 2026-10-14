@@ -1,4 +1,5 @@
-import type { Address } from 'viem'
+import { formatUnits, parseUnits, type Address } from 'viem'
+import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 
 /**
  * ERC-20 `approve` without a declared return. Some tokens (mainnet USDT)
@@ -17,6 +18,32 @@ const erc20ApproveAbi = [
     outputs: [],
   },
 ] as const
+
+/**
+ * The hold name of an approval step inside a flow: its parent intent (the user's action), the token,
+ * the spender and the step. Never the amount, which the flow calculates (a repay ceiling, say).
+ */
+export function approvalIntentKey(parent: string, { token, spender, step }: { token: Address; spender: Address; step: string }): string {
+  return writeIntentKey('approve', { intent: parent, token: intent.address(token), spender: intent.address(spender), step })
+}
+
+/**
+ * A value in a write's intent key the app may have filled in itself (a default currency, a default
+ * fee): the user's choice keys its value, and an app default keys as `auto:<field>`, so the hold
+ * follows the choice of "the default" whatever the default resolves to by the retry.
+ */
+export function chosenOrAuto<T>(field: string, value: T, chosen: boolean): T | string {
+  return chosen ? value : `auto:${field}`
+}
+
+/**
+ * A typed decimal as the user meant it, independent of any token's decimals: parsed, then written
+ * canonically, so "1", "1.0" and "1.00" are the same. Keys an amount whose token is not fixed
+ * (an auto-selected currency), where the scaled units change with the token.
+ */
+export function canonicalDecimal(typed: string): string {
+  return formatUnits(parseUnits(typed.trim(), 36), 36)
+}
 
 /** Exact ERC-20 allowance request shared by every approval: payments, loans, bridging, Sticky and treasury returns. */
 export function buildErc20ApproveRequest({

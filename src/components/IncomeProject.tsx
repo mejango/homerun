@@ -38,7 +38,7 @@ import { ProjectPermissionsEditor } from '@/components/ProjectPermissionsEditor'
 import { ProjectSplitsEditor } from '@/components/ProjectSplitsEditor'
 import { fetchFundProjectMetadata, type FundProjectMetadata } from '@/lib/fund-project-metadata'
 import { parseAmount } from '@/lib/fund-contracts'
-import { buildErc20ApproveRequest } from '@/lib/transaction-builders'
+import { approvalIntentKey, buildErc20ApproveRequest, chosenOrAuto } from '@/lib/transaction-builders'
 import { readFundProjectState } from '@/lib/fund-state'
 import { readIncomeFundBinding } from '@/lib/income-fund-binding'
 import {
@@ -51,6 +51,8 @@ import {
 } from '@/lib/income-state'
 import { readableError } from '@/lib/readable-error'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
+import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
+import { loanRepaymentIntent } from '@/lib/income-loan-tools'
 
 function message(reason: unknown) { return readableError(reason, 'The transaction could not be prepared. Refresh and try again.') }
 function amount(value: string, decimals = 18) { try { return parseAmount(value.trim(), decimals) } catch { return 0n } }
@@ -225,6 +227,8 @@ function IncomeActions({ state, client, fundProjectId, writesUnavailable, bindin
   const [selectedToken, setSelectedToken] = useState<Address | undefined>()
   const primary = state?.accountingContexts.filter(item => item.isPrimary) ?? []
   const context = primary.find(item => item.token === selectedToken) ?? primary[0]
+  /** Whether the user picked the treasury currency, or it is the project's default. */
+  const currencyChosen = !!selectedToken && context?.token === selectedToken
   const ready = !!state && !!client
   const gate = (content: ReactNode) => <fieldset aria-label="INCOME transactions" disabled={writesUnavailable} className="m-0 grid min-w-0 gap-7 border-0 p-0">{content}</fieldset>
   const currency = ready && primary.length > 0 && <label className="grid gap-2 text-sm">INCOME treasury currency<select className="min-h-11 rounded border border-[#bfc9b5] bg-white px-3 pr-9" value={context?.token} onChange={event => setSelectedToken(event.target.value as Address)}>{primary.map(item => <option key={item.token} value={item.token}>{item.symbol}</option>)}</select></label>
@@ -234,15 +238,15 @@ function IncomeActions({ state, client, fundProjectId, writesUnavailable, bindin
     permissions: ready ? <ProjectPermissionsEditor chainId={chainId} projectId={state.projectId} client={client} unavailable={writesUnavailable} /> : <Panel title="INCOME permissions"><p>Reading project permissions…</p></Panel>,
     treasuryMetric: context && <span>INCOME treasury: <DisplayTokenAmount value={context.balance} decimals={context.decimals} /> {context.symbol}</span>,
     supplyMetric: state && <span>INCOME supply: <DisplayTokenAmount value={state.totalSupply} /></span>,
-    payment: gate(<>{ready && context ? <IncomePayment state={state} client={client} context={context} /> : <p>{projectId ? 'Loading INCOME payment options…' : 'INCOME has not been launched.'}</p>}</>),
+    payment: gate(<>{ready && context ? <IncomePayment state={state} client={client} context={context} currencyChosen={currencyChosen} /> : <p>{projectId ? 'Loading INCOME payment options…' : 'INCOME has not been launched.'}</p>}</>),
     activity: projectId && <ProjectActivity chainId={chainId} projectId={projectId} />,
     overview: state && <Panel title="Revenue"><dl className="demo-live-rows"><div><dt>INCOME supply</dt><dd><DisplayTokenAmount value={state.totalSupply} /> INCOME</dd></div><div><dt>Payments</dt><dd>{state.metadata.pausePay ? 'Paused' : 'Open'}</dd></div>{state.accountingContexts.map(item => <div key={`${item.terminal}:${item.token}`}><dt>Treasury</dt><dd><DisplayTokenAmount value={item.balance} decimals={item.decimals} /> {item.symbol}</dd></div>)}</dl><p>Verified at block {state.blockNumber.toString()}. INCOME carries no claim on asset-sale proceeds.</p></Panel>,
     stages: state && <div className="demo-owner-sections"><LiveProjectActions token="INCOME" state={{cashOutsEnabled: state.cashOutsAvailable, hasInitialAllocation: !!fundProjectId}} /><Panel title="INCOME schedule"><dl className="demo-live-rows"><div><dt>Current ruleset</dt><dd>{state.ruleset.id.toString()}</dd></div><div><dt>Started</dt><dd>{new Date(Number(state.ruleset.start) * 1_000).toLocaleString()}</dd></div><div><dt>Cash-outs and loans</dt><dd>{state.cashOutsAvailable ? 'Available' : `Unlock ${new Date(Number(state.cashOutDelay) * 1_000).toLocaleString()}`}</dd></div></dl><p>Sticky rewards are separate from initial allocations and vest over four weekly rounds after a claim.</p></Panel></div>,
-    accountsYou: gate(ready && <><Panel title="Your INCOME"><dl className="demo-live-rows"><div><dt>INCOME</dt><dd><DisplayTokenAmount value={state.totalBalance} /></dd></div><div><dt>Credits</dt><dd><DisplayTokenAmount value={state.creditBalance} /></dd></div><div><dt>ERC-20 tokens</dt><dd><DisplayTokenAmount value={state.erc20Balance} /></dd></div></dl></Panel><IncomeTokenActions state={state} client={client} />{fundProjectId && <InitialIncomeMint chainId={state.chainId} fundProjectId={fundProjectId} incomeProjectId={state.projectId} manifestUri={details?.incomeManifestUri ?? null} />}<IncomeHolderRewards state={state} client={client} fundProjectId={fundProjectId} />{context && <>{currency}<IncomeCashOut state={state} client={client} context={context} /></>}</>),
+    accountsYou: gate(ready && <><Panel title="Your INCOME"><dl className="demo-live-rows"><div><dt>INCOME</dt><dd><DisplayTokenAmount value={state.totalBalance} /></dd></div><div><dt>Credits</dt><dd><DisplayTokenAmount value={state.creditBalance} /></dd></div><div><dt>ERC-20 tokens</dt><dd><DisplayTokenAmount value={state.erc20Balance} /></dd></div></dl></Panel><IncomeTokenActions state={state} client={client} />{fundProjectId && <InitialIncomeMint chainId={state.chainId} fundProjectId={fundProjectId} incomeProjectId={state.projectId} manifestUri={details?.incomeManifestUri ?? null} />}<IncomeHolderRewards state={state} client={client} fundProjectId={fundProjectId} />{context && <>{currency}<IncomeCashOut state={state} client={client} context={context} currencyChosen={currencyChosen} /></>}</>),
     accountsAll: projectId && <ProjectParticipants chainId={chainId} projectId={projectId} tokenLabel="INCOME" />,
     settlement: gate(ready && <IncomeBridgeActions state={state} />),
     splits: <div className="demo-owner-sections">{ready && <ProjectSplitsEditor chainId={chainId} projectId={state.projectId} phase="income" client={client} unavailable={writesUnavailable} />}{gate(ready && <><IncomeReservedTokens state={state} client={client} /><IncomeAutoIssue state={state} client={client} /></>)}</div>,
-    loans: gate(ready && <>{currency}{context && <IncomeBorrow state={state} client={client} context={context} />}<IncomeLoansList state={state} client={client} /><IncomeLoanTools state={state} client={client} /></>),
+    loans: gate(ready && <>{currency}{context && <IncomeBorrow state={state} client={client} context={context} currencyChosen={currencyChosen} />}<IncomeLoansList state={state} client={client} /><IncomeLoanTools state={state} client={client} /></>),
     shop: projectId && <ProjectShop chainId={chainId} projectId={projectId} tokenLabel="INCOME" />,
     extras: projectId && <ProjectPayerAddresses chainId={chainId} projectId={projectId} tokenLabel="INCOME" />,
     operators: gate(ready && <IncomeOperatorActions state={state} client={client} />),
@@ -260,8 +264,8 @@ function IncomeHolderRewards({ state, client, fundProjectId }: { state: IncomePr
   </Panel>
 }
 
-function IncomePayment({ state, client, context }: { state: IncomeProjectState; client: PublicClient; context: IncomeAccountingContext }) {
-  return <ProjectPayment chainId={state.chainId} projectId={state.projectId} tokenLabel="INCOME" title="Pay the project" context={context} paused={state.metadata.pausePay} reservedPercent={state.metadata.reservedPercent} rulesetId={state.ruleset.id.toString()} verify={async (account, minimumBlock) => {
+function IncomePayment({ state, client, context, currencyChosen }: { state: IncomeProjectState; client: PublicClient; context: IncomeAccountingContext; currencyChosen?: boolean }) {
+  return <ProjectPayment currencyChosen={currencyChosen} chainId={state.chainId} projectId={state.projectId} tokenLabel="INCOME" title="Pay the project" context={context} paused={state.metadata.pausePay} reservedPercent={state.metadata.reservedPercent} rulesetId={state.ruleset.id.toString()} verify={async (account, minimumBlock) => {
     const current = await fresh(client, state, account, minimumBlock)
     matchingContext(current, context)
     if (current.metadata.pausePay || current.ruleset.id !== state.ruleset.id) throw new Error('The payment rules changed. Refresh and review the payment again.')
@@ -269,9 +273,11 @@ function IncomePayment({ state, client, context }: { state: IncomeProjectState; 
   }} />
 }
 
-function IncomeCashOut({ state, client, context }: { state: IncomeProjectState; client: PublicClient; context: IncomeAccountingContext }) {
+function IncomeCashOut({ state, client, context, currencyChosen = false }: { state: IncomeProjectState; client: PublicClient; context: IncomeAccountingContext; currencyChosen?: boolean }) {
   const { address } = useWallet()
   const [input, setInput] = useState('')
+  /** The user chose their full balance, not a typed amount: the hold keeps that choice. */
+  const [max, setMax] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [preparing, setPreparing] = useState(false)
   const tx = useIncomeTx(state)
@@ -293,6 +299,9 @@ function IncomeCashOut({ state, client, context }: { state: IncomeProjectState; 
       if (prepared.route.minimumReturn <= 0n) throw new Error('No positive protected cash-out return is available.')
       await tx.send({ ...prepared.transaction, label: `Cash out ${units(count)} INCOME for at least ${units(prepared.route.minimumReturn, context.decimals)} ${context.symbol}` }, {
         reviewedAccount: address,
+        // Its minimum comes from a fresh quote: a retry is held by the cash out the user chose, all of
+        // the balance when they chose that, whatever it is by the retry.
+        recoveryNamespace: writeIntentKey('cash-out', { project: state.projectId, token: chosenOrAuto('token', intent.address(context.token), currencyChosen), ...(max ? { max: true } : { count }) }),
         reviewNotice: prepared.route.minimumReturn < quote.data.minimumReturn ? `The quote decreased. Your new protected minimum is ${units(prepared.route.minimumReturn, context.decimals)} ${context.symbol}.` : undefined,
         reverify: async () => { const latest = await fresh(client, state, address); matchingContext(latest, context); if (!latest.cashOutsAvailable || count > latest.totalBalance) throw new Error('Cash-out conditions changed during review.') },
       })
@@ -300,8 +309,8 @@ function IncomeCashOut({ state, client, context }: { state: IncomeProjectState; 
   }
   return <Panel title="Cash out INCOME">
     <p className="mb-5">Burn INCOME for revenue reserves. The quote includes hooks and fees.</p>
-    <Field label="INCOME to cash out" value={input} onChange={setInput} />
-    <button type="button" className="quiet-button mt-2" onClick={() => setInput(units(state.totalBalance))}>Use full balance</button>
+    <Field label="INCOME to cash out" value={input} onChange={value => { setMax(false); setInput(value) }} />
+    <button type="button" className="quiet-button mt-2" onClick={() => { setInput(units(state.totalBalance)); setMax(true) }}>Use full balance</button>
     {quote.data && <p className="mt-4 text-xs text-[var(--muted)]">At least {units(quote.data.minimumReturn, context.decimals)} {context.symbol} with 1% maximum slippage.</p>}
     {quote.isError && <p role="alert" className="mt-3 text-sm">{message(quote.error)}</p>}
     <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={!address || preparing || tx.busy || tx.phase === 'review' || !state.cashOutsAvailable || count <= 0n || count > state.totalBalance || !quote.data || quote.data.minimumReturn <= 0n} onClick={() => void submit()}>{preparing ? 'Preparing…' : txPhaseLabel(tx.phase, { idle: 'Review cash-out', pending: 'Confirming onchain…' })}</button>
@@ -358,10 +367,12 @@ async function prerequisiteBlock(client: PublicClient, hash: `0x${string}` | nul
   return receipt.blockNumber
 }
 
-export function IncomeBorrow({ state, client, context }: { state: IncomeProjectState; client: PublicClient; context: IncomeAccountingContext }) {
+export function IncomeBorrow({ state, client, context, currencyChosen = false }: { state: IncomeProjectState; client: PublicClient; context: IncomeAccountingContext; currencyChosen?: boolean }) {
   const { address } = useWallet()
   const [input, setInput] = useState('')
   const [prepaid, setPrepaid] = useState<bigint>(25n)
+  /** Whether the user picked the prepaid fee, or it is the default. */
+  const [feeChosen, setFeeChosen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [preparing, setPreparing] = useState(false)
   // Juicebox Money's loan flow: review the loan and its wallet steps, then one action runs them in order.
@@ -410,6 +421,8 @@ export function IncomeBorrow({ state, client, context }: { state: IncomeProjectS
       const minimum = protectedIncomeMinimum(latestQuote.borrowableNow)
       await tx.send({ ...buildProtectedIncomeBorrow({ chainId: state.chainId, revnetId: state.projectId, token: context.token, quotedBorrowAmount: latestQuote.borrowableNow, collateralCount: count, holder: address, beneficiary: address, prepaidFeePercent: prepaid }), label: `Borrow against ${units(count)} INCOME; minimum ${units(minimum, context.decimals)} ${context.symbol} before loan fees` }, {
         reviewedAccount: address,
+        // Its borrow amount and minimum come from a fresh quote: a retry is held by the loan the user chose.
+        recoveryNamespace: writeIntentKey('borrow', { project: state.projectId, token: chosenOrAuto('token', intent.address(context.token), currencyChosen), collateral: count, fee: chosenOrAuto('fee', prepaid, feeChosen) }),
         simulationBlockNumber: minimumBlock === undefined ? undefined : latest.blockNumber,
         reviewNotice: `The prepaid source fee is ${optionLabel}. Protocol and REV fees also reduce wallet proceeds. Your INCOME becomes loan collateral; repayment is required to recover it. Unpaid loans can be liquidated after the contract’s ten-year term.`,
         reverify: async () => { const again = await fresh(client, state, address, minimumBlock); matchingContext(again, context); if (!again.cashOutsAvailable || count > again.totalBalance) throw new Error('The borrowing conditions changed during review.') },
@@ -423,7 +436,7 @@ export function IncomeBorrow({ state, client, context }: { state: IncomeProjectS
   ]
   return <Panel title="Borrow against INCOME">
     <Field label="INCOME collateral" value={input} onChange={setInput} />
-    <fieldset className="mt-4 flex flex-wrap items-center gap-2 border-0 p-0"><legend className="mb-2 text-sm">Prepaid fee</legend>{PREPAID_OPTIONS.map(option => <button key={option.label} type="button" className={prepaid === option.value ? 'btn-primary min-h-10 px-4' : 'btn-secondary min-h-10 px-4'} aria-pressed={prepaid === option.value} onClick={() => setPrepaid(option.value)}>{option.label}</button>)}</fieldset>
+    <fieldset className="mt-4 flex flex-wrap items-center gap-2 border-0 p-0"><legend className="mb-2 text-sm">Prepaid fee</legend>{PREPAID_OPTIONS.map(option => <button key={option.label} type="button" className={prepaid === option.value ? 'btn-primary min-h-10 px-4' : 'btn-secondary min-h-10 px-4'} aria-pressed={prepaid === option.value} onClick={() => { setPrepaid(option.value); setFeeChosen(true) }}>{option.label}</button>)}</fieldset>
     <p className="mt-2 text-xs text-[var(--muted)]">Prepaying more buys more fee-free time before the repayment cost starts to grow.</p>
     {borrowable !== undefined && <p className="mt-3 text-sm">Borrowable: {units(borrowable, context.decimals)} {context.symbol}. You receive about {units(netLoanProceeds(borrowable, prepaid), context.decimals)} {context.symbol} after fees.</p>}
     {quote.isError && <p role="alert" className="mt-3 text-sm">{message(quote.error)}</p>}
@@ -487,7 +500,8 @@ function IncomeRepayDialog({ state, client, loanId, tx, approval, onClose }: { s
         let approved = await client.readContract({ address: current.sourceContext.token, abi: erc20Abi, functionName: 'allowance', args: [address, loansContract], blockNumber: current.blockNumber })
         if (approved < current.loan.amount + current.accruedFee) {
           setStage('approve')
-          const hash = await approval.send({ ...buildErc20ApproveRequest({ chainId: state.chainId, token: current.sourceContext.token, spender: loansContract, amount: current.repayCeiling }), label: `Approve up to ${units(current.repayCeiling, current.sourceContext.decimals)} ${current.sourceContext.symbol} to repay loan ${loanId}` }, { reviewedAccount: address, reverify: async () => { await readIncomeLoan(client, { chainId: state.chainId, projectId: state.projectId, loanId, account: address }) } })
+          // Its amount, the repay ceiling, accrues with time: it is held as the repayment's approval step.
+          const hash = await approval.send({ ...buildErc20ApproveRequest({ chainId: state.chainId, token: current.sourceContext.token, spender: loansContract, amount: current.repayCeiling }), label: `Approve up to ${units(current.repayCeiling, current.sourceContext.decimals)} ${current.sourceContext.symbol} to repay loan ${loanId}` }, { reviewedAccount: address, recoveryNamespace: approvalIntentKey(loanRepaymentIntent(state.projectId, loanId), { token: current.sourceContext.token, spender: loansContract, step: 'repay' }), reverify: async () => { await readIncomeLoan(client, { chainId: state.chainId, projectId: state.projectId, loanId, account: address }) } })
           const block = await prerequisiteBlock(client, hash, approval.isSafe)
           if (block === null) return
           prerequisite = block
@@ -503,6 +517,9 @@ function IncomeRepayDialog({ state, client, loanId, tx, approval, onClose }: { s
       const reviewed = current
       await tx.send({ ...buildRepayLoanTx({ chainId: state.chainId, loanId, maxRepayBorrowAmount: maximum, collateralCountToReturn: reviewed.loan.collateral, beneficiary: address, value: tokenNative ? maximum : 0n }), label: `Repay loan ${loanId}; spend at most ${units(maximum, reviewed.sourceContext.decimals)} ${reviewed.sourceContext.symbol}` }, {
         reviewedAccount: address,
+        // Its ceiling accrues with time: a retry is held by the loan, the same hold as repaying it
+        // from the loan tools.
+        recoveryNamespace: loanRepaymentIntent(state.projectId, loanId),
         simulationBlockNumber: prerequisite === undefined ? undefined : reviewed.blockNumber,
         reviewNotice: `Recover ${units(reviewed.loan.collateral)} INCOME. The maximum includes outstanding principal, accrued fees, and a 0.1% principal buffer. Unused funds are refunded.`,
         reverify: async () => { const latest = await readIncomeLoan(client, { chainId: state.chainId, projectId: state.projectId, loanId, account: address }); if (latest.loan.collateral !== reviewed.loan.collateral || latest.loan.amount !== reviewed.loan.amount || latest.loan.amount + latest.accruedFee > maximum) throw new Error('The loan changed or its fees exceeded the reviewed maximum. Review a fresh repayment.'); if (prerequisite !== undefined && latest.blockNumber < prerequisite) throw new Error('The RPC is behind the confirmed approval.') },

@@ -2,7 +2,7 @@ import { heldStorage, holds } from './write-hold'
 import { isAddress, zeroAddress, zeroHash, type Address, type Hex, type PublicClient } from 'viem'
 import {
   createBrowserWriteRecovery, parseReviewedWriteRecoveryRecord, readBrowserWriteRecovery, sameReviewedWrite,
-  type WriteHeldState, type WriteHoldHandle,
+  type WriteHeldState, type WriteHoldHandle, type WriteHoldState,
 } from '@bananapus/nana-sdk-core/review'
 
 /** One reservation per chain and project, around the SDK's per-account records. */
@@ -92,7 +92,7 @@ export function pruneProjectAdminAccounts(storage: Store, chainId: number, proje
 }
 
 /** Another account's unresolved update: its hold, and what the SDK says it is. */
-export type ProjectAdminHold = { hold: WriteHoldHandle; state: WriteHeldState }
+export type ProjectAdminHold = { hold: WriteHoldHandle; state: WriteHeldState & Pick<WriteHoldState, 'notice'> }
 
 /**
  * Unresolved updates this project holds for accounts other than `account`, each as the SDK's write
@@ -107,7 +107,8 @@ export async function otherProjectAdminHolds(storage: Store, client: PublicClien
     if (!saved) continue
     const { account: holder, safe, call } = parseReviewedWriteRecoveryRecord(saved)
     const hold = holds.open({ chainId, account: holder, safe, namespace, call })
-    const state = await hold.state(client).catch(() => hold.peek())
+    // Only the chain's answer may offer the exit: a saved state alone never does.
+    const state = await hold.state(client).catch(() => { throw new Error('Another wallet’s unresolved project update could not be checked. Try again shortly.') })
     if (state.status !== 'clear') found.push({ hold, state })
   }
   return found
