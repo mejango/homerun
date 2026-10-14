@@ -1,4 +1,4 @@
-import { keccak256, stringToHex } from 'viem'
+import { isAddress, keccak256, stringToHex } from 'viem'
 
 /** A param the user chose for a write: an amount, a token, a loan or project id, a recipient. */
 export type WriteIntentParam = string | number | bigint | boolean
@@ -14,6 +14,10 @@ export type WriteIntentParam = string | number | bigint | boolean
  */
 export function writeIntent(action: string, params: Record<string, WriteIntentParam>): string {
   if (!/^[a-z0-9-]{1,40}$/.test(action)) throw new Error(`Invalid write intent action: ${action}`)
-  const fields = Object.keys(params).sort().map(key => `${key}=${String(params[key]).toLowerCase()}`)
-  return `homerun:intent:${action}:${keccak256(stringToHex(fields.join('\n'))).slice(2)}`
+  // Addresses compare without case; free text such as a memo keeps its case. JSON keeps fields apart.
+  const fields = Object.keys(params).sort().map(key => {
+    const value = params[key]
+    return [key, typeof value === 'string' && isAddress(value, { strict: false }) ? value.toLowerCase() : String(value)]
+  })
+  return `homerun:intent:${action}:${keccak256(stringToHex(JSON.stringify(fields))).slice(2)}`
 }

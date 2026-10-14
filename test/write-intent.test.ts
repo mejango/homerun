@@ -20,4 +20,11 @@ describe('writeIntent', () => {
     expect(writeIntent('cash-out', { project: 7n, token: '0x1', count: 6n })).not.toBe(base)
     expect(writeIntent('cash-out', { project: 8n, token: '0x1', count: 5n })).not.toBe(base)
   })
+
+  it('keeps free text exactly, so distinct references never collide', () => {
+    expect(writeIntent('asset-withdrawal', { memo: 'Invoice A' })).not.toBe(writeIntent('asset-withdrawal', { memo: 'Invoice a' }))
+    expect(writeIntent('asset-withdrawal', { memo: 'x\nb=y' })).not.toBe(writeIntent('asset-withdrawal', { memo: 'x', b: 'y' }))
+    // Only an address is case-insensitive.
+    expect(writeIntent('pay', { token: '0xABCDEFabcdef0000000000000000000000000001' })).toBe(writeIntent('pay', { token: '0xabcdefabcdef0000000000000000000000000001' }))
+  })
 })
