@@ -27,6 +27,15 @@ export function approvalIntentKey(parent: string, { token, spender, step }: { to
   return writeIntentKey('approve', { intent: parent, token: intent.address(token), spender: intent.address(spender), step })
 }
 
+/**
+ * A value in a write's intent key the app may have filled in itself (a default currency, a default
+ * fee): the user's choice keys its value, and an app default keys as `auto:<field>`, so the hold
+ * follows the choice of "the default" whatever the default resolves to by the retry.
+ */
+export function chosenOrAuto<T>(field: string, value: T, chosen: boolean): T | string {
+  return chosen ? value : `auto:${field}`
+}
+
 /** Exact ERC-20 allowance request shared by every approval: payments, loans, bridging, Sticky and treasury returns. */
 export function buildErc20ApproveRequest({
   chainId,

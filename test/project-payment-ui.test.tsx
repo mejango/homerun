@@ -182,7 +182,7 @@ describe('shared payment execution', () => {
     expect(options.reviewedAccount).toBe(WALLET)
     expect(options.simulationBlockNumber).toBe(100n)
     // Its minimum comes from a fresh quote, so a retry is held by the user's choice, not the calldata.
-    expect(options.recoveryNamespace).toBe(writeIntentKey('pay', { project: 7n, token: intent.address(NATIVE_TOKEN), amount: UNIT }))
+    expect(options.recoveryNamespace).toBe(writeIntentKey('pay', { project: 7n, token: 'auto:token', amount: UNIT }))
   })
 
   it('preserves the SDK swap minimum exactly in genuine Universal Router calldata', async () => {
@@ -208,7 +208,7 @@ describe('shared payment execution', () => {
     expect(runtime.writes[0].request.address).toBe(TOKEN)
     expect(runtime.writes[1].request.value).toBe(0n)
     // One payment intent whichever route the quote picks; its approval is that intent's token step.
-    const payment = writeIntentKey('pay', { project: 7n, token: intent.address(TOKEN), amount: 2_500_000n })
+    const payment = writeIntentKey('pay', { project: 7n, token: 'auto:token', amount: 2_500_000n })
     expect(runtime.writes[1].options.recoveryNamespace).toBe(payment)
     expect(runtime.writes[0].options.recoveryNamespace).toBe(approvalIntentKey(payment, { token: TOKEN, spender: TERMINAL, step: 'token' }))
     expect(runtime.verify).toHaveBeenCalledWith(WALLET, 101n)
@@ -245,7 +245,7 @@ describe('shared payment execution', () => {
     expect(encoded(runtime.writes[0].request).args?.slice(0, 3)).toEqual([TOKEN, getAddress(DEPLOYMENT.universalRouter!), 3_000_000n])
     expect(encoded(runtime.writes[1].request).args?.[0]).toBe('0x10')
     // The approval's expiration and the swap's deadline are stamped now: both are held by the user's choice.
-    const payment = writeIntentKey('pay', { project: 7n, token: intent.address(TOKEN), amount: 3_000_000n })
+    const payment = writeIntentKey('pay', { project: 7n, token: 'auto:token', amount: 3_000_000n })
     expect(runtime.writes[0].options.recoveryNamespace).toBe(approvalIntentKey(payment, { token: TOKEN, spender: DEPLOYMENT.universalRouter!, step: 'router' }))
     expect(runtime.writes[1].options.recoveryNamespace).toBe(payment)
   })

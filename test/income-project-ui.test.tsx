@@ -150,7 +150,7 @@ describe('INCOME transaction surfaces', () => {
     await act(async () => review().click())
     expect(runtime.send).toHaveBeenCalledTimes(2)
     const [first, retry] = runtime.send.mock.calls.map(([request, options]) => ({ request, options }))
-    await expectRetryHeldByIntent(first, retry, writeIntentKey('cash-out', { project: 7n, token: intent.address(token), count: 2n * 10n ** 18n }))
+    await expectRetryHeldByIntent(first, retry, writeIntentKey('cash-out', { project: 7n, token: 'auto:token', count: 2n * 10n ** 18n }))
   })
 
   it('holds a full-balance INCOME cash out by the choice of all, so a retry after the balance moved is held by the first', async () => {
@@ -173,7 +173,7 @@ describe('INCOME transaction surfaces', () => {
     await fullBalance(11n * 10n ** 18n)
     expect(runtime.send).toHaveBeenCalledTimes(2)
     const [first, retry] = runtime.send.mock.calls.map(([request, options]) => ({ request, options }))
-    await expectRetryHeldByIntent(first, retry, writeIntentKey('cash-out', { project: 7n, token: intent.address(token), max: true }))
+    await expectRetryHeldByIntent(first, retry, writeIntentKey('cash-out', { project: 7n, token: 'auto:token', max: true }))
   })
 
   function section(title: string) { return [...host.querySelectorAll('section')].find(element => element.querySelector('h2, h3')?.textContent === title)! }

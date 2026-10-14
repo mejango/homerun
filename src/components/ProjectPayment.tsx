@@ -17,7 +17,7 @@ import { useSafeTx, type TxRequest } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { parseAmount } from '@/lib/fund-contracts'
-import { approvalIntentKey, buildErc20ApproveRequest } from '@/lib/transaction-builders'
+import { approvalIntentKey, buildErc20ApproveRequest, chosenOrAuto } from '@/lib/transaction-builders'
 import { prepareProjectPayQuote, readProjectPayTokenOptions } from '@/lib/project-pay-quote'
 import { swapDeadline } from '@/lib/safe-connector'
 // `intent` names this flow's own reviewed intent here.
@@ -64,7 +64,7 @@ async function paymentReceipt(client: PublicClient, hash: Hex) {
 
 /** FUND and INCOME share the reference clients' pay / direct-AMM execution
  * pipeline. The parent retains project-specific contract identity checks. */
-function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context: accountingContext, paused, blocked, quoteNeedsWallet, reservedPercent, rulesetId, verify, chainSelector, onBusyChange }: {
+function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context: accountingContext, currencyChosen = false, paused, blocked, quoteNeedsWallet, reservedPercent, rulesetId, verify, chainSelector, onBusyChange }: {
   chainSelector?: ReactNode; onBusyChange?: (busy: boolean) => void
   /** Why this wallet cannot pay; keeps the card but disables Pay. */
   blocked?: string
@@ -72,6 +72,8 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
   quoteNeedsWallet?: boolean
   chainId: JBChainId; projectId: bigint; tokenLabel: 'FUND' | 'INCOME'; title: string
   context: PaymentContext; paused: boolean; reservedPercent: number; rulesetId: string
+  /** The user picked the currency `context` is in; otherwise the page's default is keyed as such. */
+  currencyChosen?: boolean
   verify: (account: Address, minimumBlock?: bigint) => Promise<{ blockNumber: bigint }>
 }) {
   const checking = useContext(WritesChecking)
@@ -188,7 +190,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
         return true
       }
       // One payment intent whichever route the quote picks; its approvals are that intent's steps.
-      const payment = writeIntentKey('pay', { project: projectId, token: keyed.address(context.token), amount: count })
+      const payment = writeIntentKey('pay', { project: projectId, token: chosenOrAuto('token', keyed.address(context.token), currencyChosen || !!selectedToken), amount: count })
       if (!native) {
         const allowance = await client.readContract({ address: context.token, abi: erc20Abi, functionName: 'allowance', args: [address, spender], blockNumber: latestBlock })
         if (allowance < count) {

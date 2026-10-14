@@ -23,7 +23,7 @@ import {
 import { assertFundStateForWrite, readFundProjectState, readLinkedFundProjects, type FundProjectState } from '@/lib/fund-state'
 import { waitForSafeExecutionHash } from '@/lib/safe-connector'
 import { SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
-import { verifyReviewedWriteReceipt } from '@bananapus/nana-sdk-core/review'
+import { intent, verifyReviewedWriteReceipt, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import { wagmiConfig } from '@/providers/Providers'
 import { readableError } from '@/lib/readable-error'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
@@ -732,6 +732,8 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
       const request = buildFundRulesetChange({ snapshots: [current.rulesetSnapshot], action, mustStartAtOrAfter: 0 }).requests[0]
       await tx.send({ ...request, label: RULESET_LABELS[action] }, {
         reviewedAccount: address,
+        // The rebuilt configuration copies every field it preserves: a retry is held by the chosen action.
+        recoveryNamespace: writeIntentKey('fund-ruleset', { project: state.projectId, action }),
         reviewNotice: rulesetNotice(action),
         reverify: async () => {
           const latest = await fresh()
@@ -771,6 +773,9 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
       const request = built.requests[0]
       await tx.send({ ...request, label: input.amount === 0n ? 'Remove the asset-purchase withdrawal allowance' : `Set a new gross purchase allowance of ${formatUnits(input.amount, selected.decimals)} ${selected.symbol}` }, {
         reviewedAccount: address,
+        // The rebuilt configuration copies every field it preserves: a retry is held by the allowance chosen.
+        recoveryNamespace: writeIntentKey('fund-allowance', { project: state.projectId, terminal: intent.address(currentContext.terminal),
+          token: intent.address(currentContext.token), currency: input.currency, amount: input.amount }),
         reviewNotice: rulesetNotice('configure-asset-allowance'),
         reverify: async () => {
           const latest = await fresh()
@@ -804,6 +809,10 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
       const request = buildFundMint({ snapshot: current.rulesetSnapshot, beneficiary: mintRecipient, tokenCount: count, kind: mintKind, memo })
       await tx.send({ ...request, label: `Mint ${formatUnits(count, 18)} FUND to ${mintRecipient}` }, {
         reviewedAccount: address,
+        // An owner share's count is calculated from supply and holdings: a retry is held by the chosen target.
+        recoveryNamespace: writeIntentKey('fund-mint', { project: state.projectId, kind: mintKind, beneficiary: intent.address(mintRecipient),
+          ...(mintKind === 'offchain-contribution' ? { amount: count, reference: contributionReference.trim() }
+            : linked ? { amount: count } : { target: parsePercent(targetShare) }) }),
         reviewNotice: mintKind === 'operator-share'
           ? linked ? `Issue exactly ${formatUnits(count, 18)} FUND to the owner on ${displayChainName(state.chainId)}. Reconcile the owner’s holdings on all linked chains, including unclaimed bridged FUND. The owner may distribute these tokens to the operator at their discretion. Homerun does not infer a global ownership percentage from incomplete bridge supply.` : `Target a ${targetShare}% FUND share for the owner after this mint, including the owner’s current FUND. The owner may distribute these tokens to the operator at their discretion. This is an owner-selected allocation, not a contract-enforced entitlement.`
           : `Record ${offchainUsd} USD contributed outside the contract. No payment enters the treasury in this transaction. Check that reference “${contributionReference.trim()}” has not already been minted; the contract does not deduplicate these references.`,

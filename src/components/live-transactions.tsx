@@ -7,6 +7,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { erc20Abi, formatUnits, getAddress, isAddress, isAddressEqual, zeroAddress, type Address, type PublicClient } from 'viem'
 import { FundOperatorActions } from '@/components/FundOperatorActions'
 import { ProjectPayment } from '@/components/ProjectPayment'
+import { chosenOrAuto } from '@/lib/transaction-builders'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { useSafeTx, type TxRequest } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
@@ -133,12 +134,12 @@ async function freshState(client: PublicClient, state: FundProjectState, account
   return fresh
 }
 
-export function PaymentPanel({ state, client, contextIndex, chainSelector, onBusyChange }: { state: FundProjectState; client: PublicClient; contextIndex: number; chainSelector?: ReactNode; onBusyChange?: (busy: boolean) => void }) {
+export function PaymentPanel({ state, client, contextIndex, currencyChosen, chainSelector, onBusyChange }: { state: FundProjectState; client: PublicClient; contextIndex: number; currencyChosen?: boolean; chainSelector?: ReactNode; onBusyChange?: (busy: boolean) => void }) {
   const context = state.accountingContexts[contextIndex] ?? state.accountingContexts[0]
   const { address } = useWallet()
   // The hook reverts for anyone not on the list; say so before a doomed review instead of after.
   const blocked = state.allowlist && !state.allowlist.open && address && state.account && isAddressEqual(state.account, address) && state.allowlist.accountAllowed === false ? 'This wallet is not on the allowlist.' : undefined
-  return <ProjectPayment blocked={blocked} quoteNeedsWallet={!!state.allowlist && !state.allowlist.open} chainSelector={chainSelector} onBusyChange={onBusyChange} chainId={state.chainId} projectId={state.projectId} tokenLabel="FUND" title="Contribute" context={context} paused={state.metadata.pausePay} reservedPercent={state.metadata.reservedPercent} rulesetId={state.ruleset.id.toString()} verify={async (account, minimumBlock) => {
+  return <ProjectPayment currencyChosen={currencyChosen} blocked={blocked} quoteNeedsWallet={!!state.allowlist && !state.allowlist.open} chainSelector={chainSelector} onBusyChange={onBusyChange} chainId={state.chainId} projectId={state.projectId} tokenLabel="FUND" title="Contribute" context={context} paused={state.metadata.pausePay} reservedPercent={state.metadata.reservedPercent} rulesetId={state.ruleset.id.toString()} verify={async (account, minimumBlock) => {
     const current = await freshState(client, state, account, minimumBlock)
     const active = current.accountingContexts.find(item => isAddressEqual(item.token, context.token) && isAddressEqual(item.terminal, context.terminal))
     if (!active || active.decimals !== context.decimals || active.currency !== context.currency || current.metadata.pausePay || current.ruleset.id !== state.ruleset.id) throw new Error('The payment terminal or project rules changed. Refresh and review the payment again.')
@@ -149,7 +150,8 @@ export function PaymentPanel({ state, client, contextIndex, chainSelector, onBus
 
 type CashOutPlan = { count: bigint; minimum: bigint; request: TxRequest; reviewNotice?: string; max: boolean }
 
-export function CashOutPanel({ state, client, contextIndex }: { state: FundProjectState; client: PublicClient; contextIndex: number }) {
+/** `currencyChosen`: the user picked the treasury currency; otherwise the default is keyed as such. */
+export function CashOutPanel({ state, client, contextIndex, currencyChosen = false }: { state: FundProjectState; client: PublicClient; contextIndex: number; currencyChosen?: boolean }) {
   const { address } = useWallet()
   const [amount, setAmount] = useState('')
   /** The user chose their full balance, not a typed amount: the hold keeps that choice. */
@@ -183,7 +185,7 @@ export function CashOutPanel({ state, client, contextIndex }: { state: FundProje
     reviewNotice: plan.reviewNotice,
     // Its minimum comes from a fresh quote: a retry is held by the cash out the user chose, all of
     // the balance when they chose that, whatever it is by the retry.
-    recoveryNamespace: writeIntentKey('cash-out', { project: state.projectId, token: intent.address(context.token), ...(plan.max ? { max: true } : { count: plan.count }) }),
+    recoveryNamespace: writeIntentKey('cash-out', { project: state.projectId, token: chosenOrAuto('token', intent.address(context.token), currencyChosen), ...(plan.max ? { max: true } : { count: plan.count }) }),
     reverify: async () => {
       const latest = await freshState(client, state, account)
       if (latest.metadata.cashOutTaxRate >= 10_000 || plan.count > latest.creditBalance + latest.erc20Balance) throw new Error('Cash-out conditions changed during review. Refresh and try again.')

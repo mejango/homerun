@@ -29,6 +29,8 @@ vi.mock('@tanstack/react-query', () => ({
 }))
 vi.mock('@/lib/income-operator', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/income-operator')>(), readIncomeOperatorSnapshot: runtime.read }))
 import { IncomeOperatorActions } from '../src/components/IncomeOperatorActions'
+import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
+import { expectRetryHeldByIntent } from './support/intent-retry'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as Address
 const OPERATOR = '0x2222222222222222222222222222222222222222' as Address
@@ -93,6 +95,18 @@ describe('Owner changes the INCOME Operator', () => {
     expect(options.reviewNotice).toContain('pending reserved INCOME')
     expect(options.reviewedAccount).toBe(OWNER)
   })
+  it('holds an Operator change by its stage and recipient, so a retry after a preserved split changed is held by the first', async () => {
+    runtime.send.mockImplementation(async (request, options: TxSendOptions) => { await options.reverify?.(request); return null })
+    await render(); await recipient(NEXT); await submit()
+    // Another split of the stage changed after the lost reply: the rebuilt splits differ.
+    const next = snapshot()
+    next.stages[0].splits[1] = { ...next.stages[0].splits[1], preferAddToBalance: true }
+    runtime.snapshot = next
+    await submit()
+    const [first, retry] = runtime.send.mock.calls.map(([request, options]) => ({ request, options }))
+    await expectRetryHeldByIntent(first, retry, writeIntentKey('income-operator', { project: 7n, stage: 90n, recipient: intent.address(NEXT) }))
+  })
+
   it('shows and updates the upcoming namespace after the current stage is confirmed', async () => {
     await render(); await recipient(NEXT); await submit()
     runtime.snapshot = snapshot(); runtime.snapshot.blockNumber = 101n

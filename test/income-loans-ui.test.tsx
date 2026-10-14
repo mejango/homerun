@@ -128,7 +128,17 @@ describe('INCOME loans like Juicebox Money', () => {
     expect(borrow.options.simulationBlockNumber).toBe(200n)
     expect(borrow.options.reviewNotice).toContain('The prepaid source fee is 5%')
     // Its borrow amount and minimum come from a fresh quote: a retry is held by the collateral the user chose.
-    expect(borrow.options.recoveryNamespace).toBe(writeIntentKey('borrow', { project: state.projectId, token: intent.address(context.token), collateral: 10n * UNIT, fee: 50n }))
+    expect(borrow.options.recoveryNamespace).toBe(writeIntentKey('borrow', { project: state.projectId, token: 'auto:token', collateral: 10n * UNIT, fee: 50n }))
+  })
+
+  it('keys a borrow with the default prepaid fee as that default, not its value', async () => {
+    runtime.permitted = true
+    await act(async () => root.render(<QueryClientProvider client={cache}><IncomeBorrow state={state} client={client as never} context={context} /></QueryClientProvider>))
+    await type('INCOME collateral', '10'); await settle()
+    await act(async () => button('Review loan').click()); await settle()
+    await act(async () => button('Confirm & borrow').click()); await settle()
+    const borrow = runtime.sends.find(sent => sent.request.functionName === 'borrowFrom')!
+    expect(borrow.options.recoveryNamespace).toBe(writeIntentKey('borrow', { project: state.projectId, token: 'auto:token', collateral: 10n * UNIT, fee: 'auto:fee' }))
   })
 
   it('lists only the wallet’s open loans and repays one in full', async () => {
