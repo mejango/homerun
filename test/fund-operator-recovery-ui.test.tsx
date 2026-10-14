@@ -300,6 +300,28 @@ describe('linked ruleset recovery of a Safe execution', () => {
     expect(runtime.send).not.toHaveBeenCalled()
   })
 
+  it('closes a partly done plan whose shared start passed, without claiming the chains it never sent, unless one is still held', async () => {
+    // Chain 1 confirmed; the start passed before chain 2 was sent.
+    const saved = savedChain({ kind: 'transaction', hash: EXECUTION })
+    successReceipt(saved)
+    runtime.outcome.mockImplementation(async ({ chainId }: { chainId: number }) => chainId === 8453 ? { status: 'settled', hash: EXECUTION } : { status: 'none' })
+    const clock = vi.spyOn(Date, 'now').mockReturnValue((STARTS_AT + 3_600) * 1000)
+    try {
+      await verify()
+      expect(host.textContent).toContain('deadline has passed')
+      expect(host.textContent).toContain('The chains not yet updated were not changed.')
+      // A chain still held keeps the plan.
+      runtime.outcome.mockImplementation(async ({ chainId }: { chainId: number }) => chainId === 10 ? { status: 'held' } : { status: 'none' })
+      await act(async () => button('Close this plan')!.click())
+      expect(host.textContent).toContain('Finish or exit the pending update first.')
+      expect(localStorage.getItem(key)).not.toBeNull()
+      runtime.outcome.mockResolvedValue({ status: 'none' })
+      await act(async () => button('Close this plan')!.click())
+      expect(localStorage.getItem(key)).toBeNull()
+      expect(runtime.send).not.toHaveBeenCalled()
+    } finally { clock.mockRestore() }
+  })
+
   it('reverifies a legacy saved Safe execution hash without changing its saved identity', async () => {
     const saved = plan(); const record = { kind: 'transaction' as const, hash: EXECUTION, attemptId: crypto.randomUUID() }
     const previous = serializeRulesetRecovery(saved, new Map([[8453, record]]), ROOT)

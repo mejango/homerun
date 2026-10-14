@@ -29,15 +29,25 @@ it('routes every held-write lookup on load through the shared settled-write reco
   }
 })
 
-it('presses every check-required exit in a test that then finds the next step usable', () => {
-  const tests = sources('test').map(path => readFileSync(path, 'utf8'))
+/** Each test case in a file, by where its `it(` starts. */
+function cases(source: string): string[] {
+  const starts = [...source.matchAll(/\n\s*it(?:\.each\([\s\S]*?\))?\(\s*['"`]/g)].map(match => match.index!)
+  return starts.map((start, index) => source.slice(start, starts[index + 1] ?? source.length))
+}
+
+it('presses every check-required exit in a test case that then finds the next step usable', () => {
+  const testCases = sources('test').flatMap(path => cases(readFileSync(path, 'utf8')))
   const exits = new Set(sources('src').flatMap(path => [...readFileSync(path, 'utf8').matchAll(/<CheckRequired[^>]*?action="([^"]+)"/g)].map(match => match[1])))
   expect(exits.size).toBeGreaterThan(0)
   for (const label of exits) {
-    // Pressed (as a click or a button press), and in the same test file something is then asserted enabled or done.
-    const pressing = tests.filter(source => source.includes(`click('${label}')`) || source.includes(`button('${label}')!.click()`))
+    // Pressed (as a click or a button press), and later in the same case something is asserted enabled or done.
+    const presses = [`click('${label}')`, `button('${label}')!.click()`]
+    const pressing = testCases.filter(source => presses.some(press => source.includes(press)))
     expect(pressing.length, `no test presses "${label}"`).toBeGreaterThan(0)
-    expect(pressing.some(source => /disabled[^\n]*\.toBe\(false\)|toBeNull\(\)/.test(source.slice(source.indexOf(label)))), `"${label}" is pressed, but no usable next step is asserted after it`).toBe(true)
+    const usable = pressing.some(source => {
+      const at = Math.min(...presses.map(press => source.indexOf(press)).filter(index => index >= 0))
+      return /disabled[^\n]*\.toBe\(false\)|toBeNull\(\)/.test(source.slice(at))
+    })
+    expect(usable, `"${label}" is pressed, but no case then asserts a usable next step`).toBe(true)
   }
 })
-

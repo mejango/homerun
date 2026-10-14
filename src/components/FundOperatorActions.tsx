@@ -257,9 +257,11 @@ const CHAIN_CHECK_LINE = 'Check this chain’s ruleset before running it again.'
 /** Recovered progress: chains done, and chains whose saved transaction can't be shown, which are only run again by explicit choice. */
 type Recovered = { completed: Map<number, RulesetCompletion>; checkFirst: Set<number> }
 
-function RecoveryPanel({ plan, submissions, onResume }: {
+function RecoveryPanel({ plan, submissions, onResume, onFailed }: {
   plan: RulesetPlan; submissions: ReadonlyMap<number, RulesetSubmission>
   onResume: (recovered: Recovered) => Promise<void>
+  /** Recovery can't resume this plan (its start passed, or its chains changed): only closing it is left. */
+  onFailed: () => void
 }) {
   const [checking, setChecking] = useState(false)
   const [notice, setNotice] = useState('Saved intent found. The transactions and every linked project must be verified again before continuing.')
@@ -317,7 +319,7 @@ function RecoveryPanel({ plan, submissions, onResume }: {
       if (completed.size < plan.states.length && (Date.now() / 1000 >= plan.startsAt - 60 || current.some(project => project.blockTimestamp >= BigInt(plan.startsAt - 60)))) throw new Error('Some chains confirmed, but the shared activation deadline has passed. The remaining calls cannot be sent late. Export this plan and reconcile the active and queued rules on every chain before scheduling a replacement.')
       await onResume({ completed, checkFirst })
     } catch (reason) {
-      if (!(reason instanceof DOMException && reason.name === 'AbortError')) setError(`${message(reason)} No duplicate transaction will be submitted during recovery.`)
+      if (!(reason instanceof DOMException && reason.name === 'AbortError')) { setError(`${message(reason)} No duplicate transaction will be submitted during recovery.`); onFailed() }
     } finally { setChecking(false); abort.current = null }
   }
 
@@ -544,6 +546,8 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
   const [approvedIntent, setApprovedIntent] = useState<string | null>(null)
   const [plan, setPlan] = useState<RulesetPlan | null>(null)
   const [completed, setCompleted] = useState<Map<number, RulesetCompletion>>(new Map())
+  /** Recovery couldn't resume the plan: closing it is offered. */
+  const [unresumable, setUnresumable] = useState(false)
   /** Chains recovery couldn't show done or held: run again only by explicit choice. */
   const [checkFirst, setCheckFirst] = useState<ReadonlySet<number>>(new Set())
   const [submissions, setSubmissions] = useState<Map<number, RulesetSubmission>>(new Map())
@@ -706,7 +710,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
         if (window.localStorage.getItem(key) !== null) throw new Error('The saved recovery plan could not be cleared.')
         savedRecovery.current = { key, raw: null }
         planRef.current = null; submissionsRef.current = new Map()
-        setPlan(null); setSubmissions(new Map()); setCompleted(new Map()); setRecovering(false)
+        setPlan(null); setSubmissions(new Map()); setCompleted(new Map()); setRecovering(false); setUnresumable(false)
       })
     } catch (reason) { setError(message(reason)) }
   }
@@ -948,7 +952,12 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
       />
       {/* Every chain's hold is shown with its exit, while the plan is verified and after it resumes, except the chain its step shows. */}
       {plan.states.map((peer, index) => (recovering || peer.chainId !== plan.states.find(next => !completed.has(next.chainId))?.chainId) && <PlanChainHold key={`${plan.startsAt}:${peer.chainId}`} plan={plan} index={index} submission={submissions.get(peer.chainId)} onConfirmed={(chainId, result) => withSubmissionLock(async () => { if (planRef.current !== plan) throw new Error('The linked plan changed during confirmation.'); recordSubmission(chainId, result.submission); setCompleted(previous => new Map(previous).set(chainId, result)) })} done={completed.has(peer.chainId)} onAdopted={(chainId, submission) => withSubmissionLock(async () => { assertSubmission(chainId, submission); removeSubmission(chainId) })} />)}
-      {recovering ? <RecoveryPanel plan={plan} submissions={submissions} onResume={recovered => withSubmissionLock(async () => { if (planRef.current !== plan) throw new Error('The linked plan changed during recovery.'); for (const [chainId, submission] of submissions) assertSubmission(chainId, submission); if (submissionsRef.current.size !== submissions.size) throw new Error('A linked submission changed during recovery.'); setCompleted(recovered.completed); setCheckFirst(recovered.checkFirst); setRecovering(false) })} />
+      {/* A plan that can no longer finish (its shared start passed, or recovery can't resume it) can always be closed. */}
+      {(unresumable || (completed.size < plan.states.length && Date.now() / 1000 >= plan.startsAt - 60)) && <div role="status" className="grid gap-2 text-sm">
+        <p>This plan can no longer finish. The chains not yet updated were not changed.</p>
+        <button type="button" className="btn-secondary min-h-10 w-fit px-4" onClick={() => void closePlan(true)}>Close this plan</button>
+      </div>}
+      {recovering ? <RecoveryPanel plan={plan} submissions={submissions} onFailed={() => setUnresumable(true)} onResume={recovered => withSubmissionLock(async () => { if (planRef.current !== plan) throw new Error('The linked plan changed during recovery.'); for (const [chainId, submission] of submissions) assertSubmission(chainId, submission); if (submissionsRef.current.size !== submissions.size) throw new Error('A linked submission changed during recovery.'); setCompleted(recovered.completed); setCheckFirst(recovered.checkFirst); setRecovering(false) })} />
         : completed.size < plan.states.length ? <LinkedRulesetStep key={`${plan.startsAt}:${completed.size}`} plan={plan} index={plan.states.findIndex(peer => !completed.has(peer.chainId))} submission={submissions.get(plan.states.find(peer => !completed.has(peer.chainId))!.chainId)} checkFirst={checkFirst.has(plan.states.find(peer => !completed.has(peer.chainId))!.chainId)} completed={completed} onConfirmed={(chainId, result) => withSubmissionLock(async () => { if (planRef.current !== plan) throw new Error('The linked plan changed during confirmation.'); recordSubmission(chainId, result.submission); setCompleted(previous => new Map(previous).set(chainId, result)) })} onCancel={() => void closePlan()} onCloseChecked={() => void closePlan(true)} onAdopted={(chainId, submission) => withSubmissionLock(async () => { assertSubmission(chainId, submission); removeSubmission(chainId) })} />
           : <><p role="status" className="text-sm">Every ruleset transaction is confirmed. The new rules take effect at the shared activation time.</p><button type="button" className="btn-secondary min-h-10 w-fit px-4" onClick={() => void closePlan()}>Done</button></>}
     </section>}
