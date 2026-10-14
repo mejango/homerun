@@ -989,6 +989,28 @@ describe('useSafeTx', () => {
     } finally { vi.useRealTimers() }
   })
 
+  it('never shows success from a noncanonical receipt that is there at once, and stays pending until verification', async () => {
+    const phases: string[] = []
+    const Recorder = forwardRef<SafeTxValue>(function Recorder(_, ref) {
+      const value = useSafeTx(10)
+      phases.push(value.phase)
+      useImperativeHandle(ref, () => value, [value])
+      return null
+    })
+    const ref = createRef<SafeTxValue>()
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => { renderer = TestRenderer.create(createElement(Recorder, { ref })) })
+    renderers.push(renderer)
+    // The receipt is in hand as soon as the hash is, but no canonical block holds it.
+    mocks.publicClient.getBlock.mockResolvedValue({ number: 77n, hash: EXECUTION_HASH })
+    mocks.receipt = { data: canonicalReceipt('success'), isError: false }
+    await act(async () => { await ref.current!.send(request, reviewedByAlice) })
+    await act(async () => { renderer.update(createElement(Recorder, { ref })) })
+    expect(phases).not.toContain('success')
+    expect(ref.current!.phase).toBe('pending')
+    expect(recoveryRecords()).toHaveLength(1)
+  })
+
   it('keeps a noncanonical receipt pending and retains its durable record', async () => {
     const hook = await renderHook()
     await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })

@@ -236,6 +236,8 @@ type SafeProposal = {
   receipt: TransactionReceipt | null
   /** The line for an end other than success: failed, unproven, expired or replaced. */
   message: string | null
+  /** The follower authenticated that this exact proposal ran: its execution is proof, not a report. */
+  proven?: boolean
 }
 
 /**
@@ -426,9 +428,9 @@ async function followProposal(key: string, client: FollowClient, reply: boolean)
   updateProposal(
     key,
     status === 'success'
-      ? { phase: 'success', receipt }
+      ? { phase: 'success', receipt, proven: true }
       : status === 'failed'
-        ? { phase: 'failed', receipt, message: failed }
+        ? { phase: 'failed', receipt, message: failed, proven: true }
         : { ...unconfirmedProposal(key), receipt },
   )
 }
@@ -558,9 +560,6 @@ export function useSafeTx(chainId: number) {
   /** A timed-out send is still followed: closing keeps it shown, so its receipt or exit lands here. */
   const following = useRef(false)
   following.current = watchGaveUp
-  /** This flow already shows its own receipt: a hold that clears on it changes nothing here. */
-  const receiptShown = useRef(false)
-  receiptShown.current = !!receiptData
   // A Safe proposal's state is the registry's. Its confirm ends on Done while
   // the signers decide, and when its result can't be proven here; no send of
   // its action goes out until it ends, or the user dismisses an unproven
@@ -570,7 +569,8 @@ export function useSafeTx(chainId: number) {
     ? proposal
       ? SHOWN_AS[proposal.phase]
       : 'idle'
-    : phase === 'pending' && receiptData?.status === 'success'
+    // A held write's success shows only once the hold verified it and let go, never from the raw receipt.
+    : phase === 'pending' && receiptData?.status === 'success' && !hold
       ? 'success'
       : receiptReverted
         ? 'error'
@@ -628,8 +628,8 @@ export function useSafeTx(chainId: number) {
       if (ended && !tracked.current) {
         if ('hash' in ended) { tracked.current = ended.hash; setHash(ended.hash) }
         else { setError(SAFE_PROPOSAL_EXPIRED); setPhase('error') }
-      } else if (ended && 'hash' in ended && !receiptShown.current && tracked.current?.toLowerCase() === ended.hash) {
-        // The hold verified this flow's own hash after its receipt lookups stopped: its result shows here.
+      } else if (ended && 'hash' in ended && tracked.current?.toLowerCase() === ended.hash) {
+        // The hold verified this flow's own hash and let go: its result shows here.
         if (ended.result === 'success') setPhase('success')
         else { setError(WRITE_HOLD_REVERTED_LINE); setPhase('error') }
       }
@@ -657,10 +657,14 @@ export function useSafeTx(chainId: number) {
   // A verified receipt releases the hold; a revert only once it is final.
   useEffect(() => {
     const confirmed = shownKey ? proposal?.receipt : receiptData
-    if (hold && confirmed && publicClient) void hold.onReceipt(confirmed, publicClient).catch(() => null)
-  }, [hold, shownKey, proposal?.receipt, receiptData, publicClient])
-  // The follower's proven Safe execution is kept through a reload until its result settles it.
-  const executionHash = shownKey && proposal && proposal.phase !== 'awaiting' ? proposal.executionHash : null
+    if (!hold || !confirmed || !publicClient) return
+    const at = generation.current
+    void hold.onReceipt(confirmed, publicClient)
+      .then(state => { if (holdAt.current === at && generation.current === at) apply(state, publicClient) }, () => null)
+  }, [hold, shownKey, proposal?.receipt, receiptData, publicClient, apply])
+  // The follower's proven Safe execution is kept through a reload until its result settles it. A hash
+  // the follower only saw (an execution returned at once, or the service's report) is never saved as one.
+  const executionHash = shownKey && proposal?.proven ? proposal.executionHash : null
   useEffect(() => {
     if (hold && executionHash && publicClient) void hold.onExecuted(publicClient, executionHash).catch(() => null)
   }, [hold, executionHash, publicClient])

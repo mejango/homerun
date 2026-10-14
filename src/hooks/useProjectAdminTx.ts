@@ -162,7 +162,8 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
     if (!otherHold || exiting.current === otherHold.hold) return
     if (state.status === 'clear') void rescan(otherHold)
     else if (JSON.stringify(state.record) !== JSON.stringify(otherHold.state.record) || state.status !== otherHold.state.status) setOtherHold({ hold: otherHold.hold, state })
-  })
+  // The scan hands over the chain's own state, fresher than the saved record alone.
+  }, { replay: false })
   const phase = otherHold ? 'submitted' as const : tx.phase
   const exitOther = useCallback(async () => {
     if (!otherHold || !client) return

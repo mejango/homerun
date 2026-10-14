@@ -1097,6 +1097,28 @@ describe('generic Safe durable recovery', () => {
     expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 
+  it('offers the exit after a reopen for an execution returned at once that ran another call', async () => {
+    // The wallet's reply is a transaction, but its execTransaction runs other calldata.
+    mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => ({
+      hash, from: BOB, to: SAFE, input: execTransaction('0xdeadbeef'), nonce: 3, blockNumber: 9n,
+    }))
+    mocks.publicClient.waitForTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => receiptOf(hash, UNSEEN))
+    mocks.publicClient.getTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => receiptOf(hash, UNSEEN))
+    const flow = await mount(10, undefined, { reviewedAccount: SAFE })
+    await flow.send()
+    await settle()
+    // The unauthenticated hash is never saved as the proposal's execution.
+    expect(recoveryRecords()[0]).not.toHaveProperty('executed')
+    await flow.close()
+    vi.resetModules()
+    ;({ useSafeTx } = await import('@/hooks/useSafeTx'))
+    const reopened = await mount(10, undefined, { reviewedAccount: SAFE })
+    await reopened.send()
+    await settle()
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    expect(reopened.tx.held).toMatchObject({ label: WRITE_EXIT_LABEL })
+  })
+
   it('saves the adopted proposal’s actual stamped calldata for later proof', async () => {
     signersDecide()
     const original = STAMPED_SITES[0][1](1_800_000_000n)
@@ -1146,7 +1168,7 @@ describe('generic Safe durable recovery', () => {
     expect(recoveryRecords()).toHaveLength(0)
   })
 
-  it('keeps a proposal the Safe ran held through a reload until its receipt settles it, never sent again', async () => {
+  it('keeps a proposal the service reports executed held through a reload, never sent again', async () => {
     mocks.publicClient.getTransactionReceipt.mockRejectedValue(new TransactionReceiptNotFoundError({ hash: EXECUTION }))
     mocks.publicClient.waitForTransactionReceipt.mockRejectedValue(new Error('timed out'))
     const executes = signersDecide()
@@ -1154,7 +1176,9 @@ describe('generic Safe durable recovery', () => {
     await first.send()
     await act(async () => { executes() })
     await settle()
-    expect(recoveryRecords()).toEqual([expect.objectContaining({ hash: PROPOSAL, executed: true, executionHash: EXECUTION })])
+    // The service's report of its execution is not proof: the proposal stays held, never saved as executed.
+    expect(recoveryRecords()).toEqual([expect.objectContaining({ hash: PROPOSAL })])
+    expect(recoveryRecords()[0]).not.toHaveProperty('executed')
     await first.close()
     vi.resetModules()
     ;({ useSafeTx } = await import('@/hooks/useSafeTx'))
