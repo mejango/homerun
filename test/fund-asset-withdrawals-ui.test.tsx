@@ -6,7 +6,7 @@ import { parseAbi, type Address, type Hex } from 'viem'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { FundProjectState } from '@/lib/fund-state'
 import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
-import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
+import { allowanceIntent, intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import { expectRetryHeldByIntent } from './support/intent-retry'
 
 const OPERATOR = '0x1111111111111111111111111111111111111111' as Address
@@ -88,7 +88,9 @@ it('withdraws under the chosen withdrawal, and a retry with a fresh net quote is
   runtime.net = 974_000_000n
   await act(async () => review().click()); await settle()
   expect(runtime.sends.map(sent => sent.request.functionName)).toEqual(['useAllowanceOf', 'useAllowanceOf'])
-  await expectRetryHeldByIntent(runtime.sends[0], runtime.sends[1], writeIntentKey('asset-withdrawal', {
-    project: 7n, token: intent.address(USDC), amount: 1_000_000_000n, beneficiary: intent.address(RECIPIENT), feeBeneficiary: intent.address(FEE_RECIPIENT), memo: 'Homerun asset purchase: Invoice 12, Rotterdam' }))
+  await expectRetryHeldByIntent(runtime.sends[0], runtime.sends[1], allowanceIntent({ chainId: 1, project: 7n, terminal: TERMINAL, token: USDC, currency: 1, beneficiary: RECIPIENT }))
+  // A hold saved under the earlier key still holds it.
+  expect(runtime.sends[0].options.recoveryLegacy).toEqual([writeIntentKey('asset-withdrawal', {
+    project: 7n, token: intent.address(USDC), amount: 1_000_000_000n, beneficiary: intent.address(RECIPIENT), feeBeneficiary: intent.address(FEE_RECIPIENT), memo: 'Homerun asset purchase: Invoice 12, Rotterdam' })])
   cache.clear()
 })

@@ -43,11 +43,11 @@ it('leaves the SDK’s hold records to the SDK: no storage keys, and held states
   }
 })
 
-it('takes its React hooks from the SDK’s review/react, and binds the SDK’s view itself only in the write adapters', () => {
-  const binders = ['src/lib/write-hold.ts', 'src/hooks/useSafeTx.ts', 'src/hooks/useProjectAdminTx.ts']
+it('takes every held-write view from the SDK’s review/react hooks, never binding one itself', () => {
   for (const { path, source } of src) {
     expect(/@bananapus\/nana-sdk-react|held-binding/.test(source), `${path} uses a binding other than the SDK's`).toBe(false)
-    if (!binders.includes(path)) expect(/\bcreateHeldWriteView\b|\bcreateSavedAttemptRecovery\b/.test(source), `${path} binds the SDK itself`).toBe(false)
+    expect(/\bcreateHeldWriteView\b/.test(source), `${path} binds a held-write view itself`).toBe(false)
+    if (path !== 'src/lib/write-hold.ts') expect(/\bcreateSavedAttemptRecovery\b/.test(source), `${path} makes its own recovery`).toBe(false)
   }
 })
 

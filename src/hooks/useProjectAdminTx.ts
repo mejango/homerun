@@ -1,13 +1,15 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { encodeFunctionData, type Address, type Hex } from 'viem'
+import { encodeFunctionData, zeroAddress, type Address, type Hex } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { useSafeTx, type TxRequest } from './useSafeTx'
 import { useWallet } from './useWallet'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { WRITE_EXIT_LABEL, browserLocks, createHeldWriteView, hidesShownExit, writeExitMessage, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
+import { WRITE_EXIT_LABEL, browserLocks, hidesShownExit, writeExitMessage, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
+import { useHeldWrite } from '@bananapus/nana-sdk-core/review/react'
+import { holds } from '@/lib/write-hold'
 import {
   adoptLegacyProjectAdminRecord, noteProjectAdminAccount, otherProjectAdminHolds, projectAdminLockName, projectAdminNamespace, pruneProjectAdminAccounts, type ProjectAdminHold,
 } from '@/lib/project-admin-reservation'
@@ -157,23 +159,23 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
       setOtherHold(current => current?.hold !== shown.hold ? current : holds[0] ?? null)
     } catch { /* The next look asks again. */ }
   }, [chainId, client, projectId])
-  // Watched through the SDK's held-write view: its events, a checked read now, on focus and every poll.
-  const otherHandle = otherHold?.hold
-  const otherView = useMemo(() => otherHandle && client
-    ? createHeldWriteView(otherHandle, { client: client as WriteHoldClient, follow: false, pollMs: 15_000 }) : null, [otherHandle, client])
+  // Watched through the SDK's held write: its events, a checked read now, on focus and every poll.
+  const record = otherHold?.state.record
+  const other = useHeldWrite({
+    hold: holds, chainId: record?.chainId ?? chainId, account: record?.account ?? zeroAddress, safe: record?.safe,
+    namespace: record ? projectAdminNamespace(projectId) : undefined,
+    call: record ? { to: record.call.to, data: record.call.data, value: BigInt(record.call.value) } : undefined,
+    client: record ? client as WriteHoldClient | undefined : undefined, pollMs: 15_000,
+  })
   const shownOther = useRef(otherHold)
   shownOther.current = otherHold
+  const otherState = other.state
   useEffect(() => {
-    if (!otherView) return
-    const unsubscribe = otherView.subscribe(() => {
-      const shown = shownOther.current, state = otherView.get().state
-      if (!shown || !state || exiting.current === shown.hold || hidesShownExit(shown.state, state)) return
-      if (state.status === 'clear') void rescan(shown)
-      else setOtherHold(current => current?.hold === shown.hold ? { hold: shown.hold, state } : current)
-    })
-    const stop = otherView.start()
-    return () => { unsubscribe(); stop() }
-  }, [otherView, rescan])
+    const shown = shownOther.current
+    if (!shown || !otherState || exiting.current === shown.hold || hidesShownExit(shown.state, otherState)) return
+    if (otherState.status === 'clear') void rescan(shown)
+    else setOtherHold(current => current?.hold === shown.hold ? { hold: shown.hold, state: otherState } : current)
+  }, [otherState, rescan])
   const phase = otherHold ? 'submitted' as const : tx.phase
   const exitOther = useCallback(async (): Promise<boolean> => {
     if (!otherHold || !client) return false

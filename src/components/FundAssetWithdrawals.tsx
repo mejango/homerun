@@ -15,7 +15,7 @@ import { wagmiConfig } from '@/providers/Providers'
 import { readableError } from '@/lib/readable-error'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
 // `intent` names this flow's own reviewed intent here.
-import { intent as keyed, writeIntentKey } from '@bananapus/nana-sdk-core/review'
+import { allowanceIntent, intent as keyed, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 
 export type FundAssetAllowanceConfiguration = { amount: bigint; currency: number; contextIndex: number }
 
@@ -209,7 +209,9 @@ export function FundAssetWithdrawals({ state, client, contextIndex, onConfigureA
       const submitted = await tx.send({ ...request, label: `Withdraw ${formatUnits(requestedAmount, context.decimals)} ${context.symbol} for the asset purchase` }, {
         reviewedAccount: address,
         // Its minimum net payout is quoted by the terminal each attempt: a retry is held by the withdrawal the user chose.
-        recoveryNamespace: writeIntentKey('asset-withdrawal', { project: current.projectId, token: keyed.address(currentContext.token), amount: requestedAmount, beneficiary: keyed.address(beneficiary), feeBeneficiary: keyed.address(feeBeneficiary), memo }),
+        // Held by the allowance line and beneficiary (the SDK's builder); an earlier build held it by its entered terms.
+        recoveryNamespace: allowanceIntent({ chainId: current.chainId, project: current.projectId, terminal: currentContext.terminal, token: currentContext.token, currency: currentContext.currency, beneficiary }),
+        recoveryLegacy: [writeIntentKey('asset-withdrawal', { project: current.projectId, token: keyed.address(currentContext.token), amount: requestedAmount, beneficiary: keyed.address(beneficiary), feeBeneficiary: keyed.address(feeBeneficiary), memo })],
         reviewNotice: `The treasury spends ${formatUnits(requestedAmount, context.decimals)} ${context.symbol}. At least ${formatUnits(netAmount, context.decimals)} ${context.symbol} must reach ${beneficiary}, after the quoted protocol fee of ${formatUnits(requestedAmount - netAmount, context.decimals)} ${context.symbol}. Fee-project tokens go to ${feeBeneficiary}. This sends money directly to the entered recipient; the contract does not verify the asset purchase.`,
         reverify: async () => {
           const latest = await readFundProjectState(client, { chainId: state.chainId, projectId: state.projectId, account: address })
