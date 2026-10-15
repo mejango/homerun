@@ -224,3 +224,24 @@ Brief: `ALIGN/migration-brief.md`, frozen rules `ALIGN/recovery-rule.md`, gaps `
 - Codex review round 1 found two blockers, both fixed: a linked plan retired each chain's settlement as soon as it recorded it, so a reload lost the completion (now retired only as the plan closes, and every reload proves it again); payers retired an unauthenticated settled success (now kept with its "Check again", and creation waits). Each has a test.
 - Gates on 2.40.0: lint, 17-document indexer registry, 340 node tests, 166 Vitest files / 3,014 tests, build, typecheck, 88 contract tests; all six browser suites (browser, create, a11y, shop, intent, center).
 - Codex round 2 (last) found one more: a refused plan close had already followed a recorded chain's settlement, so a reload lost it. Closing now follows settlements only after every check passed; the test reloads after a refused close. No other blocking findings.
+
+## SDK 2.41 follow-up — 2026-10-15
+
+- [x] Bump core to 2.41.1 with a hand-edited single-package lock (`npm install --package-lock-only` reproduces it byte for byte).
+- [x] `useSafeTx` sends through `useHeldSend({ follow: false })` and shows a found hold through `useHeldWrite`; the admin hook watches another reservation through `useHeldWrite`. The gate forbids `createHeldWriteView` in `src`.
+- [x] Remove the app's elsewhere-release line after `view.exit()` (2.41 reports it).
+- [x] Asset withdrawals key on `allowanceIntent`, with the old `asset-withdrawal` key as `legacy`. Homerun builds no redeem, burn, Safe batch or sync keys (burn is held by its exact call; `bridge-relay` is a relay; `fund-allowance` configures a ruleset).
+- [x] Full gate: `npm run check`, `typecheck`, `test:suites`. Push, open PR, do not merge.
+
+## Plan refinement
+
+- **Objective:** Homerun binds its held writes through SDK 2.41's React hooks and the 2.41 allowance key, with no app-built view and no change on the normal path. Out of scope: salt handling (already kept after a check), contracts, Relayr.
+- **System fit:** The SDK view owns the watch, exit, send gate and release reporting; `useSafeTx` keeps review, wallet authority and its own receipt and Safe follower (`follow: false`) and feeds them to the hold; flows only pass their key and legacy key.
+- **Reuse and simplicity:** Use `useHeldSend`/`useHeldWrite` as published, with no app shims. Three SDK 2.41.0 view defects found here (one `apply` subscribed from both `start()` and `send()` and kept once by the listener Set; no checked read after a send; a send's own withdrawn marker read as another window's release) were fixed in 2.41.1, so the temporary shims were deleted.
+- **Evidence and unknowns:** Instrumented 2.41.0 runs showed the listener count drop to 0 after a send while the view was still running; main's app-built view started after the send, which hid it. On 2.41.1 the scenarios those shims covered pass with the shims removed.
+- **Verification:** The useSafeTx and Safe-proposal suites (114 tests) as the regression oracle against main; updated withdrawal key test; full `npm run check`, `typecheck`, all browser suites.
+- **Resource budget:** One writer, no subagents.
+
+## Review
+
+- Gates on 2.41.1, with no shims (the Safe Done-then-execute, receipt RPC error, changed-amount and withdrawn-marker scenarios pass on the SDK alone): `npm run check` (lint, indexer, node tests, 166 Vitest files / 3,014 tests, build, 88 contract tests), `typecheck`, and all six browser suites pass.
