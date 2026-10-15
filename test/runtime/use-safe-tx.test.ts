@@ -277,7 +277,7 @@ describe('useSafeTx', () => {
   })
 
   it('blocks a duplicate while review is open', async () => {
-    let finishReview!: (approved: boolean) => void
+    let finishReview: ((approved: boolean) => void) | undefined
     mocks.requestReview.mockImplementationOnce(
       () => new Promise<boolean>(resolve => (finishReview = resolve)),
     )
@@ -285,9 +285,12 @@ describe('useSafeTx', () => {
 
     await act(async () => {
       const first = hook.ref.current!.send(request, reviewedByAlice)
-      await Promise.resolve()
+      // Refused before the review opens (send waits for the view's first read)...
       await expect(hook.ref.current!.send(request, reviewedByAlice)).resolves.toBeNull()
-      finishReview(false)
+      await vi.waitFor(() => expect(finishReview).toBeTypeOf('function'))
+      // ...and while it is open.
+      await expect(hook.ref.current!.send(request, reviewedByAlice)).resolves.toBeNull()
+      finishReview!(false)
       await first
     })
 
