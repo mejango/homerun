@@ -245,3 +245,18 @@ Brief: `ALIGN/migration-brief.md`, frozen rules `ALIGN/recovery-rule.md`, gaps `
 ## Review
 
 - Gates on 2.41.1, with no shims (the Safe Done-then-execute, receipt RPC error, changed-amount and withdrawn-marker scenarios pass on the SDK alone): `npm run check` (lint, indexer, node tests, 166 Vitest files / 3,014 tests, build, 88 contract tests), `typecheck`, and all six browser suites pass.
+
+## SDK 2.41.2 bump — 2026-10-15
+
+- [x] Bump core to 2.41.2 with a hand-edited single-package lock (`npm install --package-lock-only` reproduces it byte for byte).
+- [x] `send()` now waits for the view's first read: "blocks a duplicate while review is open" waits for the review to open instead of one microtask, and refuses a duplicate both before and during the review.
+- [x] Full gate: `npm run check`, `typecheck`, `test:suites`. Push, open PR, do not merge.
+
+## Plan refinement
+
+- **Objective:** Homerun runs on SDK 2.41.2 with its duplicate-send test independent of microtask timing. Out of scope: any app behavior change.
+- **System fit:** The SDK view owns the send gate and its first read; `useSafeTx` keeps its in-flight guard, which refuses a duplicate at any point of an open send.
+- **Reuse and simplicity:** A version bump and one test edit; no app code changes.
+- **Evidence and unknowns:** 2.41.2 was validated against Homerun by the coordinator; the only timing dependence found is this test's single `await Promise.resolve()`.
+- **Verification:** The updated test, then the full `npm run check`, `typecheck` and all browser suites.
+- **Resource budget:** One writer, no subagents.
