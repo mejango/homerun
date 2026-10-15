@@ -199,18 +199,6 @@ const SHOWN_AS: Record<ProposalPhase, TxPhase> = {
 
 /** A shown hold is asked again this often, so an exit that becomes due with time appears. */
 const HOLD_POLL_MS = 15_000
-/**
- * ponytail: SDK 2.41's held-write view subscribes one `apply` from both start() and send(), and the
- * handle's listener Set keeps it once, so send's unsubscribe ends the started watch. A fresh closure per
- * subscribe keeps both. Drop this once the SDK fixes it.
- */
-const sendHolds: typeof holds = {
-  ...holds,
-  open: (...args: Parameters<typeof holds.open>) => {
-    const handle = holds.open(...args)
-    return { ...handle, subscribe: listener => handle.subscribe(state => listener(state)) }
-  },
-}
 const SAFE_EXECUTION_CONFIRMING = 'Executed by your Safe. Confirming it onchain.'
 /** What a Safe app replied in place of a proposal or execution hash. */
 const SAFE_REPLY_UNREADABLE = 'Safe did not return a proposal hash. Check Safe before sending this again.'
@@ -487,7 +475,7 @@ export function useSafeTx(chainId: number) {
    * follows the hash itself), `useHeldWrite` for a hold this flow shows without sending (`track`).
    */
   const onSettled = useRef((_settled: WriteHoldSettled, _receipt: TransactionReceipt | null) => {})
-  const heldSend = useHeldSend({ hold: sendHolds, client: publicClient as WriteHoldClient | undefined, pollMs: HOLD_POLL_MS, follow: false, onSettled: (settled, settledReceipt) => onSettled.current(settled, settledReceipt) })
+  const heldSend = useHeldSend({ hold: holds, client: publicClient as WriteHoldClient | undefined, pollMs: HOLD_POLL_MS, follow: false, onSettled: (settled, settledReceipt) => onSettled.current(settled, settledReceipt) })
   const sendRef = useRef(heldSend.send)
   sendRef.current = heldSend.send
   const [tracking, setTracking] = useState<{ chainId: number; account: Address; safe: boolean; namespace?: string; call: { to: Address; data: Hex; value?: bigint } } | null>(null)
@@ -957,10 +945,7 @@ export function useSafeTx(chainId: number) {
         sending.current = true
         // The send's view gates it: a success the hold settled while this flow was away refuses it
         // until the user says "Send it again", so the earlier write is never repeated unannounced.
-        const sent = await sendRef.current({ ...input, ...namespace, ...(options.recoveryLegacy ? { legacy: options.recoveryLegacy } : {}) }, execute)
-        // The hold's checked read of what was just sent reaches the view, as its start's read would.
-        void current.state(publicClient).catch(() => null)
-        return sent
+        return await sendRef.current({ ...input, ...namespace, ...(options.recoveryLegacy ? { legacy: options.recoveryLegacy } : {}) }, execute)
       } catch (e) {
         sending.current = false
         const submitted = e instanceof SubmittedContractWriteError && typeof e.hash === 'string' && isHash(e.hash) ? e : undefined
@@ -1008,8 +993,6 @@ export function useSafeTx(chainId: number) {
             return now.record.hash ?? null
           }
         }
-        // Nothing is held: the view's later reading of this send's own withdrawn marker isn't shown here.
-        holdAt.current = -1
         if (e instanceof TransactionReviewCancelledError) {
           setPhase('idle')
           return null
