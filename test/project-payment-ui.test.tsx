@@ -223,7 +223,11 @@ describe('shared payment execution', () => {
     await submit()
     expect(runtime.writes).toHaveLength(0)
     expect(host.textContent).toContain('buyback hook could not be read')
-    expect(button()).toBeDefined()
+    await waitUntil(() => expect(button().disabled).toBe(false))
+    runtime.quote.mockResolvedValue(quote(77n * UNIT, { metadata: REFRESHED_METADATA }))
+    await submit()
+    expect(runtime.writes.map(item => item.action)).toEqual(['approval', 'payment'])
+    expect(encoded(runtime.writes[1].request).args?.[6]).toBe(REFRESHED_METADATA)
   })
 
   it('quotes a routed payment currency using its own decimals and preserves the accounting terminal anchor', async () => {
