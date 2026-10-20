@@ -27,8 +27,9 @@ const budgets = {
   '/center/callback': { js: 196, css: 13 },
   '/account/0x0000000000000000000000000000000000000001': { js: 266, css: 16 },
   '/intent/00000000-0000-4000-8000-000000000000': { js: 406, css: 27 },
-  '/op:11': { js: 511, css: 26 },
-  '/not-a-route/x': { js: 195, css: 13 },
+  '/op:11': { js: 505, css: 26 },
+  // The only route expected to answer 404; every other route must answer 200, so a missing page cannot pass.
+  '/not-a-route/x': { js: 195, css: 13, status: 404 },
 }
 
 if (!existsSync(join(dist, 'BUILD_ID'))) {
@@ -99,7 +100,7 @@ try {
     results[route] = { status: response.status, js, css, files: assets }
     const line = `${(js / KIB).toFixed(1).padStart(6)} / ${ceiling.js} KiB js  ${(css / KIB).toFixed(1).padStart(5)} / ${ceiling.css} KiB css  ${response.status}  ${route}`
     console.log(line)
-    if (response.status >= 500) failures.push(`${route} answered ${response.status}`)
+    if (response.status !== (ceiling.status ?? 200)) failures.push(`${route} answered ${response.status}, expected ${ceiling.status ?? 200}`)
     if (!assets.js.length) failures.push(`${route} references no scripts`)
     if (js > ceiling.js * KIB) failures.push(`${route} loads ${(js / KIB).toFixed(1)} KiB of JavaScript, over its ${ceiling.js} KiB ceiling`)
     if (css > ceiling.css * KIB) failures.push(`${route} loads ${(css / KIB).toFixed(1)} KiB of CSS, over its ${ceiling.css} KiB ceiling`)

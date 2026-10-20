@@ -34,20 +34,20 @@ import { PaymentChainSelect } from "./PaymentChainSelect";
 import { demoShopStorageKey } from "@/lib/demo-shop";
 import { demoProjectManagementKey, type DemoProjectManagement } from "@/lib/demo-project-management";
 import { DemoProjectControl, DemoProjectDetailsEditor, DemoProjectPermissions, DemoProjectSplits, useDemoProjectManagement } from "./DemoProjectManagement";
-import dynamic from "next/dynamic";
+import { lazyComponent } from "@/components/lazy-component";
 import { PanelSkeleton } from "@/components/ui/Skeleton";
 import { preloadWhenIdle } from "@/lib/idle-preload";
 
 // Charts, the shop and the site snippet sit in tabs other than the overview: each loads when first shown, and all of
 // them once the page is idle.
 const loading = () => <PanelSkeleton />;
-const SiteIntegration = dynamic(() => import("./SiteIntegration").then(m => m.SiteIntegration), { loading });
-const DemoProjectShop = dynamic(() => import("./DemoProjectShop").then(m => m.DemoProjectShop), { loading });
-const BudgetChart = dynamic(() => import("./ProjectCharts").then(m => m.BudgetChart), { loading });
-const CashHistoryChart = dynamic(() => import("./ProjectCharts").then(m => m.CashHistoryChart), { loading });
-const BorrowingChart = dynamic(() => import("./ProjectCharts").then(m => m.BorrowingChart), { loading });
-const OwnershipCharts = dynamic(() => import("./ProjectCharts").then(m => m.OwnershipCharts), { loading });
-const preloadDemoPanels = () => preloadWhenIdle([() => import("./SiteIntegration"), () => import("./DemoProjectShop"), () => import("./ProjectCharts")]);
+const SiteIntegration = lazyComponent(() => import("./SiteIntegration").then(m => m.SiteIntegration), { fallback: loading });
+const DemoProjectShop = lazyComponent(() => import("./DemoProjectShop").then(m => m.DemoProjectShop), { fallback: loading });
+const BudgetChart = lazyComponent(() => import("./ProjectCharts").then(m => m.BudgetChart), { fallback: loading });
+const CashHistoryChart = lazyComponent(() => import("./ProjectCharts").then(m => m.CashHistoryChart), { fallback: loading });
+const BorrowingChart = lazyComponent(() => import("./ProjectCharts").then(m => m.BorrowingChart), { fallback: loading });
+const OwnershipCharts = lazyComponent(() => import("./ProjectCharts").then(m => m.OwnershipCharts), { fallback: loading });
+const preloadDemoPanels = () => preloadWhenIdle([SiteIntegration.preload, DemoProjectShop.preload, BudgetChart.preload, CashHistoryChart.preload, BorrowingChart.preload, OwnershipCharts.preload]);
 
 import { Modal, photos, ProjectPhoto, ProjectRaiseStats, ProjectOverviewView, DemoStageHistory, ProjectPageShell, type ProjectPhase } from "./ProjectPageParts";
 type Projection = ReturnType<typeof projectNetwork>;

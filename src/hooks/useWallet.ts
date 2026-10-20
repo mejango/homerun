@@ -9,7 +9,7 @@ export function useWallet() {
   const { address, isConnected, connector } = useAccount()
   const { connectAsync, connectors } = useConnect()
   const { disconnect } = useDisconnect()
-  const { requestSignIn } = useWalletAuth()
+  const { requestSignIn, signInPending } = useWalletAuth()
   return {
     isConnected, address: address as Address | undefined,
     isCenterWallet: connector?.id === 'juicebox-center',
@@ -21,5 +21,6 @@ export function useWallet() {
     /** Opens the wallet chooser and resolves once it closes, connected or not. */
     openSignIn: (): Promise<void> => IS_DETERMINISTIC_BROWSER ? Promise.resolve() : requestSignIn(),
     disconnect: () => disconnect(),
+    signInPending,
   }
 }

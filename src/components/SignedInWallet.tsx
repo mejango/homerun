@@ -1,16 +1,17 @@
 'use client'
 
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
+import { type RefObject, useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import Link from 'next/link'
 import type { Address } from 'viem'
 import { useAccountIdentity } from '@/hooks/useAccountIdentity'
 import styles from './wallet-button.module.css'
+import type { PlaceholderPress } from './WalletButton'
 
 function menuItems(menu: HTMLElement | null) {
   return Array.from(menu?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])
 }
 
-export function SignedInWallet({ address, disconnect }: { address: Address; disconnect: () => void }) {
+export function SignedInWallet({ address, disconnect, pressRef }: { address: Address; disconnect: () => void; pressRef: RefObject<PlaceholderPress> }) {
   const { label } = useAccountIdentity(address)
   const [open, setOpen] = useState(false)
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
@@ -41,6 +42,15 @@ export function SignedInWallet({ address, disconnect }: { address: Address; disc
       document.removeEventListener('keydown', onKeyDown)
     }
   }, [open])
+
+  // Take over from the placeholder trigger shown while this loaded: keep its focus, and open if it was pressed.
+  useEffect(() => {
+    const { focused, pressed: wasPressed } = pressRef.current
+    pressRef.current = { focused: false, pressed: false }
+    if (focused || wasPressed) triggerRef.current?.focus()
+    if (wasPressed) openMenu()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   function openMenu(initialFocus: 'first' | 'last' = 'first') {
     initialFocusRef.current = initialFocus

@@ -1,18 +1,26 @@
 'use client'
 
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { type RefObject, useEffect, useRef, useState } from 'react'
+import { lazyComponent } from '@/components/lazy-component'
 import type { Address } from 'viem'
 import { useWallet } from '@/hooks/useWallet'
 import { preloadSignIn } from '@/providers/preload-center'
 import styles from './wallet-button.module.css'
 
 // The account menu and its ENS lookup load once a wallet is connected; until then the trigger shows the short address.
-const SignedInWallet = lazy(() => import('./SignedInWallet').then(module => ({ default: module.SignedInWallet })))
+const SignedInWallet = lazyComponent(() => import('./SignedInWallet').then(module => module.SignedInWallet), {
+  fallback: ({ address, pressRef }) => <SignedInPlaceholder address={address} pressRef={pressRef} />,
+})
 
-function SignedInPlaceholder({ address }: { address: Address }) {
+/** What the visitor did to the placeholder trigger, so the loaded menu keeps focus and opens if it was pressed. */
+export type PlaceholderPress = { focused: boolean; pressed: boolean }
+
+function SignedInPlaceholder({ address, pressRef }: { address: Address; pressRef: RefObject<PlaceholderPress> }) {
   return (
     <div className={styles.container}>
-      <button type="button" className={styles.trigger} aria-label="Signed in" aria-busy="true">
+      <button type="button" className={styles.trigger} aria-label="Signed in" aria-busy="true"
+        onFocus={() => { pressRef.current.focused = true }} onBlur={() => { pressRef.current.focused = false }}
+        onClick={() => { pressRef.current.pressed = true }}>
         <span className={styles.headline}>
           <span className={styles.statusDot} aria-hidden="true" />
           Signed in
@@ -25,16 +33,15 @@ function SignedInPlaceholder({ address }: { address: Address }) {
 
 /** A small Homerun shell around the reference apps' shared wallet runtime. */
 export function WalletButton() {
-  const { address, isConnected, openSignIn, disconnect } = useWallet()
+  const { address, isConnected, openSignIn, disconnect, signInPending } = useWallet()
+  const pressRef = useRef<PlaceholderPress>({ focused: false, pressed: false })
   const [mounted, setMounted] = useState(false)
   useEffect(() => setMounted(true), [])
 
   if (mounted && isConnected && address) {
     // Account changes discard the old menu and its address-dependent state.
     return (
-      <Suspense fallback={<SignedInPlaceholder address={address} />}>
-        <SignedInWallet key={address.toLowerCase()} address={address} disconnect={disconnect} />
-      </Suspense>
+      <SignedInWallet key={address.toLowerCase()} address={address} disconnect={disconnect} pressRef={pressRef} />
     )
   }
 
@@ -45,9 +52,10 @@ export function WalletButton() {
       onMouseEnter={preloadSignIn}
       onFocus={preloadSignIn}
       onTouchStart={preloadSignIn}
+      aria-busy={signInPending || undefined}
       className="btn-primary min-h-11 px-5 text-sm"
     >
-      Sign in
+      {signInPending ? 'Opening…' : 'Sign in'}
     </button>
   )
 }
