@@ -43,7 +43,7 @@ vi.mock('@/lib/fund-launch-relayr', () => ({ runRelayrLaunch: vi.fn(), launchReq
 
 
 import { wallet } from './support/fake-wallet'
-import { FundDeploy } from '../src/components/LiveCreate'
+import { FundDeploy } from '../src/components/FundDeploy'
 import type { CreateValues } from '../src/components/CreateFlow'
 import { saveLaunch } from '../src/lib/fund-launch-session'
 import { useSafeTx } from '../src/hooks/useSafeTx'

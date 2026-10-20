@@ -52,7 +52,7 @@ it('takes every held-write view from the SDK’s review/react hooks, never bindi
 })
 
 it('recovers every saved journal through the SDK, shows its check, and retires an exit', () => {
-  const flows = ['LiveCreate', 'IncomeLaunch', 'StickyCreate', 'ProjectShopManagement', 'FundOperatorActions', 'ProjectPayerAddresses', 'StickyHolder']
+  const flows = ['FundDeploy', 'IncomeLaunch', 'StickyCreate', 'ProjectShopManagement', 'FundOperatorActions', 'ProjectPayerAddresses', 'StickyHolder']
   for (const name of flows) {
     const source = readFileSync(`src/components/${name}.tsx`, 'utf8')
     expect(/\buseSavedAttempt\(/.test(source), `${name} recovers through useSavedAttempt`).toBe(true)

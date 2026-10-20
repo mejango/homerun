@@ -24,6 +24,10 @@ describe('load boundaries', () => {
     }
   })
 
+  it('keeps the launch machinery off the create form', () => {
+    expect(staticImports('src/components/LiveCreate.tsx')).not.toContain('./FundDeploy')
+  })
+
   it('loads tab-only panels through project-panels', () => {
     const panels = ['IncomeLaunch', 'FundBridgeActions', 'FundOperatorActions', 'ProjectParticipants', 'ProjectPayerAddresses', 'ProjectShop',
       'ProjectOwnershipEditor', 'ProjectPermissionsEditor', 'ProjectSplitsEditor', 'IncomeLoanTools', 'IncomeBridgeActions',

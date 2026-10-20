@@ -1,7 +1,7 @@
 import type { Metadata } from 'next'
 import { Brand } from '@/components/Brand'
 import { WalletButton } from '@/components/WalletButton';
-import { FundDeploy } from '@/components/LiveCreate'
+import { FundDeploy } from '@/components/FundDeploy'
 
 export const metadata: Metadata = { title: 'Resume a deployment', robots: { index: false, follow: false } }
 
