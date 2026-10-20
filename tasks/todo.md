@@ -1,3 +1,33 @@
+# Pay minimum: SDK 3.4.1, failure reason, adjustable minimum (2026-10-20)
+
+Ruling (jango): get the payer the most tokens possible; when a payment fails, say why and let the payer adjust their minimum. Mirrors jbm feat/pay-minimum-failure-reason.
+
+- [x] 1. Bump @bananapus/nana-sdk-core 3.1.0 -> 3.3.0 -> 3.4.1 (hand-edit the lockfile's three fields, prove with npm ci).
+- [x] 2. prepareProjectPayQuote takes an optional slippageBps (default prepareUserPay's 100); the minimum and metadata stay the SDK's.
+- [x] 3. useSafeTx gains jbm's `onFailure(error)`. External pay: decodePayFailure on a simulation/wallet failure, and show its message (3.4.1: no receipt-block replay; a mined revert shows "The payment reverted." with Review again, which re-quotes and re-simulates at the latest block); a shortfall offers jbm's "Allowed decrease" field and "Review again", which re-quotes with that tolerance and runs the payment again.
+- [x] 4. Passkey pay: read Signa's `payFailure` (decimal strings) from a reverted status's observation/status or an error; show its message instead of "The payment reverted onchain."; a shortfall offers the same field, and "Review again" clears the record and re-prepares with that slippage (Homerun quote + Signa prepare_pay slippageBps). No payFailure: today's lines.
+- [x] 5. Sticky stake: a TERMINAL_UNDER_MIN failure says what it would have returned against the minimum.
+- [x] 6. Tests, gates on Node 24 (lint, vitest, node tests, build, budget, tsc, browser suites), screenshot of the failure state, PR, two Codex passes. No merge until Signa ships.
+
+## Plan refinement
+
+- **Objective:** Homerun's pay card sends SDK 3.3.0's quote-based minimum; a failed pay names its reason; a shortfall lets the payer loosen the minimum and retry, in both wallet and passkey flows, matching jbm; the happy path is unchanged.
+- **System fit:** SDK owns the minimum (prepareUserPay) and reason text (decodePayFailure); Signa owns passkey preparation and returns payFailure; Homerun wires the tolerance and retry. Holds, approvals, Safe paths and journals are unaffected.
+- **Reuse and simplicity:** Reuse prepareUserPay's slippageBps, decodePayFailure, jbm's payRetrySlippageBps and AllowedDecreaseField (copied verbatim, SDK candidate), TxConfirmDialog children/error. New: one onFailure option, one optional parameter.
+- **Evidence and unknowns:** SDK source at juice-sdk-v4 feat/pay-minimum-quote-and-failure-reason; published 3.3.0 d.ts re-read after install. Unknown: Signa payFailure placement; center-wallet 0.3.7 keeps a status's `observation` but drops error bodies (only `code` survives), so error-body payFailure only reaches Homerun if the client carries it.
+- **Verification:** Unit tests for the quote slippage, decoding and retry wiring in both flows, Sticky shortfall line; full gates on Node 24; rendered screenshot of the failure state.
+- **Resource budget:** One worktree, edits in project-pay-quote, ProjectPayment, CenterProjectPayment, useSafeTx, StickyHolder and one lib helper; replan if 3.3.0's API differs from source.
+
+## Review
+
+- PR mejango/homerun#53 (draft). Gates on Node 24: lint, indexer, node 340/340, vitest 3030/3030, build, budgets (/create CSS 20, /op:11 JS 508), tsc, all 7 browser suites.
+- Codex pass 1: 6 P2s. Fixed: retry state bound to payment inputs and account, queued retry bound to its payment, attempt numbering for late explanations, passkey retry for the owning wallet only. Kept: receipt-block replay (jbm parity), center-wallet 0.3.7 drops error bodies (needs a client release). Pass 2: no new defects.
+- Aligned with jbm's pay-minimum.ts (copied verbatim, a candidate to move into the SDK): no-tokens line, no retry at the limit, closing drops the tolerance.
+- SDK 3.4.1 round: pay-minimum.ts deleted for payRetrySlippageBps / PAY_DEFAULT_SLIPPAGE_BPS / PAY_MAX_SLIPPAGE_BPS; replay dropped; passkey and field capped at 4950 after rounding; the hold releases on a canonical revert so Review again sends at once. useSafeTx exposes `reverted` (receipt, hold settlement without a receipt, Safe registry failure) as Sticky does; signaPayFailure validates reason, flags and uint256 bounds.
+- Codex passes 3 to 6 found P1 (reorg double-pay, owner-accepted SDK risk) and P2s, all fixed; pass 7 at a52ea4a: SHIP. Gates at a52ea4a: lint, tsc, vitest 3026/3026, node 340/340, build, budgets, indexer, browser suites 7/7.
+- Cross-client round (jbm #138 reference): canonical revert lines are the SDK's HELD_FAILED_LINE (settledLine), not "try again in a few minutes"; the onSettled tracked-hash guard is main's and stays (SDK identity fix queued). Codex passes 8 to 11 (UX weighed with safety) found stale or doubled failure lines: a Safe failure keeps its registry line, a mined revert belongs to the payment it sent, a decoded shortfall survives close and reopen, the Sticky stake shows one line scoped to chain, wallet and amount. Pass 12 at 1162558: SHIP. follow-redirects 1.16.1 (audit:prod clean).
+- Signa live (main c64a0ab, #18 and #19): @bananapus/nana-sdk-connect 0.6.0 (resolves @me.jango/signa 0.3.8; lockfile hand-edited, npm ci unchanged). Signa's client owns payFailure validation (known reason, uint256 amounts, the SDK's own message), so Homerun's copy is gone; the SDK re-decodes a served shortfall for zeroFill and adjustable, which Signa no longer serves. Codex on the bump: SHIP.
+
 # Homerun client reconciliation
 
 - [x] Install the official reconciled SDK 2.25.0 and align shared runtime/security dependencies with current Juicebox.

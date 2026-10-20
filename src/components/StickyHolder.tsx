@@ -1,6 +1,7 @@
 "use client";
 
 import { type JBChainId } from "@bananapus/nana-sdk-core";
+import { decodePayFailure } from "@bananapus/nana-sdk-core/v6";
 import {
   keepPreviousData,
   useQuery,
@@ -129,7 +130,7 @@ function useStickyRecovery(
   const ready = !journal.error && (!journal.record || (!!outcome && outcome.status !== "check"));
   return { adopted, error: journal.error ?? null, ready, recovery };
 }
-function Status({ tx, chainId }: { tx: StickyTx; chainId: number }) {
+function Status({ tx, chainId, hideError }: { tx: StickyTx; chainId: number; hideError?: boolean }) {
   const link =
     tx.hash && !tx.safeProposalHash ? explorerTxUrl(chainId, tx.hash) : null;
   return (
@@ -141,7 +142,7 @@ function Status({ tx, chainId }: { tx: StickyTx; chainId: number }) {
       ) : tx.phase === "success" ? (
         <p>Confirmed onchain. Balances and available actions are refreshing.</p>
       ) : null}
-      {tx.error && <p className="text-red-800">{tx.error}</p>}
+      {tx.error && !hideError && <p className="text-red-800">{tx.error}</p>}
       {tx.submissionHash && !tx.hash && <p className="break-all">Safe proposal: <code>{tx.submissionHash}</code></p>}
       {link && (
         <a className="underline" href={link} target="_blank" rel="noreferrer">
@@ -570,9 +571,16 @@ function StickyStake({
     { tx, prerequisite } = useStickyTx(state, STAKE_ACTIONS);
   const [input, setInput] = useState(""),
     [error, setError] = useState<string | null>(null),
+    [stakeFailure, setStakeFailure] = useState<{ stake: string; line: string } | null>(null),
+    [attempted, setAttempted] = useState<string | null>(null),
     [preparing, setPreparing] = useState(false);
   const count = parse(input),
     shortfall = count > state.fundBalance ? count - state.fundBalance : 0n;
+  // The stake's decoded shortfall stands in for the wallet's error, for the amount it was quoted at.
+  // An attempt's errors belong to the chain, wallet and amount it sent: another shows none of them.
+  const stake = `${state.chainId}:${address ?? ""}:${count}`;
+  const explained = tx.phase === "error" && stakeFailure?.stake === stake ? stakeFailure.line : null;
+  const staleError = attempted !== null && attempted !== stake;
   const creditStep = shortfall > 0n && shortfall <= state.fundCreditBalance;
   const approvalStep = !creditStep && state.allowance !== count;
   const busy = preparing || tx.busy || tx.phase === "review";
@@ -594,6 +602,8 @@ function StickyStake({
     if (!address || count <= 0n) return;
     setPreparing(true);
     setError(null);
+    setStakeFailure(null);
+    setAttempted(stake);
     try {
       const current = await fresh(client, state, address, prerequisite.current);
       if (count > current.fundBalance) {
@@ -662,6 +672,11 @@ function StickyStake({
         {
           reviewedAccount: address,
           simulationBlockNumber: current.blockNumber,
+          onFailure: (failure) => {
+            const decoded = decodePayFailure(failure);
+            if (decoded?.reason === "TERMINAL_UNDER_MIN" && decoded.received !== undefined && decoded.minimum !== undefined)
+              setStakeFailure({ stake, line: decoded.received === 0n ? "This stake would return no SHARE." : `This stake would return ${units(decoded.received)} SHARE, under its ${units(decoded.minimum)} SHARE minimum. Review again for a fresh quote.` });
+          },
           reviewNotice: `Your FUND moves into the Sticky pool. The permanent unstaking tax is ${formatUnits(current.cashOutTaxRate, 2)}%, plus applicable terminal fees. ${quote.data && latestQuote.minimumShares < quote.data.minimumShares ? "The SHARE quote decreased since it was displayed." : ""}`,
           reverify: async () => {
             const latest = await fresh(
@@ -753,12 +768,12 @@ function StickyStake({
               pending: "Confirming onchain…",
             })}
       </button>
-      {error && (
+      {!staleError && (error ?? explained) && (
         <p role="alert" className="mt-3 text-sm text-red-800">
-          {error}
+          {error ?? explained}
         </p>
       )}
-      <Status tx={tx} chainId={state.chainId} />
+      <Status tx={tx} chainId={state.chainId} hideError={!!explained || staleError} />
     </section>
   );
 }

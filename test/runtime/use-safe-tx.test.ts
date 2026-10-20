@@ -11,7 +11,7 @@ import {
   type Hex,
 } from 'viem'
 import { SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
-import { HELD_AWAY_SUCCESS_LINE, HELD_RELEASED_ELSEWHERE_LINE, HELD_SEND_AGAIN_LABEL, SAVED_ATTEMPT_CHECK_LINE, intent, writeIntentKey, WRITE_HOLD_STALE_REVIEW_LINE, WRITE_EXIT_LABEL, WRITE_HOLD_MINED_LINE, WRITE_HOLD_NONCE_LINE, WRITE_HOLD_PENDING_LINE, WRITE_HOLD_REVERTED_LINE, createBrowserWriteRecovery, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
+import { HELD_AWAY_SUCCESS_LINE, HELD_RELEASED_ELSEWHERE_LINE, HELD_SEND_AGAIN_LABEL, SAVED_ATTEMPT_CHECK_LINE, intent, writeIntentKey, WRITE_HOLD_STALE_REVIEW_LINE, WRITE_EXIT_LABEL, WRITE_HOLD_MINED_LINE, WRITE_HOLD_NONCE_LINE, WRITE_HOLD_PENDING_LINE, HELD_FAILED_LINE, createBrowserWriteRecovery, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { installRecoveryLocks, recoveryRecords } from './write-recovery-fixture'
 
@@ -458,6 +458,35 @@ describe('useSafeTx', () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
       expect(recoveryRecords()).toHaveLength(0)
       expect(hook.ref.current).toMatchObject({ phase: 'success', error: null, held: null })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('marks a revert the hold settled even when its receipt read fails afterwards', async () => {
+    vi.useFakeTimers()
+    try {
+      mocks.publicClient.getTransactionReceipt.mockResolvedValue(undefined)
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+      mocks.receipt = { data: undefined, isError: true }
+      await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(601_000) })
+      const mined = mocks.publicClient.getTransaction.getMockImplementation()!
+      mocks.publicClient.getTransaction.mockImplementation(async (query: { hash: Hex }) => ({ ...(await mined(query)), nonce: 5 }))
+      mocks.publicClient.getBlock.mockImplementation(async ({ blockNumber }: { blockNumber?: bigint }) => ({
+        number: blockNumber ?? 76n, hash: BLOCK_HASH, timestamp: 1_000n,
+      }))
+      // The hold authenticates the revert; the receipt read it hands the flow then fails.
+      let reads = 0
+      mocks.publicClient.getTransactionReceipt.mockImplementation(async () => {
+        if (++reads > 2) throw new Error('rpc down')
+        return canonicalReceipt('reverted')
+      })
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
+      expect(reads).toBe(3)
+      expect(hook.ref.current!.receipt).toBeNull()
+      expect(hook.ref.current).toMatchObject({ phase: 'error', error: HELD_FAILED_LINE, held: null, reverted: true })
     } finally {
       vi.useRealTimers()
     }
@@ -1213,7 +1242,7 @@ describe('useSafeTx', () => {
     expect(recoveryRecords()).toHaveLength(1)
   })
 
-  it('holds a reverted write until finality proves its failure, and never sends it again meanwhile', async () => {
+  it('releases a write once its revert is canonical, so a fresh review sends at once', async () => {
     const hook = await renderHook()
     await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
     mocks.publicClient.getBlock.mockImplementation(async ({ blockNumber }: { blockNumber?: bigint }) => ({
@@ -1221,11 +1250,13 @@ describe('useSafeTx', () => {
     }))
     mocks.receipt = { data: canonicalReceipt('reverted'), isError: false }
     await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
-    expect(hook.ref.current).toMatchObject({ phase: 'error', error: WRITE_HOLD_REVERTED_LINE, held: null })
-    expect(recoveryRecords()).toHaveLength(1)
+    expect(hook.ref.current).toMatchObject({ phase: 'error', error: HELD_FAILED_LINE, held: null, receipt: { status: 'reverted' }, reverted: true })
+    // SDK 3.4 (jango's ruling): a canonical revert releases the hold so a fresh review can send at once. A reorg
+    // that re-includes the original before finality could still land both; the SDK documents that accepted risk.
+    expect(recoveryRecords()).toHaveLength(0)
     mocks.receipt = { data: undefined, isError: false }
     await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
-    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    expect(mocks.writeContract).toHaveBeenCalledTimes(2)
     expect(hook.ref.current!.phase).toBe('pending')
   })
 

@@ -1,14 +1,36 @@
-import { decodeFunctionData, isAddress, isHex, keccak256, parseAbi, stringToHex, type Address, type Hex } from 'viem'
+import { decodeFunctionData, encodeAbiParameters, isAddress, isHex, keccak256, parseAbi, stringToHex, toFunctionSelector, type Address, type Hex } from 'viem'
 import type { CenterWalletConnection, CenterWalletExpectedPayment, CenterWalletPaymentStatus, CenterWalletStorage,
-  PreparedUserOperation, SmartWalletPlan, createCenterWalletClient } from '@bananapus/nana-sdk-connect/core'
+  PreparedUserOperation, SmartWalletPlan, PayFailure as SignaPayFailure, createCenterWalletClient } from '@bananapus/nana-sdk-connect/core'
 import type { HomerunCenterConfig } from '@/providers/wallet-config'
 import { centerReturnPath } from '@/providers/center-callback'
 import { assertNoViewAs } from '@/lib/viewAs'
+import { decodePayFailure, PAY_DEFAULT_SLIPPAGE_BPS, PAY_MAX_SLIPPAGE_BPS, type PayFailure } from '@bananapus/nana-sdk-core/v6'
 
 export interface HomerunPaymentIntent {
   projectId: string; token: Address; terminal: Address; amount: string; minimumReturnedTokens: string; returnPath: string
   /** The quote's pay metadata; journals saved before it existed paid with empty metadata. */
   metadata?: Hex
+  /** The tolerance the quote and Signa floor the minimum by; journals saved before it existed used the default. */
+  slippageBps?: number
+}
+
+// The pay reverts that carry a shortfall (settled, minimum), as the SDK decodes them.
+const shortfallReverts = ['JBMultiTerminal_UnderMin', 'JBBuybackHook_SpecifiedSlippageExceeded', 'JBBuybackHook_DerivedFloorNotMet', 'JBRouterTerminal_SlippageExceeded']
+  .map(name => toFunctionSelector(`${name}(uint256,uint256)`))
+
+/**
+ * Signa's `payFailure` from a payment status or a client error. Signa's client already admits only a
+ * known reason with uint256 amounts whose message is the SDK's own for them, so the rule lives there;
+ * a shortfall is decoded again by the SDK here for its `zeroFill` and `adjustable`. Null when absent.
+ */
+export function signaPayFailure(source: unknown): PayFailure | null {
+  const served = source && typeof source === 'object' ? (source as { payFailure?: SignaPayFailure }).payFailure : undefined
+  if (!served) return null
+  if (served.received === undefined || served.minimum === undefined) return { reason: served.reason, message: served.message } as PayFailure
+  try {
+    const amounts = encodeAbiParameters([{ type: 'uint256' }, { type: 'uint256' }], [BigInt(served.received), BigInt(served.minimum)]).slice(2)
+    return shortfallReverts.map(selector => decodePayFailure(`${selector}${amounts}`)).find(failure => failure?.reason === served.reason) ?? null
+  } catch { return null }
 }
 type Principal = { accountId: string; grantId: string; signer: string }
 interface Journal extends Principal {
@@ -23,8 +45,9 @@ const encode = (value: unknown) => JSON.stringify(value, (_key, item) => typeof 
 const digest = (value: unknown) => keccak256(stringToHex(encode(value)))
 function checkedIntent(input: HomerunPaymentIntent): HomerunPaymentIntent {
   const fields = ['projectId', 'token', 'terminal', 'amount', 'minimumReturnedTokens', 'returnPath']
-  if (!input || Object.keys(input).some(field => !fields.includes(field) && field !== 'metadata') || fields.some(field => !Object.hasOwn(input, field))) fail('Invalid payment.')
+  if (!input || Object.keys(input).some(field => !fields.includes(field) && field !== 'metadata' && field !== 'slippageBps') || fields.some(field => !Object.hasOwn(input, field))) fail('Invalid payment.')
   const result = { ...input }
+  if (Object.hasOwn(result, 'slippageBps') && (!Number.isSafeInteger(result.slippageBps) || result.slippageBps! < 0 || result.slippageBps! > Number(PAY_MAX_SLIPPAGE_BPS))) fail('Invalid payment slippage.')
   if (Object.hasOwn(result, 'metadata') && (!isHex(result.metadata, { strict: true }) || result.metadata.length % 2 !== 0 || result.metadata.length > 2 + 2 * 16_384)) fail('Invalid payment metadata.')
   for (const value of [result.projectId, result.amount, result.minimumReturnedTokens])
     if (typeof value !== 'string' || !/^(0|[1-9][0-9]{0,77})$/.test(value) || BigInt(value) >= 2n ** 256n) fail('Invalid payment amount.')
@@ -107,7 +130,7 @@ export function createHomerunPayment(options: { config: HomerunCenterConfig;
         state.evidence.source !== 'onchain' || state.evidence.chainId !== 8453 || !Number.isSafeInteger(timestamp) ||
         timestamp < Date.now() - 300_000 || timestamp > Date.now() + 30_000) fail('The current wallet owners and payment profile could not be verified.')
       const plan = await smart.preparePlan(binding.id, 'prepare_pay', { project: { chainId: 8453, projectId: intent.projectId, version: 6 },
-        account: current.address, beneficiary: current.address, token: intent.token, amount: intent.amount, slippageBps: 100, memo: '', metadata: intent.metadata ?? '0x' }, 'homerun-plan:' + saved.value.id)
+        account: current.address, beneficiary: current.address, token: intent.token, amount: intent.amount, slippageBps: intent.slippageBps ?? Number(PAY_DEFAULT_SLIPPAGE_BPS), memo: '', metadata: intent.metadata ?? '0x' }, 'homerun-plan:' + saved.value.id)
       const expectedPayment = expectation(plan, intent, current.address)
       await identity(current, saved.value)
       saved = save({ ...saved.value, plan, expectedPayment }, saved.raw)
@@ -144,7 +167,7 @@ export function createHomerunPayment(options: { config: HomerunCenterConfig;
     const observed = payments.pendingPayment()
     const status = saved?.submitted && observed && ['approved', 'reviewing'].includes(observed.status)
       ? { ...observed, status: 'unknown' as const } : observed
-    return saved ? { intent: saved.intent, submitted: saved.submitted, status } : null
+    return saved ? { intent: saved.intent, submitted: saved.submitted, status, accountId: saved.accountId } : null
   }
   function clear() {
     const saved = read(); if (!saved.value) return

@@ -496,6 +496,7 @@ describe('a Safe proposal', () => {
       phase: 'error',
       busy: false,
       error: `Safe executed the proposal, but the onchain transaction failed (${execution}).`,
+      reverted: true,
     })
   })
 
@@ -1052,6 +1053,7 @@ describe("a Safe proposal's last look at the chain", () => {
     expect(flow.tx).toMatchObject({
       phase: 'error',
       error: `Safe executed the proposal, but the onchain transaction failed (${PROPOSAL}).`,
+      reverted: true,
     })
   })
 })

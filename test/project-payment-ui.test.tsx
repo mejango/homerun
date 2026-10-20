@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { NATIVE_TOKEN } from '@bananapus/nana-sdk-core'
-import { encodeFunctionData, decodeFunctionData, type Address, type Hex } from 'viem'
+import { encodeAbiParameters, encodeFunctionData, decodeFunctionData, type Address, type Hex } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectPayQuote, ProjectPayTokenOption } from '@/lib/project-pay-quote'
 import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
@@ -386,6 +386,106 @@ describe('shared payment execution', () => {
     await ready(); await submit()
     expect(runtime.writes[0].request.chainId).toBe(8453)
     expect(encoded(runtime.writes[0].request).args?.[0]).toBe(42n)
+  })
+
+  // JBMultiTerminal_UnderMin(98 tokens, 99 tokens) as revert data.
+  const UNDER_MIN = encodeAbiParameters([{ type: 'uint256' }, { type: 'uint256' }], [98n * UNIT, 99n * UNIT]).replace('0x', '0x6b2bb382') as Hex
+  const SHORTFALL = 'This payment would get fewer tokens than your minimum, so lower your minimum or try again.'
+  function allowedDecrease() { return host.querySelector<HTMLInputElement>('input[type="number"]') }
+
+  it('keeps a shortfall and its retry across closing and reopening the same payment', async () => {
+    await ready()
+    runtime.handles[0].send.mockImplementationOnce(async (_request: TxRequest, options: TxSendOptions & { onFailure?: (error: unknown) => void }) => { options.onFailure?.(UNDER_MIN); return null })
+    await act(async () => button().click())
+    await waitUntil(() => expect(host.textContent).toContain(SHORTFALL))
+    await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="Close"]')!.click())
+    await render()
+    expect(host.textContent).toContain(SHORTFALL)
+    expect(allowedDecrease()?.value).toBe('2.5')
+    expect([...host.querySelectorAll('button')].some(element => element.textContent === 'Review again')).toBe(true)
+  })
+
+  it('names a shortfall the simulation hit and reviews again with the looser minimum it offers', async () => {
+    await ready()
+    const pay = runtime.handles[0].send
+    pay.mockImplementationOnce(async (_request: TxRequest, options: TxSendOptions & { onFailure?: (error: unknown) => void }) => { options.onFailure?.(UNDER_MIN); return null })
+    await act(async () => button().click())
+    await waitUntil(() => expect(host.textContent).toContain(SHORTFALL))
+    // 1% plus the ~1.02% shortfall, rounded up to a half percent.
+    expect(allowedDecrease()?.value).toBe('2.5')
+    const again = [...host.querySelectorAll('button')].find(element => element.textContent === 'Review again')!
+    runtime.quote.mockResolvedValue(quote(97n * UNIT))
+    await act(async () => again.click())
+    await waitUntil(() => expect(runtime.writes.filter(item => item.action === 'payment')).toHaveLength(1))
+    expect(runtime.quote).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ slippageBps: 250n }))
+    expect(encoded(runtime.writes[0].request).args?.[4]).toBe(97n * UNIT)
+    expect(host.textContent).not.toContain(SHORTFALL)
+    expect(host.textContent).toContain('2.5% maximum slippage')
+  })
+
+  it('says a mined payment reverted, without a reason, and reviews it again at the latest block', async () => {
+    await ready()
+    const pay = runtime.handles[0] as unknown as { phase: string; reverted: boolean; reset: ReturnType<typeof vi.fn> }
+    pay.reset.mockImplementation(() => { pay.phase = 'idle'; pay.reverted = false })
+    await submit()
+    pay.phase = 'error'; pay.reverted = true
+    await act(async () => commitRender())
+    expect(host.textContent).toContain('The payment reverted.')
+    expect(allowedDecrease()).toBeNull()
+    const again = [...host.querySelectorAll('button')].find(element => element.textContent === 'Review again')!
+    runtime.quote.mockResolvedValue(quote(97n * UNIT))
+    await act(async () => again.click())
+    await waitUntil(() => expect(runtime.writes.filter(item => item.action === 'payment')).toHaveLength(2))
+    expect(encoded(runtime.writes[1].request).args?.[4]).toBe(97n * UNIT)
+    expect(runtime.quote).not.toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ slippageBps: expect.anything() }))
+    expect(host.textContent).not.toContain('The payment reverted.')
+  })
+
+  it("keeps a mined revert with the payment it sent, and a Safe's own failure line", async () => {
+    await ready()
+    const pay = runtime.handles[0] as unknown as { phase: string; reverted: boolean; error: string | null; isSafe: boolean }
+    await submit()
+    pay.phase = 'error'; pay.reverted = true; pay.error = 'Safe executed the proposal, but the onchain transaction failed (0xabc).'; pay.isSafe = true
+    await act(async () => commitRender())
+    expect(host.textContent).toContain('Safe executed the proposal, but the onchain transaction failed (0xabc).')
+    expect(host.textContent).not.toContain('The payment reverted.')
+    pay.isSafe = false; pay.error = 'This transaction failed onchain. Review it and try again.'
+    await act(async () => commitRender())
+    expect(host.textContent).toContain('The payment reverted.')
+    await input('2')
+    expect(host.textContent).not.toContain('The payment reverted.')
+    expect(host.textContent).not.toContain('failed onchain')
+    expect([...host.querySelectorAll('button')].some(element => element.textContent === 'Review again')).toBe(false)
+  })
+
+  it('keeps the shared line and offers no minimum for an unknown failure', async () => {
+    await ready()
+    runtime.handles[0].send.mockImplementationOnce(async (_request: TxRequest, options: TxSendOptions & { onFailure?: (error: unknown) => void }) => { options.onFailure?.(new Error('nonce too low')); return null })
+    await submit()
+    expect(allowedDecrease()).toBeNull()
+    expect([...host.querySelectorAll('button')].some(element => element.textContent === 'Review again')).toBe(false)
+    expect(runtime.quote).not.toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ slippageBps: expect.anything() }))
+  })
+
+  it('drops a shortfall and its retry once the amount changes', async () => {
+    await ready()
+    runtime.handles[0].send.mockImplementationOnce(async (_request: TxRequest, options: TxSendOptions & { onFailure?: (error: unknown) => void }) => { options.onFailure?.(UNDER_MIN); return null })
+    await act(async () => button().click())
+    await waitUntil(() => expect(host.textContent).toContain(SHORTFALL))
+    await input('2')
+    await waitUntil(() => expect(button().disabled).toBe(false))
+    expect(host.textContent).not.toContain(SHORTFALL)
+    expect(allowedDecrease()).toBeNull()
+  })
+
+  it('says a payment would return no tokens, and offers no minimum of zero', async () => {
+    await ready()
+    const none = encodeAbiParameters([{ type: 'uint256' }, { type: 'uint256' }], [0n, 99n * UNIT]).replace('0x', '0x6b2bb382') as Hex
+    runtime.handles[0].send.mockImplementationOnce(async (_request: TxRequest, options: TxSendOptions & { onFailure?: (error: unknown) => void }) => { options.onFailure?.(none); return null })
+    await submit()
+    await waitUntil(() => expect(host.textContent).toContain('This payment would return no tokens.'))
+    expect(allowedDecrease()).toBeNull()
+    expect([...host.querySelectorAll('button')].some(element => element.textContent === 'Review again')).toBe(false)
   })
 
 })

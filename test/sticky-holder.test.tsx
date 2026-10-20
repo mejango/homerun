@@ -2,7 +2,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { encodeFunctionData, erc20Abi, getAddress, type Address } from "viem";
+import { encodeAbiParameters, encodeFunctionData, erc20Abi, getAddress, type Address } from "viem";
 import type { TxRequest, TxSendOptions } from "../src/hooks/useSafeTx";
 import { jbV6ContractAddress, type JBChainId } from "@bananapus/nana-sdk-core";
 import { v6Address } from "@bananapus/nana-sdk-core/v6";
@@ -22,11 +22,13 @@ const mocks = vi.hoisted(() => ({
   track: vi.fn(),
   client: {} as Record<string, unknown>,
   phase: "idle",
+  address: "0x1111111111111111111111111111111111111111",
+  error: null as string | null,
   receipt: null as null | { status: string; transactionHash: string; blockNumber: bigint },
 }));
 vi.mock("@/hooks/useWallet", () => ({
   useWallet: () => ({
-    address: "0x1111111111111111111111111111111111111111",
+    address: mocks.address,
     isConnected: true,
   }),
 }));
@@ -41,7 +43,7 @@ vi.mock("@/hooks/useSafeTx", () => ({
     hash: mocks.receipt?.transactionHash ?? null,
     safeProposalHash: null,
     receipt: mocks.receipt,
-    error: null,
+    error: mocks.error,
   }),
   txPhaseLabel: (_: unknown, labels: { idle: string }) => labels.idle,
 }));
@@ -121,6 +123,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.client = {};
   mocks.phase = "idle";
+  mocks.error = null;
+  mocks.address = "0x1111111111111111111111111111111111111111";
   mocks.receipt = null;
   vi.mocked(readStickyProjectState).mockResolvedValue(state);
   vi.mocked(quoteStickyStake).mockResolvedValue({
@@ -243,5 +247,55 @@ describe("Sticky holder recovery and independent loading", () => {
     expect(element.textContent).toContain(
       "does not cash out FUND for treasury money",
     );
+  });
+  it("says how far a stake fell under its minimum when the terminal refuses it", async () => {
+    vi.mocked(readStickyProjectState).mockResolvedValue({ ...state, allowance: 10n ** 18n });
+    // JBMultiTerminal_UnderMin(0.98 SHARE, 0.99 SHARE) as revert data.
+    const underMin = encodeAbiParameters(
+      [{ type: "uint256" }, { type: "uint256" }],
+      [98n * 10n ** 16n, 99n * 10n ** 16n],
+    ).replace("0x", "0x6b2bb382");
+    mocks.send.mockImplementation(async (_request: TxRequest, options: TxSendOptions) => {
+      options.onFailure?.(underMin);
+      mocks.phase = "error";
+      mocks.error = "The wallet could not simulate this.";
+      return null;
+    });
+    await mount();
+    const field = [...element.querySelectorAll("label")].find((label) =>
+      label.textContent?.startsWith("FUND to stake"),
+    )!.querySelector("input")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, "1");
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await settle();
+    const stake = [...element.querySelectorAll("button")].find(
+      (button) => button.textContent === "Review stake",
+    )!;
+    await act(async () => stake.click());
+    await settle();
+    expect(element.textContent).toContain(
+      "This stake would return 0.98 SHARE, under its 0.99 SHARE minimum. Review again for a fresh quote.",
+    );
+    // One line: the decoded shortfall stands in for the raw error, and only for the amount it was quoted at.
+    expect(element.textContent).not.toContain("The wallet could not simulate this.");
+    // Another wallet at the same amount shows none of it either.
+    mocks.address = "0x2222222222222222222222222222222222222222";
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, "1.0");
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await settle();
+    expect(element.textContent).not.toContain("This stake would return");
+    expect(element.textContent).not.toContain("The wallet could not simulate this.");
+    mocks.address = "0x1111111111111111111111111111111111111111";
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, "2");
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await settle();
+    expect(element.textContent).not.toContain("This stake would return");
+    expect(element.textContent).not.toContain("The wallet could not simulate this.");
   });
 });

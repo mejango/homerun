@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodeFunctionData, keccak256, parseAbi, stringToHex } from 'viem'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
-import { createHomerunPayment } from '@/lib/center-payment'
+import { createHomerunPayment, signaPayFailure } from '@/lib/center-payment'
 import { buildUserPayMetadata } from '@bananapus/nana-sdk-core/v6'
 const account = '0x1111111111111111111111111111111111111111', terminal = '0x2222222222222222222222222222222222222222', token = '0x3333333333333333333333333333333333333333', hash = '0x' + 'ab'.repeat(32)
 function fixture() {
@@ -187,5 +187,31 @@ describe('Homerun original Center payment recovery', () => {
     expect(() => f.create().clear()).not.toThrow()
     expect(f.create().pending()).toBeNull()
     expect([...f.data.keys()].some(key => key.endsWith(':history'))).toBe(true)
+  })
+  it('plans with the slippage the payer chose and refuses one Signa would not accept', async () => {
+    const f = fixture(), intent = { ...f.intent, slippageBps: 250 }
+    expect((await f.create().prepare(intent as never)).status).toBe('reviewing')
+    expect(f.planInputs[0]).toMatchObject({ slippageBps: 250 })
+    expect(f.create().pending()?.intent).toEqual(intent)
+    for (const slippageBps of [4951, -1, 2.5, '250'])
+      await expect(fixture().create().prepare({ ...f.intent, slippageBps } as never)).rejects.toThrow('slippage')
+  })
+  it("reads Signa's checked payFailure from a status or an error, and the SDK decodes its shortfall", () => {
+    const SHORTFALL = 'This payment would get fewer tokens than your minimum, so lower your minimum or try again.'
+    const failure = { reason: 'TERMINAL_UNDER_MIN', received: '98', minimum: '99', message: SHORTFALL }
+    expect(signaPayFailure({ status: 'reverted', payFailure: failure })).toEqual({ ...failure, received: 98n, minimum: 99n, zeroFill: false, adjustable: 'minimum' })
+    // A zero fill is the SDK's no-tokens line, with nothing to relax.
+    expect(signaPayFailure({ payFailure: { ...failure, received: '0', message: 'This payment would return no tokens.' } }))
+      .toEqual({ reason: failure.reason, received: 0n, minimum: 99n, zeroFill: true, message: 'This payment would return no tokens.' })
+    // A shortfall the payer's minimum doesn't control carries no adjustment.
+    expect(signaPayFailure({ payFailure: { ...failure, reason: 'ROUTER_SLIPPAGE_EXCEEDED', message: 'The price moved while converting your payment, so try again.' } }))
+      .not.toHaveProperty('adjustable')
+    expect(signaPayFailure(Object.assign(new Error('rejected'), { payFailure: { reason: 'PAYMENTS_PAUSED', message: 'This project has paused payments.' } })))
+      .toEqual({ reason: 'PAYMENTS_PAUSED', message: 'This project has paused payments.' })
+    // Amounts that are no shortfall of that reason decode to nothing.
+    expect(signaPayFailure({ payFailure: { ...failure, received: '99' } })).toBeNull()
+    expect(signaPayFailure({ payFailure: { ...failure, reason: 'NFT_SOLD_OUT' } })).toBeNull()
+    for (const source of [{ status: 'reverted', observation: { state: 'reverted' } }, null, 'reverted', new Error('rejected')])
+      expect(signaPayFailure(source)).toBeNull()
   })
 })

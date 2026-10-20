@@ -22,7 +22,7 @@ import { useHeldSend, useHeldWrite, type HeldSendInput } from '@bananapus/nana-s
 import { submitReviewedContractWrite } from '@/lib/contract-write'
 import {
   gasWithHeadroom, sameReviewedWrite, settledLine, SubmittedContractWriteError, WRITE_EXIT_LABEL, SAFE_PROPOSAL_REPLACED_LINE,
-  HELD_AWAY_SUCCESS_LINE, HELD_SEND_AGAIN_LABEL, waitForTrackedReceipt, transactionMessage, WRITE_HOLD_PENDING_LINE, WRITE_HOLD_REVERTED_LINE, writeExitMessage, writeHeldMessage,
+  HELD_AWAY_SUCCESS_LINE, HELD_FAILED_LINE, HELD_SEND_AGAIN_LABEL, waitForTrackedReceipt, transactionMessage, WRITE_HOLD_PENDING_LINE, writeExitMessage, writeHeldMessage,
   WriteHeldError, WriteHoldBusyError, WriteHoldNonceError, WriteHoldStaleReviewError,
   type HeldWriteView, type ReviewedWriteRecoveryRecord, type WriteHeldState, type WriteHoldClient, type WriteHoldGate, type WriteHoldHandle, type WriteHoldSettled, type WriteHoldState,
 } from '@bananapus/nana-sdk-core/review'
@@ -106,6 +106,8 @@ export type TxSendOptions = {
   onBeforeWriteAborted?: () => unknown | Promise<unknown>
   /** Called only for a typed, explicit wallet rejection of the write itself. */
   onWriteRejected?: () => unknown | Promise<unknown>
+  /** The error behind a send that failed before reaching the chain (simulation, estimate, wallet), for a flow to decode. */
+  onFailure?: (error: unknown) => void
   /**
    * Hold the whole action under this stable name, not just the exact call: an earlier
    * attempt with another amount then holds a new one (a project's updates, say).
@@ -509,6 +511,8 @@ export function useSafeTx(chainId: number) {
   const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null)
   /** The receipt of a write the hold settled where this flow didn't follow it (adopted, or another tab's). */
   const [settledReceipt, setSettledReceipt] = useState<TransactionReceipt | null>(null)
+  /** The hold settled this flow's write as failed onchain, with or without a receipt read here. */
+  const [settledFailed, setSettledFailed] = useState(false)
   useEffect(() => {
     mounted.current = true
     return () => { mounted.current = false; generation.current += 1 }
@@ -604,7 +608,7 @@ export function useSafeTx(chainId: number) {
       ? proposal.message
       : null
     : receiptReverted
-      ? hold ? WRITE_HOLD_REVERTED_LINE : `Transaction reverted onchain${hash ? ` (${hash})` : ''}.`
+      ? hold ? HELD_FAILED_LINE : `Transaction reverted onchain${hash ? ` (${hash})` : ''}.`
       : error
   const awaitingProposal =
     proposal?.phase === 'checking' || proposal?.phase === 'awaiting' ? proposal.proposalHash : null
@@ -675,7 +679,7 @@ export function useSafeTx(chainId: number) {
     // The view read this settlement's receipt: the flow verifies its result from it, whoever else watches.
     if (settledReceipt) setSettledReceipt(settledReceipt)
     if (settled.result === 'success') setPhase('success')
-    else { setError(WRITE_HOLD_REVERTED_LINE); setPhase('error') }
+    else { setError(settledLine(settled)); setSettledFailed(true); setPhase('error') }
   }
 
   // Whatever the shown view says reaches this flow's state.
@@ -687,7 +691,7 @@ export function useSafeTx(chainId: number) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, shownState, shownPhase_, shownLine, shownExit, shownBy, shownNote, apply])
 
-  // A verified receipt releases the hold; a revert only once it is final.
+  // A verified receipt releases the hold, a revert once its block is canonical (a Safe failure once final).
   useEffect(() => {
     const confirmed = shownKey ? proposal?.receipt : receiptData
     if (hold && confirmed && publicClient) void hold.onReceipt(confirmed, publicClient).catch(() => null)
@@ -773,7 +777,7 @@ export function useSafeTx(chainId: number) {
       setAwaySuccess(false)
       setHeld(null)
       setRecoveryNotice(null)
-      setSettledReceipt(null)
+      setSettledReceipt(null); setSettledFailed(false)
       // Read once: the review, the sent gas and the proposal tracking must all
       // agree on whether a Safe proposes this call.
       const viaSafe = isSafeConnection(wagmiConfig)
@@ -1000,6 +1004,7 @@ export function useSafeTx(chainId: number) {
           setPhase('idle')
           return null
         }
+        options.onFailure?.(e)
         setError(friendlyTxError(e))
         setPhase('error')
         return null
@@ -1047,7 +1052,7 @@ export function useSafeTx(chainId: number) {
     setHash(null)
     setShownKey(null)
     setRecoveryNotice(null)
-    setSettledReceipt(null)
+    setSettledReceipt(null); setSettledFailed(false)
     setMode(null); setTracking(null)
     setHeld(null)
     setAwaySuccess(false)
@@ -1082,6 +1087,9 @@ export function useSafeTx(chainId: number) {
     /** Whether the connected writer is a Safe connector. */
     isSafe,
     error: effectiveError,
+    /** The write was mined and reverted (its receipt, the hold's settlement or the Safe registry says so): not why. */
+    reverted: effectivePhase === 'error' && (shownKey ? proposal?.phase === 'failed'
+      : receiptReverted || settledFailed || (!held && (receiptData ?? settledReceipt)?.status === 'reverted')),
     hash: shownKey ? (proposal?.executionHash ?? null) : hash,
     /** The wallet-returned identity, including a Safe proposal before execution. */
     submissionHash: shownKey ? (proposal?.proposalHash ?? null) : hash,

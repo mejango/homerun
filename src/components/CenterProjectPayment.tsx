@@ -10,8 +10,10 @@ import { DisplayTokenAmount } from './DisplayTokenAmount'
 import { CENTER_WALLET_CONFIG } from '@/providers/wallet-config'
 import { centerWalletClient } from '@/providers/center-runtime'
 import { CENTER_FRAME_CALLBACK, CENTER_FRAME_RECEIVED } from '@/providers/center-callback'
-import { createHomerunPayment } from '@/lib/center-payment'
+import { createHomerunPayment, signaPayFailure } from '@/lib/center-payment'
 import { prepareProjectPayQuote } from '@/lib/project-pay-quote'
+import { AllowedDecreaseField } from '@/components/ui/AllowedDecreaseField'
+import { PAY_DEFAULT_SLIPPAGE_BPS, PAY_MAX_SLIPPAGE_BPS, payRetrySlippageBps, type PayFailure } from '@bananapus/nana-sdk-core/v6'
 
 type Controller = ReturnType<typeof createHomerunPayment>
 type Pending = ReturnType<Controller['pending']>
@@ -19,7 +21,7 @@ const statuses = {
   reviewing: 'Approve this payment with your passkey in the Signa panel below.',
   approved: 'Approved. Submit this exact payment when you are ready.',
   submitting: 'Checking the original submission…', pending: 'Submitted. Waiting for confirmation…',
-  confirming: 'Confirming the payment onchain…', paid: 'Payment confirmed onchain.', reverted: 'The payment reverted onchain.',
+  confirming: 'Confirming the payment onchain…', paid: 'Payment confirmed onchain.', reverted: 'The payment reverted.',
   cancelled: 'The payment review was cancelled.', unknown: 'The payment outcome is not confirmed. Check its status before making another payment.',
   expired: 'The payment expired before it was included onchain. Nothing was charged; you can pay again.',
 }
@@ -31,6 +33,10 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
   const { address } = useWallet(), client = usePublicClient({ chainId }) as PublicClient | undefined
   const [controller, setController] = useState<Controller | null>(null), [pending, setPending] = useState<Pending>(null)
   const [input, setInput] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null)
+  /** Why preparing the payment failed, when Signa says; a reverted payment's reason is in its status. */
+  const [prepareFailure, setPrepareFailure] = useState<PayFailure | null>(null)
+  /** The tolerance offered after a shortfall, until the payer reviews again with it. */
+  const [retryEdit, setRetryEdit] = useState<number | null>(null)
   const generation = useRef(''), working = useRef(false), live = useRef(true)
   // The review page is framed here: Center admits this origin to frame it and the passkey prompt is delegated to the
   // frame. On approval Center sends the frame to Homerun's own callback page, which hands the callback up by message.
@@ -62,12 +68,25 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
   const matching = pending?.intent.projectId === projectId.toString() && chainId === 8453
   const status = pending?.status?.status
   const terminal = !!status && ['paid', 'cancelled', 'reverted', 'expired'].includes(status)
+  const failure = (status === 'reverted' ? signaPayFailure(pending?.status) : null) ?? (pending && !status ? prepareFailure : null)
+  const currentBps = BigInt(pending?.intent.slippageBps ?? PAY_DEFAULT_SLIPPAGE_BPS)
+  // Only the wallet that made the payment retries it.
+  const ownPayment = !!address && pending?.accountId === 'eip155:8453:' + address.toLowerCase()
+  const suggested = matching && ownPayment && failure ? payRetrySlippageBps(failure, currentBps) : null
+  const retryBps = suggested === null ? null : retryEdit ?? Number(suggested)
+  // Any other revert is prepared again at the same tolerance: that fresh preparation says why, if it fails.
+  const plainRetry = retryBps === null && status === 'reverted' && matching && ownPayment
   useEffect(() => { onBusyChange?.(busy || !!pending && !terminal); return () => onBusyChange?.(false) }, [busy, pending, terminal, onBusyChange])
   async function run(action: () => Promise<unknown>) {
     if (working.current) return
-    working.current = true; setBusy(true); setError(null)
+    working.current = true; setBusy(true); setError(null); setPrepareFailure(null); setRetryEdit(null)
     try { await action() }
-    catch (cause) { if (live.current) setError(cause instanceof Error ? cause.message : 'This payment could not be checked. Keep its original record.') }
+    catch (cause) {
+      if (!live.current) return
+      const reason = signaPayFailure(cause)
+      setPrepareFailure(reason)
+      setError(reason?.message ?? (cause instanceof Error ? cause.message : 'This payment could not be checked. Keep its original record.'))
+    }
     finally { working.current = false; if (live.current) { setBusy(false); try { setPending(controller?.pending() ?? null) } catch { setError('The saved payment is unavailable. Return to its original tab.') } } }
   }
   const guard = () => { if (!live.current || generation.current !== identity) throw new Error('The project or wallet changed. Return to the original payment.') }
@@ -103,15 +122,27 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
       }
       if (!/^[0-9]+(?:\.[0-9]{1,6})?$/.test(input.trim())) throw new Error('Enter a USDC amount with at most six decimal places.')
       const amount = parseUnits(input.trim(), 6); if (amount <= 0n) throw new Error('Enter an amount greater than zero.')
-      await verify(address); guard()
-      const token = USDC_ADDRESSES[8453]!, terminal = v6Address('JBMultiTerminal', 8453)
-      const quote = await prepareProjectPayQuote(client, { chainId: 8453, projectId, token, terminal, amount, beneficiary: address, directTerminalOnly: true })
-      guard()
-      const reviewed = await controller.prepare({ projectId: projectId.toString(), token, terminal, amount: amount.toString(),
-        minimumReturnedTokens: quote.minimumTokenCount.toString(), metadata: quote.metadata, returnPath: window.location.pathname })
-      guard(); if (!reviewed.approvalUrl) throw new Error('The payment review is unavailable. Check its saved status.')
-      await approve(reviewed.approvalUrl)
+      await prepareAndApprove(amount)
     })
+  }
+  async function prepareAndApprove(amount: bigint, slippageBps?: number) {
+    if (!controller || !address || !client) return
+    await verify(address); guard()
+    const token = USDC_ADDRESSES[8453]!, terminal = v6Address('JBMultiTerminal', 8453)
+    const quote = await prepareProjectPayQuote(client, { chainId: 8453, projectId, token, terminal, amount, beneficiary: address, directTerminalOnly: true,
+      ...(slippageBps === undefined ? {} : { slippageBps: BigInt(slippageBps) }) })
+    guard()
+    const reviewed = await controller.prepare({ projectId: projectId.toString(), token, terminal, amount: amount.toString(),
+      minimumReturnedTokens: quote.minimumTokenCount.toString(), metadata: quote.metadata, returnPath: window.location.pathname,
+      ...(slippageBps === undefined ? {} : { slippageBps }) })
+    guard(); if (!reviewed.approvalUrl) throw new Error('The payment review is unavailable. Check its saved status.')
+    await approve(reviewed.approvalUrl)
+  }
+  /** Close the failed payment and prepare the same amount again with the tolerance the payer chose. */
+  async function reviewAgain(slippageBps?: number) {
+    if (!controller || !pending || !matching || !ownPayment || paused) return
+    const amount = BigInt(pending.intent.amount)
+    await run(async () => { controller.clear(); setPending(null); setInput(formatUnits(amount, 6)); await prepareAndApprove(amount, slippageBps) })
   }
   async function submit() {
     if (!controller || !address || !matching || paused) return
@@ -131,7 +162,7 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
     }, 2000)
     return () => { cancelled = true; window.clearInterval(timer) }
   }, [controller, matching, status])
-  return <section aria-label={title} className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7">
+  return <section aria-label={title} className="center-payment rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7">
     {chainSelector}
     <h3 className="text-lg">Pay with Juicebox wallet</h3>
     {chainId !== 8453 ? <p className="mt-3 text-sm">Choose Base to pay with your Juicebox wallet, or connect an external wallet for this network.</p>
@@ -145,7 +176,8 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
           disabled={busy || paused} onChange={event => setInput(event.target.value)} className="min-h-12 border border-[#bfc9b5] bg-white px-3" /></label> : null}
         {matching ? <dl className="mt-4 text-sm"><dt>Payment</dt><dd>{formatUnits(BigInt(pending!.intent.amount), 6)} USDC</dd>
           {pending?.status?.expectedPayment ? <><dt className="mt-2">Minimum returned</dt><dd><DisplayTokenAmount value={BigInt(pending.status.expectedPayment.minimumReturnedTokens)} /> {tokenLabel}</dd></> : null}</dl> : null}
-        <p role="status" aria-live="polite" className="mt-4 break-words text-sm">{paused ? 'This project has paused payments.' : blocked ?? (frame ? statuses.reviewing : status ? statuses[status] : 'Each payment needs your passkey approval.')}</p>
+        <p role="status" aria-live="polite" className="mt-4 break-words text-sm">{paused ? 'This project has paused payments.' : blocked ?? (frame ? statuses.reviewing : status === 'reverted' && failure ? failure.message : status ? statuses[status] : 'Each payment needs your passkey approval.')}</p>
+        {retryBps !== null && !frame ? <AllowedDecreaseField bps={retryBps} onChange={setRetryEdit} maxBps={Number(PAY_MAX_SLIPPAGE_BPS)} /> : null}
         {frame ? <div className="center-review-frame mt-4">
           <iframe ref={frameRef} src={frame} title="Juicebox wallet payment review" allow="publickey-credentials-get" referrerPolicy="no-referrer" style={frameHeight ? { height: frameHeight } : undefined} />
           <div className="mt-3 flex flex-wrap justify-between gap-3 text-sm">
@@ -154,7 +186,8 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
           </div>
         </div> : null}
         <div className="mt-4 flex flex-wrap gap-3">
-          {!frame && (!pending || (!pending.submitted && (!status || status === 'reviewing'))) ? <button type="button" className="btn-primary min-h-11 px-4" disabled={busy || paused || !!blocked || !controller} onClick={() => void review()}>{busy ? 'Preparing…' : pending ? status ? 'Approve with your passkey' : 'Resume payment preparation' : 'Review with a passkey'}</button> : null}
+          {(retryBps !== null || plainRetry) && !frame ? <button type="button" className="btn-primary min-h-11 px-4" disabled={busy || paused || !!blocked} onClick={() => void reviewAgain(retryBps ?? pending?.intent.slippageBps)}>Review again</button> : null}
+          {!frame && retryBps === null && !plainRetry && (!pending || (!pending.submitted && (!status || status === 'reviewing'))) ? <button type="button" className="btn-primary min-h-11 px-4" disabled={busy || paused || !!blocked || !controller} onClick={() => void review()}>{busy ? 'Preparing…' : pending ? status ? 'Approve with your passkey' : 'Resume payment preparation' : 'Review with a passkey'}</button> : null}
           {status === 'approved' && !pending?.submitted ? <button type="button" className="btn-primary min-h-11 px-4" disabled={busy || paused} onClick={() => void submit()}>Submit payment</button> : null}
           {pending && status && !terminal ? <button type="button" className="btn-secondary min-h-11 px-4" disabled={busy} onClick={() => void run(() => controller!.refresh())}>Check payment status</button> : null}
           {terminal ? <button type="button" className="btn-secondary min-h-11 px-4" disabled={busy} onClick={() => void run(async () => { controller!.clear(); setInput('') })}>Close payment</button> : null}
