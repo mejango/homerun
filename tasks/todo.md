@@ -2,12 +2,12 @@
 
 Ruling (jango): get the payer the most tokens possible; when a payment fails, say why and let the payer adjust their minimum. Mirrors jbm feat/pay-minimum-failure-reason.
 
-- [ ] 1. Bump @bananapus/nana-sdk-core 3.1.0 -> 3.3.0 (hand-edit the lockfile's three fields, prove with npm ci).
-- [ ] 2. prepareProjectPayQuote takes an optional slippageBps (default prepareUserPay's 100); the minimum and metadata stay the SDK's.
-- [ ] 3. useSafeTx gains jbm's `onFailure(error)`. External pay: decodePayFailure on a simulation/wallet failure, and on an onchain revert re-simulate the sent call at its receipt block. Show its message; a shortfall offers jbm's "Allowed decrease" field and "Review again", which re-quotes with that tolerance and runs the payment again.
-- [ ] 4. Passkey pay: read Signa's `payFailure` (decimal strings) from a reverted status's observation/status or an error; show its message instead of "The payment reverted onchain."; a shortfall offers the same field, and "Review again" clears the record and re-prepares with that slippage (Homerun quote + Signa prepare_pay slippageBps). No payFailure: today's lines.
-- [ ] 5. Sticky stake: a TERMINAL_UNDER_MIN failure says what it would have returned against the minimum.
-- [ ] 6. Tests, gates on Node 24 (lint, vitest, node tests, build, budget, tsc, browser suites), screenshot of the failure state, PR, two Codex passes. No merge until Signa ships.
+- [x] 1. Bump @bananapus/nana-sdk-core 3.1.0 -> 3.3.0 (hand-edit the lockfile's three fields, prove with npm ci).
+- [x] 2. prepareProjectPayQuote takes an optional slippageBps (default prepareUserPay's 100); the minimum and metadata stay the SDK's.
+- [x] 3. useSafeTx gains jbm's `onFailure(error)`. External pay: decodePayFailure on a simulation/wallet failure, and on an onchain revert re-simulate the sent call at its receipt block. Show its message; a shortfall offers jbm's "Allowed decrease" field and "Review again", which re-quotes with that tolerance and runs the payment again.
+- [x] 4. Passkey pay: read Signa's `payFailure` (decimal strings) from a reverted status's observation/status or an error; show its message instead of "The payment reverted onchain."; a shortfall offers the same field, and "Review again" clears the record and re-prepares with that slippage (Homerun quote + Signa prepare_pay slippageBps). No payFailure: today's lines.
+- [x] 5. Sticky stake: a TERMINAL_UNDER_MIN failure says what it would have returned against the minimum.
+- [ ] 6. (open: SDK 3.4.0 bump, final Codex pass after it, merge after Signa deploys) Tests, gates on Node 24 (lint, vitest, node tests, build, budget, tsc, browser suites), screenshot of the failure state, PR, two Codex passes. No merge until Signa ships.
 
 ## Plan refinement
 
@@ -17,6 +17,12 @@ Ruling (jango): get the payer the most tokens possible; when a payment fails, sa
 - **Evidence and unknowns:** SDK source at juice-sdk-v4 feat/pay-minimum-quote-and-failure-reason; published 3.3.0 d.ts re-read after install. Unknown: Signa payFailure placement; center-wallet 0.3.7 keeps a status's `observation` but drops error bodies (only `code` survives), so error-body payFailure only reaches Homerun if the client carries it.
 - **Verification:** Unit tests for the quote slippage, decoding and retry wiring in both flows, Sticky shortfall line; full gates on Node 24; rendered screenshot of the failure state.
 - **Resource budget:** One worktree, edits in project-pay-quote, ProjectPayment, CenterProjectPayment, useSafeTx, StickyHolder and one lib helper; replan if 3.3.0's API differs from source.
+
+## Review
+
+- PR mejango/homerun#53 (draft). Gates on Node 24: lint, indexer, node 340/340, vitest 3030/3030, build, budgets (/create CSS 20, /op:11 JS 508), tsc, all 7 browser suites.
+- Codex pass 1: 6 P2s. Fixed: retry state bound to payment inputs and account, queued retry bound to its payment, attempt numbering for late explanations, passkey retry for the owning wallet only. Kept: receipt-block replay (jbm parity), center-wallet 0.3.7 drops error bodies (needs a client release). Pass 2: no new defects.
+- Aligned with jbm's pay-minimum.ts (copied verbatim, a candidate to move into the SDK): no-tokens line, no retry at the limit, closing drops the tolerance.
 
 # Homerun client reconciliation
 
