@@ -1,4 +1,4 @@
-import { ProjectPageShell } from '@/components/ProjectPage'
+import { ProjectPageShell } from '@/components/ProjectPageParts'
 import { Skeleton, SkeletonLines } from '@/components/ui/Skeleton'
 
 /** Between pages: the project layout's shapes, never a spinner or a sentence. */

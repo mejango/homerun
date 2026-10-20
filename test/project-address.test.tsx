@@ -10,7 +10,7 @@ vi.mock('next/navigation', () => ({ useRouter: () => ({ replace: mocks.replace }
 vi.mock('wagmi', () => ({ usePublicClient: () => ({}) }))
 vi.mock('@/components/FundProject', () => ({ FundProject: ({ projectId }: { projectId: string }) => <p>FUND page {projectId}</p> }))
 vi.mock('@/components/IncomeProject', () => ({ IncomeProject: ({ projectId }: { projectId: bigint }) => <p>INCOME page {projectId.toString()}</p> }))
-vi.mock('@/components/ProjectPage', () => ({ ProjectPageShell: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }))
+vi.mock('@/components/ProjectPageParts', () => ({ ProjectPageShell: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }))
 
 import { ProjectAddress } from '../src/components/ProjectAddress'
 
