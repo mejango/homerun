@@ -413,10 +413,10 @@ describe('shared payment execution', () => {
 
   it('says a mined payment reverted, without a reason, and reviews it again at the latest block', async () => {
     await ready()
-    const pay = runtime.handles[0] as unknown as { phase: string; receipt: unknown; reset: ReturnType<typeof vi.fn> }
-    pay.reset.mockImplementation(() => { pay.phase = 'idle'; pay.receipt = null })
+    const pay = runtime.handles[0] as unknown as { phase: string; reverted: boolean; reset: ReturnType<typeof vi.fn> }
+    pay.reset.mockImplementation(() => { pay.phase = 'idle'; pay.reverted = false })
     await submit()
-    pay.phase = 'error'; pay.receipt = { status: 'reverted', blockNumber: 105n, transactionHash: HASH }
+    pay.phase = 'error'; pay.reverted = true
     await act(async () => commitRender())
     expect(host.textContent).toContain('The payment reverted.')
     expect(allowedDecrease()).toBeNull()

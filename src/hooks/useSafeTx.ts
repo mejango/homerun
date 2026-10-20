@@ -511,6 +511,8 @@ export function useSafeTx(chainId: number) {
   const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null)
   /** The receipt of a write the hold settled where this flow didn't follow it (adopted, or another tab's). */
   const [settledReceipt, setSettledReceipt] = useState<TransactionReceipt | null>(null)
+  /** The hold settled this flow's write as failed onchain, with or without a receipt read here. */
+  const [settledFailed, setSettledFailed] = useState(false)
   useEffect(() => {
     mounted.current = true
     return () => { mounted.current = false; generation.current += 1 }
@@ -677,7 +679,7 @@ export function useSafeTx(chainId: number) {
     // The view read this settlement's receipt: the flow verifies its result from it, whoever else watches.
     if (settledReceipt) setSettledReceipt(settledReceipt)
     if (settled.result === 'success') setPhase('success')
-    else { setError(WRITE_HOLD_REVERTED_LINE); setPhase('error') }
+    else { setError(WRITE_HOLD_REVERTED_LINE); setSettledFailed(true); setPhase('error') }
   }
 
   // Whatever the shown view says reaches this flow's state.
@@ -775,7 +777,7 @@ export function useSafeTx(chainId: number) {
       setAwaySuccess(false)
       setHeld(null)
       setRecoveryNotice(null)
-      setSettledReceipt(null)
+      setSettledReceipt(null); setSettledFailed(false)
       // Read once: the review, the sent gas and the proposal tracking must all
       // agree on whether a Safe proposes this call.
       const viaSafe = isSafeConnection(wagmiConfig)
@@ -1050,7 +1052,7 @@ export function useSafeTx(chainId: number) {
     setHash(null)
     setShownKey(null)
     setRecoveryNotice(null)
-    setSettledReceipt(null)
+    setSettledReceipt(null); setSettledFailed(false)
     setMode(null); setTracking(null)
     setHeld(null)
     setAwaySuccess(false)
@@ -1085,6 +1087,8 @@ export function useSafeTx(chainId: number) {
     /** Whether the connected writer is a Safe connector. */
     isSafe,
     error: effectiveError,
+    /** The write was mined and reverted (its receipt, or the hold's settlement, says so): not why. */
+    reverted: effectivePhase === 'error' && (receiptReverted || settledFailed || (!held && (receiptData ?? settledReceipt)?.status === 'reverted')),
     hash: shownKey ? (proposal?.executionHash ?? null) : hash,
     /** The wallet-returned identity, including a Safe proposal before execution. */
     submissionHash: shownKey ? (proposal?.proposalHash ?? null) : hash,

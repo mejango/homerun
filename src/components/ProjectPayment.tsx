@@ -113,7 +113,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
   const retrying = retryWhenQuoted === paymentInputs
   // A mined revert's receipt carries no reason, and end-of-block state can't establish one: Review again
   // quotes and simulates it at the latest block, and only that simulation's failure is shown as a reason.
-  const minedRevert = tx.phase === 'error' && tx.receipt?.status === 'reverted'
+  const minedRevert = tx.reverted
   // Another payment drops it, so coming back to this one starts from the default again.
   useEffect(() => {
     if (payerSlippage && payerSlippage.payment !== paymentInputs) setPayerSlippage(null)

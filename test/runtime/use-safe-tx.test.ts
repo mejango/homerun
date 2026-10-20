@@ -463,6 +463,35 @@ describe('useSafeTx', () => {
     }
   })
 
+  it('marks a revert the hold settled even when its receipt read fails afterwards', async () => {
+    vi.useFakeTimers()
+    try {
+      mocks.publicClient.getTransactionReceipt.mockResolvedValue(undefined)
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+      mocks.receipt = { data: undefined, isError: true }
+      await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(601_000) })
+      const mined = mocks.publicClient.getTransaction.getMockImplementation()!
+      mocks.publicClient.getTransaction.mockImplementation(async (query: { hash: Hex }) => ({ ...(await mined(query)), nonce: 5 }))
+      mocks.publicClient.getBlock.mockImplementation(async ({ blockNumber }: { blockNumber?: bigint }) => ({
+        number: blockNumber ?? 76n, hash: BLOCK_HASH, timestamp: 1_000n,
+      }))
+      // The hold authenticates the revert; the receipt read it hands the flow then fails.
+      let reads = 0
+      mocks.publicClient.getTransactionReceipt.mockImplementation(async () => {
+        if (++reads > 2) throw new Error('rpc down')
+        return canonicalReceipt('reverted')
+      })
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
+      expect(reads).toBe(3)
+      expect(hook.ref.current!.receipt).toBeNull()
+      expect(hook.ref.current).toMatchObject({ phase: 'error', held: null, reverted: true })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it.each([
     ['success', 'success', null],
     ['reverted', 'error', /failed onchain/i],
@@ -1221,7 +1250,7 @@ describe('useSafeTx', () => {
     }))
     mocks.receipt = { data: canonicalReceipt('reverted'), isError: false }
     await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
-    expect(hook.ref.current).toMatchObject({ phase: 'error', error: WRITE_HOLD_REVERTED_LINE, held: null, receipt: { status: 'reverted' } })
+    expect(hook.ref.current).toMatchObject({ phase: 'error', error: WRITE_HOLD_REVERTED_LINE, held: null, receipt: { status: 'reverted' }, reverted: true })
     // SDK 3.4 (jango's ruling): a canonical revert releases the hold so a fresh review can send at once. A reorg
     // that re-includes the original before finality could still land both; the SDK documents that accepted risk.
     expect(recoveryRecords()).toHaveLength(0)
