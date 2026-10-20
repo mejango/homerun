@@ -1087,8 +1087,9 @@ export function useSafeTx(chainId: number) {
     /** Whether the connected writer is a Safe connector. */
     isSafe,
     error: effectiveError,
-    /** The write was mined and reverted (its receipt, or the hold's settlement, says so): not why. */
-    reverted: effectivePhase === 'error' && (receiptReverted || settledFailed || (!held && (receiptData ?? settledReceipt)?.status === 'reverted')),
+    /** The write was mined and reverted (its receipt, the hold's settlement or the Safe registry says so): not why. */
+    reverted: effectivePhase === 'error' && (shownKey ? proposal?.phase === 'failed'
+      : receiptReverted || settledFailed || (!held && (receiptData ?? settledReceipt)?.status === 'reverted')),
     hash: shownKey ? (proposal?.executionHash ?? null) : hash,
     /** The wallet-returned identity, including a Safe proposal before execution. */
     submissionHash: shownKey ? (proposal?.proposalHash ?? null) : hash,

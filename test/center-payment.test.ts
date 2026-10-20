@@ -204,6 +204,8 @@ describe('Homerun original Center payment recovery', () => {
     // Contradictory or out-of-range fields never authorize a looser minimum.
     const base = { reason: failure.reason, message: failure.message }
     expect(signaPayFailure({ payFailure: { ...failure, zeroFill: true } })).toEqual({ ...base, received: 98n, minimum: 99n })
+    expect(signaPayFailure({ payFailure: { ...failure, zeroFill: 'false' } })).toEqual({ ...base, received: 98n, minimum: 99n })
+    expect(signaPayFailure({ payFailure: { ...failure, zeroFill: undefined } })).toEqual({ ...base, received: 98n, minimum: 99n, adjustable: 'minimum' })
     expect(signaPayFailure({ payFailure: { ...failure, reason: 'ROUTER_SLIPPAGE_EXCEEDED' } })).toEqual({ ...base, reason: 'ROUTER_SLIPPAGE_EXCEEDED', received: 98n, minimum: 99n, zeroFill: false })
     expect(signaPayFailure({ payFailure: { ...failure, received: '0', zeroFill: true } })).toEqual({ ...base, received: 0n, minimum: 99n, zeroFill: true })
     expect(signaPayFailure({ payFailure: { ...failure, received: '99' } })).toEqual(base)
