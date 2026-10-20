@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { encodeFunctionData, parseAbi } from 'viem'
+import { encodeFunctionData, keccak256, parseAbi, stringToHex } from 'viem'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import { createHomerunPayment } from '@/lib/center-payment'
 import { buildUserPayMetadata } from '@bananapus/nana-sdk-core/v6'
@@ -100,6 +100,28 @@ describe('Homerun original Center payment recovery', () => {
     const g = fixture(); g.plan.draft.calls[0]!.data = pay(metadata)
     await expect(g.create().prepare(g.intent as never)).rejects.toThrow('differs')
     await expect(fixture().create().prepare({ ...g.intent, metadata: '0x1' } as never)).rejects.toThrow('metadata')
+  })
+  it('closes a preparation that never reached review, then prepares a fresh quote', async () => {
+    const f = fixture(), controller = f.create()
+    f.connection.client.request = async () => { throw new Error('simulation reverted below the minimum') }
+    await expect(controller.prepare(f.intent as never)).rejects.toThrow('simulation reverted')
+    await expect(controller.prepare({ ...f.intent, minimumReturnedTokens: '90' } as never)).rejects.toThrow('Finish or close')
+    controller.clear(); expect(controller.pending()).toBeNull()
+    expect([...f.data.keys()].some(key => key.endsWith(':history'))).toBe(true)
+    f.connection.client.request = async () => structuredClone({ id: 'operation-original', signing: { ownerProfile: 'center-passkey-v1' } })
+    expect((await controller.prepare({ ...f.intent, minimumReturnedTokens: '90' } as never)).status).toBe('reviewing')
+  })
+  it('re-derives a restored plan against its intent before review, even when storage integrity is recomputed', async () => {
+    const f = fixture(), controller = f.create()
+    f.payments.preparePayment.mockRejectedValueOnce(new Error('review unavailable'))
+    await expect(controller.prepare(f.intent as never)).rejects.toThrow('review unavailable')
+    const key = [...f.data.keys()].find(name => name.endsWith(':payment:v1'))!
+    const saved = JSON.parse(f.data.get(key)!) as { value: { plan: typeof f.plan; expectedPayment: { minimumReturnedTokens: string } } }
+    saved.value.plan.draft.calls[0]!.data = encodeFunctionData({ abi: parseAbi(['function pay(uint256,address,uint256,address,uint256,string,bytes)']), functionName: 'pay', args: [7n, token, 1000000n, account, 98n, '', '0x'] })
+    saved.value.expectedPayment.minimumReturnedTokens = '98'
+    f.data.set(key, JSON.stringify({ value: saved.value, integrity: keccak256(stringToHex(JSON.stringify(saved.value))) }))
+    await expect(f.create().prepare(f.intent as never)).rejects.toThrow()
+    expect(f.payments.preparePayment).toHaveBeenCalledOnce()
   })
   it('reviews a payment started on a project page whose address holds a colon, and keeps that page to return to', async () => {
     const f = fixture(), intent = { ...f.intent, returnPath: '/op:11' }

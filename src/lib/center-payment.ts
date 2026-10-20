@@ -120,6 +120,8 @@ export function createHomerunPayment(options: { config: HomerunCenterConfig;
       await identity(current, saved.value)
       saved = save({ ...saved.value, operation }, saved.raw)
     }
+    // A restored plan must still be the payment this intent quoted.
+    if (digest(expectation(saved.value.plan!, saved.value.intent, current.address)) !== digest(saved.value.expectedPayment)) fail()
     await identity(current, saved.value)
     assertNoViewAs()
     return payments.preparePayment({ plan: saved.value.plan!, operation: saved.value.operation!, expectedPayment: saved.value.expectedPayment! })
@@ -153,7 +155,9 @@ export function createHomerunPayment(options: { config: HomerunCenterConfig;
     const archived = history.find(item => item.id === saved.value!.id)
     if (archived && archived.digest !== digest(saved.value)) fail()
     if (!archived) {
-      if (history.length >= 64 || !payments.pendingPayment()) fail()
+      // With no SDK payment, no review was ever requested, so nothing can be approved or sent: a
+      // preparation that keeps failing (a moved price under the quote's minimum) can be closed.
+      if (history.length >= 64 || (!payments.pendingPayment() && saved.value.submitted)) fail()
       const encoded = encode([...history, { id: saved.value.id, digest: digest(saved.value), payment: saved.value, status: payments.pendingPayment() }])
       if (encoded.length > 1_048_576 || storage.getItem(historyKey) !== rawHistory) fail()
       storage.setItem(historyKey, encoded); if (storage.getItem(historyKey) !== encoded) fail()
