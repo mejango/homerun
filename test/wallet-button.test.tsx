@@ -48,6 +48,8 @@ afterEach(async () => {
 
 async function render() {
   await act(async () => root.render(<WalletButton />))
+  // The account menu is its own chunk; wait for it to replace the placeholder.
+  if (runtime.wallet.isConnected) await vi.waitFor(() => expect(trigger()).not.toBeNull())
 }
 
 function trigger() {
@@ -67,6 +69,17 @@ async function press(target: EventTarget, key: string) {
 }
 
 describe('signed-in account menu', () => {
+  it('shows the short address while the account menu loads', async () => {
+    vi.resetModules()
+    const { WalletButton: FreshWalletButton } = await import('@/components/WalletButton')
+    act(() => root.render(<FreshWalletButton />))
+    expect(trigger()).toBeNull()
+    const placeholder = host.querySelector('button[aria-busy="true"]')!
+    expect(placeholder.textContent).toBe('Signed in0x1111…1111')
+    await vi.waitFor(() => expect(trigger()).not.toBeNull())
+    expect(host.querySelector('button[aria-busy="true"]')).toBeNull()
+  })
+
   it('collapses the header to a single signed-in button and resolves ENS on Ethereum', async () => {
     await render()
     expect(host.querySelectorAll('button')).toHaveLength(1)
