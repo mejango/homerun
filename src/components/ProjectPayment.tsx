@@ -92,21 +92,26 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
   const [error, setError] = useState<string | null>(null)
   // Which wallet step the running sequence is on, for the step list.
   const [stage, setStage] = useState<'approve' | 'pay' | null>(null)
-  /** Why the last payment reverted, when the chain or its simulation says. */
-  const [failure, setFailure] = useState<PayFailure | null>(null)
+  /** Why the last attempt at a payment failed, when the chain or its simulation says, and the tolerance offered for a retry. */
+  const [outcome, setOutcome] = useState<{ payment: string; failure: PayFailure | null; retryBps: number | null } | null>(null)
   /** A tolerance the payer loosened after a shortfall, for the payment it was set on. */
   const [payerSlippage, setPayerSlippage] = useState<{ bps: number; payment: string } | null>(null)
-  /** The tolerance offered after a shortfall, until the payer reviews again with it. */
-  const [retrySlippageBps, setRetrySlippageBps] = useState<number | null>(null)
-  const [retryWhenQuoted, setRetryWhenQuoted] = useState(false)
+  /** The payment a "Review again" runs once its quote with the new tolerance is in. */
+  const [retryWhenQuoted, setRetryWhenQuoted] = useState<string | null>(null)
+  /** Each attempt's own number: a late explanation of an older attempt is dropped. */
+  const attempt = useRef(0)
   const mounted = useRef(true)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   const tx = useSafeTx(chainId)
   const approval = useSafeTx(chainId)
   const cache = useQueryClient()
   const count = inputAmount(input, context.decimals)
-  const paymentInputs = `${chainId}:${projectId}:${context.terminal}:${context.token}:${count}`
+  const paymentInputs = `${chainId}:${projectId}:${context.terminal}:${context.token}:${count}:${address ?? ''}`
   const slippageBps = payerSlippage?.payment === paymentInputs ? payerSlippage.bps : undefined
+  const shown = outcome?.payment === paymentInputs ? outcome : null
+  const failure = shown?.failure ?? null
+  const retrySlippageBps = shown?.retryBps ?? null
+  const retrying = retryWhenQuoted === paymentInputs
   const slippage = slippageBps === undefined ? undefined : BigInt(slippageBps)
   const intent = `${chainId}:${projectId}:${context.token}:${context.terminal}:${count}:${address ?? ''}:${rulesetId}:${paused}:${reservedPercent}:${tx.isSafe}`
   const currentIntent = useRef(intent)
@@ -158,7 +163,12 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
     if (!address || !client || !quoted || count <= 0n || busy) return
     const guard = () => { if (!mounted.current || currentIntent.current !== intent) throw new Error('The page, account, amount, currency, or project rules changed. Review the payment again.') }
     let latestBlock = prerequisite
-    setPreparing(true); setError(null); setFailure(null); setRetrySlippageBps(null); setStage(null); setStatus('Getting the latest payment quote…')
+    const mine = ++attempt.current
+    const payment = paymentInputs, bps = slippageBps
+    const explain = (decoded: PayFailure | null) => {
+      if (mounted.current && attempt.current === mine) setOutcome({ payment, failure: decoded, retryBps: payRetrySlippageBps(decoded, bps ?? PAY_DEFAULT_SLIPPAGE_BPS) })
+    }
+    setPreparing(true); setError(null); setOutcome(null); setStage(null); setStatus('Getting the latest payment quote…')
     try {
       guard()
       const current = await verify(address, latestBlock)
@@ -191,13 +201,13 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       // A chosen currency's decimals are fixed, so its units key the amount. A default currency can
       // switch (ETH to USDC, say), and with it the units of the same typed amount: it keys as typed.
       const chosen = currencyChosen || !!selectedToken
-      const payment = writeIntentKey('pay', { project: projectId, token: chosenOrAuto('token', keyed.address(context.token), chosen), amount: chosen ? count : canonicalDecimal(input) })
+      const paymentKey = writeIntentKey('pay', { project: projectId, token: chosenOrAuto('token', keyed.address(context.token), chosen), amount: chosen ? count : canonicalDecimal(input) })
       if (!native) {
         const allowance = await client.readContract({ address: context.token, abi: erc20Abi, functionName: 'allowance', args: [address, spender], blockNumber: latestBlock })
         if (allowance < count) {
           setStatus(`Review ${context.symbol} access for the payment terminal.`); setStage('approve')
           if (!await waitForApproval(approval, { ...buildErc20ApproveRequest({ chainId, token: context.token, spender, amount: count }), label: `Approve exactly ${formatUnits(count, context.decimals)} ${context.symbol} for this payment` },
-            approvalIntentKey(payment, { token: context.token, spender, step: 'token' }))) return
+            approvalIntentKey(paymentKey, { token: context.token, spender, step: 'token' }))) return
         }
       }
       const request = buildPayTx({ chainId, projectId, terminal: latest.terminal, token: context.token, amount: count, beneficiary: address, minReturnedTokens: latest.minimumTokenCount, memo: `Homerun ${tokenLabel} payment`, metadata: latest.metadata })
@@ -209,7 +219,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
         assertWriteState,
         onFailure: reason => { failed = reason },
         // The terminal, minimum and metadata are fresh each attempt: a retry is held by the payment the user chose.
-        recoveryNamespace: payment,
+        recoveryNamespace: paymentKey,
         simulationBlockNumber: latestBlock === undefined ? undefined : checked.blockNumber,
         reviewNotice: noTokens ? `You receive no ${tokenLabel} for this payment. This project allocates 100% of new tokens to its reserved recipients.` : latest.minimumTokenCount < minimum ? `The quote decreased. Your protected minimum is now ${formatUnits(latest.minimumTokenCount, 18)} ${tokenLabel}.` : undefined,
         reverify: async () => {
@@ -222,32 +232,29 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       else if (paid && !tx.isSafe) void paymentReceipt(client, paid).then(async receipt => {
         if (receipt.status === 'success') return
         const reason = await client.simulateContract({ address: request.address, abi: request.abi, functionName: request.functionName, args: request.args, value: request.value, account: address, blockNumber: receipt.blockNumber }).then(() => undefined, (error: unknown) => error)
-        if (mounted.current && currentIntent.current === intent) explain(decodePayFailure(reason))
+        explain(decodePayFailure(reason))
       }).catch(() => {})
       setStatus(null)
     } catch (reason) { setError(message(reason)); setStatus(null) } finally { setPreparing(false) }
   }
-  function explain(decoded: PayFailure | null) {
-    setFailure(decoded)
-    setRetrySlippageBps(payRetrySlippageBps(decoded, slippageBps ?? PAY_DEFAULT_SLIPPAGE_BPS))
-  }
   /** Quote the payment again with the tolerance the payer chose, then run it from the start. */
   function reviewWithSlippage(bps: number) {
     setPayerSlippage({ bps, payment: paymentInputs })
-    tx.reset(); setFailure(null); setRetrySlippageBps(null); setError(null); setRetryWhenQuoted(true)
+    tx.reset(); setOutcome(null); setError(null); setRetryWhenQuoted(paymentInputs)
   }
   const submitNow = useRef(submit)
   submitNow.current = submit
   // The retry runs once the quote with the chosen tolerance is in.
   useEffect(() => {
-    if (!retryWhenQuoted || quote.isFetching) return
-    setRetryWhenQuoted(false)
-    if (quoted) void submitNow.current()
-  }, [retryWhenQuoted, quote.isFetching, quoted])
+    if (!retryWhenQuoted || (retrying && quote.isFetching)) return
+    setRetryWhenQuoted(null)
+    // The payment, account or amount changed while it quoted: the retry is dropped.
+    if (retrying && quoted) void submitNow.current()
+  }, [retryWhenQuoted, retrying, quote.isFetching, quoted])
   return <section id="pay-panel" className="pay-panel">
     <h3 className="sr-only">{title}</h3>
     {chainSelector ?? <p className="payment-chain-label mb-2">{tokenLabel === 'FUND' ? 'Fund' : 'Pay'} on {displayChainName(chainId)}</p>}
-    <fieldset disabled={busy} className="m-0 mb-4 min-w-0 border-0 p-0">
+    <fieldset disabled={busy || retrying} className="m-0 mb-4 min-w-0 border-0 p-0">
       <div className="pay-amount-control">
         <input value={input} onChange={event => setInput(event.target.value)} inputMode="decimal" autoComplete="off" placeholder="0" maxLength={24} aria-label={`Amount in ${context.symbol}`} />
         <select className="pay-currency" aria-label="Payment currency" value={context.token} onChange={event => setSelectedToken(event.target.value as Address)}>{(tokenOptions.data?.length ? tokenOptions.data : [accountingContext]).map(option => <option key={option.token} value={option.token}>{option.symbol}</option>)}</select>
@@ -269,15 +276,15 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       steps={steps}
       activeIndex={activeIndex}
       action={!address ? 'Connect wallet' : retrySlippageBps !== null ? 'Review again' : `Confirm & ${payTitle.toLowerCase()}`}
-      actionDisabled={!!address && (paused || count <= 0n || !quoted || retryWhenQuoted)}
+      actionDisabled={!!address && (paused || count <= 0n || !quoted || retrying)}
       onConfirm={() => { if (!address) openSignIn(); else if (retrySlippageBps !== null) reviewWithSlippage(retrySlippageBps); else void submit() }}
-      busy={prompting || retryWhenQuoted}
+      busy={prompting || retrying}
       complete={tx.phase === 'success'}
       settled={!!submitted}
       held={submitted?.held}
       status={submitted?.notice ?? status ?? (tx.phase === 'pending' ? <>Submitted. Waiting for onchain confirmation{tx.hash && explorerTxUrl(chainId, tx.hash) ? <> (<a className="underline" href={explorerTxUrl(chainId, tx.hash)!} target="_blank" rel="noreferrer">view transaction</a>)</> : null}</> : null)}
       error={error ?? failure?.message ?? tx.error ?? approval.error}
-      onClose={() => { setOpen(false); for (const item of [tx, approval]) if (item.phase === 'submitted') item.dismiss(); setStatus(null); setFailure(null); setRetrySlippageBps(null) }}
+      onClose={() => { setOpen(false); for (const item of [tx, approval]) if (item.phase === 'submitted') item.dismiss(); setStatus(null); attempt.current++; setOutcome(null); setRetryWhenQuoted(null) }}
     >
       <div className="text-sm text-smoke-600" aria-live="polite">
         {paused ? <p>This project has paused payments.</p> : zeroAllocation ? <p>This payment gives you no {tokenLabel}. All new tokens are allocated to the reserved recipients.</p> : quoted ? <p>Through the project payment terminal, using its current rules and buyback hook. {(slippageBps ?? PAY_DEFAULT_SLIPPAGE_BPS) / 100}% maximum slippage.</p>
@@ -286,7 +293,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
           : quote.isFetching ? <p>Getting your quote…</p> : null}
         {quote.isError && <p role="alert" className="mt-2">A protected payment quote is unavailable. {message(quote.error)}</p>}
       </div>
-      {retrySlippageBps !== null ? <AllowedDecreaseField bps={retrySlippageBps} onChange={setRetrySlippageBps} limitPercent={PAY_SLIPPAGE_LIMIT_PERCENT} /> : null}
+      {retrySlippageBps !== null ? <AllowedDecreaseField bps={retrySlippageBps} onChange={retryBps => setOutcome(current => current && { ...current, retryBps })} limitPercent={PAY_SLIPPAGE_LIMIT_PERCENT} /> : null}
     </TxConfirmDialog>
   </section>
 }

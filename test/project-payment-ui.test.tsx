@@ -431,4 +431,29 @@ describe('shared payment execution', () => {
     expect(runtime.quote).not.toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ slippageBps: expect.anything() }))
   })
 
+  it('drops a shortfall and its retry once the amount changes', async () => {
+    await ready()
+    runtime.handles[0].send.mockImplementationOnce(async (_request: TxRequest, options: TxSendOptions & { onFailure?: (error: unknown) => void }) => { options.onFailure?.(UNDER_MIN); return null })
+    await act(async () => button().click())
+    await waitUntil(() => expect(host.textContent).toContain(SHORTFALL))
+    await input('2')
+    await waitUntil(() => expect(button().disabled).toBe(false))
+    expect(host.textContent).not.toContain(SHORTFALL)
+    expect(allowedDecrease()).toBeNull()
+  })
+
+  it('drops a late revert explanation once the payer closed that attempt', async () => {
+    await ready()
+    let land!: (receipt: unknown) => void
+    runtime.waitForTransactionReceipt.mockReturnValue(new Promise(resolve => { land = resolve }))
+    runtime.simulateContract.mockRejectedValue(Object.assign(new Error('reverted'), { data: UNDER_MIN }))
+    await submit()
+    const close = [...host.querySelectorAll('button')].find(element => element.textContent === 'Cancel' || element.getAttribute('aria-label') === 'Close')!
+    await act(async () => close.click())
+    await act(async () => { land({ status: 'reverted', blockNumber: 105n, transactionHash: HASH }); await new Promise(resolve => setTimeout(resolve, 0)) })
+    await waitUntil(() => expect(runtime.simulateContract).toHaveBeenCalled())
+    await render()
+    expect(host.textContent).not.toContain(SHORTFALL)
+  })
+
 })

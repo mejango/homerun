@@ -166,7 +166,7 @@ export function createHomerunPayment(options: { config: HomerunCenterConfig;
     const observed = payments.pendingPayment()
     const status = saved?.submitted && observed && ['approved', 'reviewing'].includes(observed.status)
       ? { ...observed, status: 'unknown' as const } : observed
-    return saved ? { intent: saved.intent, submitted: saved.submitted, status } : null
+    return saved ? { intent: saved.intent, submitted: saved.submitted, status, accountId: saved.accountId } : null
   }
   function clear() {
     const saved = read(); if (!saved.value) return

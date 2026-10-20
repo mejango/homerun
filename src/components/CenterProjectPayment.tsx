@@ -71,7 +71,9 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
   const terminal = !!status && ['paid', 'cancelled', 'reverted', 'expired'].includes(status)
   const failure = (status === 'reverted' ? signaPayFailure(pending?.status) : null) ?? (pending && !status ? prepareFailure : null)
   const currentBps = pending?.intent.slippageBps ?? PAY_DEFAULT_SLIPPAGE_BPS
-  const suggested = matching && failure ? payRetrySlippageBps(failure, currentBps) : null
+  // Only the wallet that made the payment retries it.
+  const ownPayment = !!address && pending?.accountId === 'eip155:8453:' + address.toLowerCase()
+  const suggested = matching && ownPayment && failure ? payRetrySlippageBps(failure, currentBps) : null
   const retryBps = suggested === null ? null : retryEdit ?? Math.min(suggested, SIGNA_SLIPPAGE_LIMIT_BPS)
   useEffect(() => { onBusyChange?.(busy || !!pending && !terminal); return () => onBusyChange?.(false) }, [busy, pending, terminal, onBusyChange])
   async function run(action: () => Promise<unknown>) {
@@ -137,7 +139,7 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
   }
   /** Close the failed payment and prepare the same amount again with the tolerance the payer chose. */
   async function reviewAgain(slippageBps: number) {
-    if (!controller || !pending || !matching || paused) return
+    if (!controller || !pending || !matching || !ownPayment || paused) return
     const amount = BigInt(pending.intent.amount)
     await run(async () => { controller.clear(); setPending(null); setInput(formatUnits(amount, 6)); await prepareAndApprove(amount, slippageBps) })
   }

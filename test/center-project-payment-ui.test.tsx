@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Address } from 'viem'
 
 const runtime = vi.hoisted(() => ({
-  pending: null as null | { intent: Record<string, unknown>; submitted: boolean; status: Record<string, unknown> | null },
+  pending: null as null | { intent: Record<string, unknown>; submitted: boolean; status: Record<string, unknown> | null; accountId?: string },
   prepare: vi.fn(), clear: vi.fn(), quote: vi.fn(), verify: vi.fn(),
 }))
 vi.mock('wagmi', () => ({ usePublicClient: () => ({}) }))
@@ -21,6 +21,7 @@ import CenterProjectPayment from '@/components/CenterProjectPayment'
 
 const SHORTFALL = 'This payment would get fewer tokens than your minimum, so lower your minimum or try again.'
 const intent = { projectId: '7', token: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', terminal: '0x2222222222222222222222222222222222222222', amount: '5000000', minimumReturnedTokens: '99', returnPath: '/project/8453/7' }
+const OWNER = 'eip155:8453:0x1111111111111111111111111111111111111111'
 const reverted = (observation: Record<string, unknown>) => ({ status: 'reverted', expectedPayment: { minimumReturnedTokens: '99' }, transactionHash: `0x${'ab'.repeat(32)}`, observation: { state: 'reverted', ...observation } })
 
 describe('Juicebox wallet payment failure', () => {
@@ -40,7 +41,7 @@ describe('Juicebox wallet payment failure', () => {
   const buttons = () => [...host.querySelectorAll('button')].map(button => button.textContent)
 
   it("shows Signa's reason for a reverted payment and prepares it again with the looser minimum", async () => {
-    runtime.pending = { intent, submitted: true, status: reverted({ payFailure: { reason: 'TERMINAL_UNDER_MIN', received: '98', minimum: '99', message: SHORTFALL } }) }
+    runtime.pending = { intent, submitted: true, accountId: OWNER, status: reverted({ payFailure: { reason: 'TERMINAL_UNDER_MIN', received: '98', minimum: '99', message: SHORTFALL } }) }
     await render()
     expect(host.textContent).toContain(SHORTFALL)
     expect(host.textContent).not.toContain('The payment reverted onchain.')
@@ -55,7 +56,7 @@ describe('Juicebox wallet payment failure', () => {
   })
 
   it('keeps the reverted line and offers no retry when Signa sends no reason', async () => {
-    runtime.pending = { intent, submitted: true, status: reverted({}) }
+    runtime.pending = { intent, submitted: true, accountId: OWNER, status: reverted({}) }
     await render()
     expect(host.textContent).toContain('The payment reverted onchain.')
     expect(host.querySelector('input[type="number"]')).toBeNull()
@@ -64,9 +65,16 @@ describe('Juicebox wallet payment failure', () => {
   })
 
   it("offers no lower minimum for a reason a minimum can't fix", async () => {
-    runtime.pending = { intent, submitted: true, status: reverted({ payFailure: { reason: 'PAYMENTS_PAUSED', message: 'This project has paused payments.' } }) }
+    runtime.pending = { intent, submitted: true, accountId: OWNER, status: reverted({ payFailure: { reason: 'PAYMENTS_PAUSED', message: 'This project has paused payments.' } }) }
     await render()
     expect(host.textContent).toContain('This project has paused payments.')
     expect(buttons()).not.toContain('Review again')
+  })
+  it("offers another wallet no retry of the payment it didn't make", async () => {
+    runtime.pending = { intent, submitted: true, accountId: 'eip155:8453:0x9999999999999999999999999999999999999999', status: reverted({ payFailure: { reason: 'TERMINAL_UNDER_MIN', received: '98', minimum: '99', message: SHORTFALL } }) }
+    await render()
+    expect(host.textContent).toContain(SHORTFALL)
+    expect(buttons()).not.toContain('Review again')
+    expect(host.querySelector('input[type="number"]')).toBeNull()
   })
 })
