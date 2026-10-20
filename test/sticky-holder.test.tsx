@@ -22,12 +22,13 @@ const mocks = vi.hoisted(() => ({
   track: vi.fn(),
   client: {} as Record<string, unknown>,
   phase: "idle",
+  address: "0x1111111111111111111111111111111111111111",
   error: null as string | null,
   receipt: null as null | { status: string; transactionHash: string; blockNumber: bigint },
 }));
 vi.mock("@/hooks/useWallet", () => ({
   useWallet: () => ({
-    address: "0x1111111111111111111111111111111111111111",
+    address: mocks.address,
     isConnected: true,
   }),
 }));
@@ -123,6 +124,7 @@ beforeEach(() => {
   mocks.client = {};
   mocks.phase = "idle";
   mocks.error = null;
+  mocks.address = "0x1111111111111111111111111111111111111111";
   mocks.receipt = null;
   vi.mocked(readStickyProjectState).mockResolvedValue(state);
   vi.mocked(quoteStickyStake).mockResolvedValue({
@@ -278,6 +280,16 @@ describe("Sticky holder recovery and independent loading", () => {
     );
     // One line: the decoded shortfall stands in for the raw error, and only for the amount it was quoted at.
     expect(element.textContent).not.toContain("The wallet could not simulate this.");
+    // Another wallet at the same amount shows none of it either.
+    mocks.address = "0x2222222222222222222222222222222222222222";
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, "1.0");
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await settle();
+    expect(element.textContent).not.toContain("This stake would return");
+    expect(element.textContent).not.toContain("The wallet could not simulate this.");
+    mocks.address = "0x1111111111111111111111111111111111111111";
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, "2");
       field.dispatchEvent(new Event("input", { bubbles: true }));

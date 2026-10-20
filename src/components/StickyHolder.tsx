@@ -571,15 +571,16 @@ function StickyStake({
     { tx, prerequisite } = useStickyTx(state, STAKE_ACTIONS);
   const [input, setInput] = useState(""),
     [error, setError] = useState<string | null>(null),
-    [stakeFailure, setStakeFailure] = useState<{ count: bigint; line: string } | null>(null),
-    [attempted, setAttempted] = useState<bigint | null>(null),
+    [stakeFailure, setStakeFailure] = useState<{ stake: string; line: string } | null>(null),
+    [attempted, setAttempted] = useState<string | null>(null),
     [preparing, setPreparing] = useState(false);
   const count = parse(input),
     shortfall = count > state.fundBalance ? count - state.fundBalance : 0n;
   // The stake's decoded shortfall stands in for the wallet's error, for the amount it was quoted at.
-  const explained = tx.phase === "error" && stakeFailure?.count === count ? stakeFailure.line : null;
-  // Another amount shows none of the last attempt's error.
-  const staleError = attempted !== null && attempted !== count;
+  // An attempt's errors belong to the chain, wallet and amount it sent: another shows none of them.
+  const stake = `${state.chainId}:${address ?? ""}:${count}`;
+  const explained = tx.phase === "error" && stakeFailure?.stake === stake ? stakeFailure.line : null;
+  const staleError = attempted !== null && attempted !== stake;
   const creditStep = shortfall > 0n && shortfall <= state.fundCreditBalance;
   const approvalStep = !creditStep && state.allowance !== count;
   const busy = preparing || tx.busy || tx.phase === "review";
@@ -602,7 +603,7 @@ function StickyStake({
     setPreparing(true);
     setError(null);
     setStakeFailure(null);
-    setAttempted(count);
+    setAttempted(stake);
     try {
       const current = await fresh(client, state, address, prerequisite.current);
       if (count > current.fundBalance) {
@@ -674,7 +675,7 @@ function StickyStake({
           onFailure: (failure) => {
             const decoded = decodePayFailure(failure);
             if (decoded?.reason === "TERMINAL_UNDER_MIN" && decoded.received !== undefined && decoded.minimum !== undefined)
-              setStakeFailure({ count, line: decoded.received === 0n ? "This stake would return no SHARE." : `This stake would return ${units(decoded.received)} SHARE, under its ${units(decoded.minimum)} SHARE minimum. Review again for a fresh quote.` });
+              setStakeFailure({ stake, line: decoded.received === 0n ? "This stake would return no SHARE." : `This stake would return ${units(decoded.received)} SHARE, under its ${units(decoded.minimum)} SHARE minimum. Review again for a fresh quote.` });
           },
           reviewNotice: `Your FUND moves into the Sticky pool. The permanent unstaking tax is ${formatUnits(current.cashOutTaxRate, 2)}%, plus applicable terminal fees. ${quote.data && latestQuote.minimumShares < quote.data.minimumShares ? "The SHARE quote decreased since it was displayed." : ""}`,
           reverify: async () => {
@@ -767,7 +768,7 @@ function StickyStake({
               pending: "Confirming onchain…",
             })}
       </button>
-      {(error ?? explained) && (
+      {!staleError && (error ?? explained) && (
         <p role="alert" className="mt-3 text-sm text-red-800">
           {error ?? explained}
         </p>
