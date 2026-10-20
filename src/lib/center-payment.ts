@@ -1,10 +1,10 @@
-import { decodeFunctionData, isAddress, isHex, keccak256, parseAbi, stringToHex, type Address, type Hex } from 'viem'
+import { decodeFunctionData, encodeAbiParameters, isAddress, isHex, keccak256, parseAbi, stringToHex, toFunctionSelector, type Address, type Hex } from 'viem'
 import type { CenterWalletConnection, CenterWalletExpectedPayment, CenterWalletPaymentStatus, CenterWalletStorage,
-  PreparedUserOperation, SmartWalletPlan, createCenterWalletClient } from '@bananapus/nana-sdk-connect/core'
+  PreparedUserOperation, SmartWalletPlan, PayFailure as SignaPayFailure, createCenterWalletClient } from '@bananapus/nana-sdk-connect/core'
 import type { HomerunCenterConfig } from '@/providers/wallet-config'
 import { centerReturnPath } from '@/providers/center-callback'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { PAY_DEFAULT_SLIPPAGE_BPS, PAY_MAX_SLIPPAGE_BPS, type PayFailure } from '@bananapus/nana-sdk-core/v6'
+import { decodePayFailure, PAY_DEFAULT_SLIPPAGE_BPS, PAY_MAX_SLIPPAGE_BPS, type PayFailure } from '@bananapus/nana-sdk-core/v6'
 
 export interface HomerunPaymentIntent {
   projectId: string; token: Address; terminal: Address; amount: string; minimumReturnedTokens: string; returnPath: string
@@ -14,27 +14,23 @@ export interface HomerunPaymentIntent {
   slippageBps?: number
 }
 
+// The pay reverts that carry a shortfall (settled, minimum), as the SDK decodes them.
+const shortfallReverts = ['JBMultiTerminal_UnderMin', 'JBBuybackHook_SpecifiedSlippageExceeded', 'JBBuybackHook_DerivedFloorNotMet', 'JBRouterTerminal_SlippageExceeded']
+  .map(name => toFunctionSelector(`${name}(uint256,uint256)`))
+
 /**
- * Signa's `payFailure` (the SDK's decodePayFailure, amounts as decimal strings) from a payment
- * status, its observation, or an error; null when absent (an older Signa) or malformed.
+ * Signa's `payFailure` from a payment status or a client error. Signa's client already admits only a
+ * known reason with uint256 amounts whose message is the SDK's own for them, so the rule lives there;
+ * a shortfall is decoded again by the SDK here for its `zeroFill` and `adjustable`. Null when absent.
  */
 export function signaPayFailure(source: unknown): PayFailure | null {
-  const at = (value: unknown, field: string) => value && typeof value === 'object' ? (value as Record<string, unknown>)[field] : undefined
-  const raw = at(source, 'payFailure') ?? at(at(source, 'observation'), 'payFailure')
-  const reason = at(raw, 'reason'), message = at(raw, 'message'), received = at(raw, 'received'), minimum = at(raw, 'minimum')
-  const amount = (value: unknown) => typeof value === 'string' && /^(0|[1-9][0-9]{0,77})$/.test(value) && BigInt(value) < 2n ** 256n ? BigInt(value) : undefined
-  if (typeof reason !== 'string' || !/^[A-Z_]{1,64}$/.test(reason) || typeof message !== 'string' || !message || message.length > 500) return null
-  const failure = { reason, message } as PayFailure
-  const settled = amount(received), floor = amount(minimum)
-  // A shortfall settles below its minimum; anything else carries no amounts.
-  if (settled !== undefined && floor !== undefined && settled < floor) {
-    failure.received = settled; failure.minimum = floor
-    if (at(raw, 'zeroFill') === (settled === 0n)) failure.zeroFill = settled === 0n
-    // Only the payer's own minimums answer to a looser tolerance, and only for a nonzero, consistent shortfall.
-    if (at(raw, 'adjustable') === 'minimum' && settled > 0n && [undefined, false].includes(at(raw, 'zeroFill') as undefined) &&
-      (reason === 'TERMINAL_UNDER_MIN' || reason === 'BUYBACK_SLIPPAGE_EXCEEDED')) failure.adjustable = 'minimum'
-  }
-  return failure
+  const served = source && typeof source === 'object' ? (source as { payFailure?: SignaPayFailure }).payFailure : undefined
+  if (!served) return null
+  if (served.received === undefined || served.minimum === undefined) return { reason: served.reason, message: served.message } as PayFailure
+  try {
+    const amounts = encodeAbiParameters([{ type: 'uint256' }, { type: 'uint256' }], [BigInt(served.received), BigInt(served.minimum)]).slice(2)
+    return shortfallReverts.map(selector => decodePayFailure(`${selector}${amounts}`)).find(failure => failure?.reason === served.reason) ?? null
+  } catch { return null }
 }
 type Principal = { accountId: string; grantId: string; signer: string }
 interface Journal extends Principal {

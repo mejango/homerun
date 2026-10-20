@@ -52,7 +52,7 @@
     "deploy:post:mainnets": "npm run deploy:verify:mainnets && npm run deploy:artifacts:mainnets"
   },
   "dependencies": {
-    "@bananapus/nana-sdk-connect": "^0.5.6",
+    "@bananapus/nana-sdk-connect": "^0.6.0",
     "@bananapus/nana-sdk-core": "3.4.1",
     "@coinbase/wallet-sdk": "4.3.7",
     "@safe-global/safe-apps-provider": "0.18.6",

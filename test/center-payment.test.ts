@@ -196,25 +196,22 @@ describe('Homerun original Center payment recovery', () => {
     for (const slippageBps of [4951, -1, 2.5, '250'])
       await expect(fixture().create().prepare({ ...f.intent, slippageBps } as never)).rejects.toThrow('slippage')
   })
-  it("reads Signa's payFailure from a status, its observation or an error, and nothing from an older Signa", () => {
-    const failure = { reason: 'TERMINAL_UNDER_MIN', received: '98', minimum: '99', zeroFill: false, adjustable: 'minimum', message: 'This payment would get fewer tokens than your minimum, so lower your minimum or try again.' }
-    expect(signaPayFailure({ status: 'reverted', observation: { state: 'reverted', payFailure: failure } })).toEqual({ ...failure, received: 98n, minimum: 99n })
-    // Only the SDK's own values pass; anything else is left out, so nothing is relaxed without it.
-    expect(signaPayFailure({ payFailure: { ...failure, adjustable: 'slippage', zeroFill: 'no' } })).toEqual({ reason: failure.reason, message: failure.message, received: 98n, minimum: 99n })
-    // Contradictory or out-of-range fields never authorize a looser minimum.
-    const base = { reason: failure.reason, message: failure.message }
-    expect(signaPayFailure({ payFailure: { ...failure, zeroFill: true } })).toEqual({ ...base, received: 98n, minimum: 99n })
-    expect(signaPayFailure({ payFailure: { ...failure, zeroFill: 'false' } })).toEqual({ ...base, received: 98n, minimum: 99n })
-    expect(signaPayFailure({ payFailure: { ...failure, zeroFill: null } })).toEqual({ ...base, received: 98n, minimum: 99n })
-    expect(signaPayFailure({ payFailure: { ...failure, zeroFill: undefined } })).toEqual({ ...base, received: 98n, minimum: 99n, adjustable: 'minimum' })
-    expect(signaPayFailure({ payFailure: { ...failure, reason: 'ROUTER_SLIPPAGE_EXCEEDED' } })).toEqual({ ...base, reason: 'ROUTER_SLIPPAGE_EXCEEDED', received: 98n, minimum: 99n, zeroFill: false })
-    expect(signaPayFailure({ payFailure: { ...failure, received: '0', zeroFill: true } })).toEqual({ ...base, received: 0n, minimum: 99n, zeroFill: true })
-    expect(signaPayFailure({ payFailure: { ...failure, received: '99' } })).toEqual(base)
-    expect(signaPayFailure({ payFailure: { ...failure, minimum: (2n ** 256n).toString() } })).toEqual(base)
-    expect(signaPayFailure({ status: 'reverted', payFailure: failure })).toMatchObject({ received: 98n, minimum: 99n })
-    expect(signaPayFailure(Object.assign(new Error('rejected'), { payFailure: { reason: 'PAYMENTS_PAUSED', message: 'Paused.' } }))).toEqual({ reason: 'PAYMENTS_PAUSED', message: 'Paused.' })
-    expect(signaPayFailure({ payFailure: { ...failure, received: '9x' } })).toEqual({ reason: failure.reason, message: failure.message })
-    for (const source of [{ status: 'reverted', observation: { state: 'reverted' } }, null, 'reverted', { payFailure: { reason: 'x', message: 'y' } }, { payFailure: { reason: 'A', message: '' } }])
+  it("reads Signa's checked payFailure from a status or an error, and the SDK decodes its shortfall", () => {
+    const SHORTFALL = 'This payment would get fewer tokens than your minimum, so lower your minimum or try again.'
+    const failure = { reason: 'TERMINAL_UNDER_MIN', received: '98', minimum: '99', message: SHORTFALL }
+    expect(signaPayFailure({ status: 'reverted', payFailure: failure })).toEqual({ ...failure, received: 98n, minimum: 99n, zeroFill: false, adjustable: 'minimum' })
+    // A zero fill is the SDK's no-tokens line, with nothing to relax.
+    expect(signaPayFailure({ payFailure: { ...failure, received: '0', message: 'This payment would return no tokens.' } }))
+      .toEqual({ reason: failure.reason, received: 0n, minimum: 99n, zeroFill: true, message: 'This payment would return no tokens.' })
+    // A shortfall the payer's minimum doesn't control carries no adjustment.
+    expect(signaPayFailure({ payFailure: { ...failure, reason: 'ROUTER_SLIPPAGE_EXCEEDED', message: 'The price moved while converting your payment, so try again.' } }))
+      .not.toHaveProperty('adjustable')
+    expect(signaPayFailure(Object.assign(new Error('rejected'), { payFailure: { reason: 'PAYMENTS_PAUSED', message: 'This project has paused payments.' } })))
+      .toEqual({ reason: 'PAYMENTS_PAUSED', message: 'This project has paused payments.' })
+    // Amounts that are no shortfall of that reason decode to nothing.
+    expect(signaPayFailure({ payFailure: { ...failure, received: '99' } })).toBeNull()
+    expect(signaPayFailure({ payFailure: { ...failure, reason: 'NFT_SOLD_OUT' } })).toBeNull()
+    for (const source of [{ status: 'reverted', observation: { state: 'reverted' } }, null, 'reverted', new Error('rejected')])
       expect(signaPayFailure(source)).toBeNull()
   })
 })

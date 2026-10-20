@@ -22,7 +22,8 @@ import CenterProjectPayment from '@/components/CenterProjectPayment'
 const SHORTFALL = 'This payment would get fewer tokens than your minimum, so lower your minimum or try again.'
 const intent = { projectId: '7', token: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', terminal: '0x2222222222222222222222222222222222222222', amount: '5000000', minimumReturnedTokens: '99', returnPath: '/project/8453/7' }
 const OWNER = 'eip155:8453:0x1111111111111111111111111111111111111111'
-const reverted = (observation: Record<string, unknown>) => ({ status: 'reverted', expectedPayment: { minimumReturnedTokens: '99' }, transactionHash: `0x${'ab'.repeat(32)}`, observation: { state: 'reverted', ...observation } })
+// Signa's client status carries its checked payFailure beside the observation, as signa 0.3.8 does.
+const reverted = (observation: Record<string, unknown>) => ({ status: 'reverted', expectedPayment: { minimumReturnedTokens: '99' }, transactionHash: `0x${'ab'.repeat(32)}`, observation: { state: 'reverted', ...observation }, ...observation })
 
 describe('Juicebox wallet payment failure', () => {
   let host: HTMLDivElement, root: Root
@@ -41,7 +42,7 @@ describe('Juicebox wallet payment failure', () => {
   const buttons = () => [...host.querySelectorAll('button')].map(button => button.textContent)
 
   it("shows Signa's reason for a reverted payment and prepares it again with the looser minimum", async () => {
-    runtime.pending = { intent, submitted: true, accountId: OWNER, status: reverted({ payFailure: { reason: 'TERMINAL_UNDER_MIN', received: '98', minimum: '99', adjustable: 'minimum', message: SHORTFALL } }) }
+    runtime.pending = { intent, submitted: true, accountId: OWNER, status: reverted({ payFailure: { reason: 'TERMINAL_UNDER_MIN', received: '98', minimum: '99', message: SHORTFALL } }) }
     await render()
     expect(host.textContent).toContain(SHORTFALL)
     expect(host.textContent).not.toContain('The payment reverted.')
@@ -77,23 +78,25 @@ describe('Juicebox wallet payment failure', () => {
     expect(host.querySelector('input[type="number"]')).toBeNull()
   })
   it("offers another wallet no retry of the payment it didn't make", async () => {
-    runtime.pending = { intent, submitted: true, accountId: 'eip155:8453:0x9999999999999999999999999999999999999999', status: reverted({ payFailure: { reason: 'TERMINAL_UNDER_MIN', received: '98', minimum: '99', adjustable: 'minimum', message: SHORTFALL } }) }
+    runtime.pending = { intent, submitted: true, accountId: 'eip155:8453:0x9999999999999999999999999999999999999999', status: reverted({ payFailure: { reason: 'TERMINAL_UNDER_MIN', received: '98', minimum: '99', message: SHORTFALL } }) }
     await render()
     expect(host.textContent).toContain(SHORTFALL)
     expect(buttons()).not.toContain('Review again')
     expect(host.querySelector('input[type="number"]')).toBeNull()
   })
   it('says a payment would return no tokens, and offers no minimum of zero', async () => {
-    runtime.pending = { intent, submitted: true, accountId: OWNER, status: reverted({ payFailure: { reason: 'TERMINAL_UNDER_MIN', received: '0', minimum: '99', zeroFill: true, message: 'This payment would return no tokens.' } }) }
+    runtime.pending = { intent, submitted: true, accountId: OWNER, status: reverted({ payFailure: { reason: 'TERMINAL_UNDER_MIN', received: '0', minimum: '99', message: 'This payment would return no tokens.' } }) }
     await render()
     expect(host.textContent).toContain('This payment would return no tokens.')
     expect(host.querySelector('input[type="number"]')).toBeNull()
     expect(buttons()).toContain('Review again')
   })
-  it("offers no looser minimum when Signa doesn't say the minimum is adjustable", async () => {
-    runtime.pending = { intent, submitted: true, accountId: OWNER, status: reverted({ payFailure: { reason: 'TERMINAL_UNDER_MIN', received: '98', minimum: '99', message: SHORTFALL } }) }
+  it("offers no looser minimum for a shortfall the SDK doesn't call adjustable", async () => {
+    const FLOOR = "The token's price moved too fast to buy safely, so wait a few minutes and try again."
+    runtime.pending = { intent, submitted: true, accountId: OWNER, status: reverted({ payFailure: { reason: 'BUYBACK_DERIVED_FLOOR_NOT_MET', received: '98', minimum: '99', message: FLOOR } }) }
     await render()
-    expect(host.textContent).toContain(SHORTFALL)
+    expect(host.textContent).toContain(FLOOR)
     expect(host.querySelector('input[type="number"]')).toBeNull()
+    expect(buttons()).toContain('Review again')
   })
 })
