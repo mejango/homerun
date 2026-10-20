@@ -689,7 +689,7 @@ export function useSafeTx(chainId: number) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, shownState, shownPhase_, shownLine, shownExit, shownBy, shownNote, apply])
 
-  // A verified receipt releases the hold; a revert only once it is final.
+  // A verified receipt releases the hold, a revert once its block is canonical (a Safe failure once final).
   useEffect(() => {
     const confirmed = shownKey ? proposal?.receipt : receiptData
     if (hold && confirmed && publicClient) void hold.onReceipt(confirmed, publicClient).catch(() => null)

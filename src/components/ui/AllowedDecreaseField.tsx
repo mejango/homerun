@@ -7,12 +7,12 @@ const SLIPPAGE_PRESETS_BPS = [50, 100, 300]
 export function AllowedDecreaseField({
   bps,
   onChange,
-  limitPercent = 100,
+  maxBps = 9_999,
 }: {
   bps: number
   onChange: (bps: number) => void
-  /** The custom field accepts percents below this. */
-  limitPercent?: number
+  /** The most the custom field accepts, in basis points. */
+  maxBps?: number
 }) {
   return (
     <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -36,17 +36,15 @@ export function AllowedDecreaseField({
         <input
           type="number"
           min="0"
-          max={limitPercent - 0.01}
+          max={maxBps / 100}
           step="0.1"
           inputMode="decimal"
           value={bps / 100}
           onChange={(event) => {
             const percent = Number(event.target.value)
-            // Checked after rounding to basis points: 49.999% rounds to the 50% limit itself.
+            // Checked once rounded, so 49.999% can't round up past the limit.
             const bps = Math.round(percent * 100)
-            if (Number.isFinite(percent) && bps >= 0 && bps < limitPercent * 100) {
-              onChange(bps)
-            }
+            if (Number.isFinite(percent) && bps >= 0 && bps <= maxBps) onChange(bps)
           }}
           className="min-w-0 flex-1 border-0 bg-transparent p-0 text-right outline-none ring-0 focus:border-0 focus:ring-0"
         />

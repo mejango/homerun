@@ -4,8 +4,7 @@ import type { CenterWalletConnection, CenterWalletExpectedPayment, CenterWalletP
 import type { HomerunCenterConfig } from '@/providers/wallet-config'
 import { centerReturnPath } from '@/providers/center-callback'
 import { assertNoViewAs } from '@/lib/viewAs'
-import type { PayFailure } from '@bananapus/nana-sdk-core/v6'
-import { PAY_DEFAULT_SLIPPAGE_BPS } from '@/lib/pay-minimum'
+import { PAY_DEFAULT_SLIPPAGE_BPS, PAY_MAX_SLIPPAGE_BPS, type PayFailure } from '@bananapus/nana-sdk-core/v6'
 
 export interface HomerunPaymentIntent {
   projectId: string; token: Address; terminal: Address; amount: string; minimumReturnedTokens: string; returnPath: string
@@ -14,8 +13,6 @@ export interface HomerunPaymentIntent {
   /** The tolerance the quote and Signa floor the minimum by; journals saved before it existed used the default. */
   slippageBps?: number
 }
-/** Signa's slippage bound for prepare_pay. */
-export const SIGNA_SLIPPAGE_LIMIT_BPS = 1000
 
 /**
  * Signa's `payFailure` (the SDK's decodePayFailure, amounts as decimal strings) from a payment
@@ -28,7 +25,13 @@ export function signaPayFailure(source: unknown): PayFailure | null {
   const amount = (value: unknown) => typeof value === 'string' && /^(0|[1-9][0-9]{0,77})$/.test(value) ? BigInt(value) : undefined
   if (typeof reason !== 'string' || !/^[A-Z_]{1,64}$/.test(reason) || typeof message !== 'string' || !message || message.length > 500) return null
   const failure = { reason, message } as PayFailure
-  if (amount(received) !== undefined && amount(minimum) !== undefined) { failure.received = amount(received); failure.minimum = amount(minimum) }
+  if (amount(received) !== undefined && amount(minimum) !== undefined) {
+    failure.received = amount(received); failure.minimum = amount(minimum)
+    const zeroFill = at(raw, 'zeroFill'), adjustable = at(raw, 'adjustable')
+    if (typeof zeroFill === 'boolean') failure.zeroFill = zeroFill
+    // Only a nonzero shortfall is ever relaxed; payRetrySlippageBps checks the amounts again.
+    if (adjustable === 'minimum') failure.adjustable = 'minimum'
+  }
   return failure
 }
 type Principal = { accountId: string; grantId: string; signer: string }
@@ -46,7 +49,7 @@ function checkedIntent(input: HomerunPaymentIntent): HomerunPaymentIntent {
   const fields = ['projectId', 'token', 'terminal', 'amount', 'minimumReturnedTokens', 'returnPath']
   if (!input || Object.keys(input).some(field => !fields.includes(field) && field !== 'metadata' && field !== 'slippageBps') || fields.some(field => !Object.hasOwn(input, field))) fail('Invalid payment.')
   const result = { ...input }
-  if (Object.hasOwn(result, 'slippageBps') && (!Number.isSafeInteger(result.slippageBps) || result.slippageBps! < 0 || result.slippageBps! > SIGNA_SLIPPAGE_LIMIT_BPS)) fail('Invalid payment slippage.')
+  if (Object.hasOwn(result, 'slippageBps') && (!Number.isSafeInteger(result.slippageBps) || result.slippageBps! < 0 || result.slippageBps! > Number(PAY_MAX_SLIPPAGE_BPS))) fail('Invalid payment slippage.')
   if (Object.hasOwn(result, 'metadata') && (!isHex(result.metadata, { strict: true }) || result.metadata.length % 2 !== 0 || result.metadata.length > 2 + 2 * 16_384)) fail('Invalid payment metadata.')
   for (const value of [result.projectId, result.amount, result.minimumReturnedTokens])
     if (typeof value !== 'string' || !/^(0|[1-9][0-9]{0,77})$/.test(value) || BigInt(value) >= 2n ** 256n) fail('Invalid payment amount.')
@@ -129,7 +132,7 @@ export function createHomerunPayment(options: { config: HomerunCenterConfig;
         state.evidence.source !== 'onchain' || state.evidence.chainId !== 8453 || !Number.isSafeInteger(timestamp) ||
         timestamp < Date.now() - 300_000 || timestamp > Date.now() + 30_000) fail('The current wallet owners and payment profile could not be verified.')
       const plan = await smart.preparePlan(binding.id, 'prepare_pay', { project: { chainId: 8453, projectId: intent.projectId, version: 6 },
-        account: current.address, beneficiary: current.address, token: intent.token, amount: intent.amount, slippageBps: intent.slippageBps ?? PAY_DEFAULT_SLIPPAGE_BPS, memo: '', metadata: intent.metadata ?? '0x' }, 'homerun-plan:' + saved.value.id)
+        account: current.address, beneficiary: current.address, token: intent.token, amount: intent.amount, slippageBps: intent.slippageBps ?? Number(PAY_DEFAULT_SLIPPAGE_BPS), memo: '', metadata: intent.metadata ?? '0x' }, 'homerun-plan:' + saved.value.id)
       const expectedPayment = expectation(plan, intent, current.address)
       await identity(current, saved.value)
       saved = save({ ...saved.value, plan, expectedPayment }, saved.raw)

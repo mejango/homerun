@@ -41,7 +41,7 @@ describe('Juicebox wallet payment failure', () => {
   const buttons = () => [...host.querySelectorAll('button')].map(button => button.textContent)
 
   it("shows Signa's reason for a reverted payment and prepares it again with the looser minimum", async () => {
-    runtime.pending = { intent, submitted: true, accountId: OWNER, status: reverted({ payFailure: { reason: 'TERMINAL_UNDER_MIN', received: '98', minimum: '99', message: SHORTFALL } }) }
+    runtime.pending = { intent, submitted: true, accountId: OWNER, status: reverted({ payFailure: { reason: 'TERMINAL_UNDER_MIN', received: '98', minimum: '99', adjustable: 'minimum', message: SHORTFALL } }) }
     await render()
     expect(host.textContent).toContain(SHORTFALL)
     expect(host.textContent).not.toContain('The payment reverted.')
@@ -75,16 +75,22 @@ describe('Juicebox wallet payment failure', () => {
     expect(buttons()).not.toContain('Review again')
   })
   it("offers another wallet no retry of the payment it didn't make", async () => {
-    runtime.pending = { intent, submitted: true, accountId: 'eip155:8453:0x9999999999999999999999999999999999999999', status: reverted({ payFailure: { reason: 'TERMINAL_UNDER_MIN', received: '98', minimum: '99', message: SHORTFALL } }) }
+    runtime.pending = { intent, submitted: true, accountId: 'eip155:8453:0x9999999999999999999999999999999999999999', status: reverted({ payFailure: { reason: 'TERMINAL_UNDER_MIN', received: '98', minimum: '99', adjustable: 'minimum', message: SHORTFALL } }) }
     await render()
     expect(host.textContent).toContain(SHORTFALL)
     expect(buttons()).not.toContain('Review again')
     expect(host.querySelector('input[type="number"]')).toBeNull()
   })
   it('says a payment would return no tokens, and offers no minimum of zero', async () => {
-    runtime.pending = { intent, submitted: true, accountId: OWNER, status: reverted({ payFailure: { reason: 'TERMINAL_UNDER_MIN', received: '0', minimum: '99', message: SHORTFALL } }) }
+    runtime.pending = { intent, submitted: true, accountId: OWNER, status: reverted({ payFailure: { reason: 'TERMINAL_UNDER_MIN', received: '0', minimum: '99', zeroFill: true, message: 'This payment would return no tokens.' } }) }
     await render()
     expect(host.textContent).toContain('This payment would return no tokens.')
     expect(buttons()).not.toContain('Review again')
+  })
+  it("offers no looser minimum when Signa doesn't say the minimum is adjustable", async () => {
+    runtime.pending = { intent, submitted: true, accountId: OWNER, status: reverted({ payFailure: { reason: 'TERMINAL_UNDER_MIN', received: '98', minimum: '99', message: SHORTFALL } }) }
+    await render()
+    expect(host.textContent).toContain(SHORTFALL)
+    expect(host.querySelector('input[type="number"]')).toBeNull()
   })
 })

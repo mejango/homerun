@@ -193,12 +193,14 @@ describe('Homerun original Center payment recovery', () => {
     expect((await f.create().prepare(intent as never)).status).toBe('reviewing')
     expect(f.planInputs[0]).toMatchObject({ slippageBps: 250 })
     expect(f.create().pending()?.intent).toEqual(intent)
-    for (const slippageBps of [1001, -1, 2.5, '250'])
+    for (const slippageBps of [4951, -1, 2.5, '250'])
       await expect(fixture().create().prepare({ ...f.intent, slippageBps } as never)).rejects.toThrow('slippage')
   })
   it("reads Signa's payFailure from a status, its observation or an error, and nothing from an older Signa", () => {
-    const failure = { reason: 'TERMINAL_UNDER_MIN', received: '98', minimum: '99', message: 'This payment would get fewer tokens than your minimum, so lower your minimum or try again.' }
+    const failure = { reason: 'TERMINAL_UNDER_MIN', received: '98', minimum: '99', zeroFill: false, adjustable: 'minimum', message: 'This payment would get fewer tokens than your minimum, so lower your minimum or try again.' }
     expect(signaPayFailure({ status: 'reverted', observation: { state: 'reverted', payFailure: failure } })).toEqual({ ...failure, received: 98n, minimum: 99n })
+    // Only the SDK's own values pass; anything else is left out, so nothing is relaxed without it.
+    expect(signaPayFailure({ payFailure: { ...failure, adjustable: 'slippage', zeroFill: 'no' } })).toEqual({ reason: failure.reason, message: failure.message, received: 98n, minimum: 99n })
     expect(signaPayFailure({ status: 'reverted', payFailure: failure })).toMatchObject({ received: 98n, minimum: 99n })
     expect(signaPayFailure(Object.assign(new Error('rejected'), { payFailure: { reason: 'PAYMENTS_PAUSED', message: 'Paused.' } }))).toEqual({ reason: 'PAYMENTS_PAUSED', message: 'Paused.' })
     expect(signaPayFailure({ payFailure: { ...failure, received: '9x' } })).toEqual({ reason: failure.reason, message: failure.message })

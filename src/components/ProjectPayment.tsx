@@ -1,7 +1,7 @@
 'use client'
 
 import { NATIVE_TOKEN, type JBChainId } from '@bananapus/nana-sdk-core'
-import { buildPayTx, decodePayFailure, type PayFailure } from '@bananapus/nana-sdk-core/v6'
+import { buildPayTx, decodePayFailure, PAY_DEFAULT_SLIPPAGE_BPS, PAY_MAX_SLIPPAGE_BPS, payRetrySlippageBps, type PayFailure } from '@bananapus/nana-sdk-core/v6'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { WritesChecking } from '@/components/writes-checking'
 import { useContext, useEffect, useRef, useState, type ReactNode } from 'react'
@@ -23,7 +23,6 @@ import { readableError } from '@/lib/readable-error'
 import { refreshIndexedProject } from '@/lib/refresh-indexed'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
 import { AllowedDecreaseField } from '@/components/ui/AllowedDecreaseField'
-import { PAY_DEFAULT_SLIPPAGE_BPS, PAY_SLIPPAGE_LIMIT_PERCENT, payFailureMessage, payRetrySlippageBps } from '@/lib/pay-minimum'
 
 const CenterProjectPayment = lazyComponent(() => import('./CenterProjectPayment').then(m => m.default))
 export function ProjectPayment(props: Parameters<typeof ExternalProjectPayment>[0]) {
@@ -173,7 +172,9 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
     const mine = ++attempt.current
     const payment = paymentInputs, bps = slippageBps
     const explain = (decoded: PayFailure | null) => {
-      if (mounted.current && attempt.current === mine) setOutcome({ payment, failure: decoded, retryBps: payRetrySlippageBps(decoded, bps ?? PAY_DEFAULT_SLIPPAGE_BPS) })
+      // A candidate from the tolerance this attempt was prepared with; the payer sees and edits it, and it is prepared and reviewed again.
+      const retry = payRetrySlippageBps(decoded, bps === undefined ? PAY_DEFAULT_SLIPPAGE_BPS : BigInt(bps))
+      if (mounted.current && attempt.current === mine) setOutcome({ payment, failure: decoded, retryBps: retry === null ? null : Number(retry) })
     }
     setPreparing(true); setError(null); setOutcome(null); setStage(null); setStatus('Getting the latest payment quote…')
     try {
@@ -284,17 +285,17 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       settled={!!submitted}
       held={submitted?.held}
       status={submitted?.notice ?? status ?? (tx.phase === 'pending' ? <>Submitted. Waiting for onchain confirmation{tx.hash && explorerTxUrl(chainId, tx.hash) ? <> (<a className="underline" href={explorerTxUrl(chainId, tx.hash)!} target="_blank" rel="noreferrer">view transaction</a>)</> : null}</> : null)}
-      error={error ?? (failure ? payFailureMessage(failure) : null) ?? (minedRevert ? 'The payment reverted.' : null) ?? tx.error ?? approval.error}
+      error={error ?? failure?.message ?? (minedRevert ? 'The payment reverted.' : null) ?? tx.error ?? approval.error}
       onClose={() => { setOpen(false); for (const item of [tx, approval]) if (item.phase === 'submitted') item.dismiss(); setStatus(null); attempt.current++; setOutcome(null); setRetryWhenQuoted(null); setPayerSlippage(null) }}
     >
       <div className="text-sm text-smoke-600" aria-live="polite">
-        {paused ? <p>This project has paused payments.</p> : zeroAllocation ? <p>This payment gives you no {tokenLabel}. All new tokens are allocated to the reserved recipients.</p> : quoted ? <p>Through the project payment terminal, using its current rules and buyback hook. {(slippageBps ?? PAY_DEFAULT_SLIPPAGE_BPS) / 100}% maximum slippage.</p>
+        {paused ? <p>This project has paused payments.</p> : zeroAllocation ? <p>This payment gives you no {tokenLabel}. All new tokens are allocated to the reserved recipients.</p> : quoted ? <p>Through the project payment terminal, using its current rules and buyback hook. {(slippageBps ?? Number(PAY_DEFAULT_SLIPPAGE_BPS)) / 100}% maximum slippage.</p>
           : quoteNeedsWallet && !address ? <p>Connect an allowed wallet to see your quote.</p>
           : count <= 0n ? <p>Enter an amount to see your {tokenLabel} quote.</p>
           : quote.isFetching ? <p>Getting your quote…</p> : null}
         {quote.isError && <p role="alert" className="mt-2">A protected payment quote is unavailable. {message(quote.error)}</p>}
       </div>
-      {retrySlippageBps !== null ? <AllowedDecreaseField bps={retrySlippageBps} onChange={retryBps => setOutcome(current => current && { ...current, retryBps })} limitPercent={PAY_SLIPPAGE_LIMIT_PERCENT} /> : null}
+      {retrySlippageBps !== null ? <AllowedDecreaseField bps={retrySlippageBps} onChange={retryBps => setOutcome(current => current && { ...current, retryBps })} maxBps={Number(PAY_MAX_SLIPPAGE_BPS)} /> : null}
     </TxConfirmDialog>
   </section>
 }

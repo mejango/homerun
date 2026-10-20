@@ -1213,7 +1213,7 @@ describe('useSafeTx', () => {
     expect(recoveryRecords()).toHaveLength(1)
   })
 
-  it('holds a reverted write until finality proves its failure, and never sends it again meanwhile', async () => {
+  it('releases a write once its revert is canonical, so a fresh review sends at once', async () => {
     const hook = await renderHook()
     await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
     mocks.publicClient.getBlock.mockImplementation(async ({ blockNumber }: { blockNumber?: bigint }) => ({
@@ -1221,11 +1221,12 @@ describe('useSafeTx', () => {
     }))
     mocks.receipt = { data: canonicalReceipt('reverted'), isError: false }
     await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
-    expect(hook.ref.current).toMatchObject({ phase: 'error', error: WRITE_HOLD_REVERTED_LINE, held: null })
-    expect(recoveryRecords()).toHaveLength(1)
+    expect(hook.ref.current).toMatchObject({ phase: 'error', error: WRITE_HOLD_REVERTED_LINE, held: null, receipt: { status: 'reverted' } })
+    // SDK 3.4: a canonical revert releases the hold; the reverted call can't run, so nothing is doubled.
+    expect(recoveryRecords()).toHaveLength(0)
     mocks.receipt = { data: undefined, isError: false }
     await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
-    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    expect(mocks.writeContract).toHaveBeenCalledTimes(2)
     expect(hook.ref.current!.phase).toBe('pending')
   })
 
