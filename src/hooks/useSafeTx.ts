@@ -22,7 +22,7 @@ import { useHeldSend, useHeldWrite, type HeldSendInput } from '@bananapus/nana-s
 import { submitReviewedContractWrite } from '@/lib/contract-write'
 import {
   gasWithHeadroom, sameReviewedWrite, settledLine, SubmittedContractWriteError, WRITE_EXIT_LABEL, SAFE_PROPOSAL_REPLACED_LINE,
-  HELD_AWAY_SUCCESS_LINE, HELD_SEND_AGAIN_LABEL, waitForTrackedReceipt, transactionMessage, WRITE_HOLD_PENDING_LINE, WRITE_HOLD_REVERTED_LINE, writeExitMessage, writeHeldMessage,
+  HELD_AWAY_SUCCESS_LINE, HELD_FAILED_LINE, HELD_SEND_AGAIN_LABEL, waitForTrackedReceipt, transactionMessage, WRITE_HOLD_PENDING_LINE, writeExitMessage, writeHeldMessage,
   WriteHeldError, WriteHoldBusyError, WriteHoldNonceError, WriteHoldStaleReviewError,
   type HeldWriteView, type ReviewedWriteRecoveryRecord, type WriteHeldState, type WriteHoldClient, type WriteHoldGate, type WriteHoldHandle, type WriteHoldSettled, type WriteHoldState,
 } from '@bananapus/nana-sdk-core/review'
@@ -608,7 +608,7 @@ export function useSafeTx(chainId: number) {
       ? proposal.message
       : null
     : receiptReverted
-      ? hold ? WRITE_HOLD_REVERTED_LINE : `Transaction reverted onchain${hash ? ` (${hash})` : ''}.`
+      ? hold ? HELD_FAILED_LINE : `Transaction reverted onchain${hash ? ` (${hash})` : ''}.`
       : error
   const awaitingProposal =
     proposal?.phase === 'checking' || proposal?.phase === 'awaiting' ? proposal.proposalHash : null
@@ -679,7 +679,7 @@ export function useSafeTx(chainId: number) {
     // The view read this settlement's receipt: the flow verifies its result from it, whoever else watches.
     if (settledReceipt) setSettledReceipt(settledReceipt)
     if (settled.result === 'success') setPhase('success')
-    else { setError(WRITE_HOLD_REVERTED_LINE); setSettledFailed(true); setPhase('error') }
+    else { setError(settledLine(settled)); setSettledFailed(true); setPhase('error') }
   }
 
   // Whatever the shown view says reaches this flow's state.
