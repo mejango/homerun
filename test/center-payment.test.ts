@@ -201,6 +201,13 @@ describe('Homerun original Center payment recovery', () => {
     expect(signaPayFailure({ status: 'reverted', observation: { state: 'reverted', payFailure: failure } })).toEqual({ ...failure, received: 98n, minimum: 99n })
     // Only the SDK's own values pass; anything else is left out, so nothing is relaxed without it.
     expect(signaPayFailure({ payFailure: { ...failure, adjustable: 'slippage', zeroFill: 'no' } })).toEqual({ reason: failure.reason, message: failure.message, received: 98n, minimum: 99n })
+    // Contradictory or out-of-range fields never authorize a looser minimum.
+    const base = { reason: failure.reason, message: failure.message }
+    expect(signaPayFailure({ payFailure: { ...failure, zeroFill: true } })).toEqual({ ...base, received: 98n, minimum: 99n })
+    expect(signaPayFailure({ payFailure: { ...failure, reason: 'ROUTER_SLIPPAGE_EXCEEDED' } })).toEqual({ ...base, reason: 'ROUTER_SLIPPAGE_EXCEEDED', received: 98n, minimum: 99n, zeroFill: false })
+    expect(signaPayFailure({ payFailure: { ...failure, received: '0', zeroFill: true } })).toEqual({ ...base, received: 0n, minimum: 99n, zeroFill: true })
+    expect(signaPayFailure({ payFailure: { ...failure, received: '99' } })).toEqual(base)
+    expect(signaPayFailure({ payFailure: { ...failure, minimum: (2n ** 256n).toString() } })).toEqual(base)
     expect(signaPayFailure({ status: 'reverted', payFailure: failure })).toMatchObject({ received: 98n, minimum: 99n })
     expect(signaPayFailure(Object.assign(new Error('rejected'), { payFailure: { reason: 'PAYMENTS_PAUSED', message: 'Paused.' } }))).toEqual({ reason: 'PAYMENTS_PAUSED', message: 'Paused.' })
     expect(signaPayFailure({ payFailure: { ...failure, received: '9x' } })).toEqual({ reason: failure.reason, message: failure.message })

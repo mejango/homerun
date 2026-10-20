@@ -74,8 +74,8 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
   const ownPayment = !!address && pending?.accountId === 'eip155:8453:' + address.toLowerCase()
   const suggested = matching && ownPayment && failure ? payRetrySlippageBps(failure, currentBps) : null
   const retryBps = suggested === null ? null : retryEdit ?? Number(suggested)
-  // A revert Signa gives no reason for is prepared again at the same tolerance: that fresh preparation says why, if it fails.
-  const plainRetry = retryBps === null && status === 'reverted' && matching && ownPayment && !failure
+  // Any other revert is prepared again at the same tolerance: that fresh preparation says why, if it fails.
+  const plainRetry = retryBps === null && status === 'reverted' && matching && ownPayment
   useEffect(() => { onBusyChange?.(busy || !!pending && !terminal); return () => onBusyChange?.(false) }, [busy, pending, terminal, onBusyChange])
   async function run(action: () => Promise<unknown>) {
     if (working.current) return

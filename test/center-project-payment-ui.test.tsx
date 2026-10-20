@@ -68,11 +68,13 @@ describe('Juicebox wallet payment failure', () => {
     expect(runtime.prepare.mock.calls[0]![0]).not.toHaveProperty('slippageBps')
   })
 
-  it("offers no lower minimum for a reason a minimum can't fix", async () => {
+  it("offers no lower minimum for a reason a minimum can't fix, only a fresh review", async () => {
     runtime.pending = { intent, submitted: true, accountId: OWNER, status: reverted({ payFailure: { reason: 'PAYMENTS_PAUSED', message: 'This project has paused payments.' } }) }
     await render()
     expect(host.textContent).toContain('This project has paused payments.')
-    expect(buttons()).not.toContain('Review again')
+    // Prepared again at the same tolerance: the fresh preparation says whether it still fails.
+    expect(buttons()).toContain('Review again')
+    expect(host.querySelector('input[type="number"]')).toBeNull()
   })
   it("offers another wallet no retry of the payment it didn't make", async () => {
     runtime.pending = { intent, submitted: true, accountId: 'eip155:8453:0x9999999999999999999999999999999999999999', status: reverted({ payFailure: { reason: 'TERMINAL_UNDER_MIN', received: '98', minimum: '99', adjustable: 'minimum', message: SHORTFALL } }) }
@@ -85,7 +87,8 @@ describe('Juicebox wallet payment failure', () => {
     runtime.pending = { intent, submitted: true, accountId: OWNER, status: reverted({ payFailure: { reason: 'TERMINAL_UNDER_MIN', received: '0', minimum: '99', zeroFill: true, message: 'This payment would return no tokens.' } }) }
     await render()
     expect(host.textContent).toContain('This payment would return no tokens.')
-    expect(buttons()).not.toContain('Review again')
+    expect(host.querySelector('input[type="number"]')).toBeNull()
+    expect(buttons()).toContain('Review again')
   })
   it("offers no looser minimum when Signa doesn't say the minimum is adjustable", async () => {
     runtime.pending = { intent, submitted: true, accountId: OWNER, status: reverted({ payFailure: { reason: 'TERMINAL_UNDER_MIN', received: '98', minimum: '99', message: SHORTFALL } }) }

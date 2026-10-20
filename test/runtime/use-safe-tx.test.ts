@@ -1222,7 +1222,8 @@ describe('useSafeTx', () => {
     mocks.receipt = { data: canonicalReceipt('reverted'), isError: false }
     await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
     expect(hook.ref.current).toMatchObject({ phase: 'error', error: WRITE_HOLD_REVERTED_LINE, held: null, receipt: { status: 'reverted' } })
-    // SDK 3.4: a canonical revert releases the hold; the reverted call can't run, so nothing is doubled.
+    // SDK 3.4 (jango's ruling): a canonical revert releases the hold so a fresh review can send at once. A reorg
+    // that re-includes the original before finality could still land both; the SDK documents that accepted risk.
     expect(recoveryRecords()).toHaveLength(0)
     mocks.receipt = { data: undefined, isError: false }
     await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })

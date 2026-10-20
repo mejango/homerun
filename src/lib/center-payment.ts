@@ -22,15 +22,17 @@ export function signaPayFailure(source: unknown): PayFailure | null {
   const at = (value: unknown, field: string) => value && typeof value === 'object' ? (value as Record<string, unknown>)[field] : undefined
   const raw = at(source, 'payFailure') ?? at(at(source, 'observation'), 'payFailure')
   const reason = at(raw, 'reason'), message = at(raw, 'message'), received = at(raw, 'received'), minimum = at(raw, 'minimum')
-  const amount = (value: unknown) => typeof value === 'string' && /^(0|[1-9][0-9]{0,77})$/.test(value) ? BigInt(value) : undefined
+  const amount = (value: unknown) => typeof value === 'string' && /^(0|[1-9][0-9]{0,77})$/.test(value) && BigInt(value) < 2n ** 256n ? BigInt(value) : undefined
   if (typeof reason !== 'string' || !/^[A-Z_]{1,64}$/.test(reason) || typeof message !== 'string' || !message || message.length > 500) return null
   const failure = { reason, message } as PayFailure
-  if (amount(received) !== undefined && amount(minimum) !== undefined) {
-    failure.received = amount(received); failure.minimum = amount(minimum)
-    const zeroFill = at(raw, 'zeroFill'), adjustable = at(raw, 'adjustable')
-    if (typeof zeroFill === 'boolean') failure.zeroFill = zeroFill
-    // Only a nonzero shortfall is ever relaxed; payRetrySlippageBps checks the amounts again.
-    if (adjustable === 'minimum') failure.adjustable = 'minimum'
+  const settled = amount(received), floor = amount(minimum)
+  // A shortfall settles below its minimum; anything else carries no amounts.
+  if (settled !== undefined && floor !== undefined && settled < floor) {
+    failure.received = settled; failure.minimum = floor
+    if (at(raw, 'zeroFill') === (settled === 0n)) failure.zeroFill = settled === 0n
+    // Only the payer's own minimums answer to a looser tolerance, and only for a nonzero, consistent shortfall.
+    if (at(raw, 'adjustable') === 'minimum' && settled > 0n && at(raw, 'zeroFill') !== true &&
+      (reason === 'TERMINAL_UNDER_MIN' || reason === 'BUYBACK_SLIPPAGE_EXCEEDED')) failure.adjustable = 'minimum'
   }
   return failure
 }
