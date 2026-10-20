@@ -78,13 +78,17 @@ describe('project payment quote parity', () => {
     f.options.multi = [f.ruleset, 1n, 100n, []]
     expect(await prepareProjectPayQuote(f.rpc, input)).toMatchObject({ minimumTokenCount: 1n })
   })
-  it('refuses the quote when the SDK cannot resolve the buyback hook', async () => {
+  it('refuses the quote when the SDK cannot resolve the buyback hook behind a swap specification', async () => {
     const f = fixture(); const implementation = f.client.readContract.getMockImplementation()!
+    // The terminal mints nothing because the buyback hook swaps; its 17-word pay specification needs the registry's hook.
+    const spec = { hook: v6Address('JBBuybackHook', CHAIN), noop: false, metadata: `0x${'00'.repeat(32 * 17)}` }
+    f.options.multi = [f.ruleset, 0n, 0n, [spec]]; f.options.router = [f.ruleset, 0n, 0n, [spec]]
     f.client.readContract.mockImplementation(async request => {
       if (request.functionName === 'hookOf') throw new Error('RPC offline')
       return implementation(request)
     })
     await expect(prepareProjectPayQuote(f.rpc, input)).rejects.toThrow('No listed payment route')
+    expect(f.client.readContract.mock.calls.some(([request]) => request.functionName === 'hookOf')).toBe(true)
   })
   it('refuses a payment with no protected token return', async () => {
     const f = fixture(); f.options.multi = [f.ruleset, 0n, 0n, []]; f.options.router = [f.ruleset, 0n, 0n, []]

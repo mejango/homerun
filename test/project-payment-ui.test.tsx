@@ -45,6 +45,9 @@ const TOKEN = '0x5555555555555555555555555555555555555555' as Address
 const WALLET = '0x1111111111111111111111111111111111111111' as Address
 const UNIT = 10n ** 18n
 const METADATA = `0x${'00'.repeat(32)}${'ab'.repeat(32)}` as Hex
+const REFRESHED_METADATA = `0x${'00'.repeat(32)}${'cd'.repeat(32)}` as Hex
+const BACKGROUND_METADATA = `0x${'00'.repeat(32)}${'ef'.repeat(32)}` as Hex
+const REFRESHED_TERMINAL = '0x4444444444444444444444444444444444444444' as Address
 const HASH = `0x${'a'.repeat(64)}` as Hex
 type Props = ComponentProps<typeof ProjectPayment>
 
@@ -144,19 +147,19 @@ describe('shared payment execution', () => {
 
   it('freezes the refreshed terminal minimum and explicitly reviews a decreased quote', async () => {
     await ready()
-    runtime.quote.mockResolvedValue(quote(88n * UNIT))
+    runtime.quote.mockResolvedValue(quote(88n * UNIT, { metadata: REFRESHED_METADATA }))
     runtime.review = async action => {
       if (action !== 'payment') return
       // A background quote may update the display while the reviewed call stays frozen.
-      cache.setQueriesData({ queryKey: ['project-pay'] }, quote(66n * UNIT))
+      cache.setQueriesData({ queryKey: ['project-pay'] }, quote(66n * UNIT, { metadata: BACKGROUND_METADATA }))
     }
     await submit()
     expect(runtime.writes).toHaveLength(1)
     const { request, options } = runtime.writes[0]
     expect(encoded(request).functionName).toBe('pay')
     expect(encoded(request).args?.slice(0, 5)).toEqual([7n, NATIVE_TOKEN, UNIT, WALLET, 88n * UNIT])
-    // The SDK's prepareUserPay metadata (buyback skipSplits quote) goes out with its minimum.
-    expect(encoded(request).args?.[6]).toBe(METADATA)
+    // The refreshed prepareUserPay metadata goes out with its own minimum, not the displayed or background quote's.
+    expect(encoded(request).args?.[6]).toBe(REFRESHED_METADATA)
     expect(request.value).toBe(UNIT)
     expect(options.reviewNotice).toContain('quote decreased')
     expect(options.reviewNotice).toContain('88 FUND')
@@ -197,6 +200,30 @@ describe('shared payment execution', () => {
     expect(runtime.writes[1].options.recoveryNamespace).toBe(payment)
     expect(runtime.writes[0].options.recoveryNamespace).toBe(approvalIntentKey(payment, { token: TOKEN, spender: TERMINAL, step: 'token' }))
     expect(runtime.verify).toHaveBeenCalledWith(WALLET, 101n)
+  })
+
+  it('approves and pays the refreshed terminal with its own metadata and minimum', async () => {
+    erc20(); runtime.allowance = 0n
+    await ready('2.5')
+    runtime.quote.mockResolvedValue(quote(77n * UNIT, { terminal: REFRESHED_TERMINAL, metadata: REFRESHED_METADATA }))
+    runtime.review = async action => { if (action === 'payment') cache.setQueriesData({ queryKey: ['project-pay'] }, quote(66n * UNIT, { metadata: BACKGROUND_METADATA })) }
+    await submit()
+    expect(runtime.writes.map(item => item.action)).toEqual(['approval', 'payment'])
+    expect(encoded(runtime.writes[0].request).args).toEqual([REFRESHED_TERMINAL, 2_500_000n])
+    const pay = runtime.writes[1].request
+    expect(pay.address).toBe(REFRESHED_TERMINAL)
+    expect(encoded(pay).args?.[4]).toBe(77n * UNIT)
+    expect(encoded(pay).args?.[6]).toBe(REFRESHED_METADATA)
+  })
+
+  it('blocks approval and payment when the refreshed preparation fails, and stays usable', async () => {
+    erc20(); runtime.allowance = 0n
+    await ready('2.5')
+    runtime.quote.mockRejectedValue(new Error('The buyback hook could not be read.'))
+    await submit()
+    expect(runtime.writes).toHaveLength(0)
+    expect(host.textContent).toContain('buyback hook could not be read')
+    expect(button()).toBeDefined()
   })
 
   it('quotes a routed payment currency using its own decimals and preserves the accounting terminal anchor', async () => {
