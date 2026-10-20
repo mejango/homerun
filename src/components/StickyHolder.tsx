@@ -1,6 +1,7 @@
 "use client";
 
 import { type JBChainId } from "@bananapus/nana-sdk-core";
+import { decodePayFailure } from "@bananapus/nana-sdk-core/v6";
 import {
   keepPreviousData,
   useQuery,
@@ -662,6 +663,11 @@ function StickyStake({
         {
           reviewedAccount: address,
           simulationBlockNumber: current.blockNumber,
+          onFailure: (failure) => {
+            const decoded = decodePayFailure(failure);
+            if (decoded?.reason === "TERMINAL_UNDER_MIN" && decoded.received !== undefined && decoded.minimum !== undefined)
+              setError(`This stake would return ${units(decoded.received)} SHARE, under its ${units(decoded.minimum)} SHARE minimum. Refresh the quote and try again.`);
+          },
           reviewNotice: `Your FUND moves into the Sticky pool. The permanent unstaking tax is ${formatUnits(current.cashOutTaxRate, 2)}%, plus applicable terminal fees. ${quote.data && latestQuote.minimumShares < quote.data.minimumShares ? "The SHARE quote decreased since it was displayed." : ""}`,
           reverify: async () => {
             const latest = await fresh(

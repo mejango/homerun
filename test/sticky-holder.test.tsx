@@ -2,7 +2,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { encodeFunctionData, erc20Abi, getAddress, type Address } from "viem";
+import { encodeAbiParameters, encodeFunctionData, erc20Abi, getAddress, type Address } from "viem";
 import type { TxRequest, TxSendOptions } from "../src/hooks/useSafeTx";
 import { jbV6ContractAddress, type JBChainId } from "@bananapus/nana-sdk-core";
 import { v6Address } from "@bananapus/nana-sdk-core/v6";
@@ -242,6 +242,35 @@ describe("Sticky holder recovery and independent loading", () => {
     });
     expect(element.textContent).toContain(
       "does not cash out FUND for treasury money",
+    );
+  });
+  it("says how far a stake fell under its minimum when the terminal refuses it", async () => {
+    vi.mocked(readStickyProjectState).mockResolvedValue({ ...state, allowance: 10n ** 18n });
+    // JBMultiTerminal_UnderMin(0.98 SHARE, 0.99 SHARE) as revert data.
+    const underMin = encodeAbiParameters(
+      [{ type: "uint256" }, { type: "uint256" }],
+      [98n * 10n ** 16n, 99n * 10n ** 16n],
+    ).replace("0x", "0x6b2bb382");
+    mocks.send.mockImplementation(async (_request: TxRequest, options: TxSendOptions) => {
+      options.onFailure?.(underMin);
+      return null;
+    });
+    await mount();
+    const field = [...element.querySelectorAll("label")].find((label) =>
+      label.textContent?.startsWith("FUND to stake"),
+    )!.querySelector("input")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, "1");
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await settle();
+    const stake = [...element.querySelectorAll("button")].find(
+      (button) => button.textContent === "Review stake",
+    )!;
+    await act(async () => stake.click());
+    await settle();
+    expect(element.textContent).toContain(
+      "This stake would return 0.98 SHARE, under its 0.99 SHARE minimum. Refresh the quote and try again.",
     );
   });
 });

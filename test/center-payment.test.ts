@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodeFunctionData, keccak256, parseAbi, stringToHex } from 'viem'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
-import { createHomerunPayment } from '@/lib/center-payment'
+import { createHomerunPayment, signaPayFailure } from '@/lib/center-payment'
 import { buildUserPayMetadata } from '@bananapus/nana-sdk-core/v6'
 const account = '0x1111111111111111111111111111111111111111', terminal = '0x2222222222222222222222222222222222222222', token = '0x3333333333333333333333333333333333333333', hash = '0x' + 'ab'.repeat(32)
 function fixture() {
@@ -187,5 +187,22 @@ describe('Homerun original Center payment recovery', () => {
     expect(() => f.create().clear()).not.toThrow()
     expect(f.create().pending()).toBeNull()
     expect([...f.data.keys()].some(key => key.endsWith(':history'))).toBe(true)
+  })
+  it('plans with the slippage the payer chose and refuses one Signa would not accept', async () => {
+    const f = fixture(), intent = { ...f.intent, slippageBps: 250 }
+    expect((await f.create().prepare(intent as never)).status).toBe('reviewing')
+    expect(f.planInputs[0]).toMatchObject({ slippageBps: 250 })
+    expect(f.create().pending()?.intent).toEqual(intent)
+    for (const slippageBps of [1001, -1, 2.5, '250'])
+      await expect(fixture().create().prepare({ ...f.intent, slippageBps } as never)).rejects.toThrow('slippage')
+  })
+  it("reads Signa's payFailure from a status, its observation or an error, and nothing from an older Signa", () => {
+    const failure = { reason: 'TERMINAL_UNDER_MIN', received: '98', minimum: '99', message: 'This payment would get fewer tokens than your minimum, so lower your minimum or try again.' }
+    expect(signaPayFailure({ status: 'reverted', observation: { state: 'reverted', payFailure: failure } })).toEqual({ ...failure, received: 98n, minimum: 99n })
+    expect(signaPayFailure({ status: 'reverted', payFailure: failure })).toMatchObject({ received: 98n, minimum: 99n })
+    expect(signaPayFailure(Object.assign(new Error('rejected'), { payFailure: { reason: 'PAYMENTS_PAUSED', message: 'Paused.' } }))).toEqual({ reason: 'PAYMENTS_PAUSED', message: 'Paused.' })
+    expect(signaPayFailure({ payFailure: { ...failure, received: '9x' } })).toEqual({ reason: failure.reason, message: failure.message })
+    for (const source of [{ status: 'reverted', observation: { state: 'reverted' } }, null, 'reverted', { payFailure: { reason: 'x', message: 'y' } }, { payFailure: { reason: 'A', message: '' } }])
+      expect(signaPayFailure(source)).toBeNull()
   })
 })

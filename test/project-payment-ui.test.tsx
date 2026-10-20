@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { NATIVE_TOKEN } from '@bananapus/nana-sdk-core'
-import { encodeFunctionData, decodeFunctionData, type Address, type Hex } from 'viem'
+import { encodeAbiParameters, encodeFunctionData, decodeFunctionData, type Address, type Hex } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectPayQuote, ProjectPayTokenOption } from '@/lib/project-pay-quote'
 import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
@@ -19,13 +19,13 @@ const runtime = vi.hoisted(() => ({
   nextHook: 0, mounts: 0, unmounts: 0,
   handles: [] as Handle[],
   quote: vi.fn(), options: vi.fn(), verify: vi.fn(), openSignIn: vi.fn(),
-  readContract: vi.fn(), waitForTransactionReceipt: vi.fn(), getTransactionReceipt: vi.fn(),
+  readContract: vi.fn(), waitForTransactionReceipt: vi.fn(), getTransactionReceipt: vi.fn(), simulateContract: vi.fn(),
   writes: [] as { action: Action; request: TxRequest; options: TxSendOptions }[],
   review: undefined as ((action: Action, request: TxRequest) => Promise<void>) | undefined,
   allowance: 0n,
 }))
 
-vi.mock('wagmi', () => ({ usePublicClient: () => ({ readContract: runtime.readContract, waitForTransactionReceipt: runtime.waitForTransactionReceipt, getTransactionReceipt: runtime.getTransactionReceipt }) }))
+vi.mock('wagmi', () => ({ usePublicClient: () => ({ readContract: runtime.readContract, waitForTransactionReceipt: runtime.waitForTransactionReceipt, getTransactionReceipt: runtime.getTransactionReceipt, simulateContract: runtime.simulateContract }) }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address, openSignIn: runtime.openSignIn }) }))
 vi.mock('@/lib/project-pay-quote', () => ({ prepareProjectPayQuote: runtime.quote, readProjectPayTokenOptions: runtime.options }))
 vi.mock('@/hooks/useSafeTx', () => ({
@@ -71,6 +71,7 @@ describe('shared payment execution', () => {
     runtime.verify.mockReset().mockImplementation(async (_account, minimumBlock) => ({ blockNumber: minimumBlock ?? 100n }))
     runtime.waitForTransactionReceipt.mockReset().mockResolvedValue({ status: 'success', blockNumber: 101n, transactionHash: HASH })
     runtime.getTransactionReceipt.mockReset()
+    runtime.simulateContract.mockReset().mockResolvedValue({})
     runtime.readContract.mockReset().mockImplementation(async ({ functionName }: { functionName: string }) => {
       if (functionName === 'allowance') return runtime.allowance
       throw new Error(`Unexpected contract read: ${functionName}`)
@@ -386,6 +387,48 @@ describe('shared payment execution', () => {
     await ready(); await submit()
     expect(runtime.writes[0].request.chainId).toBe(8453)
     expect(encoded(runtime.writes[0].request).args?.[0]).toBe(42n)
+  })
+
+  // JBMultiTerminal_UnderMin(98 tokens, 99 tokens) as revert data.
+  const UNDER_MIN = encodeAbiParameters([{ type: 'uint256' }, { type: 'uint256' }], [98n * UNIT, 99n * UNIT]).replace('0x', '0x6b2bb382') as Hex
+  const SHORTFALL = 'This payment would get fewer tokens than your minimum, so lower your minimum or try again.'
+  function allowedDecrease() { return host.querySelector<HTMLInputElement>('input[type="number"]') }
+
+  it('names a shortfall the simulation hit and reviews again with the looser minimum it offers', async () => {
+    await ready()
+    const pay = runtime.handles[0].send
+    pay.mockImplementationOnce(async (_request: TxRequest, options: TxSendOptions & { onFailure?: (error: unknown) => void }) => { options.onFailure?.(UNDER_MIN); return null })
+    await act(async () => button().click())
+    await waitUntil(() => expect(host.textContent).toContain(SHORTFALL))
+    // 1% plus the ~1.02% shortfall, rounded up to a half percent.
+    expect(allowedDecrease()?.value).toBe('2.5')
+    const again = [...host.querySelectorAll('button')].find(element => element.textContent === 'Review again')!
+    runtime.quote.mockResolvedValue(quote(97n * UNIT))
+    await act(async () => again.click())
+    await waitUntil(() => expect(runtime.writes.filter(item => item.action === 'payment')).toHaveLength(1))
+    expect(runtime.quote).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ slippageBps: 250n }))
+    expect(encoded(runtime.writes[0].request).args?.[4]).toBe(97n * UNIT)
+    expect(host.textContent).not.toContain(SHORTFALL)
+    expect(host.textContent).toContain('2.5% maximum slippage')
+  })
+
+  it('reads why a sent payment reverted from the same call at its block', async () => {
+    await ready()
+    runtime.waitForTransactionReceipt.mockResolvedValue({ status: 'reverted', blockNumber: 105n, transactionHash: HASH })
+    runtime.simulateContract.mockRejectedValue(Object.assign(new Error('reverted'), { data: UNDER_MIN }))
+    await act(async () => button().click())
+    await waitUntil(() => expect(host.textContent).toContain(SHORTFALL))
+    expect(runtime.simulateContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'pay', account: WALLET, blockNumber: 105n }))
+    expect(allowedDecrease()).not.toBeNull()
+  })
+
+  it('keeps the shared line and offers no minimum for an unknown failure', async () => {
+    await ready()
+    runtime.handles[0].send.mockImplementationOnce(async (_request: TxRequest, options: TxSendOptions & { onFailure?: (error: unknown) => void }) => { options.onFailure?.(new Error('nonce too low')); return null })
+    await submit()
+    expect(allowedDecrease()).toBeNull()
+    expect([...host.querySelectorAll('button')].some(element => element.textContent === 'Review again')).toBe(false)
+    expect(runtime.quote).not.toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ slippageBps: expect.anything() }))
   })
 
 })

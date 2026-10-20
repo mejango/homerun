@@ -15,6 +15,8 @@ export type ProjectPayQuoteInput = {
   beneficiary: Address
   /** The selected project's verified accounting terminal, never an indexer address. */
   terminal: Address
+  /** The tolerance prepareUserPay floors its quote by; its own default when unset. */
+  slippageBps?: bigint
 }
 
 export type ProjectPayQuote = {
@@ -38,7 +40,6 @@ export type ProjectPayTokenOption = {
   viaRouter: boolean
 }
 
-const SLIPPAGE_BPS = 100n
 function optionalAddress(name: string, chainId: JBChainId): Address | undefined {
   const value = (jbV6ContractAddress as Record<string, Partial<Record<JBChainId, Address>>>)[name]?.[chainId]
   return value && !isAddressEqual(value, zeroAddress) ? value : undefined
@@ -113,8 +114,8 @@ export async function prepareProjectPayQuote(client: PublicClient, input: Projec
 
   const routes = (await Promise.all(candidates.map(async address => {
     try {
-      const args = { chainId, terminal: address, projectId, token, amount, beneficiary }
-      return { terminal: address, ...await prepareUserPay(snapshot, { ...args, slippageBps: SLIPPAGE_BPS }) }
+      const args = { chainId, terminal: address, projectId, token, amount, beneficiary, ...(input.slippageBps !== undefined ? { slippageBps: input.slippageBps } : {}) }
+      return { terminal: address, ...await prepareUserPay(snapshot, args) }
     } catch { return null }
   }))).filter(route => !!route)
   routes.sort((a, b) => {
