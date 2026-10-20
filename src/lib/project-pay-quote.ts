@@ -2,14 +2,11 @@ import {
   jbContractAddress, jbControllerAbi, jbDirectoryAbi, jbMultiTerminalAbi,
   NATIVE_TOKEN, USDC_ADDRESSES, type JBChainId,
 } from '@bananapus/nana-sdk-core'
-import {
-  prepareUserPay, slippageFloor, v6Address, type PayPreview,
-  type PreparedUserPay,
-} from '@bananapus/nana-sdk-core/v6'
+import { prepareUserPay, v6Address, type PayPreview } from '@bananapus/nana-sdk-core/v6'
 import { erc20Abi, isAddress, isAddressEqual, zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
 
 export type ProjectPayQuoteInput = {
-  /** Current Center passkey profile supports exact direct terminal payments only. */
+  /** The Center passkey profile pays the multi terminal only, never through the router. */
   directTerminalOnly?: boolean
   chainId: JBChainId
   projectId: bigint
@@ -117,7 +114,7 @@ export async function prepareProjectPayQuote(client: PublicClient, input: Projec
   const routes = (await Promise.all(candidates.map(async address => {
     try {
       const args = { chainId, terminal: address, projectId, token, amount, beneficiary }
-      return { terminal: address, ...await (input.directTerminalOnly ? exactTerminalPay(snapshot, args) : prepareUserPay(snapshot, { ...args, slippageBps: SLIPPAGE_BPS })) }
+      return { terminal: address, ...await prepareUserPay(snapshot, { ...args, slippageBps: SLIPPAGE_BPS }) }
     } catch { return null }
   }))).filter(route => !!route)
   routes.sort((a, b) => {
@@ -129,10 +126,4 @@ export async function prepareProjectPayQuote(client: PublicClient, input: Projec
   if (!best) throw new Error('No listed payment route has a live quote for this token.')
   if (best.minReturnedTokens === 0n && !(metadata.reservedPercent === 10_000 && best.preview.reservedTokenCount > 0n)) throw new Error('No protected token return is available for this payment.')
   return { terminal: best.terminal, preview: best.preview, minimumTokenCount: best.minReturnedTokens, reservedTokenCount: best.preview.reservedTokenCount, metadata: best.metadata, blockNumber }
-}
-
-/** Center's passkey profile pays with empty metadata. It keeps the terminal's own count, so a payment the buyback hook would swap has no protected return here and is refused. */
-async function exactTerminalPay(client: PublicClient, { terminal, projectId, token, amount, beneficiary }: { terminal: Address; projectId: bigint; token: Address; amount: bigint; beneficiary: Address }): Promise<PreparedUserPay> {
-  const [, beneficiaryTokenCount, reservedTokenCount] = await client.readContract({ address: terminal, abi: jbMultiTerminalAbi, functionName: 'previewPayFor', args: [projectId, token, amount, beneficiary, '0x'] })
-  return { metadata: '0x', preview: { beneficiaryTokenCount, reservedTokenCount }, minReturnedTokens: slippageFloor(beneficiaryTokenCount, SLIPPAGE_BPS) }
 }

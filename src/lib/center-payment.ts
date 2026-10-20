@@ -1,4 +1,4 @@
-import { decodeFunctionData, isAddress, keccak256, parseAbi, stringToHex, type Address } from 'viem'
+import { decodeFunctionData, isAddress, isHex, keccak256, parseAbi, stringToHex, type Address, type Hex } from 'viem'
 import type { CenterWalletConnection, CenterWalletExpectedPayment, CenterWalletPaymentStatus, CenterWalletStorage,
   PreparedUserOperation, SmartWalletPlan, createCenterWalletClient } from '@bananapus/nana-sdk-connect/core'
 import type { HomerunCenterConfig } from '@/providers/wallet-config'
@@ -7,6 +7,8 @@ import { assertNoViewAs } from '@/lib/viewAs'
 
 export interface HomerunPaymentIntent {
   projectId: string; token: Address; terminal: Address; amount: string; minimumReturnedTokens: string; returnPath: string
+  /** The quote's pay metadata; journals saved before it existed paid with empty metadata. */
+  metadata?: Hex
 }
 type Principal = { accountId: string; grantId: string; signer: string }
 interface Journal extends Principal {
@@ -21,8 +23,9 @@ const encode = (value: unknown) => JSON.stringify(value, (_key, item) => typeof 
 const digest = (value: unknown) => keccak256(stringToHex(encode(value)))
 function checkedIntent(input: HomerunPaymentIntent): HomerunPaymentIntent {
   const fields = ['projectId', 'token', 'terminal', 'amount', 'minimumReturnedTokens', 'returnPath']
-  if (!input || Object.keys(input).length !== fields.length || fields.some(field => !Object.hasOwn(input, field))) fail('Invalid payment.')
+  if (!input || Object.keys(input).some(field => !fields.includes(field) && field !== 'metadata') || fields.some(field => !Object.hasOwn(input, field))) fail('Invalid payment.')
   const result = { ...input }
+  if (Object.hasOwn(result, 'metadata') && (!isHex(result.metadata, { strict: true }) || result.metadata.length % 2 !== 0 || result.metadata.length > 2 + 2 * 16_384)) fail('Invalid payment metadata.')
   for (const value of [result.projectId, result.amount, result.minimumReturnedTokens])
     if (typeof value !== 'string' || !/^(0|[1-9][0-9]{0,77})$/.test(value) || BigInt(value) >= 2n ** 256n) fail('Invalid payment amount.')
   if (BigInt(result.projectId) === 0n || BigInt(result.amount) === 0n ||
@@ -75,7 +78,7 @@ export function createHomerunPayment(options: { config: HomerunCenterConfig;
     const decoded = decodeFunctionData({ abi: payAbi, data: call.data })
     const [projectId, token, amount, beneficiary, minimum, memo, metadata] = decoded.args
     if (String(projectId) !== intent.projectId || !same(token, intent.token) || String(amount) !== intent.amount ||
-      !same(beneficiary, account) || minimum < BigInt(intent.minimumReturnedTokens) || memo !== '' || metadata !== '0x')
+      !same(beneficiary, account) || minimum < BigInt(intent.minimumReturnedTokens) || memo !== '' || !same(metadata, intent.metadata ?? '0x'))
       fail('The prepared payment differs from the amount, beneficiary or minimum you reviewed.')
     return { kind: 'v6-usdc-pay', chainId: 8453, account, token: intent.token, terminal: intent.terminal,
       projectId: intent.projectId, amount: intent.amount, beneficiary: account, minimumReturnedTokens: String(minimum),
@@ -104,7 +107,7 @@ export function createHomerunPayment(options: { config: HomerunCenterConfig;
         state.evidence.source !== 'onchain' || state.evidence.chainId !== 8453 || !Number.isSafeInteger(timestamp) ||
         timestamp < Date.now() - 300_000 || timestamp > Date.now() + 30_000) fail('The current wallet owners and payment profile could not be verified.')
       const plan = await smart.preparePlan(binding.id, 'prepare_pay', { project: { chainId: 8453, projectId: intent.projectId, version: 6 },
-        account: current.address, beneficiary: current.address, token: intent.token, amount: intent.amount, slippageBps: 100, memo: '', metadata: '0x' }, 'homerun-plan:' + saved.value.id)
+        account: current.address, beneficiary: current.address, token: intent.token, amount: intent.amount, slippageBps: 100, memo: '', metadata: intent.metadata ?? '0x' }, 'homerun-plan:' + saved.value.id)
       const expectedPayment = expectation(plan, intent, current.address)
       await identity(current, saved.value)
       saved = save({ ...saved.value, plan, expectedPayment }, saved.raw)

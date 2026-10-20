@@ -108,7 +108,7 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
       const quote = await prepareProjectPayQuote(client, { chainId: 8453, projectId, token, terminal, amount, beneficiary: address, directTerminalOnly: true })
       guard()
       const reviewed = await controller.prepare({ projectId: projectId.toString(), token, terminal, amount: amount.toString(),
-        minimumReturnedTokens: quote.minimumTokenCount.toString(), returnPath: window.location.pathname })
+        minimumReturnedTokens: quote.minimumTokenCount.toString(), metadata: quote.metadata, returnPath: window.location.pathname })
       guard(); if (!reviewed.approvalUrl) throw new Error('The payment review is unavailable. Check its saved status.')
       await approve(reviewed.approvalUrl)
     })
