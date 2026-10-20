@@ -270,7 +270,7 @@ describe("Sticky holder recovery and independent loading", () => {
     await act(async () => stake.click());
     await settle();
     expect(element.textContent).toContain(
-      "This stake would return 0.98 SHARE, under its 0.99 SHARE minimum. Refresh the quote and try again.",
+      "This stake would return 0.98 SHARE, under its 0.99 SHARE minimum. Review again for a fresh quote.",
     );
   });
 });

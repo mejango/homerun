@@ -42,8 +42,10 @@ export function AllowedDecreaseField({
           value={bps / 100}
           onChange={(event) => {
             const percent = Number(event.target.value)
-            if (Number.isFinite(percent) && percent >= 0 && percent < limitPercent) {
-              onChange(Math.round(percent * 100))
+            // Checked after rounding to basis points: 49.999% rounds to the 50% limit itself.
+            const bps = Math.round(percent * 100)
+            if (Number.isFinite(percent) && bps >= 0 && bps < limitPercent * 100) {
+              onChange(bps)
             }
           }}
           className="min-w-0 flex-1 border-0 bg-transparent p-0 text-right outline-none ring-0 focus:border-0 focus:ring-0"
