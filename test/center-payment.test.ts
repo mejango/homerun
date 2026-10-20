@@ -84,7 +84,7 @@ describe('Homerun original Center payment recovery', () => {
     expect(f.create().pending()?.intent).toEqual(f.intent)
   })
   it('plans and reviews the quote metadata, and refuses a plan that drops or changes it', async () => {
-    const metadata = buildUserPayMetadata({ chainId: 8453, minimumSwapAmountOut: 99n })
+    const metadata = buildUserPayMetadata({ chainId: 8453, minimumSwapAmountOut: 99n, tiers: { metadataIdTarget: `0x${'11'.repeat(20)}`, tierIdsToMint: [1n, 2n] } })
     const pay = (bytes: `0x${string}`) => encodeFunctionData({ abi: parseAbi(['function pay(uint256,address,uint256,address,uint256,string,bytes)']), functionName: 'pay', args: [7n, token, 1000000n, account, 100n, '', bytes] })
     const f = fixture(), intent = { ...f.intent, metadata }
     f.plan.draft.calls[0]!.data = pay(metadata)
