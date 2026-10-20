@@ -1,11 +1,11 @@
 'use client'
 
+import { FundOperatorActions } from '@/components/project-panels'
 import { buildBurnTokensTx, getHookAwareCashOutQuote, prepareHookAwareCashOut } from '@bananapus/nana-sdk-core/v6'
 import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { erc20Abi, formatUnits, getAddress, isAddress, isAddressEqual, zeroAddress, type Address, type PublicClient } from 'viem'
-import { FundOperatorActions } from '@/components/FundOperatorActions'
 import { ProjectPayment } from '@/components/ProjectPayment'
 import { chosenOrAuto } from '@/lib/transaction-builders'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'

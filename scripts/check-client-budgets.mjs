@@ -17,17 +17,17 @@ const distDir = process.env.NEXT_DIST_DIR || '.next'
 const dist = resolve(distDir)
 const budgets = {
   '/': { js: 249, css: 29 },
-  '/founderhaus': { js: 322, css: 34 },
-  '/project': { js: 322, css: 34 },
-  '/projects': { js: 257, css: 29 },
+  '/founderhaus': { js: 310, css: 30 },
+  '/project': { js: 310, css: 30 },
+  '/projects': { js: 258, css: 29 },
   '/create': { js: 423, css: 29 },
-  '/create/preview': { js: 455, css: 34 },
+  '/create/preview': { js: 443, css: 30 },
   '/create/recover': { js: 423, css: 29 },
-  '/create/success': { js: 277, css: 29 },
-  '/center/callback': { js: 230, css: 28 },
+  '/create/success': { js: 278, css: 29 },
+  '/center/callback': { js: 231, css: 28 },
   '/account/0x0000000000000000000000000000000000000001': { js: 282, css: 30 },
-  '/intent/00000000-0000-4000-8000-000000000000': { js: 430, css: 34 },
-  '/op:11': { js: 617, css: 33 },
+  '/intent/00000000-0000-4000-8000-000000000000': { js: 417, css: 30 },
+  '/op:11': { js: 525, css: 29 },
   '/not-a-route/x': { js: 229, css: 28 },
 }
 

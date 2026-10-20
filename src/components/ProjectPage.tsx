@@ -24,11 +24,9 @@ import { money } from "@/lib/money";
 import { FundTokenTermsSection, type FundTokenTerms } from "./FundTokenTerms";
 import { DemoPaymentResult } from "./DemoPaymentResult";
 import { plannedOwnerActionDraft as modelOwnerActionDraft } from "../../web/owner-actions.mjs";
-import { SiteIntegration } from "./SiteIntegration";
 import { ProjectActionGuide } from "./ProjectActionGuide";
 import { projectActionIds } from "@/lib/project-action-guide";
 import { HomerunProjectLayout, OwnersTabs } from "./HomerunProjectLayout";
-import { DemoProjectShop } from "./DemoProjectShop";
 import { DemoActivity } from "./DemoActivity";
 import { OperatorProfile } from "./OperatorProfile";
 import { FundingProgress } from "./FundingProgress";
@@ -36,12 +34,20 @@ import { PaymentChainSelect } from "./PaymentChainSelect";
 import { demoShopStorageKey } from "@/lib/demo-shop";
 import { demoProjectManagementKey, type DemoProjectManagement } from "@/lib/demo-project-management";
 import { DemoProjectControl, DemoProjectDetailsEditor, DemoProjectPermissions, DemoProjectSplits, useDemoProjectManagement } from "./DemoProjectManagement";
-import {
-  BudgetChart,
-  CashHistoryChart,
-  BorrowingChart,
-  OwnershipCharts,
-} from "./ProjectCharts";
+import dynamic from "next/dynamic";
+import { PanelSkeleton } from "@/components/ui/Skeleton";
+import { preloadWhenIdle } from "@/lib/idle-preload";
+
+// Charts, the shop and the site snippet sit in tabs other than the overview: each loads when first shown, and all of
+// them once the page is idle.
+const loading = () => <PanelSkeleton />;
+const SiteIntegration = dynamic(() => import("./SiteIntegration").then(m => m.SiteIntegration), { loading });
+const DemoProjectShop = dynamic(() => import("./DemoProjectShop").then(m => m.DemoProjectShop), { loading });
+const BudgetChart = dynamic(() => import("./ProjectCharts").then(m => m.BudgetChart), { loading });
+const CashHistoryChart = dynamic(() => import("./ProjectCharts").then(m => m.CashHistoryChart), { loading });
+const BorrowingChart = dynamic(() => import("./ProjectCharts").then(m => m.BorrowingChart), { loading });
+const OwnershipCharts = dynamic(() => import("./ProjectCharts").then(m => m.OwnershipCharts), { loading });
+const preloadDemoPanels = () => preloadWhenIdle([() => import("./SiteIntegration"), () => import("./DemoProjectShop"), () => import("./ProjectCharts")]);
 
 import { Modal, photos, ProjectPhoto, ProjectRaiseStats, ProjectOverviewView, DemoStageHistory, ProjectPageShell, type ProjectPhase } from "./ProjectPageParts";
 type Projection = ReturnType<typeof projectNetwork>;
@@ -1682,6 +1688,7 @@ export type PlannedProjectSlots = {
 
 export function DemoProjectPage({ project, planned }: { project?: CreatedProject; planned?: PlannedProjectSlots }) {
   const [ready, setReady] = useState(false);
+  useEffect(preloadDemoPanels, []);
   useEffect(() => {
     setReady(true);
   }, []);

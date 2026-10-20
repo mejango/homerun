@@ -80,7 +80,8 @@ describe('demo project phase stores', () => {
     ]
     await act(async () => root.render(<DemoProjectPage project={project} />))
     await tab('Shop')
-    expect(itemNames()).toEqual(['Fundraising membership'])
+    // The shop is its own chunk; it shows once loaded.
+    await vi.waitFor(() => expect(itemNames()).toEqual(['Fundraising membership']))
 
     for (const [phase, expected] of [
       ['funded', 'Fundraising membership'],
