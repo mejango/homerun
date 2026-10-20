@@ -139,3 +139,16 @@ it('shows kept data on the first commit of a later client navigation', async () 
   expect(firstCommit).toContain('No items yet')
   expect(firstCommit).not.toContain('Reading the project’s shop…')
 })
+
+it('seeds the raised figure only from one dollar accounting token', async () => {
+  const { FundProject } = await vi.importActual<typeof import('@/components/FundProject')>('@/components/FundProject')
+  const { parseFundProjectMetadata } = await import('@/lib/fund-project-metadata')
+  const details = parseFundProjectMetadata({ name: 'Seeded house', homerun: { version: 1, kind: 'fund', setup: { purchaseBudget: 900, opsReserve: 100 } } })
+  const usdc = { token: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', tokenSymbol: 'USDC', decimals: 6, balance: '250000000' }
+  const eth = { token: '0x000000000000000000000000000000000000eeee', tokenSymbol: 'ETH', decimals: 18, balance: '1000000000000000000' }
+  const header = (indexed: Record<string, unknown>) => renderToString(<QueryClientProvider client={client()}><FundProject chainId={1} projectId="7" seed={{ indexed: { chainId: 1, projectId: 7, version: 6, isRevnet: false, metadataUri: 'ipfs://seed', decimals: 6, balance: '1000000000250000000', ...indexed }, details } as ProjectSeed} /></QueryClientProvider>)
+  expect(header({ accountingTokenCount: 1, projectTokenBalances: { items: [usdc] } })).toContain('Raised: <span class="revalidating" aria-busy="true" title="Confirming against the chain…">$250</span>')
+  expect(header({ accountingTokenCount: 2, projectTokenBalances: { items: [usdc, eth] } })).not.toContain('Raised:')
+  expect(header({ accountingTokenCount: 1, projectTokenBalances: { items: [eth] } })).not.toContain('Raised:')
+  expect(header({})).not.toContain('Raised:')
+})

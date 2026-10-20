@@ -23,7 +23,7 @@ import { useHydrated } from '@/hooks/useHydrated'
 import { displayChainName } from '@/lib/chainDisplay'
 import { readFundAccountState, readFundProjectState, type FundProjectState } from '@/lib/fund-state'
 import { fetchFundProjectMetadata, type FundProjectMetadata } from '@/lib/fund-project-metadata'
-import { getProject } from '@/lib/bendystraw'
+import { getProject, type BsProjectDetail } from '@/lib/bendystraw'
 import { PERSIST } from '@/lib/query-persist'
 import type { ProjectSeed } from '@/lib/project-seed'
 import { DemoStageHistory, ProjectOverviewView, ProjectPageShell, ProjectPhoto, ProjectRaiseStats } from '@/components/ProjectPageParts'
@@ -116,8 +116,7 @@ export function FundProject({ chainId, projectId, intentId, seed }: { chainId: J
   })
   const indexed = { ...restoredIndexed, data: hydrated ? restoredIndexed.data : seed?.indexed }
   const indexedRow = indexed.data?.version === 6 && indexed.data.chainId === chainId && String(indexed.data.projectId) === projectId ? indexed.data : null
-  // The index's treasury balance, in the FUND's USDC accounting token, paints the header before the contract read confirms it.
-  const indexedRaised = indexedRow && indexedRow.decimals !== null ? Number(formatUnits(BigInt(indexedRow.balance), indexedRow.decimals)) : undefined
+  const indexedRaised = indexedDollarTreasury(indexedRow)
   const metadataUri = displayState?.projectUri || (indexed.data?.version === 6 && indexed.data.chainId === chainId && String(indexed.data.projectId) === projectId ? indexed.data.metadataUri : null)
   const seededDetails = metadataUri && metadataUri === seed?.indexed?.metadataUri ? seed.details ?? undefined : undefined
   const restoredDetails = useQuery({
@@ -145,6 +144,16 @@ export function FundProject({ chainId, projectId, intentId, seed }: { chainId: J
   return <IncomeProjectRuntime chainId={chainId} projectId={incomeId} fundProjectId={id} bindingUnavailable={incomeBinding.isPending || incomeBinding.isError || !!lastIncomeId && !incomeBinding.data}>{income => <ProjectPageShell>
       <ProjectActions key={`${chainId}:${projectId}`} chainId={chainId} projectId={id} intentId={intentId} indexedOwner={indexed.data?.owner ?? undefined} indexedRaised={indexedRaised} state={displayState ?? undefined} client={client} details={details.data} notice={<>{notice}{income.notice}</>} income={income} refreshing={query.isFetching} unconfirmed={!query.data || query.isPlaceholderData} readsUnavailable={readsUnavailable} writesUnavailable={writesUnavailable} refresh={() => void query.refetch()} />
     </ProjectPageShell>}</IncomeProjectRuntime>
+}
+
+/** Whether a treasury token is a dollar, the unit the published goal is in. */
+const isDollar = (symbol: string | null | undefined) => !!symbol && /^USDC?$/i.test(symbol)
+
+/** The index's treasury while it holds one accounting token and that token is a dollar, which paints the header before
+ * the contract read confirms it. Otherwise nothing, and the header waits for the chain. */
+function indexedDollarTreasury(row: BsProjectDetail | null): number | undefined {
+  const only = row?.accountingTokenCount === 1 ? row.projectTokenBalances?.items[0] : undefined
+  return only && only.decimals !== null && isDollar(only.tokenSymbol) ? Number(formatUnits(BigInt(only.balance), only.decimals)) : undefined
 }
 
 const compact = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: Math.abs(value) < 1_000 ? 2 : 1 }).format(value)
@@ -285,7 +294,7 @@ function ProjectActions({ chainId, projectId, intentId, indexedOwner, indexedRai
   const live = liveFundPhase({ pausePay: state.metadata.pausePay, cashOutTaxRate: state.metadata.cashOutTaxRate, allowOwnerMinting: state.metadata.allowOwnerMinting, hasIncome: !!income.projectId, supported: !!supported })
   // The goal is published, never enforced, and only comparable to a dollar treasury.
   const goal = publishedGoal(plan)
-  const dollars = !!context && /^USDC?$/i.test(context.symbol)
+  const dollars = !!context && isDollar(context.symbol)
   const raised = context ? Number(formatUnits(context.balance, context.decimals)) : 0
   const raisedMetric = context && (dollars
     ? <span key="raised" data-header-metric="raised" title={`Raised: ${money(raised)}`}>Raised: <Revalidating pending={unconfirmed}>{compact(raised)}</Revalidating></span>

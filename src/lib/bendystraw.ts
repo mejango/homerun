@@ -141,6 +141,21 @@ export type BsProject = {
   metadataUri: string | null
 }
 
+/** One accounting token's store balance, in that token's own units. */
+export type BsProjectTokenBalance = {
+  token: string
+  tokenSymbol: string | null
+  decimals: number | null
+  balance: string
+}
+
+/** A project with its balance per accounting token: `balance` adds their raw units when there is more than one.
+ * A row this browser kept from before the fields existed has neither. */
+export type BsProjectDetail = BsProject & {
+  accountingTokenCount?: number
+  projectTokenBalances?: { items: BsProjectTokenBalance[] }
+}
+
 export type BsSearchProject = BsProject & {
   searchTicker: string | null
 }
@@ -154,7 +169,7 @@ const PROJECT_FIELDS = `
 const PROJECTS_BY_FILTER_QUERY = `query ProjectsByFilter($where: projectFilter!, $limit: Int!) {
   projects(
     where: $where
-    orderBy: "volume"
+    orderBy: "volumeUsd"
     orderDirection: "desc"
     limit: $limit
   ) { items { ${PROJECT_FIELDS} } }
@@ -164,10 +179,13 @@ export async function getProject(
   chainId: number,
   projectId: number,
   { signal }: { signal?: AbortSignal } = {},
-): Promise<BsProject | null> {
-  const data = await bendystraw<{ project: BsProject | null }>(
+): Promise<BsProjectDetail | null> {
+  const data = await bendystraw<{ project: BsProjectDetail | null }>(
     `query($chainId: Float!, $projectId: Float!) {
-      project(chainId: $chainId, projectId: $projectId, version: 6) { ${PROJECT_FIELDS} }
+      project(chainId: $chainId, projectId: $projectId, version: 6) {
+        ${PROJECT_FIELDS} accountingTokenCount
+        projectTokenBalances { items { token tokenSymbol decimals balance } }
+      }
     }`,
     { chainId, projectId },
     { policy: 'standard', signal },

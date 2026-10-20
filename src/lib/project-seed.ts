@@ -1,12 +1,12 @@
 import { unstable_cache } from 'next/cache'
 import { cache } from 'react'
-import { getProject, type BsProject } from '@/lib/bendystraw'
+import { getProject, type BsProjectDetail } from '@/lib/bendystraw'
 import { fetchFundProjectMetadata, type FundProjectMetadata } from '@/lib/fund-project-metadata'
 import { readIncomeFundBinding } from '@/lib/income-fund-binding'
 import { jbCenterPublicClient } from '@/lib/jbcenter-public-client'
 
 /** What the server can say about a project before any contract read: its index row and published details. */
-export type ProjectSeed = { indexed: BsProject | null; details: FundProjectMetadata | null }
+export type ProjectSeed = { indexed: BsProjectDetail | null; details: FundProjectMetadata | null }
 
 /** A slow index or gateway must never hold the page: past this, the client loads it as before. */
 const SEED_WAIT_MS = 2_500
