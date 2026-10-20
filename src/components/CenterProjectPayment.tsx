@@ -13,7 +13,7 @@ import { CENTER_FRAME_CALLBACK, CENTER_FRAME_RECEIVED } from '@/providers/center
 import { createHomerunPayment, SIGNA_SLIPPAGE_LIMIT_BPS, signaPayFailure } from '@/lib/center-payment'
 import { prepareProjectPayQuote } from '@/lib/project-pay-quote'
 import { AllowedDecreaseField } from '@/components/ui/AllowedDecreaseField'
-import { PAY_DEFAULT_SLIPPAGE_BPS, payRetrySlippageBps } from '@/lib/pay-minimum'
+import { PAY_DEFAULT_SLIPPAGE_BPS, payFailureMessage, payRetrySlippageBps } from '@/lib/pay-minimum'
 import type { PayFailure } from '@bananapus/nana-sdk-core/v6'
 
 type Controller = ReturnType<typeof createHomerunPayment>
@@ -84,7 +84,7 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
       if (!live.current) return
       const reason = signaPayFailure(cause)
       setPrepareFailure(reason)
-      setError(reason?.message ?? (cause instanceof Error ? cause.message : 'This payment could not be checked. Keep its original record.'))
+      setError((reason ? payFailureMessage(reason) : null) ?? (cause instanceof Error ? cause.message : 'This payment could not be checked. Keep its original record.'))
     }
     finally { working.current = false; if (live.current) { setBusy(false); try { setPending(controller?.pending() ?? null) } catch { setError('The saved payment is unavailable. Return to its original tab.') } } }
   }
@@ -161,7 +161,7 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
     }, 2000)
     return () => { cancelled = true; window.clearInterval(timer) }
   }, [controller, matching, status])
-  return <section aria-label={title} className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7">
+  return <section aria-label={title} className="center-payment rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7">
     {chainSelector}
     <h3 className="text-lg">Pay with Juicebox wallet</h3>
     {chainId !== 8453 ? <p className="mt-3 text-sm">Choose Base to pay with your Juicebox wallet, or connect an external wallet for this network.</p>
@@ -175,7 +175,7 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
           disabled={busy || paused} onChange={event => setInput(event.target.value)} className="min-h-12 border border-[#bfc9b5] bg-white px-3" /></label> : null}
         {matching ? <dl className="mt-4 text-sm"><dt>Payment</dt><dd>{formatUnits(BigInt(pending!.intent.amount), 6)} USDC</dd>
           {pending?.status?.expectedPayment ? <><dt className="mt-2">Minimum returned</dt><dd><DisplayTokenAmount value={BigInt(pending.status.expectedPayment.minimumReturnedTokens)} /> {tokenLabel}</dd></> : null}</dl> : null}
-        <p role="status" aria-live="polite" className="mt-4 break-words text-sm">{paused ? 'This project has paused payments.' : blocked ?? (frame ? statuses.reviewing : status === 'reverted' && failure ? failure.message : status ? statuses[status] : 'Each payment needs your passkey approval.')}</p>
+        <p role="status" aria-live="polite" className="mt-4 break-words text-sm">{paused ? 'This project has paused payments.' : blocked ?? (frame ? statuses.reviewing : status === 'reverted' && failure ? payFailureMessage(failure) : status ? statuses[status] : 'Each payment needs your passkey approval.')}</p>
         {retryBps !== null && !frame ? <AllowedDecreaseField bps={retryBps} onChange={bps => setRetryEdit(Math.min(bps, SIGNA_SLIPPAGE_LIMIT_BPS))} /> : null}
         {frame ? <div className="center-review-frame mt-4">
           <iframe ref={frameRef} src={frame} title="Juicebox wallet payment review" allow="publickey-credentials-get" referrerPolicy="no-referrer" style={frameHeight ? { height: frameHeight } : undefined} />

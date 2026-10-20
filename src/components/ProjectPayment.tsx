@@ -23,7 +23,7 @@ import { readableError } from '@/lib/readable-error'
 import { refreshIndexedProject } from '@/lib/refresh-indexed'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
 import { AllowedDecreaseField } from '@/components/ui/AllowedDecreaseField'
-import { PAY_DEFAULT_SLIPPAGE_BPS, PAY_SLIPPAGE_LIMIT_PERCENT, payRetrySlippageBps } from '@/lib/pay-minimum'
+import { PAY_DEFAULT_SLIPPAGE_BPS, PAY_SLIPPAGE_LIMIT_PERCENT, payFailureMessage, payRetrySlippageBps } from '@/lib/pay-minimum'
 
 const CenterProjectPayment = lazyComponent(() => import('./CenterProjectPayment').then(m => m.default))
 export function ProjectPayment(props: Parameters<typeof ExternalProjectPayment>[0]) {
@@ -112,6 +112,10 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
   const failure = shown?.failure ?? null
   const retrySlippageBps = shown?.retryBps ?? null
   const retrying = retryWhenQuoted === paymentInputs
+  // Another payment drops it, so coming back to this one starts from the default again.
+  useEffect(() => {
+    if (payerSlippage && payerSlippage.payment !== paymentInputs) setPayerSlippage(null)
+  }, [payerSlippage, paymentInputs])
   const slippage = slippageBps === undefined ? undefined : BigInt(slippageBps)
   const intent = `${chainId}:${projectId}:${context.token}:${context.terminal}:${count}:${address ?? ''}:${rulesetId}:${paused}:${reservedPercent}:${tx.isSafe}`
   const currentIntent = useRef(intent)
@@ -283,8 +287,8 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       settled={!!submitted}
       held={submitted?.held}
       status={submitted?.notice ?? status ?? (tx.phase === 'pending' ? <>Submitted. Waiting for onchain confirmation{tx.hash && explorerTxUrl(chainId, tx.hash) ? <> (<a className="underline" href={explorerTxUrl(chainId, tx.hash)!} target="_blank" rel="noreferrer">view transaction</a>)</> : null}</> : null)}
-      error={error ?? failure?.message ?? tx.error ?? approval.error}
-      onClose={() => { setOpen(false); for (const item of [tx, approval]) if (item.phase === 'submitted') item.dismiss(); setStatus(null); attempt.current++; setOutcome(null); setRetryWhenQuoted(null) }}
+      error={error ?? (failure ? payFailureMessage(failure) : null) ?? tx.error ?? approval.error}
+      onClose={() => { setOpen(false); for (const item of [tx, approval]) if (item.phase === 'submitted') item.dismiss(); setStatus(null); attempt.current++; setOutcome(null); setRetryWhenQuoted(null); setPayerSlippage(null) }}
     >
       <div className="text-sm text-smoke-600" aria-live="polite">
         {paused ? <p>This project has paused payments.</p> : zeroAllocation ? <p>This payment gives you no {tokenLabel}. All new tokens are allocated to the reserved recipients.</p> : quoted ? <p>Through the project payment terminal, using its current rules and buyback hook. {(slippageBps ?? PAY_DEFAULT_SLIPPAGE_BPS) / 100}% maximum slippage.</p>

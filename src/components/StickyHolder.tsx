@@ -666,7 +666,7 @@ function StickyStake({
           onFailure: (failure) => {
             const decoded = decodePayFailure(failure);
             if (decoded?.reason === "TERMINAL_UNDER_MIN" && decoded.received !== undefined && decoded.minimum !== undefined)
-              setError(`This stake would return ${units(decoded.received)} SHARE, under its ${units(decoded.minimum)} SHARE minimum. Refresh the quote and try again.`);
+              setError(decoded.received === 0n ? "This stake would return no SHARE." : `This stake would return ${units(decoded.received)} SHARE, under its ${units(decoded.minimum)} SHARE minimum. Refresh the quote and try again.`);
           },
           reviewNotice: `Your FUND moves into the Sticky pool. The permanent unstaking tax is ${formatUnits(current.cashOutTaxRate, 2)}%, plus applicable terminal fees. ${quote.data && latestQuote.minimumShares < quote.data.minimumShares ? "The SHARE quote decreased since it was displayed." : ""}`,
           reverify: async () => {

@@ -456,4 +456,14 @@ describe('shared payment execution', () => {
     expect(host.textContent).not.toContain(SHORTFALL)
   })
 
+  it('says a payment would return no tokens, and offers no minimum of zero', async () => {
+    await ready()
+    const none = encodeAbiParameters([{ type: 'uint256' }, { type: 'uint256' }], [0n, 99n * UNIT]).replace('0x', '0x6b2bb382') as Hex
+    runtime.handles[0].send.mockImplementationOnce(async (_request: TxRequest, options: TxSendOptions & { onFailure?: (error: unknown) => void }) => { options.onFailure?.(none); return null })
+    await submit()
+    await waitUntil(() => expect(host.textContent).toContain('This payment would return no tokens.'))
+    expect(allowedDecrease()).toBeNull()
+    expect([...host.querySelectorAll('button')].some(element => element.textContent === 'Review again')).toBe(false)
+  })
+
 })
