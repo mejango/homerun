@@ -17,7 +17,7 @@ const runtime = vi.hoisted(() => ({
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({
   ...runtime.wallet, disconnect: runtime.disconnect, openSignIn: runtime.openSignIn,
 }) }))
-vi.mock('@/providers/preload-center', () => ({ preloadCenterWallet: runtime.preload }))
+vi.mock('@/providers/preload-center', () => ({ preloadSignIn: runtime.preload }))
 vi.mock('@/providers/Providers', () => ({ IS_DETERMINISTIC_BROWSER: false }))
 vi.mock('wagmi', () => ({ useEnsName: (query: unknown) => {
   runtime.ensQuery(query)

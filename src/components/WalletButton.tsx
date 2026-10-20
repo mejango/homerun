@@ -5,7 +5,7 @@ import Link from 'next/link'
 import type { Address } from 'viem'
 import { useAccountIdentity } from '@/hooks/useAccountIdentity'
 import { useWallet } from '@/hooks/useWallet'
-import { preloadCenterWallet } from '@/providers/preload-center'
+import { preloadSignIn } from '@/providers/preload-center'
 import styles from './wallet-button.module.css'
 
 function menuItems(menu: HTMLElement | null) {
@@ -161,9 +161,9 @@ export function WalletButton() {
     <button
       type="button"
       onClick={openSignIn}
-      onMouseEnter={preloadCenterWallet}
-      onFocus={preloadCenterWallet}
-      onTouchStart={preloadCenterWallet}
+      onMouseEnter={preloadSignIn}
+      onFocus={preloadSignIn}
+      onTouchStart={preloadSignIn}
       className="btn-primary min-h-11 px-5 text-sm"
     >
       Sign in

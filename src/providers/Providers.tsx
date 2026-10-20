@@ -5,6 +5,7 @@ import './center-callback'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { type PropsWithChildren, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createConfig, injected, WagmiProvider } from 'wagmi'
+import dynamic from 'next/dynamic'
 import { TransactionReviewProvider } from '@/components/TransactionReviewProvider'
 import { SUPPORTED_CHAINS } from '@/lib/chains'
 import { jbCenterRpcTransport } from '@/lib/jbcenter-rpc'
@@ -14,8 +15,10 @@ import { WalletAuthContext } from './WalletAuthContext'
 import { lazyCenterConnector } from './lazy-center-connector'
 import { externalWalletConnectors } from './wallet-connectors'
 import { CENTER_WALLET_ENABLED } from './wallet-config'
-import { ExternalWalletDialog } from './ExternalWalletDialog'
 import { arbitrum, arbitrumSepolia, base, baseSepolia, mainnet, optimism, optimismSepolia, sepolia } from '@bananapus/nana-sdk-core/chains'
+
+// The sign-in dialog loads on first open; the wallet button preloads it on hover and focus.
+const ExternalWalletDialog = dynamic(() => import('./ExternalWalletDialog').then(m => m.ExternalWalletDialog), { ssr: false })
 
 export const IS_DETERMINISTIC_BROWSER = process.env.NEXT_PUBLIC_DETERMINISTIC_BROWSER === 'true'
 export { SUPPORTED_CHAINS } from '@/lib/chains'
