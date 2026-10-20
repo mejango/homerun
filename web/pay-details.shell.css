@@ -1,0 +1,15 @@
+.pay-contribution { margin-top: 20px; border-top: 1px solid var(--line); }
+.pay-contribution .pay-detail, .income-payment-details { border-bottom: 1px solid var(--line); }
+.pay-contribution .pay-detail > summary, .income-payment-details > summary { padding: 14px 0; min-height: 46px; color: var(--green); font-size: 12px; font-weight: 500; cursor: pointer; }
+.pay-detail-body, .income-payment-detail-body { padding: 0 0 17px; min-width: 0; }
+.pay-detail-body p, .income-payment-detail-body p { font-size: 11px; line-height: 1.65; }
+.pay-detail-body .pay-position-basis { margin-bottom: 14px; }
+#pay-panel .outcomes { grid-template-columns: minmax(0, 1fr); }
+#pay-panel .outcome { display: block; padding: 14px 0; border-left: 0; }
+#pay-panel .outcome + .outcome { border-top: 1px solid var(--line); }
+#pay-panel .outcome > strong { font-size: 29px; }
+#pay-panel .quote-cash-flow { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+#pay-panel .quote-cash-flow > span { display: none; }
+#pay-panel .quote-cash-flow > div { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+#pay-panel .quote-cash-flow strong { font-size: 18px; flex: 0 0 auto; }
+#pay-panel .math-values > div, #pay-panel .rent-allocation > div { gap: 10px; font-size: 11px; }

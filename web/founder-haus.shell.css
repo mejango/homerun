@@ -1,0 +1,13 @@
+.founder-heading .asset-location { margin-top: 9px; font-size: 13px; }
+.house-gallery-heading { display: flex; justify-content: space-between; align-items: start; gap: 18px; margin-bottom: 17px; }
+.house-gallery-heading h2 { margin: 0; font: 32px/1.15 var(--serif); letter-spacing: -.035em; }
+.house-gallery-heading p { margin-top: 5px; font-size: 12px; }
+.house-gallery-heading > button { white-space: nowrap; }
+@media (max-width: 760px) {
+  .founder-heading .asset-location { max-width: 230px; font-size: 11px; }
+  .house-gallery-heading h2 { font-size: 28px; }
+}
+@media (max-width: 380px) {
+  .founder-heading { gap: 12px; }
+  .deal-heading.founder-heading h1 { font-size: 32px; }
+}

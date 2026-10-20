@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { LocalProjectPreview } from "../../components/ProjectPage";
+import '../project.css'
 
 export const metadata: Metadata = {
   title: "Project preview",

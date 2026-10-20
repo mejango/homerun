@@ -16,19 +16,19 @@ const KIB = 1024
 const distDir = process.env.NEXT_DIST_DIR || '.next'
 const dist = resolve(distDir)
 const budgets = {
-  '/': { js: 250, css: 30 },
-  '/founderhaus': { js: 310, css: 31 },
-  '/project': { js: 310, css: 31 },
-  '/projects': { js: 258, css: 30 },
-  '/create': { js: 263, css: 31 },
-  '/create/preview': { js: 443, css: 31 },
-  '/create/recover': { js: 405, css: 30 },
-  '/create/success': { js: 278, css: 30 },
-  '/center/callback': { js: 231, css: 28 },
-  '/account/0x0000000000000000000000000000000000000001': { js: 282, css: 30 },
-  '/intent/00000000-0000-4000-8000-000000000000': { js: 418, css: 31 },
-  '/op:11': { js: 519, css: 31 },
-  '/not-a-route/x': { js: 229, css: 28 },
+  '/': { js: 250, css: 16 },
+  '/founderhaus': { js: 310, css: 27 },
+  '/project': { js: 310, css: 27 },
+  '/projects': { js: 258, css: 14 },
+  '/create': { js: 263, css: 19 },
+  '/create/preview': { js: 440, css: 27 },
+  '/create/recover': { js: 402, css: 19 },
+  '/create/success': { js: 278, css: 14 },
+  '/center/callback': { js: 231, css: 13 },
+  '/account/0x0000000000000000000000000000000000000001': { js: 282, css: 16 },
+  '/intent/00000000-0000-4000-8000-000000000000': { js: 415, css: 27 },
+  '/op:11': { js: 516, css: 26 },
+  '/not-a-route/x': { js: 230, css: 13 },
 }
 
 if (!existsSync(join(dist, 'BUILD_ID'))) {

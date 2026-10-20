@@ -1,0 +1,16 @@
+.projection-chart { position: relative; min-width: 0; max-width: 100%; margin: 20px 0 0; }
+.pc-budget-bar { display: flex; height: 19px; overflow: hidden; border-radius: var(--radius); background: #e8e9de; }
+.pc-budget-segment { display: block; height: 100%; }
+.pc-house { background: #2d6045; }
+.pc-reserve { background: repeating-linear-gradient(135deg, #b9c79f, #b9c79f 4px, #d9e1c8 4px, #d9e1c8 7px); }
+.pc-expenses { background: #aa8057; }
+.pc-budget-legend { display: flex; flex-wrap: wrap; gap: 5px 12px; margin: 9px 0 0; padding: 0; list-style: none; }
+.pc-budget-swatch { flex-shrink: 0; width: 9px; height: 9px; margin-top: 4px; border-radius: var(--radius); }
+.pc-plot { position: relative; height: 180px; }
+.pc-canvas { position: absolute; inset: 8px 7px 27px 42px; touch-action: pan-y; }
+.pc-grid { stroke: #dde2d5; stroke-width: 1; }
+.pc-line { stroke-width: 2.3; stroke-linecap: round; stroke-linejoin: round; }
+.pc-series-0 { stroke: #2d6045; }
+.pc-series-1 { stroke: #916032; stroke-dasharray: 5 4; }
+.pc-point { position: absolute; width: 8px; height: 8px; transform: translate(-50%, -50%); border: 2px solid #fffefa; border-radius: 50%; background: #2d6045; pointer-events: none; }
+.pc-point-1 { border-radius: 0; background: #916032; }

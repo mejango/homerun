@@ -1,0 +1,3 @@
+/* Rules used only by the create form and its recovery page, split from the shared sheets by class, in the shared sheets' order. */
+@import '../../web/create.create.css';
+@import '../../web/create-income-preview.create.css';

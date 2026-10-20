@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { Brand } from '@/components/Brand'
 import { WalletButton } from '@/components/WalletButton';
 import { FundDeploy } from '@/components/FundDeploy'
+import '../../create.css'
 
 export const metadata: Metadata = { title: 'Resume a deployment', robots: { index: false, follow: false } }
 
