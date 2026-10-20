@@ -41,7 +41,6 @@ vi.mock('@/components/ProjectPermissionsEditor', () => ({ ProjectPermissionsEdit
 vi.mock('@/components/ProjectSplitsEditor', () => ({ ProjectSplitsEditor: ({ chainId, projectId, unavailable, phase }: AdminEditorProps) => <button data-testid={`splits-${projectId}`} data-chain-id={chainId} data-project-id={projectId.toString()} data-phase={phase} disabled={unavailable}>Edit splits</button> }))
 vi.mock('wagmi', () => ({ usePublicClient: () => ({ readContract: async () => runtime.delegated }) }))
 vi.mock('@/lib/fund-state', () => ({ readFundProjectState: async () => runtime.query.data, readFundAccountState: async () => runtime.query.data, readFundWriteState: async () => runtime.query.data }))
-vi.mock('@/hooks/useReviewedPermit2Signature', () => ({ useReviewedPermit2Signature: () => ({ signPermit2Async: vi.fn() }) }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address, isConnected: true }) }))
 vi.mock('@/components/WalletButton', () => ({ WalletButton: () => <span>Wallet</span> }))
 vi.mock('@/components/FundOperatorActions', () => ({ FundOperatorActions: () => <span>Operator actions</span> }))

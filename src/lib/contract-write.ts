@@ -6,8 +6,8 @@ export const REVIEWED_ACCOUNT_CHANGED = 'The connected account changed. Review a
 
 /**
  * A request is built for the account that reviewed it (its beneficiary,
- * holder or recipient), so no other connected account may send it. The
- * Permit2 signature checks it here; a reviewed write leaves it to the SDK.
+ * holder or recipient), so no other connected account may send it. A
+ * reviewed write leaves this check to the SDK.
  */
 export function assertReviewedAccountConnected(
   reviewed: Address,

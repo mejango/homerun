@@ -1,14 +1,12 @@
 import {
-  jbBuybackHookAbi, jbBuybackHookRegistryAbi, jbContractAddress, jbControllerAbi,
-  jbDirectoryAbi, jbMultiTerminalAbi, jbOmnichainDeployerAbi, jbTokensAbi,
+  jbContractAddress, jbControllerAbi, jbDirectoryAbi, jbMultiTerminalAbi,
   NATIVE_TOKEN, USDC_ADDRESSES, type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import {
-  previewPay, uniswapV4Deployment, v6Address, type PayPreview,
-  type UniswapV4PoolKey,
+  prepareUserPay, slippageFloor, v6Address, type PayPreview,
+  type PreparedUserPay,
 } from '@bananapus/nana-sdk-core/v6'
-import { quoteDirectPaySwap, type DirectPaySwapQuote } from '@bananapus/nana-sdk-core/v6/direct-pay'
-import { erc20Abi, isAddress, isAddressEqual, zeroAddress, type Address, type PublicClient } from 'viem'
+import { erc20Abi, isAddress, isAddressEqual, zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
 
 export type ProjectPayQuoteInput = {
   /** Current Center passkey profile supports exact direct terminal payments only. */
@@ -23,13 +21,13 @@ export type ProjectPayQuoteInput = {
 }
 
 export type ProjectPayQuote = {
-  kind: 'pay' | 'direct-swap'
-  /** Execution target: the selected terminal, or the canonical Universal Router. */
+  /** The listed terminal the payment goes to. */
   terminal: Address
   preview: PayPreview
   minimumTokenCount: bigint
   reservedTokenCount: bigint
-  swapQuote?: DirectPaySwapQuote
+  /** The pay metadata the payment sends with this minimum. */
+  metadata: Hex
   /** All route/quote reads use this same confirmed block. */
   blockNumber: bigint
 }
@@ -44,11 +42,6 @@ export type ProjectPayTokenOption = {
 }
 
 const SLIPPAGE_BPS = 100n
-function minimum(count: bigint) {
-  if (count <= 0n) return 0n
-  const floor = count * (10_000n - SLIPPAGE_BPS) / 10_000n
-  return floor > 0n ? floor : 1n
-}
 function optionalAddress(name: string, chainId: JBChainId): Address | undefined {
   const value = (jbContractAddress[6] as Record<string, Partial<Record<JBChainId, Address>>>)[name]?.[chainId]
   return value && !isAddressEqual(value, zeroAddress) ? value : undefined
@@ -88,10 +81,11 @@ export async function readProjectPayTokenOptions(client: PublicClient, { chainId
 }
 
 /**
- * Current JBM/Revnet payment routing: live terminal previews compete with the
- * canonical hooked V4 market through the SDK (including its ETH/USDC bridge).
- * This helper only reads. The caller must freeze/review the returned minimum,
- * validate its wallet, approve the actual route's spender, and simulate its call.
+ * Prepares a payment on each listed terminal through the SDK's prepareUserPay
+ * (buyback skipSplits metadata: the hook picks the pool or a mint for the payer)
+ * and keeps the best protected return. This helper only reads. The caller must
+ * freeze/review the returned minimum, validate its wallet, approve the terminal,
+ * and simulate its call.
  */
 export async function prepareProjectPayQuote(client: PublicClient, input: ProjectPayQuoteInput): Promise<ProjectPayQuote> {
   const { chainId, projectId, token, amount, beneficiary, terminal } = input
@@ -99,7 +93,7 @@ export async function prepareProjectPayQuote(client: PublicClient, input: Projec
   if (await client.getChainId() !== chainId) throw new Error('The payment RPC is connected to the wrong chain.')
   const blockNumber = await client.getBlockNumber({ cacheTime: 0 })
   // SDK helpers intentionally accept a PublicClient. Pin their terminal and
-  // quoter reads alongside our hook/pool reads to avoid mixing ruleset stages.
+  // quoter reads to one block to avoid mixing ruleset stages.
   const snapshot = {
     ...client,
     readContract: (request: Parameters<PublicClient['readContract']>[0]) => client.readContract({ ...request, blockNumber }),
@@ -122,63 +116,23 @@ export async function prepareProjectPayQuote(client: PublicClient, input: Projec
 
   const routes = (await Promise.all(candidates.map(async address => {
     try {
-      const preview = await previewPay(snapshot, { chainId, terminal: address, projectId, token, amount, beneficiary })
-      return { terminal: address, preview }
+      const args = { chainId, terminal: address, projectId, token, amount, beneficiary }
+      return { terminal: address, ...await (input.directTerminalOnly ? exactTerminalPay(snapshot, args) : prepareUserPay(snapshot, { ...args, slippageBps: SLIPPAGE_BPS })) }
     } catch { return null }
-  }))).filter((route): route is { terminal: Address; preview: PayPreview } => !!route)
+  }))).filter(route => !!route)
   routes.sort((a, b) => {
-    if (a.preview.beneficiaryTokenCount !== b.preview.beneficiaryTokenCount) return a.preview.beneficiaryTokenCount > b.preview.beneficiaryTokenCount ? -1 : 1
+    if (a.minReturnedTokens !== b.minReturnedTokens) return a.minReturnedTokens > b.minReturnedTokens ? -1 : 1
     if (a.preview.reservedTokenCount !== b.preview.reservedTokenCount) return a.preview.reservedTokenCount > b.preview.reservedTokenCount ? -1 : 1
     return same(a.terminal, multi) ? -1 : same(b.terminal, multi) ? 1 : 0
   })
   const best = routes[0]
   if (!best) throw new Error('No listed payment route has a live quote for this token.')
+  if (best.minReturnedTokens === 0n && !(metadata.reservedPercent === 10_000 && best.preview.reservedTokenCount > 0n)) throw new Error('No protected token return is available for this payment.')
+  return { terminal: best.terminal, preview: best.preview, minimumTokenCount: best.minReturnedTokens, reservedTokenCount: best.preview.reservedTokenCount, metadata: best.metadata, blockNumber }
+}
 
-  let dataHook = metadata.useDataHookForPay ? metadata.dataHook : zeroAddress
-  const omni = optionalAddress('JBOmnichainDeployer', chainId)
-  if (same(dataHook, omni)) {
-    const extra = await snapshot.readContract({ address: omni!, abi: jbOmnichainDeployerAbi, functionName: 'extraDataHookOf', args: [projectId, BigInt(ruleset.id)] })
-    dataHook = extra.useDataHookForPay ? extra.dataHook : zeroAddress
-  }
-  const buybackRegistry = optionalAddress('JBBuybackHookRegistry', chainId)
-  const concreteHook = optionalAddress('JBBuybackHook', chainId)
-  const revOwner = optionalAddress('REVOwner', chainId)
-  let hook: Address | undefined
-  if (buybackRegistry && (same(dataHook, buybackRegistry) || same(dataHook, revOwner))) {
-    const resolved = await snapshot.readContract({ address: buybackRegistry, abi: jbBuybackHookRegistryAbi, functionName: 'hookOf', args: [projectId] })
-    if (!same(resolved, zeroAddress)) hook = resolved
-  } else if (same(dataHook, concreteHook)) hook = dataHook
-
-  let swapQuote: DirectPaySwapQuote | undefined
-  if (!input.directTerminalOnly && hook && uniswapV4Deployment(chainId)?.universalRouter) {
-    const [contexts, projectToken] = await Promise.all([
-      snapshot.readContract({ address: multi, abi: jbMultiTerminalAbi, functionName: 'accountingContextsOf', args: [projectId] }),
-      snapshot.readContract({ address: v6Address('JBTokens', chainId), abi: jbTokensAbi, functionName: 'tokenOf', args: [projectId] }),
-    ])
-    if (contexts.length > 16) throw new Error('The project has too many accounting tokens to verify its payment routes.')
-    if (!same(projectToken, zeroAddress)) {
-      const pairs = [...new Set(contexts.map(context => (same(context.token, NATIVE_TOKEN) ? zeroAddress : context.token).toLowerCase()))] as Address[]
-      const swaps = await Promise.all(pairs.map(async pair => {
-        const key: UniswapV4PoolKey = await snapshot.readContract({ address: hook!, abi: jbBuybackHookAbi, functionName: 'poolKeyOf', args: [projectId, pair] })
-        if (same(key.currency0, zeroAddress) && same(key.currency1, zeroAddress)) return null
-        const pairIsCurrency0 = same(key.currency0, pair)
-        if (!(pairIsCurrency0 ? same(key.currency1, projectToken) : same(key.currency1, pair) && same(key.currency0, projectToken))) throw new Error('The buyback pool does not match this project’s token and accounting currency.')
-        try {
-          return await quoteDirectPaySwap({ client: snapshot, chainId, poolKey: key, pairIsCurrency0, paymentToken: token, amount, payPreview: best.preview, paySettlement: same(best.terminal, registry) ? 'swap' : 'issuance', slippageBps: SLIPPAGE_BPS })
-        } catch { return null }
-      }))
-      for (const quote of swaps) if (quote && (!swapQuote || quote.minimumTokenCount > swapQuote.minimumTokenCount)) swapQuote = quote
-    }
-  }
-  if (swapQuote) return {
-    kind: 'direct-swap', terminal: uniswapV4Deployment(chainId)!.universalRouter!,
-    preview: { beneficiaryTokenCount: swapQuote.minimumTokenCount, reservedTokenCount: 0n },
-    minimumTokenCount: swapQuote.minimumTokenCount, reservedTokenCount: 0n, swapQuote, blockNumber,
-  }
-  if (best.preview.beneficiaryTokenCount === 0n && !(metadata.reservedPercent === 10_000 && best.preview.reservedTokenCount > 0n)) {
-    // Active buyback settlement returns zero issuance; the SDK preview omits
-    // the separate hook specifications. Zero here is not proof of zero output.
-    throw new Error('A protected token return could not be verified. The payment may settle through its buyback hook; refresh its market quote before continuing.')
-  }
-  return { kind: 'pay', terminal: best.terminal, preview: best.preview, minimumTokenCount: minimum(best.preview.beneficiaryTokenCount), reservedTokenCount: best.preview.reservedTokenCount, blockNumber }
+/** Center's passkey profile pays with empty metadata. It keeps the terminal's own count, so a payment the buyback hook would swap has no protected return here and is refused. */
+async function exactTerminalPay(client: PublicClient, { terminal, projectId, token, amount, beneficiary }: { terminal: Address; projectId: bigint; token: Address; amount: bigint; beneficiary: Address }): Promise<PreparedUserPay> {
+  const [, beneficiaryTokenCount, reservedTokenCount] = await client.readContract({ address: terminal, abi: jbMultiTerminalAbi, functionName: 'previewPayFor', args: [projectId, token, amount, beneficiary, '0x'] })
+  return { metadata: '0x', preview: { beneficiaryTokenCount, reservedTokenCount }, minReturnedTokens: slippageFloor(beneficiaryTokenCount, SLIPPAGE_BPS) }
 }
