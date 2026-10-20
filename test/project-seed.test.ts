@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => ({ project: vi.fn(), metadata: vi.fn(), binding: 
 vi.mock('@/lib/bendystraw', () => ({ getProject: mocks.project }))
 vi.mock('@/lib/fund-project-metadata', () => ({ fetchFundProjectMetadata: mocks.metadata }))
 vi.mock('@/lib/income-fund-binding', () => ({ readIncomeFundBinding: mocks.binding }))
-vi.mock('@/lib/jbcenter-rpc', () => ({ jbCenterPublicClient: (chainId: number) => ({ chainId }) }))
+vi.mock('@/lib/jbcenter-public-client', () => ({ jbCenterPublicClient: (chainId: number) => ({ chainId }) }))
 vi.mock('next/cache', () => ({ unstable_cache: <T>(fn: T) => fn }))
 vi.mock('react', async importOriginal => ({ ...(await importOriginal<typeof import('react')>()), cache: <T>(fn: T) => fn }))
 

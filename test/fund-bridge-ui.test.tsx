@@ -31,7 +31,7 @@ vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
   ...await importOriginal<typeof import('@bananapus/nana-sdk-core/v6')>(),
   verifySuckerDestinationMint: runtime.verifyDestinationMint,
 }))
-vi.mock('@/lib/jbcenter-rpc', () => ({
+vi.mock('@/lib/jbcenter-public-client', () => ({
   jbCenterPublicClient: (chainId: number) => chainId === 10 ? runtime.destinationClient : runtime.sourceClient,
 }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address, isConnected: !!runtime.address }) }))
