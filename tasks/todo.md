@@ -25,7 +25,8 @@ Ruling (jango): get the payer the most tokens possible; when a payment fails, sa
 - Aligned with jbm's pay-minimum.ts (copied verbatim, a candidate to move into the SDK): no-tokens line, no retry at the limit, closing drops the tolerance.
 - SDK 3.4.1 round: pay-minimum.ts deleted for payRetrySlippageBps / PAY_DEFAULT_SLIPPAGE_BPS / PAY_MAX_SLIPPAGE_BPS; replay dropped; passkey and field capped at 4950 after rounding; the hold releases on a canonical revert so Review again sends at once. useSafeTx exposes `reverted` (receipt, hold settlement without a receipt, Safe registry failure) as Sticky does; signaPayFailure validates reason, flags and uint256 bounds.
 - Codex passes 3 to 6 found P1 (reorg double-pay, owner-accepted SDK risk) and P2s, all fixed; pass 7 at a52ea4a: SHIP. Gates at a52ea4a: lint, tsc, vitest 3026/3026, node 340/340, build, budgets, indexer, browser suites 7/7.
-- Open: center-wallet 0.3.8 bump when Signa #18 ships; Signa raises prepare_pay's cap to 4950; merge only after Signa deploys and jango approves.
+- Cross-client round (jbm #138 reference): canonical revert lines are the SDK's HELD_FAILED_LINE (settledLine), not "try again in a few minutes"; the onSettled tracked-hash guard is main's and stays (SDK identity fix queued). Codex passes 8 to 11 (UX weighed with safety) found stale or doubled failure lines: a Safe failure keeps its registry line, a mined revert belongs to the payment it sent, a decoded shortfall survives close and reopen, the Sticky stake shows one line scoped to chain, wallet and amount. Pass 12 at 1162558: SHIP. follow-redirects 1.16.1 (audit:prod clean).
+- Open: switch to @me.jango/signa 0.3.8 when published (Homerun reaches center-wallet only through @bananapus/nana-sdk-connect, so that needs a connect release or an override); merge only after Signa deploys and jango approves.
 
 # Homerun client reconciliation
 
