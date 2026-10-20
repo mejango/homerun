@@ -130,7 +130,7 @@ function useStickyRecovery(
   const ready = !journal.error && (!journal.record || (!!outcome && outcome.status !== "check"));
   return { adopted, error: journal.error ?? null, ready, recovery };
 }
-function Status({ tx, chainId, explained }: { tx: StickyTx; chainId: number; explained?: boolean }) {
+function Status({ tx, chainId, hideError }: { tx: StickyTx; chainId: number; hideError?: boolean }) {
   const link =
     tx.hash && !tx.safeProposalHash ? explorerTxUrl(chainId, tx.hash) : null;
   return (
@@ -142,7 +142,7 @@ function Status({ tx, chainId, explained }: { tx: StickyTx; chainId: number; exp
       ) : tx.phase === "success" ? (
         <p>Confirmed onchain. Balances and available actions are refreshing.</p>
       ) : null}
-      {tx.error && !explained && <p className="text-red-800">{tx.error}</p>}
+      {tx.error && !hideError && <p className="text-red-800">{tx.error}</p>}
       {tx.submissionHash && !tx.hash && <p className="break-all">Safe proposal: <code>{tx.submissionHash}</code></p>}
       {link && (
         <a className="underline" href={link} target="_blank" rel="noreferrer">
@@ -572,11 +572,14 @@ function StickyStake({
   const [input, setInput] = useState(""),
     [error, setError] = useState<string | null>(null),
     [stakeFailure, setStakeFailure] = useState<{ count: bigint; line: string } | null>(null),
+    [attempted, setAttempted] = useState<bigint | null>(null),
     [preparing, setPreparing] = useState(false);
   const count = parse(input),
     shortfall = count > state.fundBalance ? count - state.fundBalance : 0n;
   // The stake's decoded shortfall stands in for the wallet's error, for the amount it was quoted at.
   const explained = tx.phase === "error" && stakeFailure?.count === count ? stakeFailure.line : null;
+  // Another amount shows none of the last attempt's error.
+  const staleError = attempted !== null && attempted !== count;
   const creditStep = shortfall > 0n && shortfall <= state.fundCreditBalance;
   const approvalStep = !creditStep && state.allowance !== count;
   const busy = preparing || tx.busy || tx.phase === "review";
@@ -599,6 +602,7 @@ function StickyStake({
     setPreparing(true);
     setError(null);
     setStakeFailure(null);
+    setAttempted(count);
     try {
       const current = await fresh(client, state, address, prerequisite.current);
       if (count > current.fundBalance) {
@@ -768,7 +772,7 @@ function StickyStake({
           {error ?? explained}
         </p>
       )}
-      <Status tx={tx} chainId={state.chainId} explained={!!explained} />
+      <Status tx={tx} chainId={state.chainId} hideError={!!explained || staleError} />
     </section>
   );
 }

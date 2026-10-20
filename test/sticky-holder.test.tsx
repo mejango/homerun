@@ -284,5 +284,6 @@ describe("Sticky holder recovery and independent loading", () => {
     });
     await settle();
     expect(element.textContent).not.toContain("This stake would return");
+    expect(element.textContent).not.toContain("The wallet could not simulate this.");
   });
 });

@@ -38,11 +38,11 @@ function inputAmount(value: string, decimals: number) {
   try { return parseAmount(value.trim(), decimals) } catch { return 0n }
 }
 function message(error: unknown) { return readableError(error, 'The payment could not be prepared. Refresh and try again.') }
-function Status({ tx, chainId }: { tx: PaymentTx; chainId: number }) {
+function Status({ tx, chainId, stale }: { tx: PaymentTx; chainId: number; stale?: boolean }) {
   const url = tx.hash && !tx.safeProposalHash ? explorerTxUrl(chainId, tx.hash) : null
   return <div role="status" aria-live="polite" className="mt-3 break-words text-sm">
     {tx.phase === 'submitted' ? <HeldNotice tx={tx} /> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? <p>Confirmed onchain.</p> : null}
-    {tx.error && <p className="text-red-800">{tx.error}</p>}{url && <a className="underline" href={url} target="_blank" rel="noreferrer">View transaction</a>}
+    {tx.error && !stale && <p className="text-red-800">{tx.error}</p>}{url && <a className="underline" href={url} target="_blank" rel="noreferrer">View transaction</a>}
   </div>
 }
 
@@ -115,7 +115,9 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
   const retrying = retryWhenQuoted === paymentInputs
   // A mined revert's receipt carries no reason, and end-of-block state can't establish one: Review again
   // quotes and simulates it at the latest block, and only that simulation's failure is shown as a reason.
-  const minedRevert = tx.reverted && sentPayment === paymentInputs
+  // A sent attempt's result belongs to the payment it sent: another amount or account shows none of it.
+  const sentShown = sentPayment === paymentInputs
+  const minedRevert = tx.reverted && sentShown
   // Another payment drops it, so coming back to this one starts from the default again.
   useEffect(() => {
     if (payerSlippage && payerSlippage.payment !== paymentInputs) setPayerSlippage(null)
@@ -267,7 +269,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
     </fieldset>
     <button type="button" className="btn-primary min-h-12 w-full px-5" disabled={paused || !!blocked} onClick={() => setOpen(true)}>{paused ? 'Payments paused' : checking ? 'Checking…' : `Pay on ${displayChainName(chainId)}`}</button>
     {blocked && !paused && <p className="mt-2 text-sm text-[var(--muted)]">{blocked}</p>}
-    {!open && <><Status tx={approval} chainId={chainId} /><Status tx={tx} chainId={chainId} /></>}
+    {!open && <><Status tx={approval} chainId={chainId} stale={!sentShown} /><Status tx={tx} chainId={chainId} stale={!sentShown} /></>}
     <TxConfirmDialog
       open={open}
       eyebrow="Payment"
@@ -289,7 +291,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       held={submitted?.held}
       status={submitted?.notice ?? status ?? (tx.phase === 'pending' ? <>Submitted. Waiting for onchain confirmation{tx.hash && explorerTxUrl(chainId, tx.hash) ? <> (<a className="underline" href={explorerTxUrl(chainId, tx.hash)!} target="_blank" rel="noreferrer">view transaction</a>)</> : null}</> : null)}
       // A Safe's failure keeps the registry's own line, with its execution.
-      error={error ?? failure?.message ?? (minedRevert && !tx.safeProposalHash ? 'The payment reverted.' : null) ?? tx.error ?? approval.error}
+      error={error ?? failure?.message ?? (minedRevert && !tx.isSafe ? 'The payment reverted.' : null) ?? (sentShown ? tx.error ?? approval.error : null)}
       onClose={() => { setOpen(false); for (const item of [tx, approval]) if (item.phase === 'submitted') item.dismiss(); setStatus(null); attempt.current++; setOutcome(null); setRetryWhenQuoted(null); setPayerSlippage(null) }}
     >
       <div className="text-sm text-smoke-600" aria-live="polite">

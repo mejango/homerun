@@ -431,17 +431,18 @@ describe('shared payment execution', () => {
 
   it("keeps a mined revert with the payment it sent, and a Safe's own failure line", async () => {
     await ready()
-    const pay = runtime.handles[0] as unknown as { phase: string; reverted: boolean; error: string | null; safeProposalHash: string | null }
+    const pay = runtime.handles[0] as unknown as { phase: string; reverted: boolean; error: string | null; isSafe: boolean }
     await submit()
-    pay.phase = 'error'; pay.reverted = true; pay.error = 'Safe executed the proposal, but the onchain transaction failed (0xabc).'; pay.safeProposalHash = '0xdef'
+    pay.phase = 'error'; pay.reverted = true; pay.error = 'Safe executed the proposal, but the onchain transaction failed (0xabc).'; pay.isSafe = true
     await act(async () => commitRender())
     expect(host.textContent).toContain('Safe executed the proposal, but the onchain transaction failed (0xabc).')
     expect(host.textContent).not.toContain('The payment reverted.')
-    pay.safeProposalHash = null; pay.error = null
+    pay.isSafe = false; pay.error = 'This transaction failed onchain. Review it and try again.'
     await act(async () => commitRender())
     expect(host.textContent).toContain('The payment reverted.')
     await input('2')
     expect(host.textContent).not.toContain('The payment reverted.')
+    expect(host.textContent).not.toContain('failed onchain')
     expect([...host.querySelectorAll('button')].some(element => element.textContent === 'Review again')).toBe(false)
   })
 
