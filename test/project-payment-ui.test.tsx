@@ -393,6 +393,18 @@ describe('shared payment execution', () => {
   const SHORTFALL = 'This payment would get fewer tokens than your minimum, so lower your minimum or try again.'
   function allowedDecrease() { return host.querySelector<HTMLInputElement>('input[type="number"]') }
 
+  it('keeps a shortfall and its retry across closing and reopening the same payment', async () => {
+    await ready()
+    runtime.handles[0].send.mockImplementationOnce(async (_request: TxRequest, options: TxSendOptions & { onFailure?: (error: unknown) => void }) => { options.onFailure?.(UNDER_MIN); return null })
+    await act(async () => button().click())
+    await waitUntil(() => expect(host.textContent).toContain(SHORTFALL))
+    await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="Close"]')!.click())
+    await render()
+    expect(host.textContent).toContain(SHORTFALL)
+    expect(allowedDecrease()?.value).toBe('2.5')
+    expect([...host.querySelectorAll('button')].some(element => element.textContent === 'Review again')).toBe(true)
+  })
+
   it('names a shortfall the simulation hit and reviews again with the looser minimum it offers', async () => {
     await ready()
     const pay = runtime.handles[0].send

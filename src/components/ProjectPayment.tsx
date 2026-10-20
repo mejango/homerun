@@ -115,9 +115,9 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
   const retrying = retryWhenQuoted === paymentInputs
   // A mined revert's receipt carries no reason, and end-of-block state can't establish one: Review again
   // quotes and simulates it at the latest block, and only that simulation's failure is shown as a reason.
-  // A sent attempt's result belongs to the payment it sent: another amount or account shows none of it.
-  const sentShown = sentPayment === paymentInputs
-  const minedRevert = tx.reverted && sentShown
+  // A mined revert belongs to the payment it sent: another amount or account shows none of it.
+  const staleRevert = tx.reverted && sentPayment !== paymentInputs
+  const minedRevert = tx.reverted && !staleRevert
   // Another payment drops it, so coming back to this one starts from the default again.
   useEffect(() => {
     if (payerSlippage && payerSlippage.payment !== paymentInputs) setPayerSlippage(null)
@@ -269,7 +269,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
     </fieldset>
     <button type="button" className="btn-primary min-h-12 w-full px-5" disabled={paused || !!blocked} onClick={() => setOpen(true)}>{paused ? 'Payments paused' : checking ? 'Checking…' : `Pay on ${displayChainName(chainId)}`}</button>
     {blocked && !paused && <p className="mt-2 text-sm text-[var(--muted)]">{blocked}</p>}
-    {!open && <><Status tx={approval} chainId={chainId} stale={!sentShown} /><Status tx={tx} chainId={chainId} stale={!sentShown} /></>}
+    {!open && <><Status tx={approval} chainId={chainId} /><Status tx={tx} chainId={chainId} stale={staleRevert} /></>}
     <TxConfirmDialog
       open={open}
       eyebrow="Payment"
@@ -291,8 +291,8 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       held={submitted?.held}
       status={submitted?.notice ?? status ?? (tx.phase === 'pending' ? <>Submitted. Waiting for onchain confirmation{tx.hash && explorerTxUrl(chainId, tx.hash) ? <> (<a className="underline" href={explorerTxUrl(chainId, tx.hash)!} target="_blank" rel="noreferrer">view transaction</a>)</> : null}</> : null)}
       // A Safe's failure keeps the registry's own line, with its execution.
-      error={error ?? failure?.message ?? (minedRevert && !tx.isSafe ? 'The payment reverted.' : null) ?? (sentShown ? tx.error ?? approval.error : null)}
-      onClose={() => { setOpen(false); for (const item of [tx, approval]) if (item.phase === 'submitted') item.dismiss(); setStatus(null); attempt.current++; setOutcome(null); setRetryWhenQuoted(null); setPayerSlippage(null) }}
+      error={error ?? failure?.message ?? (minedRevert && !tx.isSafe ? 'The payment reverted.' : null) ?? (staleRevert ? null : tx.error) ?? approval.error}
+      onClose={() => { setOpen(false); for (const item of [tx, approval]) if (item.phase === 'submitted') item.dismiss(); setStatus(null); attempt.current++; setRetryWhenQuoted(null); setPayerSlippage(null) }}
     >
       <div className="text-sm text-smoke-600" aria-live="polite">
         {paused ? <p>This project has paused payments.</p> : zeroAllocation ? <p>This payment gives you no {tokenLabel}. All new tokens are allocated to the reserved recipients.</p> : quoted ? <p>Through the project payment terminal, using its current rules and buyback hook. {(slippageBps ?? Number(PAY_DEFAULT_SLIPPAGE_BPS)) / 100}% maximum slippage.</p>
