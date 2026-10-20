@@ -19,7 +19,7 @@ function SignedInPlaceholder({ address, pressRef }: { address: Address; pressRef
   return (
     <div className={styles.container}>
       <button type="button" className={styles.trigger} aria-label="Signed in" aria-busy="true"
-        onFocus={() => { pressRef.current.focused = true }} onBlur={() => { pressRef.current.focused = false }}
+        onFocus={() => { pressRef.current.focused = true }} onBlur={() => { pressRef.current = { focused: false, pressed: false } }}
         onClick={() => { pressRef.current.pressed = true }}>
         <span className={styles.headline}>
           <span className={styles.statusDot} aria-hidden="true" />

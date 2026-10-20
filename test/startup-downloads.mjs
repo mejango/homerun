@@ -31,8 +31,9 @@ try {
     })
     await page.goto(base + path, { waitUntil: 'load' })
     await page.waitForLoadState('networkidle')
-    // Idle preloads (project panels, sign-in) start after load; give them time to land.
-    await page.waitForTimeout(3000)
+    // Idle preloads start by preloadWhenIdle's 4 s deadline; wait past it, then until no chunk has arrived for 1 s.
+    await page.waitForTimeout(4500)
+    for (let seen = -1; seen !== bodies.size;) { seen = bodies.size; await page.waitForTimeout(1000) }
     const sources = await Promise.all(bodies.values())
     try {
       assert.ok(sources.length > 0, 'no chunks were seen')
