@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   track: vi.fn(),
   client: {} as Record<string, unknown>,
   phase: "idle",
+  error: null as string | null,
   receipt: null as null | { status: string; transactionHash: string; blockNumber: bigint },
 }));
 vi.mock("@/hooks/useWallet", () => ({
@@ -41,7 +42,7 @@ vi.mock("@/hooks/useSafeTx", () => ({
     hash: mocks.receipt?.transactionHash ?? null,
     safeProposalHash: null,
     receipt: mocks.receipt,
-    error: null,
+    error: mocks.error,
   }),
   txPhaseLabel: (_: unknown, labels: { idle: string }) => labels.idle,
 }));
@@ -121,6 +122,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.client = {};
   mocks.phase = "idle";
+  mocks.error = null;
   mocks.receipt = null;
   vi.mocked(readStickyProjectState).mockResolvedValue(state);
   vi.mocked(quoteStickyStake).mockResolvedValue({
@@ -253,6 +255,8 @@ describe("Sticky holder recovery and independent loading", () => {
     ).replace("0x", "0x6b2bb382");
     mocks.send.mockImplementation(async (_request: TxRequest, options: TxSendOptions) => {
       options.onFailure?.(underMin);
+      mocks.phase = "error";
+      mocks.error = "The wallet could not simulate this.";
       return null;
     });
     await mount();
@@ -272,5 +276,13 @@ describe("Sticky holder recovery and independent loading", () => {
     expect(element.textContent).toContain(
       "This stake would return 0.98 SHARE, under its 0.99 SHARE minimum. Review again for a fresh quote.",
     );
+    // One line: the decoded shortfall stands in for the raw error, and only for the amount it was quoted at.
+    expect(element.textContent).not.toContain("The wallet could not simulate this.");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, "2");
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await settle();
+    expect(element.textContent).not.toContain("This stake would return");
   });
 });

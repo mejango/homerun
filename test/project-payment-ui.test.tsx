@@ -429,6 +429,22 @@ describe('shared payment execution', () => {
     expect(host.textContent).not.toContain('The payment reverted.')
   })
 
+  it("keeps a mined revert with the payment it sent, and a Safe's own failure line", async () => {
+    await ready()
+    const pay = runtime.handles[0] as unknown as { phase: string; reverted: boolean; error: string | null; safeProposalHash: string | null }
+    await submit()
+    pay.phase = 'error'; pay.reverted = true; pay.error = 'Safe executed the proposal, but the onchain transaction failed (0xabc).'; pay.safeProposalHash = '0xdef'
+    await act(async () => commitRender())
+    expect(host.textContent).toContain('Safe executed the proposal, but the onchain transaction failed (0xabc).')
+    expect(host.textContent).not.toContain('The payment reverted.')
+    pay.safeProposalHash = null; pay.error = null
+    await act(async () => commitRender())
+    expect(host.textContent).toContain('The payment reverted.')
+    await input('2')
+    expect(host.textContent).not.toContain('The payment reverted.')
+    expect([...host.querySelectorAll('button')].some(element => element.textContent === 'Review again')).toBe(false)
+  })
+
   it('keeps the shared line and offers no minimum for an unknown failure', async () => {
     await ready()
     runtime.handles[0].send.mockImplementationOnce(async (_request: TxRequest, options: TxSendOptions & { onFailure?: (error: unknown) => void }) => { options.onFailure?.(new Error('nonce too low')); return null })

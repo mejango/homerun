@@ -93,6 +93,8 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
   const [stage, setStage] = useState<'approve' | 'pay' | null>(null)
   /** Why the last attempt at a payment failed, when the chain or its simulation says, and the tolerance offered for a retry. */
   const [outcome, setOutcome] = useState<{ payment: string; failure: PayFailure | null; retryBps: number | null } | null>(null)
+  /** The payment inputs the last attempt sent: a revert belongs to that payment only. */
+  const [sentPayment, setSentPayment] = useState<string | null>(null)
   /** A tolerance the payer loosened after a shortfall, for the payment it was set on. */
   const [payerSlippage, setPayerSlippage] = useState<{ bps: number; payment: string } | null>(null)
   /** The payment a "Review again" runs once its quote with the new tolerance is in. */
@@ -113,7 +115,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
   const retrying = retryWhenQuoted === paymentInputs
   // A mined revert's receipt carries no reason, and end-of-block state can't establish one: Review again
   // quotes and simulates it at the latest block, and only that simulation's failure is shown as a reason.
-  const minedRevert = tx.reverted
+  const minedRevert = tx.reverted && sentPayment === paymentInputs
   // Another payment drops it, so coming back to this one starts from the default again.
   useEffect(() => {
     if (payerSlippage && payerSlippage.payment !== paymentInputs) setPayerSlippage(null)
@@ -171,6 +173,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
     let latestBlock = prerequisite
     const mine = ++attempt.current
     const payment = paymentInputs, bps = slippageBps
+    setSentPayment(payment)
     const explain = (decoded: PayFailure | null) => {
       // A candidate from the tolerance this attempt was prepared with; the payer sees and edits it, and it is prepared and reviewed again.
       const retry = payRetrySlippageBps(decoded, bps === undefined ? PAY_DEFAULT_SLIPPAGE_BPS : BigInt(bps))
@@ -285,7 +288,8 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       settled={!!submitted}
       held={submitted?.held}
       status={submitted?.notice ?? status ?? (tx.phase === 'pending' ? <>Submitted. Waiting for onchain confirmation{tx.hash && explorerTxUrl(chainId, tx.hash) ? <> (<a className="underline" href={explorerTxUrl(chainId, tx.hash)!} target="_blank" rel="noreferrer">view transaction</a>)</> : null}</> : null)}
-      error={error ?? failure?.message ?? (minedRevert ? 'The payment reverted.' : null) ?? tx.error ?? approval.error}
+      // A Safe's failure keeps the registry's own line, with its execution.
+      error={error ?? failure?.message ?? (minedRevert && !tx.safeProposalHash ? 'The payment reverted.' : null) ?? tx.error ?? approval.error}
       onClose={() => { setOpen(false); for (const item of [tx, approval]) if (item.phase === 'submitted') item.dismiss(); setStatus(null); attempt.current++; setOutcome(null); setRetryWhenQuoted(null); setPayerSlippage(null) }}
     >
       <div className="text-sm text-smoke-600" aria-live="polite">
