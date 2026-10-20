@@ -1,5 +1,6 @@
 'use client'
 
+import { ProjectParticipants, ProjectPayerAddresses, ProjectShop, ProjectOwnershipEditor, ProjectPermissionsEditor, ProjectSplitsEditor, IncomeLoanTools, IncomeBridgeActions, IncomeReservedTokens, IncomeOperatorActions, InitialIncomeMint, preloadProjectPanels } from '@/components/project-panels'
 import { NATIVE_TOKEN, type JBChainId } from '@bananapus/nana-sdk-core'
 import {
   buildBurnTokensTx, buildSetPermissionsTx,
@@ -12,30 +13,19 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { erc20Abi, formatUnits, getAddress, isAddress, isAddressEqual, zeroAddress, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import Image from 'next/image'
-import { IncomeLoanTools } from '@/components/IncomeLoanTools'
-import { IncomeBridgeActions } from '@/components/IncomeBridgeActions'
-import { IncomeReservedTokens } from '@/components/IncomeReservedTokens'
-import { IncomeOperatorActions } from '@/components/IncomeOperatorActions'
 import { ProjectActivity } from '@/components/ProjectActivity'
 import { DisplayTokenAmount } from '@/components/DisplayTokenAmount'
-import { InitialIncomeMint } from '@/components/InitialIncomeMint'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
 import { getLoans } from '@/lib/loans-queries'
 import { useSafeTx, txPhaseLabel, type TxRequest } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { displayChainName, explorerTxUrl } from '@/lib/chainDisplay'
 import { HomerunProjectLayout, OwnersTabs } from '@/components/HomerunProjectLayout'
-import { ProjectPageShell } from '@/components/ProjectPage'
-import { ProjectParticipants } from '@/components/ProjectParticipants'
-import { ProjectPayerAddresses } from '@/components/ProjectPayerAddresses'
-import { ProjectShop } from '@/components/ProjectShop'
+import { ProjectPageShell } from '@/components/ProjectPageParts'
 import { LiveProjectActions } from '@/components/LiveProjectActions'
 import { ProjectPayment } from '@/components/ProjectPayment'
 import { CurrentOperatorProfile, CurrentOwnerProfile } from '@/components/CurrentOperatorProfile'
 import { ProjectMetadataEditor } from '@/components/ProjectMetadataEditor'
-import { ProjectOwnershipEditor } from '@/components/ProjectOwnershipEditor'
-import { ProjectPermissionsEditor } from '@/components/ProjectPermissionsEditor'
-import { ProjectSplitsEditor } from '@/components/ProjectSplitsEditor'
 import { fetchFundProjectMetadata, type FundProjectMetadata } from '@/lib/fund-project-metadata'
 import { parseAmount } from '@/lib/fund-contracts'
 import { approvalIntentKey, buildErc20ApproveRequest, chosenOrAuto } from '@/lib/transaction-builders'
@@ -166,6 +156,7 @@ export function IncomeProjectRuntime({ chainId, projectId, fundProjectId, bindin
 }
 
 export function IncomeProject({ chainId, projectId, fundProjectId }: { chainId: JBChainId; projectId: bigint; fundProjectId?: bigint }) {
+  useEffect(preloadProjectPanels, [])
   return <IncomeProjectRuntime chainId={chainId} projectId={projectId} fundProjectId={fundProjectId}>{slots => <ProjectPageShell><HomerunProjectLayout
     title={slots.title}
     location={slots.location}

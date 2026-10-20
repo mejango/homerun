@@ -1,0 +1,12 @@
+/* Rules used only by project pages (live, demo, intent and preview), split from the shared sheets by class, in the shared sheets' order. */
+@import '../../web/project-page.project.css';
+@import '../../web/project-journey.project.css';
+@import '../../web/pay-panel.project.css';
+@import '../../web/pay-details.project.css';
+@import '../../web/ownership-charts.project.css';
+@import '../../web/lifecycle.project.css';
+@import '../../web/projection-charts.project.css';
+@import '../../web/founder-haus.project.css';
+@import '../../web/network.project.css';
+@import '../components/project-layout.project.css';
+@import '../components/project-demo.project.css';

@@ -52,6 +52,9 @@ jobs:
       # tsc reads the next-env.d.ts that the build writes.
       - name: Type-check
         run: npm run typecheck
+      # Serves the build and gzips what each route's HTML loads, against per-route ceilings.
+      - name: Route budgets
+        run: npm run budget
 
   browser:
     name: Browser suites

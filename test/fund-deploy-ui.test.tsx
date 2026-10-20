@@ -29,7 +29,7 @@ vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({ phase: runtime.txPhase
 vi.mock('@/lib/publish-fund-project-metadata', () => ({ publishFundProjectMetadata: runtime.publish }))
 vi.mock('@/lib/fund-launch-verification', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/fund-launch-verification')>(), checkLaunchDeployment: runtime.checkDeployment, verifyFundLaunch: (...args: unknown[]) => runtime.verifyLaunch(...args) }))
 vi.mock('@/lib/fund-launch-relayr', () => ({ runRelayrLaunch: runtime.relayr, launchRequestsDead: runtime.requestsDead }))
-import { FundDeploy } from '../src/components/LiveCreate'
+import { FundDeploy } from '../src/components/FundDeploy'
 import CreateSuccess from '../src/components/CreateSuccess'
 
 function saved(): FundLaunchSession {

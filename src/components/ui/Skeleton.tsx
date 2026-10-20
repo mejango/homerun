@@ -65,3 +65,8 @@ export function SkeletonTable({
     </div>
   )
 }
+
+/** Stands in for a tab panel while its code loads. */
+export function PanelSkeleton() {
+  return <SkeletonLines lines={4} className="py-2" />
+}

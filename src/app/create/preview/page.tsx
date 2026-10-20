@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import CreatePreview from '@/components/CreatePreview'
+import '../../project.css'
 
 export const metadata: Metadata = {
   title: 'Preview your project',

@@ -1,5 +1,5 @@
 /** Exact V6 transaction adapters. Wallet review and onchain verification live above these builders. */
-import { jbContractAddress, revLoansAbi, type JBChainId } from '@bananapus/nana-sdk-core'
+import { jbV6ContractAddress, revLoansAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import {
   buildAutoIssueTx, buildBorrowTx, buildRepayLoanTx, v6Address,
   MIN_PREPAID_FEE_PERCENT, MAX_PREPAID_FEE_PERCENT,
@@ -111,20 +111,20 @@ function checkedAddress(value: Address, label: string): Address {
 
 /** Add-ons must be published in the deployment registry before they become transaction targets. */
 export function registeredIncomeDistributor(chainId: JBChainId): Address | null {
-  const contracts = jbContractAddress['6'] as Record<string, Partial<Record<JBChainId, Address>>>
+  const contracts = jbV6ContractAddress as Record<string, Partial<Record<JBChainId, Address>>>
   const result = contracts.JBTokenDistributor?.[chainId]
   return result && isAddress(result) && result.toLowerCase() !== zeroAddress ? getAddress(result) : null
 }
 
 /** A registry entry (a fork deployment registers one) wins over the verified deployment. */
 export function registeredAllowlistHook(chainId: JBChainId): Address | null {
-  const contracts = jbContractAddress['6'] as Record<string, Partial<Record<JBChainId, Address>>>
+  const contracts = jbV6ContractAddress as Record<string, Partial<Record<JBChainId, Address>>>
   const result = contracts.HomerunAllowlistHook?.[chainId] ?? HOMERUN_ALLOWLIST_HOOK[chainId]
   return result && isAddress(result) && result.toLowerCase() !== zeroAddress ? getAddress(result) : null
 }
 
 export function registeredHomerunDeployer(chainId: JBChainId): Address | null {
-  const contracts = jbContractAddress['6'] as Record<string, Partial<Record<JBChainId, Address>>>
+  const contracts = jbV6ContractAddress as Record<string, Partial<Record<JBChainId, Address>>>
   const result = contracts.HomerunDeployer?.[chainId] ?? HOMERUN_DEPLOYER[chainId]
   return result && isAddress(result) && result.toLowerCase() !== zeroAddress ? getAddress(result) : null
 }

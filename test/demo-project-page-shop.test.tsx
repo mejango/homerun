@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/components/WalletButton', () => ({ WalletButton: () => <span>Wallet</span> }))
 
-import { DemoProjectPage, type ProjectPhase } from '../src/components/ProjectPage'
+import { DemoProjectPage } from '../src/components/ProjectPage'
+import type { ProjectPhase } from '../src/components/ProjectPageParts'
 import { demoShopStorageKey, newDemoShopItem, type DemoShopPhase } from '../src/lib/demo-shop'
 import { CREATE_DEFAULTS, saveCreatedProject } from '../web/create-model.mjs'
 
@@ -79,7 +80,8 @@ describe('demo project phase stores', () => {
     ]
     await act(async () => root.render(<DemoProjectPage project={project} />))
     await tab('Shop')
-    expect(itemNames()).toEqual(['Fundraising membership'])
+    // The shop is its own chunk; it shows once loaded.
+    await vi.waitFor(() => expect(itemNames()).toEqual(['Fundraising membership']))
 
     for (const [phase, expected] of [
       ['funded', 'Fundraising membership'],

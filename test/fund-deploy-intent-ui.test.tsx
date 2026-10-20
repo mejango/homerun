@@ -50,7 +50,7 @@ vi.mock('@bananapus/nana-sdk-core/safe', async original => {
   }) }
 })
 
-import { FundDeploy } from '../src/components/LiveCreate'
+import { FundDeploy } from '../src/components/FundDeploy'
 
 function values(overrides: Partial<CreateValues> = {}): CreateValues {
   return {

@@ -1,0 +1,14 @@
+@keyframes home-asset-appear { from { opacity: 0; } to { opacity: 1; } }
+#ballpark { width: 100%; height: 100%; display: block; }
+
+#ballpark { --scene-top: 100; }
+@media (max-width: 760px) {
+  #ballpark { --scene-top: 104; }
+}
+
+#ballpark { --scene-top: 136; }
+@media (max-width: 760px) {
+  #ballpark { --scene-top: 140; }
+}
+
+/* The controls sit on the scene's bottom edge. */

@@ -15,7 +15,7 @@ vi.mock('@/components/CreateFlow', () => ({ default: () => null }))
 vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => false, useSafeConnection: () => false, waitForSafeExecutionHash: vi.fn() }))
 vi.mock('@/lib/fund-launch-relayr', () => ({ runRelayrLaunch: runtime.run, launchRequestsDead: vi.fn() }))
 
-import { FundDeploy } from '@/components/LiveCreate'
+import { FundDeploy } from '@/components/FundDeploy'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as const
 let root: Root

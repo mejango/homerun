@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { isAddressEqual } from "viem";
 import { useWallet } from "@/hooks/useWallet";
 import type { IncomeProjectState } from "@/lib/income-state";
-import { jbCenterPublicClient } from "@/lib/jbcenter-rpc";
+import { jbCenterPublicClient } from "@/lib/jbcenter-public-client";
 import {
   readLinkedIncomeProjects,
   readIncomeBridgeRoute,

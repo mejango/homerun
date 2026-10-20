@@ -10,18 +10,20 @@
   --radius-xl: var(--radius);
   --radius-2xl: var(--radius);
 }
-@import '../../web/network.css';
-@import '../../web/lifecycle.css';
-@import '../../web/project-page.css';
-@import '../../web/project-journey.css';
-@import '../../web/pay-panel.css';
-@import '../../web/pay-details.css';
-@import '../../web/projection-charts.css';
-@import '../../web/ownership-charts.css';
-@import '../../web/founder-haus.css';
-@import '../../web/create.css';
-@import '../../web/create-income-preview.css';
-@import '../../web/home.css';
+/* Each sheet's shared rules, in the order the sheets' own @imports gave them; route-family rules load with their
+   routes (project.css, create.css and home.css here). */
+@import '../../web/project-page.shell.css';
+@import '../../web/project-journey.shell.css';
+@import '../../web/pay-panel.shell.css';
+@import '../../web/pay-details.shell.css';
+@import '../../web/ownership-charts.shell.css';
+@import '../../web/create.shell.css';
+@import '../../web/create-income-preview.shell.css';
+@import '../../web/lifecycle.shell.css';
+@import '../../web/projection-charts.shell.css';
+@import '../../web/founder-haus.shell.css';
+@import '../../web/network.shell.css';
+@import '../../web/home.shell.css';
 @import '../components/transaction-runtime.css';
 @import './live.css';
 @import '../components/project-layout.css';

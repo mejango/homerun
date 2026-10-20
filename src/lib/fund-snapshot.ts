@@ -5,7 +5,7 @@
  * an onchain proof of historical balances.
  */
 import {
-  jbContractAddress, jbControllerAbi, jbDirectoryAbi, jbOmnichainDeployerAbi,
+  jbV6ContractAddress, jbControllerAbi, jbDirectoryAbi, jbOmnichainDeployerAbi,
   jbProjectsAbi, jbSuckerRegistryAbi, jbTerminalStoreAbi, jbTokensAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
@@ -292,7 +292,7 @@ async function readFundSnapshotCore(client: PublicClient, input: FundSnapshotInp
   if (totalCreditSupply + totalErc20Supply !== totalFundSupply) throw new Error('The FUND credit and ERC-20 supplies do not reconcile.')
   input.onProgress?.({ stage: 'creation', completed: 0n, total: 1n, candidates: 0 })
   const creation = await locateCreation(client, input, block.number, projects)
-  const registeredSticky = (jbContractAddress['6'] as Record<string, Partial<Record<JBChainId, Address>>>).StickyDeployer?.[input.chainId]
+  const registeredSticky = (jbV6ContractAddress as Record<string, Partial<Record<JBChainId, Address>>>).StickyDeployer?.[input.chainId]
   let stickyDeployer: Address | null = null
   const terminal = v6Address('JBMultiTerminal', input.chainId)
   if (tokenAddress && registeredSticky && isAddress(registeredSticky) && !isAddressEqual(registeredSticky, zeroAddress)) {

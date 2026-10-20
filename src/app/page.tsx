@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import HomePage from '../components/HomePage';
+import './home.css'
 
 export const metadata: Metadata = {
   title: { absolute: "Homerun \u2014 Run your homes' investments and revenues" },

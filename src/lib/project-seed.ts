@@ -3,7 +3,7 @@ import { cache } from 'react'
 import { getProject, type BsProject } from '@/lib/bendystraw'
 import { fetchFundProjectMetadata, type FundProjectMetadata } from '@/lib/fund-project-metadata'
 import { readIncomeFundBinding } from '@/lib/income-fund-binding'
-import { jbCenterPublicClient } from '@/lib/jbcenter-rpc'
+import { jbCenterPublicClient } from '@/lib/jbcenter-public-client'
 
 /** What the server can say about a project before any contract read: its index row and published details. */
 export type ProjectSeed = { indexed: BsProject | null; details: FundProjectMetadata | null }

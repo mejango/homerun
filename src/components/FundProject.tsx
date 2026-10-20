@@ -1,5 +1,6 @@
 'use client'
 
+import { IncomeLaunch, FundBridgeActions, ProjectParticipants, ProjectPayerAddresses, ProjectShop, ProjectOwnershipEditor, ProjectPermissionsEditor, ProjectSplitsEditor, SiteIntegration, preloadProjectPanels } from '@/components/project-panels'
 import { type JBChainId } from '@bananapus/nana-sdk-core'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
@@ -7,21 +8,13 @@ import { formatUnits, isAddress, isAddressEqual, type PublicClient } from 'viem'
 import Image from 'next/image'
 import { usePublicClient } from 'wagmi'
 import { DeployRemainingChains } from '@/components/DeployRemainingChains'
-import { IncomeLaunch } from '@/components/IncomeLaunch'
-import { FundBridgeActions } from '@/components/FundBridgeActions'
 import { ProjectActivity } from '@/components/ProjectActivity'
 import { DisplayTokenAmount } from '@/components/DisplayTokenAmount'
 import { HomerunProjectLayout, OwnersTabs } from '@/components/HomerunProjectLayout'
-import { ProjectParticipants } from '@/components/ProjectParticipants'
-import { ProjectPayerAddresses } from '@/components/ProjectPayerAddresses'
-import { ProjectShop } from '@/components/ProjectShop'
 import { IncomeProjectRuntime, type IncomeProjectSlots } from '@/components/IncomeProject'
 import { FundPaymentNetworks } from '@/components/FundPaymentNetworks'
 import { CurrentOperatorProfile, CurrentOwnerProfile } from '@/components/CurrentOperatorProfile'
 import { ProjectMetadataEditor } from '@/components/ProjectMetadataEditor'
-import { ProjectOwnershipEditor } from '@/components/ProjectOwnershipEditor'
-import { ProjectPermissionsEditor } from '@/components/ProjectPermissionsEditor'
-import { ProjectSplitsEditor } from '@/components/ProjectSplitsEditor'
 import { FundTokenTermsSection } from '@/components/FundTokenTerms'
 import { readIncomeLaunchBinding } from '@/lib/income-launch'
 import { money } from '@/lib/money'
@@ -30,11 +23,10 @@ import { useHydrated } from '@/hooks/useHydrated'
 import { displayChainName } from '@/lib/chainDisplay'
 import { readFundAccountState, readFundProjectState, type FundProjectState } from '@/lib/fund-state'
 import { fetchFundProjectMetadata, type FundProjectMetadata } from '@/lib/fund-project-metadata'
-import { SiteIntegration } from './SiteIntegration'
 import { getProject } from '@/lib/bendystraw'
 import { PERSIST } from '@/lib/query-persist'
 import type { ProjectSeed } from '@/lib/project-seed'
-import { DemoStageHistory, ProjectOverviewView, ProjectPageShell, ProjectPhoto, ProjectRaiseStats } from '@/components/ProjectPage'
+import { DemoStageHistory, ProjectOverviewView, ProjectPageShell, ProjectPhoto, ProjectRaiseStats } from '@/components/ProjectPageParts'
 import { liveFundPhase } from '@/lib/fund-phase'
 import { FundingProgress } from '@/components/FundingProgress'
 import { Revalidating } from '@/components/ui/Revalidating'
@@ -60,6 +52,7 @@ function projectLogo(details: { logoUrl: string | null; coverUrl: string | null 
   return src ? <Image unoptimized src={src} width={112} height={112} alt={alt} /> : null
 }
 export function FundProject({ chainId, projectId, intentId, seed }: { chainId: JBChainId; projectId: string; intentId?: string; seed?: ProjectSeed }) {
+  useEffect(preloadProjectPanels, [])
   const hydrated = useHydrated()
   const id = BigInt(projectId)
   const client = usePublicClient({ chainId }) as PublicClient | undefined

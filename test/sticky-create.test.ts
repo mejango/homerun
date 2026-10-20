@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
-import { jbContractAddress, type JBChainId } from "@bananapus/nana-sdk-core";
+import { jbV6ContractAddress, type JBChainId } from "@bananapus/nana-sdk-core";
 import { v6Address } from "@bananapus/nana-sdk-core/v6";
 import {
   decodeFunctionData,
@@ -81,7 +81,7 @@ const DEPLOYER = "0x1111111111111111111111111111111111111111",
 const HOOK = getContractAddress({ from: DEPLOYER, nonce: 1n }),
   hash = (n: bigint) => toHex(n, { size: 32 }),
   EXECUTION = hash(700n);
-const registry = jbContractAddress["6"] as Record<
+const registry = jbV6ContractAddress as Record<
     string,
     Partial<Record<JBChainId, Address>>
   >,

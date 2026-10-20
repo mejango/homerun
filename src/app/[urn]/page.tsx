@@ -5,6 +5,7 @@ import { displayChainName } from '@/lib/chainDisplay'
 import { projectFromUrn } from '@/lib/project-route'
 import { projectPath } from '@/lib/urn'
 import { loadIncomeFund, loadProjectSeed } from '@/lib/project-seed'
+import '../project.css'
 
 const INTENT_ID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i
 

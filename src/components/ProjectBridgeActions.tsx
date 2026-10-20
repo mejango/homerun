@@ -25,7 +25,7 @@ import {
   displayChainSlug,
   explorerTxUrl,
 } from "@/lib/chainDisplay";
-import { jbCenterPublicClient } from "@/lib/jbcenter-rpc";
+import { jbCenterPublicClient } from "@/lib/jbcenter-public-client";
 import { parseAmount } from "@/lib/fund-contracts";
 import type { FundTransaction } from "@/lib/fund-contracts";
 import type {

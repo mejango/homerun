@@ -6,7 +6,7 @@ import type { PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { readFundPayNetwork } from '@/lib/fund-pay-networks'
 import type { FundProjectState } from '@/lib/fund-state'
-import { jbCenterPublicClient } from '@/lib/jbcenter-rpc'
+import { jbCenterPublicClient } from '@/lib/jbcenter-public-client'
 import { displayChainName } from '@/lib/chainDisplay'
 import { PaymentChainSelect } from '@/components/PaymentChainSelect'
 

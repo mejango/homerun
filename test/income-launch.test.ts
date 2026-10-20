@@ -14,7 +14,7 @@ const runtime = vi.hoisted(() => ({
 }))
 vi.mock('@bananapus/nana-sdk-core', async importOriginal => {
   const actual = await importOriginal<typeof import('@bananapus/nana-sdk-core')>()
-  return { ...actual, jbContractAddress: { ...actual.jbContractAddress, '6': { ...actual.jbContractAddress['6'], HomerunDeployer: { 8453: runtime.launcher, 10: runtime.launcher }, HomerunAllowlistHook: { 8453: runtime.allowlist, 10: runtime.allowlist } } } }
+  return { ...actual, jbV6ContractAddress: { ...actual.jbV6ContractAddress, HomerunDeployer: { 8453: runtime.launcher, 10: runtime.launcher }, HomerunAllowlistHook: { 8453: runtime.allowlist, 10: runtime.allowlist } } }
 })
 vi.mock('../src/lib/fund-state', () => ({ readFundProjectState: vi.fn((_client, { chainId }) => runtime.remoteStates.get(chainId) ?? runtime.state) }))
 vi.mock('../src/lib/income-initial-allocation', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/income-initial-allocation')>(), readInitialIncomeAllocation: runtime.allocation }))

@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/components/WalletButton', () => ({ WalletButton: () => <span>Wallet</span> }))
 
-import { DemoProjectPage, type ProjectPhase } from '../src/components/ProjectPage'
+import { DemoProjectPage } from '../src/components/ProjectPage'
+import type { ProjectPhase } from '../src/components/ProjectPageParts'
 import { CREATE_DEFAULTS, saveCreatedProject } from '../web/create-model.mjs'
 
 let root: Root

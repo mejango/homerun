@@ -1,6 +1,6 @@
 /** Block-consistent reads for canonical V6 revnets and unstaked FUND rewards. */
 import {
-  NATIVE_TOKEN, USDC_ADDRESSES, jbContractAddress, jbControllerAbi, jbDirectoryAbi, jbMultiTerminalAbi,
+  NATIVE_TOKEN, USDC_ADDRESSES, jbV6ContractAddress, jbControllerAbi, jbDirectoryAbi, jbMultiTerminalAbi,
   jbProjectsAbi, jbSplitsAbi, jbTerminalStoreAbi, jbTokensAbi, revOwnerAbi, type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import { RESERVED_TOKEN_SPLIT_GROUP_ID, v6Address, type JBRuleset, type JBRulesetMetadata } from '@bananapus/nana-sdk-core/v6'
@@ -80,7 +80,7 @@ async function readAccountingContexts(client: PublicClient, snapshot: Snapshot):
   const terminal = v6Address('JBMultiTerminal', chainId)
   const directory = v6Address('JBDirectory', chainId)
   const terminals = await client.readContract({ address: directory, abi: jbDirectoryAbi, functionName: 'terminalsOf', args: [projectId], blockNumber })
-  const registry = (jbContractAddress['6'] as Record<string, Partial<Record<JBChainId, Address>>>).JBRouterTerminalRegistry?.[chainId]
+  const registry = (jbV6ContractAddress as Record<string, Partial<Record<JBChainId, Address>>>).JBRouterTerminalRegistry?.[chainId]
   // REVDeployer registers the treasury terminal plus an optional router registry
   // with no accounting contexts. The router never becomes a treasury/loan source.
   const uniqueTerminals = new Set(terminals.map(entry => entry.toLowerCase()))

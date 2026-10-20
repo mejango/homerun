@@ -677,10 +677,8 @@ try {
     "Native SVG charts expose readable histories without changing the selected month",
     async () => {
       await open();
-      assert.equal(
-        await page.locator("[data-projection-chart=budget]").count(),
-        1,
-      );
+      // The charts load in their own chunk after the page.
+      await expect(page.locator("[data-projection-chart=budget]")).toHaveCount(1);
       await phase("earning");
       await reveal("[data-chart-kind=loan]");
       for (const name of ["cash", "loan"]) {

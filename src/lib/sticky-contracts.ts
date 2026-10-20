@@ -1,5 +1,5 @@
 /** Native adapters for the canonical Sticky sources. No predicted deployment is a write target. */
-import { jbContractAddress, type JBChainId } from "@bananapus/nana-sdk-core";
+import { jbV6ContractAddress, type JBChainId } from "@bananapus/nana-sdk-core";
 import {
   buildClaimTokensTx,
   buildPayTx,
@@ -75,7 +75,7 @@ export function registeredStickyContract(
   name: "StickyDeployer" | "JBTokenDistributor",
 ): Address | null {
   const value = (
-    jbContractAddress["6"] as Record<
+    jbV6ContractAddress as Record<
       string,
       Partial<Record<JBChainId, Address>>
     >

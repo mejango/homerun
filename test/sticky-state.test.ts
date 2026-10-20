@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { jbContractAddress, type JBChainId } from "@bananapus/nana-sdk-core";
+import { jbV6ContractAddress, type JBChainId } from "@bananapus/nana-sdk-core";
 import { v6Address } from "@bananapus/nana-sdk-core/v6";
 import { zeroAddress, type Address, type Hex, type PublicClient } from "viem";
 import { initialFundRuleset } from "../src/lib/fund-contracts";
@@ -22,7 +22,7 @@ const DEPLOYER = "0x1111111111111111111111111111111111111111",
 const BLOCK = 1000n,
   HASH = `0x${"ab".repeat(32)}` as Hex,
   TIMESTAMP = 1_800_000_000n;
-const registry = jbContractAddress["6"] as Record<
+const registry = jbV6ContractAddress as Record<
     string,
     Partial<Record<JBChainId, Address>>
   >,

@@ -1,8 +1,8 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { Brand } from './Brand';
+import { HoverPrefetchLink } from './HoverPrefetchLink';
 import { WalletButton } from '@/components/WalletButton';
 import { RotatingAssetHeadline } from './RotatingAssetHeadline';
 import {
@@ -110,8 +110,8 @@ export function HomePage() {
               <em className="home-title-revenues">investments and revenues</em>
             </h1>
             <div className="home-actions">
-              <Link className="create-homerun" href="/create">Begin</Link>
-              <Link className="see-demo" href="/founderhaus">See Founder Haus demo</Link>
+              <HoverPrefetchLink className="create-homerun" href="/create">Begin</HoverPrefetchLink>
+              <HoverPrefetchLink className="see-demo" href="/founderhaus">See Founder Haus demo</HoverPrefetchLink>
             </div>
           </div>
           <canvas

@@ -18,12 +18,12 @@ import { approvalIntentKey, buildErc20ApproveRequest, canonicalDecimal, chosenOr
 import { prepareProjectPayQuote, readProjectPayTokenOptions } from '@/lib/project-pay-quote'
 // `intent` names this flow's own reviewed intent here.
 import { intent as keyed, writeIntentKey } from '@bananapus/nana-sdk-core/review'
-import dynamic from 'next/dynamic'
+import { lazyComponent } from '@/components/lazy-component'
 import { readableError } from '@/lib/readable-error'
 import { refreshIndexedProject } from '@/lib/refresh-indexed'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
 
-const CenterProjectPayment = dynamic(() => import('./CenterProjectPayment'))
+const CenterProjectPayment = lazyComponent(() => import('./CenterProjectPayment').then(m => m.default))
 export function ProjectPayment(props: Parameters<typeof ExternalProjectPayment>[0]) {
   const { isCenterWallet } = useWallet()
   return isCenterWallet ? <CenterProjectPayment {...props} /> : <ExternalProjectPayment {...props} />

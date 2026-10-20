@@ -24,7 +24,7 @@ vi.mock('@/components/HomerunProjectLayout', () => ({ HomerunProjectLayout: ({ t
 vi.mock('@/components/ProjectShopManagement', () => ({ ProjectShopManagement: ({ children }: { children: (value: object) => ReactNode }) => children({}) }))
 vi.mock('@/components/FundProject', () => ({ FundProject: () => <p>FUND page</p> }))
 vi.mock('@/components/IncomeProject', () => ({ IncomeProject: () => <p>INCOME page</p>, IncomeProjectRuntime: ({ children }: { children: (slots: object) => ReactNode }) => children({}) }))
-vi.mock('@/components/ProjectPage', () => ({ ProjectPageShell: ({ children }: { children: ReactNode }) => <div>{children}</div>, ProjectOverviewView: () => null, ProjectPhoto: () => null, DemoStageHistory: () => null, ProjectRaiseStats: () => null }))
+vi.mock('@/components/ProjectPageParts', () => ({ ProjectPageShell: ({ children }: { children: ReactNode }) => <div>{children}</div>, ProjectOverviewView: () => null, ProjectPhoto: () => null, DemoStageHistory: () => null, ProjectRaiseStats: () => null }))
 
 import { ProjectActivity } from '@/components/ProjectActivity'
 import { ProjectAddress } from '@/components/ProjectAddress'

@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import LiveCreate from '../../components/LiveCreate';
 import { Brand } from '../../components/Brand';
 import { WalletButton } from '@/components/WalletButton';
+import '../create.css'
 
 export const metadata: Metadata = {
   title: 'Design the rules',
