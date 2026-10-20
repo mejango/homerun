@@ -22,7 +22,7 @@ const statuses = {
   reviewing: 'Approve this payment with your passkey in the Signa panel below.',
   approved: 'Approved. Submit this exact payment when you are ready.',
   submitting: 'Checking the original submission…', pending: 'Submitted. Waiting for confirmation…',
-  confirming: 'Confirming the payment onchain…', paid: 'Payment confirmed onchain.', reverted: 'The payment reverted onchain.',
+  confirming: 'Confirming the payment onchain…', paid: 'Payment confirmed onchain.', reverted: 'The payment reverted.',
   cancelled: 'The payment review was cancelled.', unknown: 'The payment outcome is not confirmed. Check its status before making another payment.',
   expired: 'The payment expired before it was included onchain. Nothing was charged; you can pay again.',
 }
@@ -75,6 +75,8 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
   const ownPayment = !!address && pending?.accountId === 'eip155:8453:' + address.toLowerCase()
   const suggested = matching && ownPayment && failure ? payRetrySlippageBps(failure, currentBps) : null
   const retryBps = suggested === null ? null : retryEdit ?? Math.min(suggested, SIGNA_SLIPPAGE_LIMIT_BPS)
+  // A revert Signa gives no reason for is prepared again at the same tolerance: that fresh preparation says why, if it fails.
+  const plainRetry = retryBps === null && status === 'reverted' && matching && ownPayment && !failure
   useEffect(() => { onBusyChange?.(busy || !!pending && !terminal); return () => onBusyChange?.(false) }, [busy, pending, terminal, onBusyChange])
   async function run(action: () => Promise<unknown>) {
     if (working.current) return
@@ -138,7 +140,7 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
     await approve(reviewed.approvalUrl)
   }
   /** Close the failed payment and prepare the same amount again with the tolerance the payer chose. */
-  async function reviewAgain(slippageBps: number) {
+  async function reviewAgain(slippageBps?: number) {
     if (!controller || !pending || !matching || !ownPayment || paused) return
     const amount = BigInt(pending.intent.amount)
     await run(async () => { controller.clear(); setPending(null); setInput(formatUnits(amount, 6)); await prepareAndApprove(amount, slippageBps) })
@@ -185,8 +187,8 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
           </div>
         </div> : null}
         <div className="mt-4 flex flex-wrap gap-3">
-          {retryBps !== null && !frame ? <button type="button" className="btn-primary min-h-11 px-4" disabled={busy || paused || !!blocked} onClick={() => void reviewAgain(retryBps)}>Review again</button> : null}
-          {!frame && retryBps === null && (!pending || (!pending.submitted && (!status || status === 'reviewing'))) ? <button type="button" className="btn-primary min-h-11 px-4" disabled={busy || paused || !!blocked || !controller} onClick={() => void review()}>{busy ? 'Preparing…' : pending ? status ? 'Approve with your passkey' : 'Resume payment preparation' : 'Review with a passkey'}</button> : null}
+          {(retryBps !== null || plainRetry) && !frame ? <button type="button" className="btn-primary min-h-11 px-4" disabled={busy || paused || !!blocked} onClick={() => void reviewAgain(retryBps ?? pending?.intent.slippageBps)}>Review again</button> : null}
+          {!frame && retryBps === null && !plainRetry && (!pending || (!pending.submitted && (!status || status === 'reviewing'))) ? <button type="button" className="btn-primary min-h-11 px-4" disabled={busy || paused || !!blocked || !controller} onClick={() => void review()}>{busy ? 'Preparing…' : pending ? status ? 'Approve with your passkey' : 'Resume payment preparation' : 'Review with a passkey'}</button> : null}
           {status === 'approved' && !pending?.submitted ? <button type="button" className="btn-primary min-h-11 px-4" disabled={busy || paused} onClick={() => void submit()}>Submit payment</button> : null}
           {pending && status && !terminal ? <button type="button" className="btn-secondary min-h-11 px-4" disabled={busy} onClick={() => void run(() => controller!.refresh())}>Check payment status</button> : null}
           {terminal ? <button type="button" className="btn-secondary min-h-11 px-4" disabled={busy} onClick={() => void run(async () => { controller!.clear(); setInput('') })}>Close payment</button> : null}

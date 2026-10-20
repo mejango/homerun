@@ -112,6 +112,9 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
   const failure = shown?.failure ?? null
   const retrySlippageBps = shown?.retryBps ?? null
   const retrying = retryWhenQuoted === paymentInputs
+  // A mined revert's receipt carries no reason, and end-of-block state can't establish one: Review again
+  // quotes and simulates it at the latest block, and only that simulation's failure is shown as a reason.
+  const minedRevert = tx.phase === 'error' && tx.receipt?.status === 'reverted'
   // Another payment drops it, so coming back to this one starts from the default again.
   useEffect(() => {
     if (payerSlippage && payerSlippage.payment !== paymentInputs) setPayerSlippage(null)
@@ -218,7 +221,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       const checked = await reverify()
       setStatus('Review and execute the payment.'); setStage('pay')
       let failed: unknown
-      const paid = await tx.send({ ...request, label: `Pay ${formatUnits(count, context.decimals)} ${context.symbol} through the Juicebox payment terminal; minimum ${formatUnits(latest.minimumTokenCount, 18)} ${tokenLabel}` }, {
+      await tx.send({ ...request, label: `Pay ${formatUnits(count, context.decimals)} ${context.symbol} through the Juicebox payment terminal; minimum ${formatUnits(latest.minimumTokenCount, 18)} ${tokenLabel}` }, {
         reviewedAccount: address,
         assertWriteState,
         onFailure: reason => { failed = reason },
@@ -232,18 +235,12 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
         },
       })
       if (failed !== undefined) explain(decodePayFailure(failed))
-      // A receipt carries no reason: the same call at its block says why it reverts there.
-      else if (paid && !tx.isSafe) void paymentReceipt(client, paid).then(async receipt => {
-        if (receipt.status === 'success') return
-        const reason = await client.simulateContract({ address: request.address, abi: request.abi, functionName: request.functionName, args: request.args, value: request.value, account: address, blockNumber: receipt.blockNumber }).then(() => undefined, (error: unknown) => error)
-        explain(decodePayFailure(reason))
-      }).catch(() => {})
       setStatus(null)
     } catch (reason) { setError(message(reason)); setStatus(null) } finally { setPreparing(false) }
   }
-  /** Quote the payment again with the tolerance the payer chose, then run it from the start. */
-  function reviewWithSlippage(bps: number) {
-    setPayerSlippage({ bps, payment: paymentInputs })
+  /** Quote the payment again (with the tolerance the payer chose, if any), then run it from the start. */
+  function reviewAgain(bps?: number) {
+    if (bps !== undefined) setPayerSlippage({ bps, payment: paymentInputs })
     tx.reset(); setOutcome(null); setError(null); setRetryWhenQuoted(paymentInputs)
   }
   const submitNow = useRef(submit)
@@ -279,15 +276,15 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       ]}
       steps={steps}
       activeIndex={activeIndex}
-      action={!address ? 'Connect wallet' : retrySlippageBps !== null ? 'Review again' : `Confirm & ${payTitle.toLowerCase()}`}
+      action={!address ? 'Connect wallet' : retrySlippageBps !== null || minedRevert ? 'Review again' : `Confirm & ${payTitle.toLowerCase()}`}
       actionDisabled={!!address && (paused || count <= 0n || !quoted || retrying)}
-      onConfirm={() => { if (!address) openSignIn(); else if (retrySlippageBps !== null) reviewWithSlippage(retrySlippageBps); else void submit() }}
+      onConfirm={() => { if (!address) openSignIn(); else if (retrySlippageBps !== null) reviewAgain(retrySlippageBps); else if (minedRevert) reviewAgain(); else void submit() }}
       busy={prompting || retrying}
       complete={tx.phase === 'success'}
       settled={!!submitted}
       held={submitted?.held}
       status={submitted?.notice ?? status ?? (tx.phase === 'pending' ? <>Submitted. Waiting for onchain confirmation{tx.hash && explorerTxUrl(chainId, tx.hash) ? <> (<a className="underline" href={explorerTxUrl(chainId, tx.hash)!} target="_blank" rel="noreferrer">view transaction</a>)</> : null}</> : null)}
-      error={error ?? (failure ? payFailureMessage(failure) : null) ?? tx.error ?? approval.error}
+      error={error ?? (failure ? payFailureMessage(failure) : null) ?? (minedRevert ? 'The payment reverted.' : null) ?? tx.error ?? approval.error}
       onClose={() => { setOpen(false); for (const item of [tx, approval]) if (item.phase === 'submitted') item.dismiss(); setStatus(null); attempt.current++; setOutcome(null); setRetryWhenQuoted(null); setPayerSlippage(null) }}
     >
       <div className="text-sm text-smoke-600" aria-live="polite">

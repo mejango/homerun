@@ -44,7 +44,7 @@ describe('Juicebox wallet payment failure', () => {
     runtime.pending = { intent, submitted: true, accountId: OWNER, status: reverted({ payFailure: { reason: 'TERMINAL_UNDER_MIN', received: '98', minimum: '99', message: SHORTFALL } }) }
     await render()
     expect(host.textContent).toContain(SHORTFALL)
-    expect(host.textContent).not.toContain('The payment reverted onchain.')
+    expect(host.textContent).not.toContain('The payment reverted.')
     expect(host.querySelector<HTMLInputElement>('input[type="number"]')?.value).toBe('2.5')
     const again = [...host.querySelectorAll('button')].find(button => button.textContent === 'Review again')!
     await act(async () => again.click())
@@ -55,13 +55,17 @@ describe('Juicebox wallet payment failure', () => {
     await vi.waitFor(() => expect(host.querySelector('iframe')).not.toBeNull())
   })
 
-  it('keeps the reverted line and offers no retry when Signa sends no reason', async () => {
+  it('says a payment reverted when Signa sends no reason, and prepares it again', async () => {
     runtime.pending = { intent, submitted: true, accountId: OWNER, status: reverted({}) }
     await render()
-    expect(host.textContent).toContain('The payment reverted onchain.')
+    expect(host.textContent).toContain('The payment reverted.')
     expect(host.querySelector('input[type="number"]')).toBeNull()
-    expect(buttons()).not.toContain('Review again')
     expect(buttons()).toContain('Close payment')
+    await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Review again')!.click())
+    await vi.waitFor(() => expect(runtime.prepare).toHaveBeenCalled())
+    // Prepared again at the payment's own tolerance: the fresh preparation says why, if it fails again.
+    expect(runtime.quote).toHaveBeenCalledWith(expect.anything(), expect.not.objectContaining({ slippageBps: expect.anything() }))
+    expect(runtime.prepare.mock.calls[0]![0]).not.toHaveProperty('slippageBps')
   })
 
   it("offers no lower minimum for a reason a minimum can't fix", async () => {

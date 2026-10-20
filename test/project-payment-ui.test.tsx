@@ -19,13 +19,13 @@ const runtime = vi.hoisted(() => ({
   nextHook: 0, mounts: 0, unmounts: 0,
   handles: [] as Handle[],
   quote: vi.fn(), options: vi.fn(), verify: vi.fn(), openSignIn: vi.fn(),
-  readContract: vi.fn(), waitForTransactionReceipt: vi.fn(), getTransactionReceipt: vi.fn(), simulateContract: vi.fn(),
+  readContract: vi.fn(), waitForTransactionReceipt: vi.fn(), getTransactionReceipt: vi.fn(),
   writes: [] as { action: Action; request: TxRequest; options: TxSendOptions }[],
   review: undefined as ((action: Action, request: TxRequest) => Promise<void>) | undefined,
   allowance: 0n,
 }))
 
-vi.mock('wagmi', () => ({ usePublicClient: () => ({ readContract: runtime.readContract, waitForTransactionReceipt: runtime.waitForTransactionReceipt, getTransactionReceipt: runtime.getTransactionReceipt, simulateContract: runtime.simulateContract }) }))
+vi.mock('wagmi', () => ({ usePublicClient: () => ({ readContract: runtime.readContract, waitForTransactionReceipt: runtime.waitForTransactionReceipt, getTransactionReceipt: runtime.getTransactionReceipt }) }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address, openSignIn: runtime.openSignIn }) }))
 vi.mock('@/lib/project-pay-quote', () => ({ prepareProjectPayQuote: runtime.quote, readProjectPayTokenOptions: runtime.options }))
 vi.mock('@/hooks/useSafeTx', () => ({
@@ -71,7 +71,6 @@ describe('shared payment execution', () => {
     runtime.verify.mockReset().mockImplementation(async (_account, minimumBlock) => ({ blockNumber: minimumBlock ?? 100n }))
     runtime.waitForTransactionReceipt.mockReset().mockResolvedValue({ status: 'success', blockNumber: 101n, transactionHash: HASH })
     runtime.getTransactionReceipt.mockReset()
-    runtime.simulateContract.mockReset().mockResolvedValue({})
     runtime.readContract.mockReset().mockImplementation(async ({ functionName }: { functionName: string }) => {
       if (functionName === 'allowance') return runtime.allowance
       throw new Error(`Unexpected contract read: ${functionName}`)
@@ -412,14 +411,22 @@ describe('shared payment execution', () => {
     expect(host.textContent).toContain('2.5% maximum slippage')
   })
 
-  it('reads why a sent payment reverted from the same call at its block', async () => {
+  it('says a mined payment reverted, without a reason, and reviews it again at the latest block', async () => {
     await ready()
-    runtime.waitForTransactionReceipt.mockResolvedValue({ status: 'reverted', blockNumber: 105n, transactionHash: HASH })
-    runtime.simulateContract.mockRejectedValue(Object.assign(new Error('reverted'), { data: UNDER_MIN }))
-    await act(async () => button().click())
-    await waitUntil(() => expect(host.textContent).toContain(SHORTFALL))
-    expect(runtime.simulateContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'pay', account: WALLET, blockNumber: 105n }))
-    expect(allowedDecrease()).not.toBeNull()
+    const pay = runtime.handles[0] as unknown as { phase: string; receipt: unknown; reset: ReturnType<typeof vi.fn> }
+    pay.reset.mockImplementation(() => { pay.phase = 'idle'; pay.receipt = null })
+    await submit()
+    pay.phase = 'error'; pay.receipt = { status: 'reverted', blockNumber: 105n, transactionHash: HASH }
+    await act(async () => commitRender())
+    expect(host.textContent).toContain('The payment reverted.')
+    expect(allowedDecrease()).toBeNull()
+    const again = [...host.querySelectorAll('button')].find(element => element.textContent === 'Review again')!
+    runtime.quote.mockResolvedValue(quote(97n * UNIT))
+    await act(async () => again.click())
+    await waitUntil(() => expect(runtime.writes.filter(item => item.action === 'payment')).toHaveLength(2))
+    expect(encoded(runtime.writes[1].request).args?.[4]).toBe(97n * UNIT)
+    expect(runtime.quote).not.toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ slippageBps: expect.anything() }))
+    expect(host.textContent).not.toContain('The payment reverted.')
   })
 
   it('keeps the shared line and offers no minimum for an unknown failure', async () => {
@@ -440,20 +447,6 @@ describe('shared payment execution', () => {
     await waitUntil(() => expect(button().disabled).toBe(false))
     expect(host.textContent).not.toContain(SHORTFALL)
     expect(allowedDecrease()).toBeNull()
-  })
-
-  it('drops a late revert explanation once the payer closed that attempt', async () => {
-    await ready()
-    let land!: (receipt: unknown) => void
-    runtime.waitForTransactionReceipt.mockReturnValue(new Promise(resolve => { land = resolve }))
-    runtime.simulateContract.mockRejectedValue(Object.assign(new Error('reverted'), { data: UNDER_MIN }))
-    await submit()
-    const close = [...host.querySelectorAll('button')].find(element => element.textContent === 'Cancel' || element.getAttribute('aria-label') === 'Close')!
-    await act(async () => close.click())
-    await act(async () => { land({ status: 'reverted', blockNumber: 105n, transactionHash: HASH }); await new Promise(resolve => setTimeout(resolve, 0)) })
-    await waitUntil(() => expect(runtime.simulateContract).toHaveBeenCalled())
-    await render()
-    expect(host.textContent).not.toContain(SHORTFALL)
   })
 
   it('says a payment would return no tokens, and offers no minimum of zero', async () => {
