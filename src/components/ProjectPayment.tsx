@@ -118,6 +118,8 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
   const minimum = quote.data?.minimumTokenCount ?? 0n
   const zeroAllocation = reservedPercent === 10_000 && !!quote.data && minimum === 0n && quote.data.reservedTokenCount > 0n
   const quoted = !!quote.data && !quote.isError && !quote.isPlaceholderData && (minimum > 0n || zeroAllocation)
+  const quotedNow = useRef(quoted)
+  quotedNow.current = quoted
   const busy = preparing || [tx, approval].some(item => item.busy || item.phase === 'review')
   const submitted = [tx, approval].find(item => item.phase === 'submitted')
   const tracking = busy || [tx, approval].some(item => !!item.safeProposalHash && item.phase !== 'success')
@@ -158,10 +160,12 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       if (latest.minimumTokenCount <= 0n && !noTokens) throw new Error('No protected token output is available for this payment.')
       const spender = latest.terminal
       const native = isAddressEqual(context.token, NATIVE_TOKEN)
+      // Runs after review, simulation and the hold marker, right before the wallet prompt.
+      const assertWriteState = () => { guard(); if (!quotedNow.current) throw new Error('The payment quote is no longer available. Review the payment again.') }
       const reverify = async () => { guard(); const checked = await verify(address, latestBlock); guard(); latestBlock = checked.blockNumber; return checked }
       const waitForApproval = async (action: PaymentTx, request: TxRequest, recoveryNamespace?: string) => {
         guard()
-        const hash = await action.send(request, { reviewedAccount: address, simulationBlockNumber: latestBlock, reverify, ...(recoveryNamespace ? { recoveryNamespace } : {}) })
+        const hash = await action.send(request, { reviewedAccount: address, simulationBlockNumber: latestBlock, reverify, assertWriteState: guard, ...(recoveryNamespace ? { recoveryNamespace } : {}) })
         if (!hash) throw new Error('Approval was cancelled. Nothing further was sent.')
         if (action.isSafe) { setStatus('Approval proposed to Safe. Execute it there, then continue the payment.'); return false }
         setStatus('Confirming approval onchain…')
@@ -189,6 +193,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       setStatus('Review and execute the payment.'); setStage('pay')
       await tx.send({ ...request, label: `Pay ${formatUnits(count, context.decimals)} ${context.symbol} through the Juicebox payment terminal; minimum ${formatUnits(latest.minimumTokenCount, 18)} ${tokenLabel}` }, {
         reviewedAccount: address,
+        assertWriteState,
         // The terminal, minimum and metadata are fresh each attempt: a retry is held by the payment the user chose.
         recoveryNamespace: payment,
         simulationBlockNumber: latestBlock === undefined ? undefined : checked.blockNumber,

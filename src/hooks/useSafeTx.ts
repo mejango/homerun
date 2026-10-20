@@ -98,6 +98,8 @@ export type TxSendOptions = {
   reverify?: (request: TxRequest) => Promise<unknown>
   /** Additional preflight work; this does not replace the durable recovery owner. */
   beforeWrite?: () => unknown | Promise<unknown>
+  /** Synchronous caller intent/mount check at the final wallet boundary. */
+  assertWriteState?: () => void
   /** Adopt known proposal facts without simulating or marking a new wallet write. */
   onExistingProposal?: (proposal: { proposalHash: Hex; call: SafeAppCall }) => unknown | Promise<unknown>
   /** Called if the final account gate aborts a persisted intent before the wallet write. */
@@ -919,6 +921,7 @@ export function useSafeTx(chainId: number) {
               assertCurrent()
               assertReviewedRequest()
               assertReviewedWallet({ account, connectorUid, chainId: request.chainId, safe: viaSafe })
+              options.assertWriteState?.()
             },
             write: simulated => writeContractAsync({ ...simulated, chainId: request.chainId }),
             onPhase: next => { if (generation.current === at) setPhase(next) },
