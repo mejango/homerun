@@ -695,7 +695,7 @@ export async function getProjectsOwnedBy(
     `query($owners: [String!]!, $limit: Int!, $offset: Int!) {
       projects(
         where: { owner_in: $owners, version: 6 }
-        orderBy: "volume"
+        orderBy: "volumeUsd"
         orderDirection: "desc"
         limit: $limit
         offset: $offset

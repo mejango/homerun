@@ -15,7 +15,7 @@ import {
   getSuckerGroupProjects,
   normalizeBendystrawUrl,
   searchProjects,
-  type BsProject,
+  type BsProjectDetail,
 } from '@/lib/bendystraw'
 import registry from '@/lib/bendystraw-operation-registry.json'
 import { getLoans } from '@/lib/loans-queries'
@@ -30,12 +30,12 @@ function response(data: unknown, status = 200) {
 function request(init?: RequestInit) {
   return JSON.parse(String(init?.body)) as { query: string; variables: Record<string, unknown>; operation?: string }
 }
-function project(override: Partial<BsProject> = {}): BsProject {
+function project(override: Partial<BsProjectDetail> = {}): BsProjectDetail {
   return {
     projectId: 11, chainId: 8453, version: 6, name: 'An asset', logoUri: null, projectTagline: null,
     volume: '0', volumeUsd: '0', balance: '0', paymentsCount: 0, contributorsCount: 0, createdAt: 1,
     suckerGroupId: null, token: null, tokenSymbol: null, decimals: null, currency: null,
-    isRevnet: false, owner: null, metadataUri: null, ...override,
+    isRevnet: false, owner: null, metadataUri: null, accountingTokenCount: 0, projectTokenBalances: { items: [] }, ...override,
   }
 }
 
