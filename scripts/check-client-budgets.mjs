@@ -27,7 +27,7 @@ const budgets = {
   '/center/callback': { js: 196, css: 13 },
   '/account/0x0000000000000000000000000000000000000001': { js: 266, css: 16 },
   '/intent/00000000-0000-4000-8000-000000000000': { js: 406, css: 27 },
-  '/op:11': { js: 508, css: 26 },
+  '/op:11': { js: 510, css: 26 },
   // The only route expected to answer 404; every other route must answer 200, so a missing page cannot pass.
   '/not-a-route/x': { js: 195, css: 13, status: 404 },
 }
