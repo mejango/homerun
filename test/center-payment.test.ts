@@ -106,10 +106,33 @@ describe('Homerun original Center payment recovery', () => {
     f.connection.client.request = async () => { throw new Error('simulation reverted below the minimum') }
     await expect(controller.prepare(f.intent as never)).rejects.toThrow('simulation reverted')
     await expect(controller.prepare({ ...f.intent, minimumReturnedTokens: '90' } as never)).rejects.toThrow('Finish or close')
-    controller.clear(); expect(controller.pending()).toBeNull()
-    expect([...f.data.keys()].some(key => key.endsWith(':history'))).toBe(true)
+    // Repeated failed preparations never fill the bounded payment history.
+    for (let i = 0; i < 70; i++) {
+      controller.clear(); expect(controller.pending()).toBeNull()
+      await expect(controller.prepare(f.intent as never)).rejects.toThrow('simulation reverted')
+    }
+    controller.clear()
+    expect([...f.data.keys()].some(key => key.endsWith(':history'))).toBe(false)
     f.connection.client.request = async () => structuredClone({ id: 'operation-original', signing: { ownerProfile: 'center-passkey-v1' } })
     expect((await controller.prepare({ ...f.intent, minimumReturnedTokens: '90' } as never)).status).toBe('reviewing')
+  })
+  it('does not open a review for a journal another controller closed during preparation', async () => {
+    const f = fixture(), first = f.create()
+    f.connection.client.request = async () => { throw new Error('operation unavailable') }
+    await expect(first.prepare(f.intent as never)).rejects.toThrow('operation unavailable')
+    f.connection.client.request = async () => structuredClone({ id: 'operation-original', signing: { ownerProfile: 'center-passkey-v1' } })
+    // The resumed preparation waits on its final authorization while a remounted page starts over.
+    const original = f.connection.client.authorizeRead.getMockImplementation()!
+    let release!: () => void, entered!: () => void
+    const waiting = new Promise<void>(resolve => { release = resolve }), authorizing = new Promise<void>(resolve => { entered = resolve })
+    f.connection.client.authorizeRead.mockImplementationOnce(original).mockImplementationOnce(original)
+      .mockImplementationOnce(async () => { entered(); await waiting; return original() })
+    const resumed = first.prepare(f.intent as never)
+    await authorizing
+    f.create().clear()
+    release()
+    await expect(resumed).rejects.toThrow()
+    expect(f.payments.preparePayment).not.toHaveBeenCalled()
   })
   it('re-derives a restored plan against its intent before review, even when storage integrity is recomputed', async () => {
     const f = fixture(), controller = f.create()
