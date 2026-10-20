@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { encodeFunctionData, parseAbi } from 'viem'
+import { encodeFunctionData, keccak256, parseAbi, stringToHex } from 'viem'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import { createHomerunPayment } from '@/lib/center-payment'
+import { buildUserPayMetadata } from '@bananapus/nana-sdk-core/v6'
 const account = '0x1111111111111111111111111111111111111111', terminal = '0x2222222222222222222222222222222222222222', token = '0x3333333333333333333333333333333333333333', hash = '0x' + 'ab'.repeat(32)
 function fixture() {
-  const data = new Map<string, string>(), events: string[] = []
+  const data = new Map<string, string>(), events: string[] = [], planInputs: unknown[] = []
   const storage = { getItem: (key: string) => data.get(key) ?? null, setItem: (key: string, value: string) => { data.set(key, value) }, removeItem: (key: string) => { data.delete(key) } }
   const config = { issuer: 'https://my.juicebox.center', audience: 'https://juicebox.center', manifest: { id: 'reviewed', revision: hash }, maximumNetworkFee: '100000000000000' }
   const intent = { projectId: '7', token, terminal, amount: '1000000', minimumReturnedTokens: '99', returnPath: '/project/8453/7' }
@@ -24,12 +25,12 @@ function fixture() {
   const connection = { address: account, chainId: 8453, accountId: 'eip155:8453:' + account, client: {
     authorizeRead: vi.fn(async () => ({ claims: { accountId: 'eip155:8453:' + account, signer: token, grantId: 'grant-original' } })),
     smartAccounts: () => ({ bindings: async () => ({ items: [binding] }), binding: async () => binding,
-      preparePlan: async () => { events.push('plan'); return structuredClone(plan) } }),
+      preparePlan: async (...args: unknown[]) => { events.push('plan'); planInputs.push(args[2]); return structuredClone(plan) } }),
     request: async () => { events.push('operation'); return structuredClone(record) },
   } }
   const wallet = { restoreConnection: () => connection, payments: () => payments }
   const create = () => createHomerunPayment({ config, wallet, storage } as never)
-  return { connection, data, storage, config, intent, plan, binding, wallet, payments, create, events, setStatus: (state: string) => { status = { ...status, status: state } } }
+  return { connection, data, storage, config, intent, plan, binding, wallet, payments, create, events, planInputs, setStatus: (state: string) => { status = { ...status, status: state } } }
 }
 describe('Homerun original Center payment recovery', () => {
   beforeEach(() => clearViewAs())
@@ -81,6 +82,69 @@ describe('Homerun original Center payment recovery', () => {
     expect(f.payments.preparePayment.mock.calls[0]![0].expectedPayment).toMatchObject({ account, amount: '1000000', projectId: '7', minimumReturnedTokens: '100', maximumNetworkFee: f.config.maximumNetworkFee })
     expect(f.payments.submitPayment).not.toHaveBeenCalled()
     expect(f.create().pending()?.intent).toEqual(f.intent)
+  })
+  it('plans and reviews the quote metadata, and refuses a plan that drops or changes it', async () => {
+    const metadata = buildUserPayMetadata({ chainId: 8453, minimumSwapAmountOut: 99n })
+    const pay = (bytes: `0x${string}`) => encodeFunctionData({ abi: parseAbi(['function pay(uint256,address,uint256,address,uint256,string,bytes)']), functionName: 'pay', args: [7n, token, 1000000n, account, 100n, '', bytes] })
+    const f = fixture(), intent = { ...f.intent, metadata }
+    f.plan.draft.calls[0]!.data = pay(metadata)
+    expect((await f.create().prepare(intent as never)).status).toBe('reviewing')
+    expect(f.planInputs[0]).toMatchObject({ metadata, slippageBps: 100 })
+    expect(f.payments.preparePayment.mock.calls[0]![0].expectedPayment).toMatchObject({ metadata })
+    expect(f.create().pending()?.intent).toEqual(intent)
+    for (const bytes of ['0x', buildUserPayMetadata({ chainId: 8453, minimumSwapAmountOut: 98n })] as const) {
+      const g = fixture(); g.plan.draft.calls[0]!.data = pay(bytes)
+      await expect(g.create().prepare({ ...g.intent, metadata } as never)).rejects.toThrow('differs')
+      expect(g.payments.preparePayment).not.toHaveBeenCalled()
+    }
+    const g = fixture(); g.plan.draft.calls[0]!.data = pay(metadata)
+    await expect(g.create().prepare(g.intent as never)).rejects.toThrow('differs')
+    await expect(fixture().create().prepare({ ...g.intent, metadata: '0x1' } as never)).rejects.toThrow('metadata')
+  })
+  it('closes a preparation that never reached review, then prepares a fresh quote', async () => {
+    const f = fixture(), controller = f.create()
+    f.connection.client.request = async () => { throw new Error('simulation reverted below the minimum') }
+    await expect(controller.prepare(f.intent as never)).rejects.toThrow('simulation reverted')
+    await expect(controller.prepare({ ...f.intent, minimumReturnedTokens: '90' } as never)).rejects.toThrow('Finish or close')
+    // Repeated failed preparations never fill the bounded payment history.
+    for (let i = 0; i < 70; i++) {
+      controller.clear(); expect(controller.pending()).toBeNull()
+      await expect(controller.prepare(f.intent as never)).rejects.toThrow('simulation reverted')
+    }
+    controller.clear()
+    expect([...f.data.keys()].some(key => key.endsWith(':history'))).toBe(false)
+    f.connection.client.request = async () => structuredClone({ id: 'operation-original', signing: { ownerProfile: 'center-passkey-v1' } })
+    expect((await controller.prepare({ ...f.intent, minimumReturnedTokens: '90' } as never)).status).toBe('reviewing')
+  })
+  it('does not open a review for a journal another controller closed during preparation', async () => {
+    const f = fixture(), first = f.create()
+    f.connection.client.request = async () => { throw new Error('operation unavailable') }
+    await expect(first.prepare(f.intent as never)).rejects.toThrow('operation unavailable')
+    f.connection.client.request = async () => structuredClone({ id: 'operation-original', signing: { ownerProfile: 'center-passkey-v1' } })
+    // The resumed preparation waits on its final authorization while a remounted page starts over.
+    const original = f.connection.client.authorizeRead.getMockImplementation()!
+    let release!: () => void, entered!: () => void
+    const waiting = new Promise<void>(resolve => { release = resolve }), authorizing = new Promise<void>(resolve => { entered = resolve })
+    f.connection.client.authorizeRead.mockImplementationOnce(original).mockImplementationOnce(original)
+      .mockImplementationOnce(async () => { entered(); await waiting; return original() })
+    const resumed = first.prepare(f.intent as never)
+    await authorizing
+    f.create().clear()
+    release()
+    await expect(resumed).rejects.toThrow()
+    expect(f.payments.preparePayment).not.toHaveBeenCalled()
+  })
+  it('re-derives a restored plan against its intent before review, even when storage integrity is recomputed', async () => {
+    const f = fixture(), controller = f.create()
+    f.payments.preparePayment.mockRejectedValueOnce(new Error('review unavailable'))
+    await expect(controller.prepare(f.intent as never)).rejects.toThrow('review unavailable')
+    const key = [...f.data.keys()].find(name => name.endsWith(':payment:v1'))!
+    const saved = JSON.parse(f.data.get(key)!) as { value: { plan: typeof f.plan; expectedPayment: { minimumReturnedTokens: string } } }
+    saved.value.plan.draft.calls[0]!.data = encodeFunctionData({ abi: parseAbi(['function pay(uint256,address,uint256,address,uint256,string,bytes)']), functionName: 'pay', args: [7n, token, 1000000n, account, 98n, '', '0x'] })
+    saved.value.expectedPayment.minimumReturnedTokens = '98'
+    f.data.set(key, JSON.stringify({ value: saved.value, integrity: keccak256(stringToHex(JSON.stringify(saved.value))) }))
+    await expect(f.create().prepare(f.intent as never)).rejects.toThrow()
+    expect(f.payments.preparePayment).toHaveBeenCalledOnce()
   })
   it('reviews a payment started on a project page whose address holds a colon, and keeps that page to return to', async () => {
     const f = fixture(), intent = { ...f.intent, returnPath: '/op:11' }

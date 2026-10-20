@@ -32,12 +32,28 @@ function fixture() {
   return { ruleset, metadata, options, client, rpc: client as unknown as PublicClient }
 }
 describe('project payment quote parity', () => {
-  it('keeps the Center profile on its direct terminal with empty metadata even when a router quotes more tokens', async () => {
+  it('keeps the Center profile on its direct terminal with the same skipSplits pay metadata even when a router quotes more tokens', async () => {
     const f = fixture(); f.options.router = [f.ruleset, 120n, 1n, []]
-    expect(await prepareProjectPayQuote(f.rpc, { ...input, directTerminalOnly: true })).toMatchObject({ terminal: MULTI, minimumTokenCount: 99n, metadata: '0x' })
+    const metadata = buildUserPayMetadata({ chainId: CHAIN })
+    expect(await prepareProjectPayQuote(f.rpc, { ...input, directTerminalOnly: true })).toMatchObject({ terminal: MULTI, minimumTokenCount: 99n, metadata })
     const previews = f.client.readContract.mock.calls.filter(([request]) => request.functionName === 'previewPayFor')
     expect(previews).toHaveLength(1)
-    expect(previews[0][0].args?.[4]).toBe('0x')
+    expect(previews[0][0].args?.[4]).toBe(metadata)
+  })
+  it('protects a Center payment the buyback hook swaps instead of refusing it', async () => {
+    const f = fixture(); const implementation = f.client.readContract.getMockImplementation()!
+    const hook = v6Address('JBBuybackHook', CHAIN)
+    // A 1.4 skipSplits spec that swaps: the terminal mints nothing; the payer's mint share (word 5) is 800.
+    const words = Array<bigint>(17).fill(0n); words[5] = 800n; words[6] = 10n ** 18n; words[7] = input.amount; words[15] = 1n; words[16] = 2000n
+    const spec = { hook, noop: false, metadata: `0x${words.map(word => word.toString(16).padStart(64, '0')).join('')}` }
+    f.options.multi = [f.ruleset, 0n, 0n, [spec]]
+    f.client.readContract.mockImplementation(async request => {
+      if (request.functionName === 'hookOf') return hook
+      if (request.functionName === 'poolKeyOf') throw new Error('No pool quote')
+      return implementation(request)
+    })
+    // No pool quote: the minimum is the mint entitlement the hook never settles below, floored by 1%.
+    expect(await prepareProjectPayQuote(f.rpc, { ...input, directTerminalOnly: true })).toMatchObject({ terminal: MULTI, minimumTokenCount: 790n, metadata: buildUserPayMetadata({ chainId: CHAIN }) })
   })
   it('prepares both listed terminals with the skipSplits pay metadata at one block and returns that metadata', async () => {
     const f = fixture()

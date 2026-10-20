@@ -108,7 +108,7 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
       const quote = await prepareProjectPayQuote(client, { chainId: 8453, projectId, token, terminal, amount, beneficiary: address, directTerminalOnly: true })
       guard()
       const reviewed = await controller.prepare({ projectId: projectId.toString(), token, terminal, amount: amount.toString(),
-        minimumReturnedTokens: quote.minimumTokenCount.toString(), returnPath: window.location.pathname })
+        minimumReturnedTokens: quote.minimumTokenCount.toString(), metadata: quote.metadata, returnPath: window.location.pathname })
       guard(); if (!reviewed.approvalUrl) throw new Error('The payment review is unavailable. Check its saved status.')
       await approve(reviewed.approvalUrl)
     })
@@ -156,8 +156,9 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
         <div className="mt-4 flex flex-wrap gap-3">
           {!frame && (!pending || (!pending.submitted && (!status || status === 'reviewing'))) ? <button type="button" className="btn-primary min-h-11 px-4" disabled={busy || paused || !!blocked || !controller} onClick={() => void review()}>{busy ? 'Preparing…' : pending ? status ? 'Approve with your passkey' : 'Resume payment preparation' : 'Review with a passkey'}</button> : null}
           {status === 'approved' && !pending?.submitted ? <button type="button" className="btn-primary min-h-11 px-4" disabled={busy || paused} onClick={() => void submit()}>Submit payment</button> : null}
-          {pending && !terminal ? <button type="button" className="btn-secondary min-h-11 px-4" disabled={busy} onClick={() => void run(() => controller!.refresh())}>Check payment status</button> : null}
+          {pending && status && !terminal ? <button type="button" className="btn-secondary min-h-11 px-4" disabled={busy} onClick={() => void run(() => controller!.refresh())}>Check payment status</button> : null}
           {terminal ? <button type="button" className="btn-secondary min-h-11 px-4" disabled={busy} onClick={() => void run(async () => { controller!.clear(); setInput('') })}>Close payment</button> : null}
+          {pending && !status && !pending.submitted ? <button type="button" className="btn-secondary min-h-11 px-4" disabled={busy} onClick={() => void run(async () => { controller!.clear(); setInput('') })}>Start over</button> : null}
         </div>
         {pending?.status?.transactionHash ? <a className="mt-4 block break-words text-sm underline" href={`https://basescan.org/tx/${pending.status.transactionHash}`} target="_blank" rel="noreferrer">View transaction</a> : null}
       </>}
