@@ -16,6 +16,7 @@
     "budget": "node scripts/check-client-budgets.mjs",
     "test:browser": "node test/browser-flow.mjs",
     "test:center": "node test/center-browser.mjs",
+    "test:startup": "node test/startup-downloads.mjs",
     "test:create": "node test/create-browser.mjs",
     "test:intent": "node test/intent-browser.mjs",
     "test:shop": "node test/shop-browser.mjs",

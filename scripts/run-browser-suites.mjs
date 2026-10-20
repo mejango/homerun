@@ -12,7 +12,7 @@ import { requireFreePort, runCommand, runGroups, runSuite, startServer, stopAll,
 //
 // dev     test:browser, test:create, test:a11y and test:shop share one development server (npm run dev).
 // intent  test:intent starts its own servers.
-// center  test:center needs a production build with the Center wallet enabled, served from its standalone output on
+// center  test:center and test:startup need a production build with the Center wallet enabled, served from its standalone output on
 //         127.0.0.1. The ports and the build's pins are in test/support/browser-suites.mjs.
 //
 // A group whose port already answers does not start, and says which port: a server that finds its port taken exits, and
@@ -74,6 +74,7 @@ const groups = {
     try {
       await waitForServer(`${base}/founderhaus`, server, 60)
       await npmRun(suite, 'test:center', { BASE_URL: base })
+      await npmRun(suite, 'test:startup', { BASE_URL: base, STARTUP_CHUNKS_DIR: join(root, centerDist, 'static/chunks') })
     } finally {
       await server.stop()
     }

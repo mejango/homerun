@@ -7,7 +7,7 @@ import { gzipSync } from 'node:zlib'
 // Route budget gate: starts the built app, fetches each route's rendered HTML and gzips every script and stylesheet it
 // loads (the <script>/<link> tags plus the client chunks its flight data names). Next's per-route manifests misattribute
 // modules a layout and a page share and drop chunks whose path carries `?dpl=`, so the gate reads what a visitor gets.
-// Nomodule polyfills are excluded. Run after `npm run build`: `npm run budget`. Ceilings are KiB of gzip; lower them
+// Only nomodule scripts (which modern browsers skip) are excluded. Run after `npm run build`: `npm run budget`. Ceilings are KiB of gzip; lower them
 // when a change lands under them so the saving holds.
 //
 //   node scripts/check-client-budgets.mjs [--json out.json]
@@ -65,7 +65,6 @@ async function waitForServer() {
   throw new Error('next start did not answer within 60 s')
 }
 
-const polyfills = new Set(JSON.parse(readFileSync(join(dist, 'build-manifest.json'), 'utf8')).polyfillFiles)
 const gzipped = new Map()
 const gzipSize = file => {
   if (!gzipped.has(file)) gzipped.set(file, gzipSync(readFileSync(join(dist, file))).byteLength)
@@ -74,15 +73,15 @@ const gzipSize = file => {
 
 // Paths under /_next/, query (`?dpl=`) and fragment dropped, nomodule scripts skipped.
 function assetsOf(html) {
-  const scripts = [...html.matchAll(/<script([^>]*)\bsrc="\/_next\/([^"?#]+\.js)[^"]*"([^>]*)>/g)]
-    .filter(match => !/nomodule/i.test(match[1] + match[3]))
-    .map(match => match[2])
+  const tags = [...html.matchAll(/<script([^>]*)\bsrc="\/_next\/([^"?#]+\.js)[^"]*"([^>]*)>/g)]
+  const nomodule = new Set(tags.filter(match => /nomodule/i.test(match[1] + match[3])).map(match => match[2]))
+  const scripts = tags.map(match => match[2])
   const flight = [...html.matchAll(/static\/chunks\/[^"\\?#]+?\.js/g)].map(match => match[0])
   const styles = [...html.matchAll(/<link[^>]*\bhref="\/_next\/([^"?#]+\.css)[^"]*"[^>]*>/g)].map(match => match[1])
   const flightStyles = [...html.matchAll(/static\/(?:chunks|css)\/[^"\\?#]+?\.css/g)].map(match => match[0])
   const unique = list => [...new Set(list.map(decodeURIComponent))]
   return {
-    js: unique([...scripts, ...flight]).filter(file => !polyfills.has(file)),
+    js: unique([...scripts, ...flight]).filter(file => !nomodule.has(file)),
     css: unique([...styles, ...flightStyles]),
   }
 }
