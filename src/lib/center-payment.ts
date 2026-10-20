@@ -31,7 +31,7 @@ export function signaPayFailure(source: unknown): PayFailure | null {
     failure.received = settled; failure.minimum = floor
     if (at(raw, 'zeroFill') === (settled === 0n)) failure.zeroFill = settled === 0n
     // Only the payer's own minimums answer to a looser tolerance, and only for a nonzero, consistent shortfall.
-    if (at(raw, 'adjustable') === 'minimum' && settled > 0n && (at(raw, 'zeroFill') ?? false) === false &&
+    if (at(raw, 'adjustable') === 'minimum' && settled > 0n && [undefined, false].includes(at(raw, 'zeroFill') as undefined) &&
       (reason === 'TERMINAL_UNDER_MIN' || reason === 'BUYBACK_SLIPPAGE_EXCEEDED')) failure.adjustable = 'minimum'
   }
   return failure
