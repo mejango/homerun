@@ -19,7 +19,6 @@ export {
   SAFE_PREFIX,
   SAFE_SERVICE_PREFIX,
   safeServiceBase,
-  swapDeadline,
 } from '@bananapus/nana-sdk-core/safe-service'
 
 /**

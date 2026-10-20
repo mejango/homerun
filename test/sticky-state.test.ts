@@ -262,6 +262,9 @@ function fixture(options: Options = {}) {
         expect(request.account).toBe(HOLDER);
         expect(args).toEqual([9n, FUND, 100n, HOLDER, "0x"]);
         return [ruleset, 50n, 0n, []];
+      case "hookOf":
+        // Sticky has no buyback hook; the SDK's pay preview resolves it first.
+        return "0x0000000000000000000000000000000000000000";
       case "previewCashOutFrom":
         expect(request.account).toBe(HOLDER);
         return [ruleset, 20n, 0n, []];

@@ -37,7 +37,6 @@ vi.mock('@/components/ProjectPermissionsEditor', () => ({ ProjectPermissionsEdit
 vi.mock('@/components/ProjectSplitsEditor', () => ({ ProjectSplitsEditor: ({ chainId, projectId, phase, unavailable }: { chainId: number; projectId: bigint; phase: string; unavailable?: boolean }) => <section data-testid="splits-editor" data-chain-id={chainId} data-project-id={projectId.toString()} data-phase={phase}><button disabled={unavailable}>Edit splits</button></section> }))
 vi.mock('wagmi', () => ({ usePublicClient: () => ({}) }))
 vi.mock('@/components/WalletButton', () => ({ WalletButton: () => <span>Wallet</span> }))
-vi.mock('@/hooks/useReviewedPermit2Signature', () => ({ useReviewedPermit2Signature: () => ({ signPermit2Async: vi.fn() }) }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address, isConnected: true }) }))
 vi.mock('@/components/InitialIncomeMint', () => ({ InitialIncomeMint: ({ fundProjectId, incomeProjectId, manifestUri }: { fundProjectId: bigint; incomeProjectId: bigint; manifestUri: string | null }) => <div>Initial INCOME FUND {fundProjectId.toString()} INCOME {incomeProjectId.toString()} manifest {manifestUri ?? 'none'}</div> }))
 vi.mock('@/hooks/useSafeTx', () => ({
@@ -51,7 +50,7 @@ vi.mock('@/components/IncomeBridgeActions', () => ({ IncomeBridgeActions: () => 
 vi.mock('@/components/IncomeLoanTools', () => ({ IncomeLoanTools: () => <span>Additional loan operations</span> }))
 vi.mock('@/lib/income-state', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/income-state')>(), readIncomeProjectState: runtime.readState, readIncomeAutoIssuance: runtime.autoIssuance }))
 vi.mock('@/lib/income-reserved', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/income-reserved')>(), readIncomeReservedTokens: runtime.readReserved }))
-vi.mock('@/lib/project-pay-quote', () => ({ prepareProjectPayQuote: async () => ({ kind: 'pay', terminal: '0x3333333333333333333333333333333333333333', preview: runtime.payQuote, minimumTokenCount: runtime.payQuote.beneficiaryTokenCount * 99n / 100n, reservedTokenCount: runtime.payQuote.reservedTokenCount, blockNumber: 100n }), readProjectPayTokenOptions: vi.fn() }))
+vi.mock('@/lib/project-pay-quote', () => ({ prepareProjectPayQuote: async () => ({ terminal: '0x3333333333333333333333333333333333333333', preview: runtime.payQuote, minimumTokenCount: runtime.payQuote.beneficiaryTokenCount * 99n / 100n, reservedTokenCount: runtime.payQuote.reservedTokenCount, metadata: '0x', blockNumber: 100n }), readProjectPayTokenOptions: vi.fn() }))
 vi.mock('@tanstack/react-query', () => ({
   keepPreviousData: (value: unknown) => value,
   useQueryClient: () => ({ cancelQueries: vi.fn().mockResolvedValue(undefined), invalidateQueries: runtime.invalidateQueries }),
@@ -64,7 +63,7 @@ vi.mock('@tanstack/react-query', () => ({
     : queryKey[0] === 'fund-project' ? { data: runtime.fund, isError: false }
     : queryKey[0] === 'fund-project-metadata' ? { data: runtime.details[String(queryKey[1])], isError: false }
     : queryKey[0] === 'income-fund-binding' ? { data: runtime.discoveredFund, isError: runtime.discoveryError, refetch: vi.fn() }
-    : queryKey[0] === 'project-pay' ? { data: { kind: 'pay', terminal: '0x3333333333333333333333333333333333333333', preview: runtime.payQuote, minimumTokenCount: runtime.payQuote.beneficiaryTokenCount * 99n / 100n, reservedTokenCount: runtime.payQuote.reservedTokenCount, blockNumber: 100n }, isError: false }
+    : queryKey[0] === 'project-pay' ? { data: { terminal: '0x3333333333333333333333333333333333333333', preview: runtime.payQuote, minimumTokenCount: runtime.payQuote.beneficiaryTokenCount * 99n / 100n, reservedTokenCount: runtime.payQuote.reservedTokenCount, metadata: '0x', blockNumber: 100n }, isError: false }
     : queryKey[0] === 'income-cash-out' ? { data: runtime.cashOutQuote, isError: false }
     : queryKey[0] === 'income-reserved' ? { data: runtime.reserved, isError: runtime.reservedError, error: new Error('RPC unavailable'), refetch: vi.fn() }
     : queryKey[0] === 'income-reserved-receipt' ? { data: runtime.reservedReceipt, isError: !!runtime.reservedReceiptError, error: runtime.reservedReceiptError, refetch: vi.fn() }

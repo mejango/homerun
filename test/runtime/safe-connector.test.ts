@@ -33,7 +33,6 @@ import {
   SAFE_PREFIX,
   SAFE_SERVICE_PREFIX,
   safeServiceBase,
-  swapDeadline,
   useSafeConnection,
   waitForSafeExecutionHash,
 } from '@/lib/safe-connector'
@@ -141,16 +140,6 @@ describe('Safe connection', () => {
 })
 
 describe('Safe connector transaction boundaries', () => {
-  it('gives swaps a 20-minute deadline for EOAs and 30 days for Safe signature collection', () => {
-    const nowMs = 1_700_000_000_000
-    const nowSec = 1_700_000_000
-    // EOA: proposal and execution are one act, so 20 minutes is plenty.
-    expect(swapDeadline(false, nowMs)).toBe(BigInt(nowSec + 20 * 60))
-    // Safe: co-signer collection routinely outlives 20 minutes — match the
-    // 30-day Permit2 windows so the executed swap doesn't revert on deadline.
-    expect(swapDeadline(true, nowMs)).toBe(BigInt(nowSec + 30 * 24 * 60 * 60))
-  })
-
   it('reads the chain through the watched config, so an execution hash resolves without the service', async () => {
     const client = { getTransaction: vi.fn(async () => ({ hash: EXECUTION })) }
     runtime.clients.set(8453, client)

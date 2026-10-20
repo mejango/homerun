@@ -4,8 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { NATIVE_TOKEN } from '@bananapus/nana-sdk-core'
-import { uniswapV4Deployment } from '@bananapus/nana-sdk-core/v6'
-import { decodeAbiParameters, encodeFunctionData, decodeFunctionData, getAddress, parseAbiParameters, zeroAddress, type Address, type Hex } from 'viem'
+import { encodeFunctionData, decodeFunctionData, type Address, type Hex } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectPayQuote, ProjectPayTokenOption } from '@/lib/project-pay-quote'
 import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
@@ -13,24 +12,22 @@ import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import { approvalIntentKey } from '@/lib/transaction-builders'
 import { expectRetryHeldByIntent } from './support/intent-retry'
 
-type Action = 'payment' | 'approval' | 'router'
+type Action = 'payment' | 'approval'
 type Handle = { notice: string | null; dismiss: ReturnType<typeof vi.fn>; phase: string; busy: boolean; isSafe: boolean; error: null; hash: Hex | null; safeProposalHash: Hex | null; receipt: null; send: ReturnType<typeof vi.fn>; reset: ReturnType<typeof vi.fn> }
 const runtime = vi.hoisted(() => ({
   address: '0x1111111111111111111111111111111111111111' as Address | undefined,
   nextHook: 0, mounts: 0, unmounts: 0,
   handles: [] as Handle[],
-  quote: vi.fn(), options: vi.fn(), sign: vi.fn(), verify: vi.fn(), openSignIn: vi.fn(),
-  readContract: vi.fn(), waitForTransactionReceipt: vi.fn(), getTransactionReceipt: vi.fn(), getBytecode: vi.fn(),
+  quote: vi.fn(), options: vi.fn(), verify: vi.fn(), openSignIn: vi.fn(),
+  readContract: vi.fn(), waitForTransactionReceipt: vi.fn(), getTransactionReceipt: vi.fn(),
   writes: [] as { action: Action; request: TxRequest; options: TxSendOptions }[],
   review: undefined as ((action: Action, request: TxRequest) => Promise<void>) | undefined,
   allowance: 0n,
 }))
 
-vi.mock('wagmi', () => ({ usePublicClient: () => ({ readContract: runtime.readContract, waitForTransactionReceipt: runtime.waitForTransactionReceipt, getTransactionReceipt: runtime.getTransactionReceipt, getBytecode: runtime.getBytecode }) }))
+vi.mock('wagmi', () => ({ usePublicClient: () => ({ readContract: runtime.readContract, waitForTransactionReceipt: runtime.waitForTransactionReceipt, getTransactionReceipt: runtime.getTransactionReceipt }) }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address, openSignIn: runtime.openSignIn }) }))
-vi.mock('@/hooks/useReviewedPermit2Signature', () => ({ useReviewedPermit2Signature: () => ({ signPermit2Async: runtime.sign }) }))
 vi.mock('@/lib/project-pay-quote', () => ({ prepareProjectPayQuote: runtime.quote, readProjectPayTokenOptions: runtime.options }))
-vi.mock('@/lib/safe-connector', () => ({ swapDeadline: (safe: boolean) => BigInt(Math.floor(Date.now() / 1000) + (safe ? 86_400 : 1800)) }))
 vi.mock('@/hooks/useSafeTx', () => ({
   txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,
   useSafeTx: () => {
@@ -45,34 +42,21 @@ import { WritesChecking } from '@/components/writes-checking'
 
 const TERMINAL = '0x3333333333333333333333333333333333333333' as Address
 const TOKEN = '0x5555555555555555555555555555555555555555' as Address
-const OUTPUT = '0x9999999999999999999999999999999999999999' as Address
 const WALLET = '0x1111111111111111111111111111111111111111' as Address
 const UNIT = 10n ** 18n
-const DEPLOYMENT = uniswapV4Deployment(1)!
+const METADATA = `0x${'00'.repeat(32)}${'ab'.repeat(32)}` as Hex
+const REFRESHED_METADATA = `0x${'00'.repeat(32)}${'cd'.repeat(32)}` as Hex
+const BACKGROUND_METADATA = `0x${'00'.repeat(32)}${'ef'.repeat(32)}` as Hex
+const REFRESHED_TERMINAL = '0x4444444444444444444444444444444444444444' as Address
 const HASH = `0x${'a'.repeat(64)}` as Hex
 type Props = ComponentProps<typeof ProjectPayment>
 
 function quote(minimum = 99n * UNIT, overrides: Partial<ProjectPayQuote> = {}): ProjectPayQuote {
-  return { kind: 'pay', terminal: TERMINAL, preview: { beneficiaryTokenCount: 100n * UNIT, reservedTokenCount: 0n }, minimumTokenCount: minimum, reservedTokenCount: 0n, blockNumber: 100n, ...overrides }
-}
-function swapQuote(token = NATIVE_TOKEN, minimum = 107n * UNIT): ProjectPayQuote {
-  return quote(minimum, { kind: 'direct-swap', terminal: DEPLOYMENT.universalRouter!, swapQuote: {
-    kind: 'direct-swap', poolKey: { currency0: token === NATIVE_TOKEN ? zeroAddress : token, currency1: OUTPUT, fee: 3000, tickSpacing: 60, hooks: zeroAddress },
-    zeroForOne: true, quotedTokenCount: 110n * UNIT, minimumTokenCount: minimum, beneficiaryTokenCount: minimum, reservedTokenCount: 0n, inputRoute: { kind: 'single-v4' },
-  } })
+  return { terminal: TERMINAL, preview: { beneficiaryTokenCount: 100n * UNIT, reservedTokenCount: 0n }, minimumTokenCount: minimum, reservedTokenCount: 0n, metadata: METADATA, blockNumber: 100n, ...overrides }
 }
 function encoded(request: TxRequest) {
   return decodeFunctionData({ abi: request.abi, data: encodeFunctionData({ abi: request.abi, functionName: request.functionName, args: request.args }) })
 }
-function swapMinimum(request: TxRequest) {
-  const execution = encoded(request)
-  const [, inputs] = execution.args as readonly [Hex, Hex[], bigint]
-  const [actions, params] = decodeAbiParameters(parseAbiParameters('bytes, bytes[]'), inputs.at(-1)!)
-  expect(actions).toBe('0x060c0e')
-  const [swap] = decodeAbiParameters(parseAbiParameters('((address, address, uint24, int24, address), bool, uint128, uint128, bytes)'), params[0])
-  return swap[3]
-}
-
 describe('shared payment execution', () => {
   let host: HTMLDivElement
   let root: Root
@@ -84,17 +68,14 @@ describe('shared payment execution', () => {
     runtime.writes = []; runtime.review = undefined; runtime.allowance = 1000n * UNIT
     runtime.quote.mockReset().mockResolvedValue(quote())
     runtime.options.mockReset().mockResolvedValue([{ token: NATIVE_TOKEN, terminal: TERMINAL, decimals: 18, symbol: 'ETH', viaRouter: false }])
-    runtime.sign.mockReset().mockResolvedValue(`0x${'12'.repeat(65)}`)
     runtime.verify.mockReset().mockImplementation(async (_account, minimumBlock) => ({ blockNumber: minimumBlock ?? 100n }))
     runtime.waitForTransactionReceipt.mockReset().mockResolvedValue({ status: 'success', blockNumber: 101n, transactionHash: HASH })
     runtime.getTransactionReceipt.mockReset()
-    runtime.getBytecode.mockReset().mockResolvedValue(undefined)
-    runtime.readContract.mockReset().mockImplementation(async ({ address, functionName }: { address: Address; functionName: string }) => {
-      if (functionName === 'allowance' && address.toLowerCase() === DEPLOYMENT.permit2.toLowerCase()) return [0n, 0, 7]
+    runtime.readContract.mockReset().mockImplementation(async ({ functionName }: { functionName: string }) => {
       if (functionName === 'allowance') return runtime.allowance
       throw new Error(`Unexpected contract read: ${functionName}`)
     })
-    runtime.handles = (['payment', 'approval', 'router'] as const).map(action => ({
+    runtime.handles = (['payment', 'approval'] as const).map(action => ({
       notice: null, dismiss: vi.fn(), phase: 'idle', busy: false, isSafe: false, error: null, hash: null, safeProposalHash: null, receipt: null, reset: vi.fn(),
       send: vi.fn(async (request: TxRequest, options: TxSendOptions = {}) => {
         await runtime.review?.(action, request)
@@ -149,7 +130,7 @@ describe('shared payment execution', () => {
     } else {
       await waitUntil(() => {
         expect(button().textContent).not.toContain('Preparing')
-        expect(host.textContent).not.toMatch(/Finding the best|Review and execute|Confirming approval onchain/)
+        expect(host.textContent).not.toMatch(/Getting the latest|Review and execute|Confirming approval onchain/)
       })
     }
   }
@@ -166,17 +147,19 @@ describe('shared payment execution', () => {
 
   it('freezes the refreshed terminal minimum and explicitly reviews a decreased quote', async () => {
     await ready()
-    runtime.quote.mockResolvedValue(quote(88n * UNIT))
+    runtime.quote.mockResolvedValue(quote(88n * UNIT, { metadata: REFRESHED_METADATA }))
     runtime.review = async action => {
       if (action !== 'payment') return
       // A background quote may update the display while the reviewed call stays frozen.
-      cache.setQueriesData({ queryKey: ['project-pay'] }, quote(66n * UNIT))
+      cache.setQueriesData({ queryKey: ['project-pay'] }, quote(66n * UNIT, { metadata: BACKGROUND_METADATA }))
     }
     await submit()
     expect(runtime.writes).toHaveLength(1)
     const { request, options } = runtime.writes[0]
     expect(encoded(request).functionName).toBe('pay')
     expect(encoded(request).args?.slice(0, 5)).toEqual([7n, NATIVE_TOKEN, UNIT, WALLET, 88n * UNIT])
+    // The refreshed prepareUserPay metadata goes out with its own minimum, not the displayed or background quote's.
+    expect(encoded(request).args?.[6]).toBe(REFRESHED_METADATA)
     expect(request.value).toBe(UNIT)
     expect(options.reviewNotice).toContain('quote decreased')
     expect(options.reviewNotice).toContain('88 FUND')
@@ -184,19 +167,6 @@ describe('shared payment execution', () => {
     expect(options.simulationBlockNumber).toBe(100n)
     // Its minimum comes from a fresh quote, so a retry is held by the user's choice, not the calldata.
     expect(options.recoveryNamespace).toBe(writeIntentKey('pay', { project: 7n, token: 'auto:token', amount: '1' }))
-  })
-
-  it('preserves the SDK swap minimum exactly in genuine Universal Router calldata', async () => {
-    const minimum = 107_123_456_789_123_456_789n
-    runtime.quote.mockResolvedValue(swapQuote(NATIVE_TOKEN, minimum))
-    await ready(); await submit()
-    expect(runtime.writes).toHaveLength(1)
-    const { request, options } = runtime.writes[0]
-    expect(request.address).toBe(DEPLOYMENT.universalRouter)
-    expect(encoded(request).functionName).toBe('execute')
-    expect(swapMinimum(request)).toBe(minimum)
-    expect(request.value).toBe(UNIT)
-    expect(options.reviewNotice).toContain('does not add the payment to the project treasury')
   })
 
   it('holds a payment in the default currency by the amount as typed, so a retry after the default switched from ETH to USDC is held by the first', async () => {
@@ -232,6 +202,34 @@ describe('shared payment execution', () => {
     expect(runtime.verify).toHaveBeenCalledWith(WALLET, 101n)
   })
 
+  it('approves and pays the refreshed terminal with its own metadata and minimum', async () => {
+    erc20(); runtime.allowance = 0n
+    await ready('2.5')
+    runtime.quote.mockResolvedValue(quote(77n * UNIT, { terminal: REFRESHED_TERMINAL, metadata: REFRESHED_METADATA }))
+    runtime.review = async action => { if (action === 'payment') cache.setQueriesData({ queryKey: ['project-pay'] }, quote(66n * UNIT, { metadata: BACKGROUND_METADATA })) }
+    await submit()
+    expect(runtime.writes.map(item => item.action)).toEqual(['approval', 'payment'])
+    expect(encoded(runtime.writes[0].request).args).toEqual([REFRESHED_TERMINAL, 2_500_000n])
+    const pay = runtime.writes[1].request
+    expect(pay.address).toBe(REFRESHED_TERMINAL)
+    expect(encoded(pay).args?.[4]).toBe(77n * UNIT)
+    expect(encoded(pay).args?.[6]).toBe(REFRESHED_METADATA)
+  })
+
+  it('blocks approval and payment when the refreshed preparation fails, and stays usable', async () => {
+    erc20(); runtime.allowance = 0n
+    await ready('2.5')
+    runtime.quote.mockRejectedValue(new Error('The buyback hook could not be read.'))
+    await submit()
+    expect(runtime.writes).toHaveLength(0)
+    expect(host.textContent).toContain('buyback hook could not be read')
+    await waitUntil(() => expect(button().disabled).toBe(false))
+    runtime.quote.mockResolvedValue(quote(77n * UNIT, { metadata: REFRESHED_METADATA }))
+    await submit()
+    expect(runtime.writes.map(item => item.action)).toEqual(['approval', 'payment'])
+    expect(encoded(runtime.writes[1].request).args?.[6]).toBe(REFRESHED_METADATA)
+  })
+
   it('quotes a routed payment currency using its own decimals and preserves the accounting terminal anchor', async () => {
     runtime.options.mockResolvedValue([{ ...props.context, viaRouter: false }, { token: TOKEN, terminal: TERMINAL, decimals: 6, symbol: 'USDC', viaRouter: true }])
     await ready()
@@ -243,54 +241,21 @@ describe('shared payment execution', () => {
     expect(encoded(runtime.writes.at(-1)!.request).args?.slice(1, 3)).toEqual([TOKEN, 2_125_000n])
   })
 
-  it('approves Permit2 and uses a reviewed EOA signature for the swap router', async () => {
-    erc20(); runtime.allowance = 0n; runtime.quote.mockResolvedValue(swapQuote(TOKEN))
-    await ready('2'); await submit()
-    expect(runtime.writes.map(item => item.action)).toEqual(['approval', 'payment'])
-    expect(encoded(runtime.writes[0].request).args).toEqual([DEPLOYMENT.permit2, 2_000_000n])
-    expect(runtime.sign).toHaveBeenCalledWith(expect.objectContaining({ expectedAccount: WALLET, authorization: expect.objectContaining({ token: TOKEN, spender: DEPLOYMENT.universalRouter, amount: 2_000_000n, nonce: 7 }) }))
-    expect(encoded(runtime.writes[1].request).args?.[0]).toBe('0x0a10')
-    expect(swapMinimum(runtime.writes[1].request)).toBe(107n * UNIT)
-    expect(runtime.writes[1].request.value).toBe(0n)
-  })
-
-  it('falls back to an exact onchain Permit2 approval when typed data is unsupported', async () => {
-    erc20(); runtime.quote.mockResolvedValue(swapQuote(TOKEN))
-    runtime.sign.mockRejectedValue(Object.assign(new Error('Method eth_signTypedData_v4 not supported'), { code: -32601 }))
-    await ready('3'); await submit()
-    expect(runtime.writes.map(item => item.action)).toEqual(['router', 'payment'])
-    expect(runtime.writes[0].request.address).toBe(DEPLOYMENT.permit2)
-    expect(encoded(runtime.writes[0].request).args?.slice(0, 3)).toEqual([TOKEN, getAddress(DEPLOYMENT.universalRouter!), 3_000_000n])
-    expect(encoded(runtime.writes[1].request).args?.[0]).toBe('0x10')
-    // The approval's expiration and the swap's deadline are stamped now: both are held by the user's choice.
-    const payment = writeIntentKey('pay', { project: 7n, token: 'auto:token', amount: '3' })
-    expect(runtime.writes[0].options.recoveryNamespace).toBe(approvalIntentKey(payment, { token: TOKEN, spender: DEPLOYMENT.universalRouter!, step: 'router' }))
-    expect(runtime.writes[1].options.recoveryNamespace).toBe(payment)
-  })
-
-  it('never substitutes an onchain approval after the user rejects a signature', async () => {
-    erc20(); runtime.quote.mockResolvedValue(swapQuote(TOKEN))
-    runtime.sign.mockRejectedValue(Object.assign(new Error('User rejected the request'), { code: 4001 }))
-    await ready(); await submit()
-    expect(runtime.writes).toHaveLength(0)
-    expect(host.textContent).toContain('User rejected')
-  })
-
-  it.each(['erc20', 'router'] as const)('stops after a Safe %s approval proposal, without signing or paying', async step => {
-    erc20(); runtime.quote.mockResolvedValue(swapQuote(TOKEN)); runtime.allowance = step === 'erc20' ? 0n : 10n ** 9n
+  it('stops after a Safe approval proposal, without paying', async () => {
+    erc20(); runtime.allowance = 0n
     runtime.handles.forEach(handle => { handle.isSafe = true })
     await ready(); await submit()
-    expect(runtime.writes.map(item => item.action)).toEqual([step === 'erc20' ? 'approval' : 'router'])
-    expect(runtime.sign).not.toHaveBeenCalled()
+    expect(runtime.writes.map(item => item.action)).toEqual(['approval'])
     expect(runtime.waitForTransactionReceipt).not.toHaveBeenCalled()
     expect(host.textContent).toContain('Execute it there')
   })
 
-  it.each(['approval', 'router'] as const)('shows the %s proposal notice and Done without completing or paying', async action => {
-    erc20(); runtime.quote.mockResolvedValue(swapQuote(TOKEN)); runtime.allowance = action === 'approval' ? 0n : 10n ** 9n
+  it('shows the approval proposal notice and Done without completing or paying', async () => {
+    const action = 'approval'
+    erc20(); runtime.allowance = 0n
     runtime.handles.forEach(handle => { handle.isSafe = true })
     await ready(); await submit()
-    const handle = runtime.handles[action === 'approval' ? 1 : 2]
+    const handle = runtime.handles[1]
     handle.phase = 'submitted'
     handle.notice = 'The Safe result could not be proven. Check Safe before taking another action.'
     await render()
@@ -341,7 +306,7 @@ describe('shared payment execution', () => {
       await new Promise<void>(resolve => queueMicrotask(resolve))
     })
     expect(runtime.writes.map(item => item.action)).toEqual(['approval'])
-    expect(runtime.unmounts).toBe(3)
+    expect(runtime.unmounts).toBe(2)
   })
 
   it.each([0, 10_000])('rejects an unprotected zero output with reserved percent %s', async reservedPercent => {
@@ -362,16 +327,16 @@ describe('shared payment execution', () => {
     expect(runtime.writes[0].options.reviewNotice).toContain('You receive no FUND')
   })
 
-  it('retains all three receipt watchers across currency, quote, and rules changes', async () => {
+  it('retains both receipt watchers across currency, quote, and rules changes', async () => {
     const options: ProjectPayTokenOption[] = [{ token: NATIVE_TOKEN, terminal: TERMINAL, decimals: 18, symbol: 'ETH', viaRouter: false }, { token: TOKEN, terminal: TERMINAL, decimals: 6, symbol: 'USDC', viaRouter: true }]
     runtime.options.mockResolvedValue(options)
     await ready()
-    expect(runtime.mounts).toBe(3)
+    expect(runtime.mounts).toBe(2)
     runtime.quote.mockRejectedValue(new Error('RPC offline'))
     await input('2')
     await act(async () => { const select = host.querySelector('select')!; select.value = TOKEN; select.dispatchEvent(new Event('change', { bubbles: true })) })
     props.rulesetId = '101'; await render()
-    expect(runtime.mounts).toBe(3)
+    expect(runtime.mounts).toBe(2)
     expect(runtime.unmounts).toBe(0)
     expect(runtime.writes).toHaveLength(0)
   })
@@ -383,7 +348,7 @@ describe('shared payment execution', () => {
     expect(runtime.unmounts).toBe(0)
     await render()
     expect(host.querySelector('input')!.value).toBe('2')
-    expect(runtime.mounts).toBe(3)
+    expect(runtime.mounts).toBe(2)
   })
 
   it('lists the wallet steps before the first prompt and advances through them, as jbm\'s pay sequence does', async () => {
