@@ -4,7 +4,7 @@ import { getAccount } from '@wagmi/core'
 import {
   JBCoreContracts,
   erc2771ForwarderAbi,
-  jbContractAddress,
+  jbV6ContractAddress,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import { isDefiniteWalletRejection } from '@bananapus/nana-sdk-core/review'
@@ -178,7 +178,7 @@ export async function prepareForwardedTx(
   expectedAccount: Address,
   expectedNonce?: bigint,
 ): Promise<{ review: TransactionReviewRequest; sign: () => Promise<RelayrEntry> }> {
-  const forwarder = jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][
+  const forwarder = jbV6ContractAddress[JBCoreContracts.ERC2771Forwarder][
     call.chainId
   ] as Address | undefined
   if (!forwarder) throw new Error(`No ERC-2771 forwarder on chain ${call.chainId}.`)

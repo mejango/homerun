@@ -8,7 +8,7 @@ import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { encodeFunctionData, erc20Abi, type Address } from 'viem'
-import { jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
+import { jbV6ContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { installRecoveryLocks } from './runtime/write-recovery-fixture'
@@ -47,7 +47,7 @@ const SHARE = '0x3333333333333333333333333333333333333333' as Address
 const DEPLOYER = '0x4444444444444444444444444444444444444444' as Address
 const TERMINAL = v6Address('JBMultiTerminal', 1)
 const EXIT = 'I checked my wallet. Send again'
-const registry = jbContractAddress['6'] as Record<string, Partial<Record<JBChainId, Address>>>
+const registry = jbV6ContractAddress as Record<string, Partial<Record<JBChainId, Address>>>
 const oldFactory = registry.StickyDeployer
 const state = {
   chainId: 1, fundProjectId: 7n, stickyProjectId: 9n, blockNumber: 100n, blockTimestamp: 1800000000n, account: HOLDER,

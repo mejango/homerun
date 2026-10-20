@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { jbContractAddress } from '@bananapus/nana-sdk-core'
+import { jbV6ContractAddress } from '@bananapus/nana-sdk-core'
 import { v6Address, type JBRuleset } from '@bananapus/nana-sdk-core/v6'
 import { getAddress, zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
 import { initialFundRuleset } from '../src/lib/fund-contracts'
@@ -9,7 +9,7 @@ import { HOMERUN_ALLOWLIST_HOOK } from './fixtures/homerun-deployer'
 vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fixtures/homerun-deployer')).withHomerunDeployer(await importOriginal()))
 
 // These RPC fixtures model FUND custody with no Sticky factory; the Sticky cases register their own.
-const stickyRegistry = jbContractAddress['6'] as Record<string, Record<number, Address> | undefined>
+const stickyRegistry = jbV6ContractAddress as Record<string, Record<number, Address> | undefined>
 const registeredSticky = stickyRegistry.StickyDeployer
 beforeEach(() => { delete stickyRegistry.StickyDeployer })
 afterAll(() => { stickyRegistry.StickyDeployer = registeredSticky })
@@ -481,7 +481,7 @@ describe('FUND history pagination and provenance', () => {
 
 describe('canonical Sticky custody in the fixed FUND snapshot', () => {
   it.each(['positive', 'empty', 'wrong-token', 'wrong-wiring'] as const)('verifies every discovered Sticky project (%s)', async mode => {
-    const registry = jbContractAddress['6'] as Record<string, Record<number, Address> | undefined>
+    const registry = jbV6ContractAddress as Record<string, Record<number, Address> | undefined>
     const previous = registry.StickyDeployer
     const factory = getAddress('0x9999999999999999999999999999999999999999')
     registry.StickyDeployer = { [CHAIN_ID]: factory }

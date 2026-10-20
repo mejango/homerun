@@ -2,7 +2,7 @@
 import {
   NATIVE_TOKEN,
   USDC_ADDRESSES,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbControllerAbi,
   jbDirectoryAbi,
   jbFundAccessLimitsAbi,
@@ -236,7 +236,7 @@ export async function readFundWriteState(client: PublicClient, project: FundProj
   // The wallet's ERC-20 balance was read on the known token; a new token would make it the wrong one.
   if (tokenAddress?.toLowerCase() !== project.tokenAddress?.toLowerCase()) throw new Error('The project token changed. Refresh and review again.')
   boundedCount(rawContexts.length, 32, 'Accounting token count')
-  const revOwner = (jbContractAddress['6'] as Record<string, Record<number, Address | undefined>>).REVOwner?.[chain]
+  const revOwner = (jbV6ContractAddress as Record<string, Record<number, Address | undefined>>).REVOwner?.[chain]
   const [ruleset, metadata] = current
   const sameOwner = isAddressEqual(owner, project.owner)
   return {
@@ -316,7 +316,7 @@ export async function readFundProjectState(
   const supportedTerminals = terminals.some(terminal => isAddressEqual(terminal, canonicalTerminal)) &&
     terminals.every(terminal => isAddressEqual(terminal, canonicalTerminal) || isAddressEqual(terminal, routerRegistry))
   if (!supportedTerminals) issues.push('This project has unsupported or missing payment terminals.')
-  const revOwner = (jbContractAddress['6'] as Record<string, Record<number, Address | undefined>>).REVOwner?.[chainId]
+  const revOwner = (jbV6ContractAddress as Record<string, Record<number, Address | undefined>>).REVOwner?.[chainId]
   const knownOwnerWrapper = !revOwner || !isAddressEqual(owner, revOwner)
   if (!knownOwnerWrapper) issues.push('This is a revnet. Its limited operator permissions are different from FUND ownership.')
   const [ruleset, metadata] = current

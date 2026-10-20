@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { USDC_ADDRESSES, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
+import { USDC_ADDRESSES, jbV6ContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import {
   JBPermissionIdsV6,
   RESERVED_TOKEN_SPLIT_GROUP_ID,
@@ -322,7 +322,7 @@ describe('readFundProjectState', () => {
   })
 
   it('does not treat REVOwner operator powers as ownership of a FUND', async () => {
-    const revOwner = (jbContractAddress['6'] as Record<string, Record<number, Address>>).REVOwner[1]
+    const revOwner = (jbV6ContractAddress as Record<string, Record<number, Address>>).REVOwner[1]
     const state = await read(rpcFixture({ owner: revOwner }), revOwner)
     expect(state.knownOwnerWrapper).toBe(false)
     expect(Object.values(state.permissions).every(value => value === false)).toBe(true)

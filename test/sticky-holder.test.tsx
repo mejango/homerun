@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { encodeFunctionData, erc20Abi, getAddress, type Address } from "viem";
 import type { TxRequest, TxSendOptions } from "../src/hooks/useSafeTx";
-import { jbContractAddress, type JBChainId } from "@bananapus/nana-sdk-core";
+import { jbV6ContractAddress, type JBChainId } from "@bananapus/nana-sdk-core";
 import { v6Address } from "@bananapus/nana-sdk-core/v6";
 import { StickyHolder } from "../src/components/StickyHolder";
 import {
@@ -57,7 +57,7 @@ const HOLDER = "0x1111111111111111111111111111111111111111",
   TERMINAL = v6Address("JBMultiTerminal", 1),
   SHARE = "0x3333333333333333333333333333333333333333",
   DEPLOYER = "0x4444444444444444444444444444444444444444";
-const registry = jbContractAddress["6"] as Record<
+const registry = jbV6ContractAddress as Record<
   string,
   Partial<Record<JBChainId, Address>>
 >;

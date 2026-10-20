@@ -7,7 +7,7 @@ import { isEip7702DelegatedEoaRuntime } from '@bananapus/nana-sdk-core/safe'
 import {
   JBCoreContracts,
   erc2771ForwarderAbi,
-  jbContractAddress,
+  jbV6ContractAddress,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import { getProjectCreationFee } from '@bananapus/nana-sdk-core/v6'
@@ -141,7 +141,7 @@ export function canRelayrLaunch(session: LaunchSession): boolean {
 }
 
 function forwarderFor(chainId: number): Address {
-  const address = jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][chainId as JBChainId]
+  const address = jbV6ContractAddress[JBCoreContracts.ERC2771Forwarder][chainId as JBChainId]
   if (!address) throw new Error(`No V6 forwarder is configured on ${chainName(chainId)}.`)
   return address
 }

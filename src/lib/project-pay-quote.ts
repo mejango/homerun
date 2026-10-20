@@ -1,5 +1,5 @@
 import {
-  jbContractAddress, jbControllerAbi, jbDirectoryAbi, jbMultiTerminalAbi,
+  jbV6ContractAddress, jbControllerAbi, jbDirectoryAbi, jbMultiTerminalAbi,
   NATIVE_TOKEN, USDC_ADDRESSES, type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import { prepareUserPay, v6Address, type PayPreview } from '@bananapus/nana-sdk-core/v6'
@@ -40,7 +40,7 @@ export type ProjectPayTokenOption = {
 
 const SLIPPAGE_BPS = 100n
 function optionalAddress(name: string, chainId: JBChainId): Address | undefined {
-  const value = (jbContractAddress[6] as Record<string, Partial<Record<JBChainId, Address>>>)[name]?.[chainId]
+  const value = (jbV6ContractAddress as Record<string, Partial<Record<JBChainId, Address>>>)[name]?.[chainId]
   return value && !isAddressEqual(value, zeroAddress) ? value : undefined
 }
 function same(a: Address, b: Address | undefined) { return !!b && isAddressEqual(a, b) }

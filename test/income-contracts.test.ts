@@ -4,7 +4,7 @@ import { getAddress, zeroAddress } from 'viem'
 const ADDRESSES = vi.hoisted(() => ({ distributor: '0x0000000000000000000000000000000000000100' as const, launcher: '0x0000000000000000000000000000000000000200' as const }))
 vi.mock('@bananapus/nana-sdk-core', async importOriginal => {
   const actual = await importOriginal<typeof import('@bananapus/nana-sdk-core')>()
-  return { ...actual, jbContractAddress: { ...actual.jbContractAddress, '6': { ...actual.jbContractAddress['6'], JBTokenDistributor: { 8453: ADDRESSES.distributor }, HomerunDeployer: { 8453: ADDRESSES.launcher } } } }
+  return { ...actual, jbV6ContractAddress: { ...actual.jbV6ContractAddress, JBTokenDistributor: { 8453: ADDRESSES.distributor }, HomerunDeployer: { 8453: ADDRESSES.launcher } } }
 })
 import {
   allocateInitialIncome, buildIncomeRewardActivation, buildIncomeRewardClaim,
