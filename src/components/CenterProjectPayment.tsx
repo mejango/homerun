@@ -81,7 +81,8 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
   // A refused payment was never sent, and the fresh one takes its nonce, so at most one of them executes.
   const plainRetry = retryBps === null && (status === 'reverted' || status === 'refused') && matching && ownPayment
   useEffect(() => { onBusyChange?.(busy || !!pending && !terminal); return () => onBusyChange?.(false) }, [busy, pending, terminal, onBusyChange])
-  /** `sends`: a submit or retire, whose error Signa follows with the payment's own outcome, which is shown instead. */
+  /** `sends`: a submit or retire, whose error Signa follows with the payment's own outcome, which is shown instead
+   * (an unresolved one says to check its status, with no retry advice until it settles). */
   async function run(action: () => Promise<unknown>, sends = false) {
     if (working.current) return
     working.current = true; setBusy(true); setError(null); setPrepareFailure(null); setRetryEdit(null)
@@ -92,7 +93,7 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
       setPrepareFailure(reason)
       let outcome: string | undefined
       try { outcome = controller?.pending()?.status?.status } catch { /* The saved payment's error is shown below. */ }
-      if (sends && outcome && ['refused', 'pending', 'confirming', 'paid', 'reverted'].includes(outcome)) return
+      if (sends && outcome && ['refused', 'pending', 'confirming', 'paid', 'reverted', 'unknown'].includes(outcome)) return
       setError(reason?.message ?? (cause instanceof Error ? cause.message : 'This payment could not be checked. Keep its original record.'))
     }
     finally { working.current = false; if (live.current) { setBusy(false); try { setPending(controller?.pending() ?? null) } catch { setError('The saved payment is unavailable. Return to its original tab.') } } }
