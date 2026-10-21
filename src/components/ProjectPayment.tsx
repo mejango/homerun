@@ -1,7 +1,7 @@
 'use client'
 
 import { NATIVE_TOKEN, type JBChainId } from '@bananapus/nana-sdk-core'
-import { buildPayTx, decodePayFailure, PAY_DEFAULT_SLIPPAGE_BPS, PAY_MAX_SLIPPAGE_BPS, payRetrySlippageBps, type PayFailure } from '@bananapus/nana-sdk-core/v6'
+import { buildPayTx, decodePayFailure, PAY_DEFAULT_SLIPPAGE_BPS, PAY_MAX_SLIPPAGE_BPS, PAY_QUOTE_FAILED_MESSAGE, payRetrySlippageBps, type PayFailure } from '@bananapus/nana-sdk-core/v6'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { WritesChecking } from '@/components/writes-checking'
 import { useContext, useEffect, useRef, useState, type ReactNode } from 'react'
@@ -300,6 +300,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
           : count <= 0n ? <p>Enter an amount to see your {tokenLabel} quote.</p>
           : quote.isFetching ? <p>Getting your quote…</p> : null}
         {quote.isError && <p role="alert" className="mt-2">A protected payment quote is unavailable. {message(quote.error)}</p>}
+        {quoted && quote.data?.quoteFailed && <p className="mt-2">{PAY_QUOTE_FAILED_MESSAGE} <button type="button" className="underline" disabled={quote.isFetching} onClick={() => void quote.refetch()}>Try again</button></p>}
       </div>
       {retrySlippageBps !== null ? <AllowedDecreaseField bps={retrySlippageBps} onChange={retryBps => setOutcome(current => current && { ...current, retryBps })} maxBps={Number(PAY_MAX_SLIPPAGE_BPS)} /> : null}
     </TxConfirmDialog>
