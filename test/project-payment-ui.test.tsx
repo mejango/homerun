@@ -175,10 +175,25 @@ describe('shared payment execution', () => {
     await ready()
     expect(host.textContent).toContain(PAY_QUOTE_FAILED_MESSAGE)
     expect(host.textContent).not.toContain('maximum slippage')
-    runtime.quote.mockResolvedValue(quote())
+    const retried = Promise.withResolvers<ProjectPayQuote>()
+    runtime.quote.mockReturnValue(retried.promise)
     await act(async () => [...host.querySelectorAll('button')].find(element => element.textContent === 'Try again')!.click())
-    await waitUntil(() => expect(host.textContent).toContain('maximum slippage'))
+    await waitUntil(() => expect(host.textContent).toContain('Refreshing the market price'))
     expect(host.textContent).not.toContain(PAY_QUOTE_FAILED_MESSAGE)
+    await act(async () => retried.resolve(quote()))
+    await waitUntil(() => expect(host.textContent).toContain('maximum slippage'))
+    expect(host.textContent).not.toMatch(/Refreshing the market price|Couldn't load/)
+  })
+
+  it('keeps the slippage promise off a failed quote while the payment is under review', async () => {
+    runtime.quote.mockResolvedValue(quote(99n * UNIT, { quoteFailed: true }))
+    await ready()
+    let shown = ''
+    runtime.review = async () => { shown = host.textContent ?? '' }
+    await submit()
+    expect(shown).not.toContain('maximum slippage')
+    expect(shown).not.toContain('Try again')
+    expect(runtime.writes[0].options.reviewNotice).toContain(PAY_QUOTE_FAILED_MESSAGE)
   })
 
   it('discloses a market price that failed only at submission in the final review', async () => {

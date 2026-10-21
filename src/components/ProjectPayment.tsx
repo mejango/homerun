@@ -136,6 +136,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       refreshIndexedProject(cache, chainId, projectId)
     }
   }, [cache, chainId, projectId, tx, approval])
+  const [requoting, setRequoting] = useState(false)
   const quote = useQuery({
     queryKey: ['project-pay', chainId, projectId.toString(), context.terminal, context.token, count.toString(), address ?? zeroAddress, rulesetId, reservedPercent, slippageBps ?? null],
     enabled: !!client && count > 0n && !paused && (!quoteNeedsWallet || !!address),
@@ -299,9 +300,10 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       onClose={() => { setOpen(false); for (const item of [tx, approval]) if (item.phase === 'submitted') item.dismiss(); setStatus(null); attempt.current++; setRetryWhenQuoted(null); setPayerSlippage(null) }}
     >
       <div className="text-sm text-smoke-600" aria-live="polite">
-        {paused ? <p>This project has paused payments.</p> : zeroAllocation ? <p>This payment gives you no {tokenLabel}. All new tokens are allocated to the reserved recipients.</p> : quoted && quote.data?.quoteFailed && !busy && !error && tx.phase === 'idle'
+        {paused ? <p>This project has paused payments.</p> : zeroAllocation ? <p>This payment gives you no {tokenLabel}. All new tokens are allocated to the reserved recipients.</p> : quoted && quote.data?.quoteFailed
           // Without a market price the slippage line would promise protection the quote couldn't give.
-          ? <p>{PAY_QUOTE_FAILED_MESSAGE} <button type="button" className="min-h-11 underline" disabled={quote.isFetching} onClick={() => void quote.refetch()}>{quote.isFetching ? 'Refreshing…' : 'Try again'}</button></p>
+          // A tapped retry replaces the notice; the 15s background refresh keeps it, so it never flickers.
+          ? <p>{requoting ? 'Refreshing the market price…' : !busy && !error && tx.phase === 'idle' ? <>{PAY_QUOTE_FAILED_MESSAGE} <button type="button" className="min-h-11 underline" onClick={() => { setRequoting(true); void quote.refetch().finally(() => setRequoting(false)) }}>Try again</button></> : 'Through the project payment terminal, using its current rules and buyback hook.'}</p>
           : quoted ? <p>Through the project payment terminal, using its current rules and buyback hook. {(slippageBps ?? Number(PAY_DEFAULT_SLIPPAGE_BPS)) / 100}% maximum slippage.</p>
           : quoteNeedsWallet && !address ? <p>Connect an allowed wallet to see your quote.</p>
           : count <= 0n ? <p>Enter an amount to see your {tokenLabel} quote.</p>
