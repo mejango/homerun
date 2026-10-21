@@ -1,8 +1,8 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { createConnectController, passkeyOption, type ConnectOption } from '@bananapus/nana-sdk-connect/core'
-import { JBConnectModal, passkeyLabel } from '@bananapus/nana-sdk-connect/react'
+import { createConnectController, passkeyOption, type ConnectOption } from '@me.jango/signa/core'
+import { JBConnectModal, passkeyLabel } from '@me.jango/signa/react'
 import { WalletFallbackMark } from '@/components/BrandMarks'
 import { useWallet } from '@/hooks/useWallet'
 import { useMobileWallet } from '@/hooks/useMobileWallet'
@@ -26,9 +26,7 @@ export function ExternalWalletDialog({ onClose }: { onClose: () => void }) {
       const dialog = document.querySelector('.jb-connect.homerun-connect')
       if (!dialog) return
       const status = dialog.querySelector('.jb-connect-status')
-      if (status?.textContent === 'Continuing at Juicebox Center…') status.textContent = 'Connecting, just a sec...'
-      const frame = dialog.querySelector('iframe.jb-connect-frame')
-      if (frame?.getAttribute('title') === 'Juicebox Center') frame.setAttribute('title', 'Signa')
+      if (status?.textContent === 'Continuing at Signa…') status.textContent = 'Connecting, just a sec...'
     }
     label()
     const observer = new MutationObserver(label)

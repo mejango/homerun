@@ -26,7 +26,7 @@ const mocks = vi.hoisted(() => {
   }
 })
 
-vi.mock('@bananapus/nana-sdk-connect/core', () => ({
+vi.mock('@me.jango/signa/core', () => ({
   createCenterWalletClient: mocks.createClient,
   deliverCenterCallback: mocks.deliver,
 }))

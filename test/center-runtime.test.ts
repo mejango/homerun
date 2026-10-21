@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const runtime = vi.hoisted(() => ({ create: vi.fn() }))
-vi.mock('@bananapus/nana-sdk-connect/core', () => ({ createCenterWalletClient: runtime.create }))
+vi.mock('@me.jango/signa/core', () => ({ createCenterWalletClient: runtime.create }))
 vi.mock('@/providers/wallet-config', () => ({ CENTER_WALLET_CONFIG: { issuer: 'https://my.juicebox.center', audience: 'https://juicebox.center' } }))
 beforeEach(() => {
   vi.resetModules(); vi.clearAllMocks(); runtime.create.mockReturnValue({ client: true })
