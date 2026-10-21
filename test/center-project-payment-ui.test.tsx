@@ -118,6 +118,22 @@ describe('Juicebox wallet payment failure', () => {
     await vi.waitFor(() => expect(runtime.prepare).toHaveBeenCalledWith(expect.objectContaining({ slippageBps: 250 })))
     expect(runtime.clear).toHaveBeenCalledOnce()
   })
+  it.each([
+    ['refused without a reason', 'refused', 'Signa did not send this payment, so nothing was charged. Review it again.'],
+    ['claimed by a send that won', 'pending', 'Submitted. Waiting for confirmation…'],
+    ['claimed by a send that reverted', 'reverted', SHORTFALL],
+  ] as const)('shows a failed send %s by its outcome alone, not the error', async (_, outcome, line) => {
+    runtime.pending = { intent, submitted: false, accountId: OWNER, status: { status: 'approved', expectedPayment: { minimumReturnedTokens: '99' } } }
+    runtime.submit.mockImplementationOnce(async () => {
+      runtime.pending = { intent, submitted: true, accountId: OWNER, status: outcome === 'reverted' ? reverted({ payFailure: UNDER_MIN }) : { status: outcome, expectedPayment: { minimumReturnedTokens: '99' } } }
+      throw Object.assign(new Error('The service rejected this request (409).'), { code: 'WALLET_OPERATION_REFUSED' })
+    })
+    await render()
+    await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Submit payment')!.click())
+    await vi.waitFor(() => expect(host.textContent).toContain(line))
+    expect(host.textContent).not.toContain('The service rejected this request')
+    expect(host.textContent!.split(line)).toHaveLength(2)
+  })
   it('says a refused payment was never sent, and prepares it again at once', async () => {
     runtime.pending = { intent, submitted: true, accountId: OWNER, status: { status: 'refused', expectedPayment: { minimumReturnedTokens: '99' } } }
     await render()

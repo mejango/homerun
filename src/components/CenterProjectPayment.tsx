@@ -81,7 +81,8 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
   // A refused payment was never sent, and the fresh one takes its nonce, so at most one of them executes.
   const plainRetry = retryBps === null && (status === 'reverted' || status === 'refused') && matching && ownPayment
   useEffect(() => { onBusyChange?.(busy || !!pending && !terminal); return () => onBusyChange?.(false) }, [busy, pending, terminal, onBusyChange])
-  async function run(action: () => Promise<unknown>) {
+  /** `sends`: a submit or retire, whose error Signa follows with the payment's own outcome, which is shown instead. */
+  async function run(action: () => Promise<unknown>, sends = false) {
     if (working.current) return
     working.current = true; setBusy(true); setError(null); setPrepareFailure(null); setRetryEdit(null)
     try { await action() }
@@ -89,6 +90,9 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
       if (!live.current) return
       const reason = (cause as RestClientError | null)?.payFailure ?? null
       setPrepareFailure(reason)
+      let outcome: string | undefined
+      try { outcome = controller?.pending()?.status?.status } catch { /* The saved payment's error is shown below. */ }
+      if (sends && outcome && ['refused', 'pending', 'confirming', 'paid', 'reverted'].includes(outcome)) return
       setError(reason?.message ?? (cause instanceof Error ? cause.message : 'This payment could not be checked. Keep its original record.'))
     }
     finally { working.current = false; if (live.current) { setBusy(false); try { setPending(controller?.pending() ?? null) } catch { setError('The saved payment is unavailable. Return to its original tab.') } } }
@@ -156,7 +160,7 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
   }
   async function submit() {
     if (!controller || !address || !matching || paused) return
-    await run(async () => { await verify(address); guard(); await controller.submit() })
+    await run(async () => { await verify(address); guard(); await controller.submit() }, true)
   }
   // Bounded observation only. Visibility/offline changes pause requests; no interval submits.
   useEffect(() => {
@@ -186,7 +190,7 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
           disabled={busy || paused} onChange={event => setInput(event.target.value)} className="min-h-12 border border-[#bfc9b5] bg-white px-3" /></label> : null}
         {matching ? <dl className="mt-4 text-sm"><dt>Payment</dt><dd>{formatUnits(BigInt(pending!.intent.amount), 6)} USDC</dd>
           {pending?.status?.expectedPayment ? <><dt className="mt-2">Minimum returned</dt><dd><DisplayTokenAmount value={BigInt(pending.status.expectedPayment.minimumReturnedTokens)} /> {tokenLabel}</dd></> : null}</dl> : null}
-        <p role="status" aria-live="polite" className="mt-4 break-words text-sm">{paused ? 'This project has paused payments.' : blocked ?? (frame ? statuses.reviewing : status === 'refused' ? failure?.message ?? error ?? statuses.refused : status === 'reverted' && failure ? failure.message : status ? statuses[status] : 'Each payment needs your passkey approval.')}</p>
+        <p role="status" aria-live="polite" className="mt-4 break-words text-sm">{paused ? 'This project has paused payments.' : blocked ?? (frame ? statuses.reviewing : status === 'refused' ? failure?.message ?? statuses.refused : status === 'reverted' && failure ? failure.message : status ? statuses[status] : 'Each payment needs your passkey approval.')}</p>
         {retryBps !== null && !frame ? <AllowedDecreaseField bps={retryBps} onChange={setRetryEdit} maxBps={Number(PAY_MAX_SLIPPAGE_BPS)} /> : null}
         {frame ? <div className="center-review-frame mt-4">
           <iframe ref={frameRef} src={frame} title="Juicebox wallet payment review" allow="publickey-credentials-get" referrerPolicy="no-referrer" style={frameHeight ? { height: frameHeight } : undefined} />
@@ -199,12 +203,12 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
           {(retryBps !== null || plainRetry) && !frame ? <button type="button" className="btn-primary min-h-11 px-4" disabled={busy || paused || !!blocked} onClick={() => void reviewAgain(retryBps ?? pending?.intent.slippageBps)}>Review again</button> : null}
           {!frame && retryBps === null && !plainRetry && (!pending || (!pending.submitted && (!status || status === 'reviewing'))) ? <button type="button" className="btn-primary min-h-11 px-4" disabled={busy || paused || !!blocked || !controller} onClick={() => void review()}>{busy ? 'Preparing…' : pending ? status ? 'Approve with your passkey' : 'Resume payment preparation' : 'Review with a passkey'}</button> : null}
           {status === 'approved' && !pending?.submitted ? <button type="button" className="btn-primary min-h-11 px-4" disabled={busy || paused} onClick={() => void submit()}>Submit payment</button> : null}
-          {pending && status && !terminal ? <button type="button" className="btn-secondary min-h-11 px-4" disabled={busy} onClick={() => void run(() => status === 'unknown' && pending.submitted ? retire() : controller!.refresh())}>Check payment status</button> : null}
+          {pending && status && !terminal ? <button type="button" className="btn-secondary min-h-11 px-4" disabled={busy} onClick={() => void run(() => status === 'unknown' && pending.submitted ? retire() : controller!.refresh(), status === 'unknown' && pending.submitted)}>Check payment status</button> : null}
           {terminal ? <button type="button" className="btn-secondary min-h-11 px-4" disabled={busy} onClick={() => void run(async () => { controller!.clear(); setInput('') })}>Close payment</button> : null}
           {pending && !status && !pending.submitted ? <button type="button" className="btn-secondary min-h-11 px-4" disabled={busy} onClick={() => void run(async () => { controller!.clear(); setInput('') })}>Start over</button> : null}
         </div>
         {pending?.status?.transactionHash ? <a className="mt-4 block break-words text-sm underline" href={`https://basescan.org/tx/${pending.status.transactionHash}`} target="_blank" rel="noreferrer">View transaction</a> : null}
       </>}
-    {error && status !== 'refused' ? <p role="alert" className="mt-4 break-words text-sm text-red-800">{error}</p> : null}
+    {error ? <p role="alert" className="mt-4 break-words text-sm text-red-800">{error}</p> : null}
   </section>
 }
