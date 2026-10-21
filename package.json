@@ -52,7 +52,7 @@
     "deploy:post:mainnets": "npm run deploy:verify:mainnets && npm run deploy:artifacts:mainnets"
   },
   "dependencies": {
-    "@bananapus/nana-sdk-core": "3.5.1",
+    "@bananapus/nana-sdk-core": "3.5.2",
     "@coinbase/wallet-sdk": "4.3.7",
     "@me.jango/signa": "^0.4.0",
     "@safe-global/safe-apps-provider": "0.18.6",
