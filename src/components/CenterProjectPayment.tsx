@@ -10,10 +10,11 @@ import { DisplayTokenAmount } from './DisplayTokenAmount'
 import { CENTER_WALLET_CONFIG } from '@/providers/wallet-config'
 import { centerWalletClient } from '@/providers/center-runtime'
 import { CENTER_FRAME_CALLBACK, CENTER_FRAME_RECEIVED } from '@/providers/center-callback'
-import { createHomerunPayment, signaPayFailure } from '@/lib/center-payment'
+import { createHomerunPayment } from '@/lib/center-payment'
 import { prepareProjectPayQuote } from '@/lib/project-pay-quote'
 import { AllowedDecreaseField } from '@/components/ui/AllowedDecreaseField'
-import { PAY_DEFAULT_SLIPPAGE_BPS, PAY_MAX_SLIPPAGE_BPS, payRetrySlippageBps, type PayFailure } from '@bananapus/nana-sdk-core/v6'
+import { PAY_DEFAULT_SLIPPAGE_BPS, PAY_MAX_SLIPPAGE_BPS, payRetrySlippageBps } from '@bananapus/nana-sdk-core/v6'
+import type { PayFailure, RestClientError } from '@me.jango/signa/core'
 
 type Controller = ReturnType<typeof createHomerunPayment>
 type Pending = ReturnType<Controller['pending']>
@@ -24,6 +25,7 @@ const statuses = {
   confirming: 'Confirming the payment onchain…', paid: 'Payment confirmed onchain.', reverted: 'The payment reverted.',
   cancelled: 'The payment review was cancelled.', unknown: 'The payment outcome is not confirmed. Check its status before making another payment.',
   expired: 'The payment expired before it was included onchain. Nothing was charged; you can pay again.',
+  refused: 'Signa did not send this payment, so nothing was charged. Review it again.',
 }
 export default function CenterProjectPayment({ chainId, projectId, tokenLabel, title, paused, blocked, verify, chainSelector, onBusyChange }: {
   chainId: JBChainId; projectId: bigint; tokenLabel: 'FUND' | 'INCOME'; title: string; paused: boolean; blocked?: string; quoteNeedsWallet?: boolean;
@@ -33,7 +35,7 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
   const { address } = useWallet(), client = usePublicClient({ chainId }) as PublicClient | undefined
   const [controller, setController] = useState<Controller | null>(null), [pending, setPending] = useState<Pending>(null)
   const [input, setInput] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null)
-  /** Why preparing the payment failed, when Signa says; a reverted payment's reason is in its status. */
+  /** Why preparing or sending the payment failed, when Signa says; a reverted payment's reason is in its status. */
   const [prepareFailure, setPrepareFailure] = useState<PayFailure | null>(null)
   /** The tolerance offered after a shortfall, until the payer reviews again with it. */
   const [retryEdit, setRetryEdit] = useState<number | null>(null)
@@ -67,15 +69,17 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
   }, [])
   const matching = pending?.intent.projectId === projectId.toString() && chainId === 8453
   const status = pending?.status?.status
-  const terminal = !!status && ['paid', 'cancelled', 'reverted', 'expired'].includes(status)
-  const failure = (status === 'reverted' ? signaPayFailure(pending?.status) : null) ?? (pending && !status ? prepareFailure : null)
+  const terminal = !!status && ['paid', 'cancelled', 'reverted', 'expired', 'refused'].includes(status)
+  // Signa's client attaches the SDK's own PayFailure: to a reverted status, and to the error a refused send or preparation throws.
+  const failure = status === 'reverted' ? pending?.status?.payFailure ?? null : status === 'refused' || (pending && !status) ? prepareFailure : null
   const currentBps = BigInt(pending?.intent.slippageBps ?? PAY_DEFAULT_SLIPPAGE_BPS)
   // Only the wallet that made the payment retries it.
   const ownPayment = !!address && pending?.accountId === 'eip155:8453:' + address.toLowerCase()
   const suggested = matching && ownPayment && failure ? payRetrySlippageBps(failure, currentBps) : null
   const retryBps = suggested === null ? null : retryEdit ?? Number(suggested)
-  // Any other revert is prepared again at the same tolerance: that fresh preparation says why, if it fails.
-  const plainRetry = retryBps === null && status === 'reverted' && matching && ownPayment
+  // Any other revert or refusal is prepared again at the same tolerance: that fresh preparation says why, if it fails.
+  // A refused payment was never sent, and the fresh one takes its nonce, so at most one of them executes.
+  const plainRetry = retryBps === null && (status === 'reverted' || status === 'refused') && matching && ownPayment
   useEffect(() => { onBusyChange?.(busy || !!pending && !terminal); return () => onBusyChange?.(false) }, [busy, pending, terminal, onBusyChange])
   async function run(action: () => Promise<unknown>) {
     if (working.current) return
@@ -83,7 +87,7 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
     try { await action() }
     catch (cause) {
       if (!live.current) return
-      const reason = signaPayFailure(cause)
+      const reason = (cause as RestClientError | null)?.payFailure ?? null
       setPrepareFailure(reason)
       setError(reason?.message ?? (cause instanceof Error ? cause.message : 'This payment could not be checked. Keep its original record.'))
     }
@@ -144,6 +148,12 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
     const amount = BigInt(pending.intent.amount)
     await run(async () => { controller.clear(); setPending(null); setInput(formatUnits(amount, 6)); await prepareAndApprove(amount, slippageBps) })
   }
+  /** An unknown send: Signa retires it if it never went out (refused, so a fresh review follows at once), or returns the
+   * submission that claimed it, which is followed. An approval Signa no longer holds is read again. */
+  async function retire() {
+    try { await controller!.retire() }
+    catch (cause) { if ((cause as RestClientError | null)?.code === 'WALLET_PAYMENT_NOT_APPROVED') await controller!.refresh(); else throw cause }
+  }
   async function submit() {
     if (!controller || !address || !matching || paused) return
     await run(async () => { await verify(address); guard(); await controller.submit() })
@@ -176,7 +186,7 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
           disabled={busy || paused} onChange={event => setInput(event.target.value)} className="min-h-12 border border-[#bfc9b5] bg-white px-3" /></label> : null}
         {matching ? <dl className="mt-4 text-sm"><dt>Payment</dt><dd>{formatUnits(BigInt(pending!.intent.amount), 6)} USDC</dd>
           {pending?.status?.expectedPayment ? <><dt className="mt-2">Minimum returned</dt><dd><DisplayTokenAmount value={BigInt(pending.status.expectedPayment.minimumReturnedTokens)} /> {tokenLabel}</dd></> : null}</dl> : null}
-        <p role="status" aria-live="polite" className="mt-4 break-words text-sm">{paused ? 'This project has paused payments.' : blocked ?? (frame ? statuses.reviewing : status === 'reverted' && failure ? failure.message : status ? statuses[status] : 'Each payment needs your passkey approval.')}</p>
+        <p role="status" aria-live="polite" className="mt-4 break-words text-sm">{paused ? 'This project has paused payments.' : blocked ?? (frame ? statuses.reviewing : status === 'refused' ? failure?.message ?? error ?? statuses.refused : status === 'reverted' && failure ? failure.message : status ? statuses[status] : 'Each payment needs your passkey approval.')}</p>
         {retryBps !== null && !frame ? <AllowedDecreaseField bps={retryBps} onChange={setRetryEdit} maxBps={Number(PAY_MAX_SLIPPAGE_BPS)} /> : null}
         {frame ? <div className="center-review-frame mt-4">
           <iframe ref={frameRef} src={frame} title="Juicebox wallet payment review" allow="publickey-credentials-get" referrerPolicy="no-referrer" style={frameHeight ? { height: frameHeight } : undefined} />
@@ -189,12 +199,12 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
           {(retryBps !== null || plainRetry) && !frame ? <button type="button" className="btn-primary min-h-11 px-4" disabled={busy || paused || !!blocked} onClick={() => void reviewAgain(retryBps ?? pending?.intent.slippageBps)}>Review again</button> : null}
           {!frame && retryBps === null && !plainRetry && (!pending || (!pending.submitted && (!status || status === 'reviewing'))) ? <button type="button" className="btn-primary min-h-11 px-4" disabled={busy || paused || !!blocked || !controller} onClick={() => void review()}>{busy ? 'Preparing…' : pending ? status ? 'Approve with your passkey' : 'Resume payment preparation' : 'Review with a passkey'}</button> : null}
           {status === 'approved' && !pending?.submitted ? <button type="button" className="btn-primary min-h-11 px-4" disabled={busy || paused} onClick={() => void submit()}>Submit payment</button> : null}
-          {pending && status && !terminal ? <button type="button" className="btn-secondary min-h-11 px-4" disabled={busy} onClick={() => void run(() => controller!.refresh())}>Check payment status</button> : null}
+          {pending && status && !terminal ? <button type="button" className="btn-secondary min-h-11 px-4" disabled={busy} onClick={() => void run(() => status === 'unknown' && pending.submitted ? retire() : controller!.refresh())}>Check payment status</button> : null}
           {terminal ? <button type="button" className="btn-secondary min-h-11 px-4" disabled={busy} onClick={() => void run(async () => { controller!.clear(); setInput('') })}>Close payment</button> : null}
           {pending && !status && !pending.submitted ? <button type="button" className="btn-secondary min-h-11 px-4" disabled={busy} onClick={() => void run(async () => { controller!.clear(); setInput('') })}>Start over</button> : null}
         </div>
         {pending?.status?.transactionHash ? <a className="mt-4 block break-words text-sm underline" href={`https://basescan.org/tx/${pending.status.transactionHash}`} target="_blank" rel="noreferrer">View transaction</a> : null}
       </>}
-    {error ? <p role="alert" className="mt-4 break-words text-sm text-red-800">{error}</p> : null}
+    {error && status !== 'refused' ? <p role="alert" className="mt-4 break-words text-sm text-red-800">{error}</p> : null}
   </section>
 }

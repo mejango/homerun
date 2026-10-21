@@ -1,10 +1,10 @@
-import { decodeFunctionData, encodeAbiParameters, isAddress, isHex, keccak256, parseAbi, stringToHex, toFunctionSelector, type Address, type Hex } from 'viem'
+import { decodeFunctionData, isAddress, isHex, keccak256, parseAbi, stringToHex, type Address, type Hex } from 'viem'
 import type { CenterWalletConnection, CenterWalletExpectedPayment, CenterWalletPaymentStatus, CenterWalletStorage,
-  PreparedUserOperation, SmartWalletPlan, PayFailure as SignaPayFailure, createCenterWalletClient } from '@bananapus/nana-sdk-connect/core'
+  PreparedUserOperation, SmartWalletPlan, createCenterWalletClient } from '@me.jango/signa/core'
 import type { HomerunCenterConfig } from '@/providers/wallet-config'
 import { centerReturnPath } from '@/providers/center-callback'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { decodePayFailure, PAY_DEFAULT_SLIPPAGE_BPS, PAY_MAX_SLIPPAGE_BPS, type PayFailure } from '@bananapus/nana-sdk-core/v6'
+import { PAY_DEFAULT_SLIPPAGE_BPS, PAY_MAX_SLIPPAGE_BPS } from '@bananapus/nana-sdk-core/v6'
 
 export interface HomerunPaymentIntent {
   projectId: string; token: Address; terminal: Address; amount: string; minimumReturnedTokens: string; returnPath: string
@@ -14,24 +14,6 @@ export interface HomerunPaymentIntent {
   slippageBps?: number
 }
 
-// The pay reverts that carry a shortfall (settled, minimum), as the SDK decodes them.
-const shortfallReverts = ['JBMultiTerminal_UnderMin', 'JBBuybackHook_SpecifiedSlippageExceeded', 'JBBuybackHook_DerivedFloorNotMet', 'JBRouterTerminal_SlippageExceeded']
-  .map(name => toFunctionSelector(`${name}(uint256,uint256)`))
-
-/**
- * Signa's `payFailure` from a payment status or a client error. Signa's client already admits only a
- * known reason with uint256 amounts whose message is the SDK's own for them, so the rule lives there;
- * a shortfall is decoded again by the SDK here for its `zeroFill` and `adjustable`. Null when absent.
- */
-export function signaPayFailure(source: unknown): PayFailure | null {
-  const served = source && typeof source === 'object' ? (source as { payFailure?: SignaPayFailure }).payFailure : undefined
-  if (!served) return null
-  if (served.received === undefined || served.minimum === undefined) return { reason: served.reason, message: served.message } as PayFailure
-  try {
-    const amounts = encodeAbiParameters([{ type: 'uint256' }, { type: 'uint256' }], [BigInt(served.received), BigInt(served.minimum)]).slice(2)
-    return shortfallReverts.map(selector => decodePayFailure(`${selector}${amounts}`)).find(failure => failure?.reason === served.reason) ?? null
-  } catch { return null }
-}
 type Principal = { accountId: string; grantId: string; signer: string }
 interface Journal extends Principal {
   version: 1; id: string; config: HomerunCenterConfig; intent: HomerunPaymentIntent; submitted: boolean;
@@ -172,7 +154,7 @@ export function createHomerunPayment(options: { config: HomerunCenterConfig;
   function clear() {
     const saved = read(); if (!saved.value) return
     const current = payments.pendingPayment()
-    if (current && !['paid', 'cancelled', 'reverted', 'expired'].includes(current.status)) fail('Keep this payment until its outcome is known.')
+    if (current && !['paid', 'cancelled', 'reverted', 'expired', 'refused'].includes(current.status)) fail('Keep this payment until its outcome is known.')
     // With no SDK payment, no review was ever requested (the SDK records one before asking), so
     // nothing can be approved or sent: a preparation that keeps failing, such as a moved price
     // under the quote's minimum, closes without a history entry.
@@ -201,5 +183,11 @@ export function createHomerunPayment(options: { config: HomerunCenterConfig;
     await identity(connection(), saved.value)
     return payments.completePayment(callbackUrl)
   }
-  return { prepare, submit, pending, clear, complete, refresh: () => payments.refreshPayment() }
+  /** An unknown outcome: Signa retires the approval if it never sent it (refused), or returns the submission that claimed it. */
+  async function retire() {
+    const saved = read(); if (!saved.value) fail()
+    await identity(connection(), saved.value)
+    return payments.retirePayment()
+  }
+  return { prepare, submit, pending, clear, complete, retire, refresh: () => payments.refreshPayment() }
 }

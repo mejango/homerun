@@ -1,3 +1,11 @@
+# Signa 0.4.0: one client package, refused payments review again (2026-10-20)
+
+- [x] Replace `@bananapus/nana-sdk-connect` with `@me.jango/signa@^0.4.0` (lockfile hand-edited, npm ci unchanged); imports to `/core`, `/react`, `/wagmi`; docs.
+- [x] Use the SDK `PayFailure` Signa 0.4.0 attaches to a reverted status and to `RestClientError`; delete Homerun's revert-data rebuild.
+- [x] `refused`: terminal, its reason shown once, Review again clears and prepares a fresh payment at once (same nonce, at most one runs). `unknown` after a send: Check payment status retires it through Signa (refused, or the submission that claimed it, which is followed).
+- [x] Copy: "Continuing at Signa…" match, connector named "Signa account".
+- [x] Gates on Node 24, Codex pass (UX with safety), PR, CI, merge.
+
 # Pay minimum: SDK 3.4.1, failure reason, adjustable minimum (2026-10-20)
 
 Ruling (jango): get the payer the most tokens possible; when a payment fails, say why and let the payer adjust their minimum. Mirrors jbm feat/pay-minimum-failure-reason.
