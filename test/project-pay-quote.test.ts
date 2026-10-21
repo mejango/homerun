@@ -52,14 +52,14 @@ describe('project payment quote parity', () => {
       if (request.functionName === 'poolKeyOf') throw new Error('No pool quote')
       return implementation(request)
     })
-    // No pool quote: the minimum is the mint entitlement the hook never settles below, floored by 1%.
-    expect(await prepareProjectPayQuote(f.rpc, { ...input, directTerminalOnly: true })).toMatchObject({ terminal: MULTI, minimumTokenCount: 790n, metadata: buildUserPayMetadata({ chainId: CHAIN }) })
+    // No pool quote: the minimum is the mint entitlement the hook never settles below, floored by 1%, and the quote says so.
+    expect(await prepareProjectPayQuote(f.rpc, { ...input, directTerminalOnly: true })).toMatchObject({ terminal: MULTI, minimumTokenCount: 790n, metadata: buildUserPayMetadata({ chainId: CHAIN }), quoteFailed: true })
   })
   it('prepares both listed terminals with the skipSplits pay metadata at one block and returns that metadata', async () => {
     const f = fixture()
     const metadata = buildUserPayMetadata({ chainId: CHAIN })
     const result = await prepareProjectPayQuote(f.rpc, input)
-    expect(result).toMatchObject({ terminal: MULTI, minimumTokenCount: 99n, reservedTokenCount: 25n, metadata, blockNumber: 100n })
+    expect(result).toMatchObject({ terminal: MULTI, minimumTokenCount: 99n, reservedTokenCount: 25n, metadata, blockNumber: 100n, quoteFailed: false })
     expect(f.client.readContract.mock.calls.every(([request]) => request.blockNumber === 100n)).toBe(true)
     const previews = f.client.readContract.mock.calls.filter(([request]) => request.functionName === 'previewPayFor')
     expect(previews.map(([request]) => request.address)).toEqual([MULTI, ROUTER])

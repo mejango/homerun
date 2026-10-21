@@ -29,6 +29,8 @@ export type ProjectPayQuote = {
   metadata: Hex
   /** All route/quote reads use this same confirmed block. */
   blockNumber: bigint
+  /** The pool price could not be read, so the minimum is only the mint rate. */
+  quoteFailed: boolean
 }
 
 export type ProjectPayTokenOption = {
@@ -126,5 +128,5 @@ export async function prepareProjectPayQuote(client: PublicClient, input: Projec
   const best = routes[0]
   if (!best) throw new Error('No listed payment route has a live quote for this token.')
   if (best.minReturnedTokens === 0n && !(metadata.reservedPercent === 10_000 && best.preview.reservedTokenCount > 0n)) throw new Error('No protected token return is available for this payment.')
-  return { terminal: best.terminal, preview: best.preview, minimumTokenCount: best.minReturnedTokens, reservedTokenCount: best.preview.reservedTokenCount, metadata: best.metadata, blockNumber }
+  return { terminal: best.terminal, preview: best.preview, minimumTokenCount: best.minReturnedTokens, reservedTokenCount: best.preview.reservedTokenCount, metadata: best.metadata, blockNumber, quoteFailed: !!best.quoteFailed }
 }

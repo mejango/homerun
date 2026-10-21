@@ -1,7 +1,7 @@
 'use client'
 
 import { NATIVE_TOKEN, type JBChainId } from '@bananapus/nana-sdk-core'
-import { buildPayTx, decodePayFailure, PAY_DEFAULT_SLIPPAGE_BPS, PAY_MAX_SLIPPAGE_BPS, payRetrySlippageBps, type PayFailure } from '@bananapus/nana-sdk-core/v6'
+import { buildPayTx, decodePayFailure, PAY_DEFAULT_SLIPPAGE_BPS, PAY_MAX_SLIPPAGE_BPS, PAY_QUOTE_FAILED_MESSAGE, payRetrySlippageBps, type PayFailure } from '@bananapus/nana-sdk-core/v6'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { WritesChecking } from '@/components/writes-checking'
 import { useContext, useEffect, useRef, useState, type ReactNode } from 'react'
@@ -136,6 +136,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       refreshIndexedProject(cache, chainId, projectId)
     }
   }, [cache, chainId, projectId, tx, approval])
+  const [requoting, setRequoting] = useState(false)
   const quote = useQuery({
     queryKey: ['project-pay', chainId, projectId.toString(), context.terminal, context.token, count.toString(), address ?? zeroAddress, rulesetId, reservedPercent, slippageBps ?? null],
     enabled: !!client && count > 0n && !paused && (!quoteNeedsWallet || !!address),
@@ -234,7 +235,11 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
         // The terminal, minimum and metadata are fresh each attempt: a retry is held by the payment the user chose.
         recoveryNamespace: paymentKey,
         simulationBlockNumber: latestBlock === undefined ? undefined : checked.blockNumber,
-        reviewNotice: noTokens ? `You receive no ${tokenLabel} for this payment. This project allocates 100% of new tokens to its reserved recipients.` : latest.minimumTokenCount < minimum ? `The quote decreased. Your protected minimum is now ${formatUnits(latest.minimumTokenCount, 18)} ${tokenLabel}.` : undefined,
+        // The quote signed here, not the card's: it can fall back to the mint rate after a healthy card.
+        reviewNotice: noTokens ? `You receive no ${tokenLabel} for this payment. This project allocates 100% of new tokens to its reserved recipients.` : [
+          latest.quoteFailed ? PAY_QUOTE_FAILED_MESSAGE : null,
+          latest.minimumTokenCount < minimum ? `The quote decreased. Your protected minimum is now ${formatUnits(latest.minimumTokenCount, 18)} ${tokenLabel}.` : null,
+        ].filter(Boolean).join(' ') || undefined,
         reverify: async () => {
           const verified = await reverify()
           if (!native && await client.readContract({ address: context.token, abi: erc20Abi, functionName: 'allowance', args: [address, spender], blockNumber: verified.blockNumber }) < count) throw new Error('Token approval changed. Review a new approval before paying.')
@@ -295,7 +300,11 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       onClose={() => { setOpen(false); for (const item of [tx, approval]) if (item.phase === 'submitted') item.dismiss(); setStatus(null); attempt.current++; setRetryWhenQuoted(null); setPayerSlippage(null) }}
     >
       <div className="text-sm text-smoke-600" aria-live="polite">
-        {paused ? <p>This project has paused payments.</p> : zeroAllocation ? <p>This payment gives you no {tokenLabel}. All new tokens are allocated to the reserved recipients.</p> : quoted ? <p>Through the project payment terminal, using its current rules and buyback hook. {(slippageBps ?? Number(PAY_DEFAULT_SLIPPAGE_BPS)) / 100}% maximum slippage.</p>
+        {paused ? <p>This project has paused payments.</p> : zeroAllocation ? <p>This payment gives you no {tokenLabel}. All new tokens are allocated to the reserved recipients.</p> : quoted && quote.data?.quoteFailed
+          // Without a market price the slippage line would promise protection the quote couldn't give.
+          // A tapped retry replaces the notice; the 15s background refresh keeps it, so it never flickers.
+          ? <p>{requoting ? 'Refreshing the market price…' : !busy && !error && tx.phase === 'idle' ? <>{PAY_QUOTE_FAILED_MESSAGE} <button type="button" className="min-h-11 underline" onClick={() => { setRequoting(true); void quote.refetch().finally(() => setRequoting(false)) }}>Try again</button></> : 'Through the project payment terminal, using its current rules and buyback hook.'}</p>
+          : quoted ? <p>Through the project payment terminal, using its current rules and buyback hook. {(slippageBps ?? Number(PAY_DEFAULT_SLIPPAGE_BPS)) / 100}% maximum slippage.</p>
           : quoteNeedsWallet && !address ? <p>Connect an allowed wallet to see your quote.</p>
           : count <= 0n ? <p>Enter an amount to see your {tokenLabel} quote.</p>
           : quote.isFetching ? <p>Getting your quote…</p> : null}
