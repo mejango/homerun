@@ -234,7 +234,11 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
         // The terminal, minimum and metadata are fresh each attempt: a retry is held by the payment the user chose.
         recoveryNamespace: paymentKey,
         simulationBlockNumber: latestBlock === undefined ? undefined : checked.blockNumber,
-        reviewNotice: noTokens ? `You receive no ${tokenLabel} for this payment. This project allocates 100% of new tokens to its reserved recipients.` : latest.minimumTokenCount < minimum ? `The quote decreased. Your protected minimum is now ${formatUnits(latest.minimumTokenCount, 18)} ${tokenLabel}.` : undefined,
+        // The quote signed here, not the card's: it can fall back to the mint rate after a healthy card.
+        reviewNotice: noTokens ? `You receive no ${tokenLabel} for this payment. This project allocates 100% of new tokens to its reserved recipients.` : [
+          latest.quoteFailed ? PAY_QUOTE_FAILED_MESSAGE : null,
+          latest.minimumTokenCount < minimum ? `The quote decreased. Your protected minimum is now ${formatUnits(latest.minimumTokenCount, 18)} ${tokenLabel}.` : null,
+        ].filter(Boolean).join(' ') || undefined,
         reverify: async () => {
           const verified = await reverify()
           if (!native && await client.readContract({ address: context.token, abi: erc20Abi, functionName: 'allowance', args: [address, spender], blockNumber: verified.blockNumber }) < count) throw new Error('Token approval changed. Review a new approval before paying.')
@@ -295,12 +299,14 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       onClose={() => { setOpen(false); for (const item of [tx, approval]) if (item.phase === 'submitted') item.dismiss(); setStatus(null); attempt.current++; setRetryWhenQuoted(null); setPayerSlippage(null) }}
     >
       <div className="text-sm text-smoke-600" aria-live="polite">
-        {paused ? <p>This project has paused payments.</p> : zeroAllocation ? <p>This payment gives you no {tokenLabel}. All new tokens are allocated to the reserved recipients.</p> : quoted ? <p>Through the project payment terminal, using its current rules and buyback hook. {(slippageBps ?? Number(PAY_DEFAULT_SLIPPAGE_BPS)) / 100}% maximum slippage.</p>
+        {paused ? <p>This project has paused payments.</p> : zeroAllocation ? <p>This payment gives you no {tokenLabel}. All new tokens are allocated to the reserved recipients.</p> : quoted && quote.data?.quoteFailed && !busy && !error && tx.phase === 'idle'
+          // Without a market price the slippage line would promise protection the quote couldn't give.
+          ? <p>{PAY_QUOTE_FAILED_MESSAGE} <button type="button" className="min-h-11 underline" disabled={quote.isFetching} onClick={() => void quote.refetch()}>{quote.isFetching ? 'Refreshing…' : 'Try again'}</button></p>
+          : quoted ? <p>Through the project payment terminal, using its current rules and buyback hook. {(slippageBps ?? Number(PAY_DEFAULT_SLIPPAGE_BPS)) / 100}% maximum slippage.</p>
           : quoteNeedsWallet && !address ? <p>Connect an allowed wallet to see your quote.</p>
           : count <= 0n ? <p>Enter an amount to see your {tokenLabel} quote.</p>
           : quote.isFetching ? <p>Getting your quote…</p> : null}
         {quote.isError && <p role="alert" className="mt-2">A protected payment quote is unavailable. {message(quote.error)}</p>}
-        {quoted && quote.data?.quoteFailed && <p className="mt-2">{PAY_QUOTE_FAILED_MESSAGE} <button type="button" className="underline" disabled={quote.isFetching} onClick={() => void quote.refetch()}>Try again</button></p>}
       </div>
       {retrySlippageBps !== null ? <AllowedDecreaseField bps={retrySlippageBps} onChange={retryBps => setOutcome(current => current && { ...current, retryBps })} maxBps={Number(PAY_MAX_SLIPPAGE_BPS)} /> : null}
     </TxConfirmDialog>

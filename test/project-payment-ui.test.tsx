@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { NATIVE_TOKEN } from '@bananapus/nana-sdk-core'
+import { PAY_QUOTE_FAILED_MESSAGE } from '@bananapus/nana-sdk-core/v6'
 import { encodeAbiParameters, encodeFunctionData, decodeFunctionData, type Address, type Hex } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectPayQuote, ProjectPayTokenOption } from '@/lib/project-pay-quote'
@@ -52,7 +53,7 @@ const HASH = `0x${'a'.repeat(64)}` as Hex
 type Props = ComponentProps<typeof ProjectPayment>
 
 function quote(minimum = 99n * UNIT, overrides: Partial<ProjectPayQuote> = {}): ProjectPayQuote {
-  return { terminal: TERMINAL, preview: { beneficiaryTokenCount: 100n * UNIT, reservedTokenCount: 0n }, minimumTokenCount: minimum, reservedTokenCount: 0n, metadata: METADATA, blockNumber: 100n, ...overrides }
+  return { terminal: TERMINAL, preview: { beneficiaryTokenCount: 100n * UNIT, reservedTokenCount: 0n }, minimumTokenCount: minimum, reservedTokenCount: 0n, metadata: METADATA, blockNumber: 100n, quoteFailed: false, ...overrides }
 }
 function encoded(request: TxRequest) {
   return decodeFunctionData({ abi: request.abi, data: encodeFunctionData({ abi: request.abi, functionName: request.functionName, args: request.args }) })
@@ -167,6 +168,26 @@ describe('shared payment execution', () => {
     expect(options.simulationBlockNumber).toBe(100n)
     // Its minimum comes from a fresh quote, so a retry is held by the user's choice, not the calldata.
     expect(options.recoveryNamespace).toBe(writeIntentKey('pay', { project: 7n, token: 'auto:token', amount: '1' }))
+  })
+
+  it('says when the market price could not be read, in place of the slippage promise, and offers a retry', async () => {
+    runtime.quote.mockResolvedValue(quote(99n * UNIT, { quoteFailed: true }))
+    await ready()
+    expect(host.textContent).toContain(PAY_QUOTE_FAILED_MESSAGE)
+    expect(host.textContent).not.toContain('maximum slippage')
+    runtime.quote.mockResolvedValue(quote())
+    await act(async () => [...host.querySelectorAll('button')].find(element => element.textContent === 'Try again')!.click())
+    await waitUntil(() => expect(host.textContent).toContain('maximum slippage'))
+    expect(host.textContent).not.toContain(PAY_QUOTE_FAILED_MESSAGE)
+  })
+
+  it('discloses a market price that failed only at submission in the final review', async () => {
+    await ready()
+    expect(host.textContent).not.toContain(PAY_QUOTE_FAILED_MESSAGE)
+    runtime.quote.mockResolvedValue(quote(88n * UNIT, { quoteFailed: true }))
+    await submit()
+    expect(runtime.writes[0].options.reviewNotice).toContain(PAY_QUOTE_FAILED_MESSAGE)
+    expect(runtime.writes[0].options.reviewNotice).toContain('quote decreased')
   })
 
   it('holds a payment in the default currency by the amount as typed, so a retry after the default switched from ETH to USDC is held by the first', async () => {
