@@ -1,5 +1,5 @@
-# The digest is the multi-platform index of the tag: docker buildx imagetools inspect node:26.7-alpine
-FROM node:26.7-alpine@sha256:aadf416b2cdce311a8811ba3f0608a61b77dbf997500e2eafe781b51f6a0b019 AS base
+# The digest is the multi-platform index of the tag: docker buildx imagetools inspect node:26.12.1-alpine
+FROM node:26.12.1-alpine@sha256:ae8e1c19d56886270987e99b3cfcef13a919f0655b376ae322bc64ada76f88cd AS base
 WORKDIR /app
 
 FROM base AS build

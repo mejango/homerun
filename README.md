@@ -53,7 +53,7 @@ The asset's appraised value is not spendable INCOME backing. Borrowing and cash-
 
 ## Run locally
 
-Use Node **26.7.x** (`.nvmrc`) and npm **12.0.1** (`packageManager`). CI and Docker install that same npm version.
+Use Node **26.12.x** (`.nvmrc`) and npm **12.0.1** (`packageManager`). CI and Docker install that same npm version.
 
 ```sh
 npm ci
