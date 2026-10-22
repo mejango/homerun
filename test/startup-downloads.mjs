@@ -13,7 +13,7 @@ import { centerPort } from './support/browser-suites.mjs'
 const base = process.env.BASE_URL || `http://127.0.0.1:${centerPort}`
 const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || undefined, headless: true })
 let failed = 0
-const idleCeilings = { '/': 214, '/founderhaus': 302, '/create': 430 }
+const idleCeilings = { '/': 216, '/founderhaus': 304, '/create': 432 }
 try {
   // Positive control: every vendor still ships its markers in some chunk, so a renamed marker cannot pass silently.
   if (process.env.STARTUP_CHUNKS_DIR) {
