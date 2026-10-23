@@ -38,7 +38,7 @@
     },
     {
       "file": "src/components/TransactionReviewProvider.tsx",
-      "line": 152,
+      "line": 154,
       "api": "registerReviewHandler",
       "boundary": "The one review UI core's prompts reach: it returns core's confirmation only when the person confirms the dialog, and null on close or when core withdraws the prompt.",
       "test": "test/transaction-review-dialog.test.tsx"

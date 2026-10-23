@@ -94,7 +94,7 @@ function asLine(reason: unknown): unknown {
     : Object.assign(new ReviewLineError(transactionMessage(reason.message)), { cause: reason })
 }
 
-type Tracked = { chainId: number; account: Address; safe: boolean; namespace?: string; call: { to: Address; data: Hex; value?: bigint } }
+type Tracked = { chainId: number; account: Address; safe: boolean; namespace?: string; legacy?: ReviewedCall['legacy']; call: { to: Address; data: Hex; value?: bigint } }
 
 /**
  * The one reviewed send every project-page write flow uses, over core's useReviewedRun: core reviews,
@@ -133,7 +133,7 @@ export function useReviewedAction(chainId: number) {
   const [trackReceipt, setTrackReceipt] = useState<TransactionReceipt | null>(null)
   const trackView = useHeldWrite({
     hold: holds, chainId: tracking?.chainId ?? chainId, account: tracking?.account ?? zeroAddress, safe: tracking?.safe,
-    namespace: tracking?.namespace, call: tracking?.call,
+    namespace: tracking?.namespace, ...(tracking?.legacy ? { legacy: [...tracking.legacy] } : {}), call: tracking?.call,
     client: tracking ? publicClient(tracking.chainId as JBChainId) as WriteHoldClient : undefined,
     onSettled: (_settled, receipt) => setTrackReceipt(receipt),
   })
@@ -151,7 +151,7 @@ export function useReviewedAction(chainId: number) {
    * Show the hold of a write this flow didn't send in this page, which its saved-attempt recovery
    * found held. Nothing is sent; the hold's state is shown with its line and exit, and followed.
    */
-  const track = useCallback((request: TxRequest | { chainId: number; call: { to: Address; data: Hex; value?: bigint } }, options: Pick<TxSendOptions, 'reviewedAccount' | 'recoveryNamespace'> & { safe?: boolean; reservation?: string }) => {
+  const track = useCallback((request: TxRequest | { chainId: number; call: { to: Address; data: Hex; value?: bigint } }, options: Pick<TxSendOptions, 'reviewedAccount' | 'recoveryNamespace' | 'recoveryLegacy'> & { safe?: boolean; reservation?: string }) => {
     if (inFlight.current) return
     // A reservation this flow already shows is watched already.
     if (options.reservation && options.reservation === trackedReservation.current) return
@@ -161,6 +161,7 @@ export function useReviewedAction(chainId: number) {
       chainId: request.chainId, account: options.reviewedAccount, safe: options.safe ?? isSafeConnection(wagmiConfig),
       call: 'call' in request ? request.call : callOf(request),
       ...(options.recoveryNamespace ? { namespace: options.recoveryNamespace } : {}),
+      ...(options.recoveryLegacy ? { legacy: options.recoveryLegacy } : {}),
     })
   }, [])
 
@@ -185,14 +186,13 @@ export function useReviewedAction(chainId: number) {
       ...(options.simulationBlockNumber !== undefined ? { simulationBlockNumber: options.simulationBlockNumber } : {}),
     }
     // A success that settled while the user was away is shown with its "Send it again", never sent over.
-    const away = { reviewedAccount: options.reviewedAccount, safe: viaSafe, ...(options.recoveryNamespace ? { recoveryNamespace: options.recoveryNamespace } : {}) }
+    const away = { reviewedAccount: options.reviewedAccount, safe: viaSafe, ...(options.recoveryNamespace ? { recoveryNamespace: options.recoveryNamespace } : {}), ...(options.recoveryLegacy ? { recoveryLegacy: options.recoveryLegacy } : {}) }
     if (openStepHold(holds, options.reviewedAccount, viaSafe, call).unacknowledgedSuccess()) {
       inFlight.current = false
       track(request, away)
       return null
     }
     // The send resolves with the wallet's reply, as the flow journals it; core follows it to its receipt.
-    const submission: { current: { hash: Hex; safe: boolean } | null } = { current: null }
     return new Promise<Hex | null>(resolve => {
       let answered = false
       const answer = (hash: Hex | null) => { if (!answered) { answered = true; resolve(hash) } }
@@ -209,16 +209,15 @@ export function useReviewedAction(chainId: number) {
         },
         onSubmitted: async (sent, _step, hash, how) => {
           if (how.adopted) await options.onExistingProposal?.({ proposalHash: hash, call: { to: sent.to, data: sent.data, value: sent.value ?? 0n } })
-          submission.current = { hash, safe: how.safe }
-          if (mounted.current) setSubmission(submission.current)
+          if (mounted.current) setSubmission({ hash, safe: how.safe })
           answer(hash)
         },
       }).then(ended => {
-        // A same-nonce replacement's receipt is not this call's: the hold still has the call, so it is shown.
-        const replaced = ended?.status === 'done' && submission.current && !submission.current.safe
-          && ended.receipts.at(-1)?.transactionHash.toLowerCase() !== submission.current.hash.toLowerCase()
+        // Done is success only once the hold settled it: a receipt it did not verify (a same-nonce
+        // replacement, a block since reorged out) leaves the call held, so the hold is shown.
+        const unsettled = ended?.status === 'done' && openStepHold(holds, options.reviewedAccount, viaSafe, call).peek().status !== 'clear'
         if (ended?.status === 'failed') { if (!answered) options.onFailure?.(ended.failure) }
-        else if (replaced) { if (mounted.current) { inFlight.current = false; track(request, away) } }
+        else if (unsettled) { if (mounted.current) { inFlight.current = false; track(request, away) } }
         else if (mounted.current) setResult(ended)
         answer(ended?.status === 'done' ? ended.hashes.at(-1) ?? null : ended?.status === 'proposed' ? ended.safeTxHash : null)
       }, () => answer(null)).finally(() => { inFlight.current = false })
