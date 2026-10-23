@@ -514,7 +514,7 @@ export function useSafeTx(chainId: number) {
   /** The hold settled this flow's write as failed onchain, with or without a receipt read here. */
   const [settledFailed, setSettledFailed] = useState(false)
   /** How the hold settled the Safe proposal this flow shows: only the hold says a proposal succeeded or failed. */
-  const [safeSettled, setSafeSettled] = useState<{ success: boolean; line: string | null } | null>(null)
+  const [settledProposal, setSafeSettled] = useState<{ proposalHash: Hex; success: boolean; line: string | null } | null>(null)
   const shownKeyRef = useRef<string | null>(null)
   shownKeyRef.current = shownKey
   useEffect(() => {
@@ -585,12 +585,15 @@ export function useSafeTx(chainId: number) {
   // another flow) shows nothing.
   // The registry follows a proposal to its execution; its success or failure shows once the hold settles it.
   const followerEnded = proposal?.phase === 'success' || proposal?.phase === 'failed'
+  /** The hold's settlement of the proposal shown now: a later proposal of the same call has its own. */
+  const safeSettled = settledProposal && proposal && settledProposal.proposalHash === proposal.proposalHash ? settledProposal : null
   const shownPhase: TxPhase = shownKey
     ? safeSettled
       ? safeSettled.success ? 'success' : 'error'
       : proposal
         // Its success is in flight until the hold verifies it; a failure the hold has not proven can end on Done.
-        ? proposal.phase === 'success' ? 'pending' : proposal.phase === 'failed' ? 'submitted' : SHOWN_AS[proposal.phase]
+        // A hold released elsewhere settles nothing: the confirm can end on Done.
+        ? proposal.phase === 'success' ? (shownHold?.phase === 'released' ? 'submitted' : 'pending') : proposal.phase === 'failed' ? 'submitted' : SHOWN_AS[proposal.phase]
         : 'idle'
     // A held write's success shows only once the hold verified it and let go, never from the raw receipt.
     : phase === 'pending' && receiptData?.status === 'success' && !hold
@@ -684,9 +687,12 @@ export function useSafeTx(chainId: number) {
       return
     }
     if (shownKeyRef.current) {
-      // A Safe proposal's execution, which the hold authenticated: its result is this flow's.
+      // The shown proposal's execution, which the hold authenticated, is this flow's result; another one is not.
+      const shown = proposals.get(shownKeyRef.current)
+      const ran = settled.hash.toLowerCase()
+      if (!shown || (ran !== shown.proposalHash.toLowerCase() && ran !== shown.executionHash?.toLowerCase())) return
       if (settledReceipt) setSettledReceipt(settledReceipt)
-      setSafeSettled(settled.result === 'success' ? { success: true, line: null } : { success: false, line: settledLine(settled) })
+      setSafeSettled({ proposalHash: shown.proposalHash, success: settled.result === 'success', line: settled.result === 'success' ? null : settledLine(settled) })
       return
     }
     const untracked = !tracked.current
