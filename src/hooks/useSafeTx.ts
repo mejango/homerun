@@ -514,7 +514,7 @@ export function useSafeTx(chainId: number) {
   /** The hold settled this flow's write as failed onchain, with or without a receipt read here. */
   const [settledFailed, setSettledFailed] = useState(false)
   /** How the hold settled the Safe proposal this flow shows: only the hold says a proposal succeeded or failed. */
-  const [settledProposal, setSafeSettled] = useState<{ proposalHash: Hex; success: boolean; line: string | null } | null>(null)
+  const [holdSettlement, setSafeSettled] = useState<{ hash: Hex; success: boolean; line: string | null; receipt: TransactionReceipt | null } | null>(null)
   const shownKeyRef = useRef<string | null>(null)
   shownKeyRef.current = shownKey
   useEffect(() => {
@@ -585,8 +585,13 @@ export function useSafeTx(chainId: number) {
   // another flow) shows nothing.
   // The registry follows a proposal to its execution; its success or failure shows once the hold settles it.
   const followerEnded = proposal?.phase === 'success' || proposal?.phase === 'failed'
-  /** The hold's settlement of the proposal shown now: a later proposal of the same call has its own. */
-  const safeSettled = settledProposal && proposal && settledProposal.proposalHash === proposal.proposalHash ? settledProposal : null
+  /**
+   * The hold's settlement, once it names the shown proposal or the execution its follower found (it can arrive first):
+   * another proposal of the same call, or another reservation's execution, settles nothing here.
+   */
+  const safeSettled = holdSettlement && proposal &&
+    [proposal.proposalHash, proposal.executionHash].some(hash => hash?.toLowerCase() === holdSettlement.hash.toLowerCase())
+    ? holdSettlement : null
   const shownPhase: TxPhase = shownKey
     ? safeSettled
       ? safeSettled.success ? 'success' : 'error'
@@ -687,12 +692,8 @@ export function useSafeTx(chainId: number) {
       return
     }
     if (shownKeyRef.current) {
-      // The shown proposal's execution, which the hold authenticated, is this flow's result; another one is not.
-      const shown = proposals.get(shownKeyRef.current)
-      const ran = settled.hash.toLowerCase()
-      if (!shown || (ran !== shown.proposalHash.toLowerCase() && ran !== shown.executionHash?.toLowerCase())) return
-      if (settledReceipt) setSettledReceipt(settledReceipt)
-      setSafeSettled({ proposalHash: shown.proposalHash, success: settled.result === 'success', line: settled.result === 'success' ? null : settledLine(settled) })
+      // An execution the hold authenticated: it shows once it is the shown proposal's.
+      setSafeSettled({ hash: settled.hash, success: settled.result === 'success', line: settled.result === 'success' ? null : settledLine(settled), receipt: settledReceipt })
       return
     }
     const untracked = !tracked.current
@@ -1118,7 +1119,7 @@ export function useSafeTx(chainId: number) {
     submissionHash: shownKey ? (proposal?.proposalHash ?? null) : hash,
     safeProposalHash: awaitingProposal,
     safeNonceGuidance: awaitingProposal ? SAFE_NONCE_GUIDANCE : null,
-    receipt: held ? null : shownKey ? (safeSettled ? settledReceipt ?? proposal?.receipt ?? null : null) : (receiptData ?? settledReceipt ?? null),
+    receipt: held ? null : shownKey ? (safeSettled ? safeSettled.receipt ?? proposal?.receipt ?? null : null) : (receiptData ?? settledReceipt ?? null),
     /** A write the chain has not placed, with the user's one exit; null otherwise. */
     held: held?.exit
       ? { kind: 'exit' as const, line: held.line, warning: 'warning' in held && held.warning ? held.warning : writeExitMessage(held.record.call), label: WRITE_EXIT_LABEL, release }
