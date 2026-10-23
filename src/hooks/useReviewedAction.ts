@@ -8,22 +8,26 @@ import {
   ReviewLineError,
   settledLine,
   transactionMessage,
+  viemWalletAdapter,
   writeExitMessage,
   type ReviewedCall,
   type ReviewedResult,
+  type ReviewedSendDeps,
   type WriteHoldClient,
 } from '@bananapus/nana-sdk-core/review'
 import { useHeldWrite, useReviewedRun } from '@bananapus/nana-sdk-core/review/react'
+import { getAccount, getWalletClient, switchChain } from '@wagmi/core'
 import { loadReviewDialog } from '@/components/TransactionReviewProvider'
 import type { HeldWrite } from '@/components/ui/HeldWriteExit'
 import { useWallet } from '@/hooks/useWallet'
 import { isSafeConnection, SAFE_NONCE_GUIDANCE, useSafeConnection, type SafeAppCall } from '@/lib/safe-connector'
 import { preloadWhenIdle } from '@/lib/idle-preload'
 import { getViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
-import { loadReviewEngine, publicClient, reviewedSendDeps } from '@/lib/wallet-core'
+import { publicClient } from '@/lib/wallet-core'
 import { callOf, holds } from '@/lib/write-hold'
 import { wagmiConfig } from '@/providers/Providers'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
+import { chainName } from '@/lib/urn'
 
 export type TxPhase =
   | 'idle'
@@ -68,6 +72,27 @@ export type TxSendOptions = {
   /** Plain-language sentence shown at the top of the review. */
   reviewNotice?: string
 }
+
+/** Homerun's wallet as core's reviewed sends use it: the connected wagmi wallet, switched to the chain each call is on. */
+const walletAdapter = viemWalletAdapter({
+  walletClient: () => getWalletClient(wagmiConfig),
+  account: () => getAccount(wagmiConfig).address,
+  chainId: () => getAccount(wagmiConfig).chainId,
+  isSafe: () => isSafeConnection(wagmiConfig),
+  switchChain: chainId => switchChain(wagmiConfig, { chainId: chainId as JBChainId }).catch(() => {
+    throw new ReviewLineError(`Switch your wallet to ${chainName(chainId)} to continue.`)
+  }),
+})
+
+/** What every reviewed send goes through: the wallet, each chain's client, and the app's one write hold. */
+const reviewedSendDeps: ReviewedSendDeps = {
+  adapter: walletAdapter,
+  clientFor: chainId => publicClient(chainId as JBChainId),
+  hold: holds,
+}
+
+/** Core's send engine, out of every page's first load: a reviewed run loads it, and the review provider preloads it on intent. */
+const loadReviewEngine = () => import('@bananapus/nana-sdk-core/review')
 
 const CENTER_WALLET_REFUSED = 'This action needs an external wallet. Juicebox wallet payments use their own payment review.'
 const CLOSED_LINE = 'This review closed. Open the action again before sending.'
