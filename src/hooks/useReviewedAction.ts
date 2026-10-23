@@ -91,8 +91,12 @@ const reviewedSendDeps: ReviewedSendDeps = {
   hold: holds,
 }
 
-/** Core's send engine, out of every page's first load: a reviewed run loads it, and the review provider preloads it on intent. */
-const loadReviewEngine = () => import('@bananapus/nana-sdk-core/review')
+/**
+ * Core's send engine, out of every page's first load: a reviewed run loads it, and the review provider preloads it on intent.
+ * Only its two entry points are marked used: a whole-namespace import marks every core review export used, and webpack then
+ * bundles their imports into the shared chunk every page with a write hold loads.
+ */
+const loadReviewEngine = () => import(/* webpackExports: ["sendReviewed", "resumeReviewed"] */ '@bananapus/nana-sdk-core/review')
 
 const CENTER_WALLET_REFUSED = 'This action needs an external wallet. Juicebox wallet payments use their own payment review.'
 const CLOSED_LINE = 'This review closed. Open the action again before sending.'
