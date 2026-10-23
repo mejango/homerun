@@ -2,7 +2,7 @@ import {
   jbV6ContractAddress, jbControllerAbi, jbDirectoryAbi, jbMultiTerminalAbi,
   NATIVE_TOKEN, USDC_ADDRESSES, type JBChainId,
 } from '@bananapus/nana-sdk-core'
-import { prepareUserPay, v6Address, type PayPreview } from '@bananapus/nana-sdk-core/v6'
+import { PaySwapQuoteFailedError, prepareUserPay, v6Address, type PayPreview } from '@bananapus/nana-sdk-core/v6'
 import { erc20Abi, isAddress, isAddressEqual, zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
 
 export type ProjectPayQuoteInput = {
@@ -114,11 +114,15 @@ export async function prepareProjectPayQuote(client: PublicClient, input: Projec
   if (BigInt(ruleset.id) === 0n || BigInt(ruleset.start) > block.timestamp) throw new Error('The project’s payment rules have not started.')
   if (metadata.pausePay) throw new Error('The project has paused payments.')
 
+  let swapQuoteFailed: PaySwapQuoteFailedError | undefined
   const routes = (await Promise.all(candidates.map(async address => {
     try {
       const args = { chainId, terminal: address, projectId, token, amount, beneficiary, ...(input.slippageBps !== undefined ? { slippageBps: input.slippageBps } : {}) }
       return { terminal: address, ...await prepareUserPay(snapshot, args) }
-    } catch { return null }
+    } catch (error) {
+      if (error instanceof PaySwapQuoteFailedError) swapQuoteFailed = error
+      return null
+    }
   }))).filter(route => !!route)
   routes.sort((a, b) => {
     if (a.minReturnedTokens !== b.minReturnedTokens) return a.minReturnedTokens > b.minReturnedTokens ? -1 : 1
@@ -126,7 +130,8 @@ export async function prepareProjectPayQuote(client: PublicClient, input: Projec
     return same(a.terminal, multi) ? -1 : same(b.terminal, multi) ? 1 : 0
   })
   const best = routes[0]
-  if (!best) throw new Error('No listed payment route has a live quote for this token.')
+  // A swap whose pool could not be read is refused, never quoted lower: the read is retried, not routed around.
+  if (!best) throw swapQuoteFailed ?? new Error('No listed payment route has a live quote for this token.')
   if (best.minReturnedTokens === 0n && !(metadata.reservedPercent === 10_000 && best.preview.reservedTokenCount > 0n)) throw new Error('No protected token return is available for this payment.')
   return { terminal: best.terminal, preview: best.preview, minimumTokenCount: best.minReturnedTokens, reservedTokenCount: best.preview.reservedTokenCount, metadata: best.metadata, blockNumber, quoteFailed: !!best.quoteFailed }
 }

@@ -80,11 +80,12 @@ The demo's blue controls change fundraising, failure, income and sale scenarios.
 npm run check
 ```
 
-`check` runs lint, the retained model/unit tests, live integration tests, the Next production build, and Foundry contract tests. The individual commands are:
+`check` runs lint, the wallet boundary check, the retained model/unit tests, live integration tests, the Next production build, and Foundry contract tests. The individual commands are:
 
 | Command | Scope |
 | --- | --- |
 | `npm run lint` | Application and script linting |
+| `npm run wallet:check` | Every wallet send, sign and raw request in `src` is listed in `wallet-boundaries.json` with its review boundary and test |
 | `npm run typecheck` | TypeScript checking without emission |
 | `npm test` | Financial models and retained JavaScript unit tests |
 | `npm run test:live` | Vitest tests for contract builders/reads, launch recovery, metadata boundaries and wallet/review behavior |

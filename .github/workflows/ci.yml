@@ -37,6 +37,9 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Lint
         run: npm run lint
+      # Every wallet send, sign and raw request in src is listed with its review boundary in wallet-boundaries.json.
+      - name: Wallet boundaries
+        run: npm run wallet:check
       # Local hash comparison only: a browser query whose document is missing from the
       # persisted registry is rejected by the relay, so drift here silently breaks a
       # feature. The live-schema half of the script stays out of CI so a third-party

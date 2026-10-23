@@ -1,0 +1,124 @@
+{
+  "format": "juice-sdk-wallet-boundaries-1",
+  "sites": [
+    {
+      "file": "src/components/CreatePreview.tsx",
+      "line": 183,
+      "api": "signMessage",
+      "boundary": "The project publication message is signed by the reviewed authority account only after the person confirms its review; the signature authorizes publishing, never a transaction.",
+      "test": "test/create-preview-ui.test.tsx"
+    },
+    {
+      "file": "src/components/DeployChains.tsx",
+      "line": 192,
+      "api": "sendTransaction",
+      "boundary": "A paid relay of a reviewed chain deployment: the person confirms the exact relay call in the review before the wallet opens, and a refusal leaves nothing sent.",
+      "test": "test/deploy-chains-ui.test.tsx"
+    },
+    {
+      "file": "src/components/FundDeploy.tsx",
+      "line": 268,
+      "api": "request",
+      "boundary": "Web Locks, not a wallet: one tab at a time reviews and submits a saved FUND launch.",
+      "test": "test/fund-deploy-hold-ui.test.tsx"
+    },
+    {
+      "file": "src/components/FundOperatorActions.tsx",
+      "line": 721,
+      "api": "request",
+      "boundary": "Web Locks, not a wallet: one tab at a time reviews and submits a linked ruleset plan.",
+      "test": "test/fund-operator-recovery-ui.test.tsx"
+    },
+    {
+      "file": "src/components/StickyCreate.tsx",
+      "line": 120,
+      "api": "request",
+      "boundary": "Web Locks, not a wallet: one tab at a time records a Sticky creation's proven result.",
+      "test": "test/sticky-create.test.ts"
+    },
+    {
+      "file": "src/hooks/useProjectAdminTx.ts",
+      "line": 110,
+      "api": "request",
+      "boundary": "Web Locks, not a wallet: one project update at a time across tabs, around its reservation.",
+      "test": "test/project-admin-reservation.test.ts"
+    },
+    {
+      "file": "src/hooks/useProjectAdminTx.ts",
+      "line": 156,
+      "api": "request",
+      "boundary": "Web Locks, not a wallet: prunes the project's settled admin reservations under the same lock.",
+      "test": "test/project-admin-reservation.test.ts"
+    },
+    {
+      "file": "src/hooks/useSafeTx.ts",
+      "line": 457,
+      "api": "useWriteContract",
+      "boundary": "The app's reviewed contract write: every call is reviewed, simulated, held and gated on the reviewed account, chain and connection before the wallet opens.",
+      "test": "test/runtime/use-safe-tx.test.ts"
+    },
+    {
+      "file": "src/hooks/useSafeTx.ts",
+      "line": 846,
+      "api": "reviewedInParent",
+      "boundary": "A flow whose parent already reviewed the exact call skips this hook's own review; the call is still simulated, held and gated.",
+      "test": "test/runtime/use-safe-tx.test.ts"
+    },
+    {
+      "file": "src/hooks/useSafeTx.ts",
+      "line": 930,
+      "api": "writeContractAsync",
+      "boundary": "Sends only the simulated request of the reviewed call, after the final synchronous gate on account, chain, connection and request.",
+      "test": "test/runtime/use-safe-tx.test.ts"
+    },
+    {
+      "file": "src/lib/forwarder-authorization.ts",
+      "line": 17,
+      "api": "request",
+      "boundary": "Web Locks, not a wallet: one tab at a time signs a wallet's forward requests per chain.",
+      "test": "test/fund-launch-relayr.test.ts"
+    },
+    {
+      "file": "src/lib/fund-launch-session.ts",
+      "line": 335,
+      "api": "request",
+      "boundary": "Web Locks, not a wallet: cancelling a launch waits for its direct submission lock.",
+      "test": "test/fund-launch-session.test.ts"
+    },
+    {
+      "file": "src/lib/income-global-launch-draft.ts",
+      "line": 97,
+      "api": "request",
+      "boundary": "Web Locks, not a wallet: one tab at a time updates the global INCOME launch draft.",
+      "test": "test/income-global-launch-draft.test.ts"
+    },
+    {
+      "file": "src/lib/project-shop-session.ts",
+      "line": 292,
+      "api": "request",
+      "boundary": "Web Locks, not a wallet: one tab at a time reviews and submits a project's shop update.",
+      "test": "test/project-shop-session.test.ts"
+    },
+    {
+      "file": "src/lib/relayr.ts",
+      "line": 259,
+      "api": "signTypedData",
+      "boundary": "Signs the Relayr forward requests the person reviewed, with the exact typed data shown in the review.",
+      "test": "test/relayr-review.test.ts"
+    },
+    {
+      "file": "src/lib/relayr.ts",
+      "line": 439,
+      "api": "sendTransaction",
+      "boundary": "Pays the reviewed Relayr quote after the payment is reviewed and simulated; only a 4001 means not sent.",
+      "test": "test/relayr-review.test.ts"
+    },
+    {
+      "file": "src/providers/lazy-center-connector.ts",
+      "line": 15,
+      "api": "request",
+      "boundary": "The Signa connector's read callback forwards public reads to the Center RPC transport for Base; Signa's own wallet signs and refuses writes here.",
+      "test": "test/center-runtime.test.ts"
+    }
+  ]
+}
