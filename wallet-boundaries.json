@@ -59,14 +59,14 @@
     },
     {
       "file": "src/hooks/useSafeTx.ts",
-      "line": 846,
+      "line": 870,
       "api": "reviewedInParent",
       "boundary": "A flow whose parent already reviewed the exact call skips this hook's own review; the call is still simulated, held and gated.",
       "test": "test/runtime/use-safe-tx.test.ts"
     },
     {
       "file": "src/hooks/useSafeTx.ts",
-      "line": 930,
+      "line": 954,
       "api": "writeContractAsync",
       "boundary": "Sends only the simulated request of the reviewed call, after the final synchronous gate on account, chain, connection and request.",
       "test": "test/runtime/use-safe-tx.test.ts"
