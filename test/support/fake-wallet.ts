@@ -99,6 +99,13 @@ function createFakeWallet() {
     awaits(hash: Hex) {
       return awaiting.has(hash.toLowerCase())
     },
+    /** The exact transactions the wallet was asked to send, in order. */
+    sent() {
+      return writeContract.mock.calls.map(call => {
+        const request = (call as unknown[])[0] as Parameters<typeof writeContract>[0]
+        return { chainId: request.chainId, to: request.address.toLowerCase(), data: encodeFunctionData(request), value: String(request.value ?? 0n) }
+      })
+    },
     /** What reached the wallet: each write's function and sender. */
     writes() {
       return writeContract.mock.calls.map(call => {
