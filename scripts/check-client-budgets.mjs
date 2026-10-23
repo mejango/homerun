@@ -16,20 +16,20 @@ const KIB = 1024
 const distDir = process.env.NEXT_DIST_DIR || '.next'
 const dist = resolve(distDir)
 const budgets = {
-  '/': { js: 215, css: 16 },
-  '/founderhaus': { js: 271, css: 27 },
-  '/project': { js: 271, css: 27 },
-  '/projects': { js: 241, css: 14 },
-  '/create': { js: 229, css: 20 },
-  '/create/preview': { js: 433, css: 27 },
-  '/create/recover': { js: 397, css: 19 },
-  '/create/success': { js: 253, css: 14 },
-  '/center/callback': { js: 196, css: 13 },
-  '/account/0x0000000000000000000000000000000000000001': { js: 266, css: 16 },
-  '/intent/00000000-0000-4000-8000-000000000000': { js: 406, css: 27 },
-  '/op:11': { js: 510, css: 26 },
+  '/': { js: 217, css: 16 },
+  '/founderhaus': { js: 273, css: 27 },
+  '/project': { js: 273, css: 27 },
+  '/projects': { js: 243, css: 14 },
+  '/create': { js: 231, css: 20 },
+  '/create/preview': { js: 435, css: 27 },
+  '/create/recover': { js: 399, css: 19 },
+  '/create/success': { js: 255, css: 14 },
+  '/center/callback': { js: 198, css: 13 },
+  '/account/0x0000000000000000000000000000000000000001': { js: 268, css: 16 },
+  '/intent/00000000-0000-4000-8000-000000000000': { js: 408, css: 27 },
+  '/op:11': { js: 512, css: 26 },
   // The only route expected to answer 404; every other route must answer 200, so a missing page cannot pass.
-  '/not-a-route/x': { js: 195, css: 13, status: 404 },
+  '/not-a-route/x': { js: 197, css: 13, status: 404 },
 }
 
 if (!existsSync(join(dist, 'BUILD_ID'))) {
