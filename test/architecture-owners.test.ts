@@ -11,7 +11,7 @@ const owners: readonly Owner[] = [
   { file: 'lib/jbcenter-rpc.ts', module: `${core}/jbcenter`, calls: ['createJBCenterRpcProvider', 'createPacedJBCenterLimiter'] },
   { file: 'lib/contract-write.ts', module: `${core}/review`, calls: ['submitReviewedContractWrite'] },
   { file: 'lib/transaction-review.ts', module: `${core}/review`, calls: ['buildTransactionDebugPrompt', 'buildTransactionReviewPrompt'],
-    exports: ['requireTransactionReview', 'requestContractTransactionReview', 'registerTransactionReviewHandler', 'requireFundingChainSelection'] },
+    exports: ['requireFundingChainSelection', 'TransactionReviewCancelledError'] },
   { file: 'lib/readable-error.ts', module: `${core}/review`, calls: ['transactionMessage'] },
   { file: 'hooks/useSafeTx.ts', module: `${core}/review`, calls: ['transactionMessage', 'waitForTrackedReceipt', 'gasWithHeadroom'] },
   { file: 'lib/safe-connector.ts', module: `${core}/safe-service`, calls: ['isSafeWalletPeer', 'waitForSafeExecutionHash'],
