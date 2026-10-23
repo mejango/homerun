@@ -5,7 +5,7 @@ import { encodeAbiParameters, encodeEventTopics, type PublicClient, type Transac
 import type { FundAccountingContext, FundProjectState } from '../src/lib/fund-state'
 
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
-vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: vi.fn(), txPhaseLabel: vi.fn() }))
+vi.mock('@/hooks/useReviewedAction', () => ({ useReviewedAction: vi.fn(), txPhaseLabel: vi.fn() }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: vi.fn() }))
 
 import { confirmedAssetWithdrawal, readAssetAllowance } from '../src/components/FundAssetWithdrawals'

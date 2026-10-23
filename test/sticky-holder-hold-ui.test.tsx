@@ -15,8 +15,8 @@ import { installRecoveryLocks } from './runtime/write-recovery-fixture'
 
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@wagmi/core', async importOriginal => {
-  const { wallet } = await import('./support/fake-wallet')
-  return { ...(await importOriginal<typeof import('@wagmi/core')>()), getAccount: () => ({ address: wallet.account, chainId: 1 }) }
+  const { wallet, walletCore } = await import('./support/fake-wallet')
+  return { ...(await importOriginal<typeof import('@wagmi/core')>()), ...walletCore, getAccount: () => ({ address: wallet.account, chainId: 1 }) }
 })
 vi.mock('wagmi', async importOriginal => {
   const { walletHooks } = await import('./support/fake-wallet')
@@ -25,10 +25,6 @@ vi.mock('wagmi', async importOriginal => {
 vi.mock('@/hooks/useWallet', async () => {
   const { useFakeWallet } = await import('./support/fake-wallet')
   return { useWallet: useFakeWallet }
-})
-vi.mock('@/lib/transaction-review', async importOriginal => {
-  const { wallet } = await import('./support/fake-wallet')
-  return { ...(await importOriginal<typeof import('@/lib/transaction-review')>()), requestContractTransactionReview: wallet.requestReview }
 })
 vi.mock('@/lib/safe-connector', async importOriginal => ({ ...(await importOriginal<typeof import('@/lib/safe-connector')>()), isSafeConnection: () => false, useSafeConnection: () => false }))
 vi.mock('@/lib/sticky-state', () => ({
@@ -46,7 +42,7 @@ const FUND = '0x2222222222222222222222222222222222222222' as Address
 const SHARE = '0x3333333333333333333333333333333333333333' as Address
 const DEPLOYER = '0x4444444444444444444444444444444444444444' as Address
 const TERMINAL = v6Address('JBMultiTerminal', 1)
-const EXIT = 'I checked my wallet. Send again'
+const EXIT = 'I checked my wallet'
 const registry = jbV6ContractAddress as Record<string, Partial<Record<JBChainId, Address>>>
 const oldFactory = registry.StickyDeployer
 const state = {

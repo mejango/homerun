@@ -9,6 +9,7 @@ import {
   useState,
 } from 'react'
 import type { Address } from 'viem'
+import { registerReviewHandler, type ReviewModel } from '@bananapus/nana-sdk-core/review'
 import { useAccount } from 'wagmi'
 import { ModalDialog } from '@/components/ui/ModalShell'
 import {
@@ -21,7 +22,9 @@ import {
 export type PendingReview = {
   kind: 'review'
   id: number
-  request: TransactionReviewRequest
+  /** A boolean review's request, or core's prompt model, confirmed only by its own confirmation. */
+  request?: TransactionReviewRequest
+  model?: ReviewModel
   resolve: (approved: boolean) => void
 }
 
@@ -43,6 +46,16 @@ export type TransactionReviewDialogProps = {
 function cancelPendingDialog(pending: PendingDialog) {
   if (pending.kind === 'review') pending.resolve(false)
   else pending.resolve(null)
+}
+
+let dialogLoad: Promise<typeof import('./TransactionReviewDialog')> | undefined
+/** The dialog's one download, shared by its preload and the first review; a failed one is tried again next time. */
+export function loadReviewDialog() {
+  dialogLoad ??= import('./TransactionReviewDialog').catch(error => {
+    dialogLoad = undefined
+    throw error
+  })
+  return dialogLoad
 }
 
 /**
@@ -134,13 +147,33 @@ export function TransactionReviewProvider({ children }: PropsWithChildren) {
     else current.resolve(typeof result === 'number' ? result : null)
   }, [])
 
+  useEffect(
+    () =>
+      registerReviewHandler(async prompt => {
+        const approved = await new Promise<boolean>(resolve => {
+          const pending: PendingReview = { kind: 'review', id: nextId.current++, model: prompt.model, resolve }
+          // Core withdrew the prompt: its dialog closes, or it leaves the queue.
+          prompt.signal.addEventListener('abort', () => {
+            if (activeRef.current === pending) finish(pending.id, null)
+            else {
+              queueRef.current = queueRef.current.filter(queued => queued !== pending)
+              resolve(false)
+            }
+          }, { once: true })
+          enqueueDialog(pending)
+        })
+        return approved ? prompt.confirmation : null
+      }),
+    [enqueueDialog, finish],
+  )
+
   // Keep the global queue ready immediately, but fetch the full decoder and
   // review UI only when a request arrives. Loading never authorizes a call;
   // cancellation, unmount, or a failed download resolves it as declined.
   useEffect(() => {
     if (!active || Dialog) return
     let cancelled = false
-    void import('./TransactionReviewDialog').then(
+    void loadReviewDialog().then(
       module => {
         if (!cancelled) setDialog(() => module.TransactionReviewDialog)
       },

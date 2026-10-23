@@ -5,7 +5,7 @@ import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-quer
 import { useEffect, useRef, useState } from 'react'
 import { formatUnits, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
-import { useSafeTx, txPhaseLabel } from '@/hooks/useSafeTx'
+import { useReviewedAction, txPhaseLabel } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { displayChainName, explorerTxUrl } from '@/lib/chainDisplay'
 import { fundIpfsUrl } from '@/lib/fund-project-metadata'
@@ -18,7 +18,7 @@ const message = (error: unknown) => error instanceof Error ? error.message : 'Th
 export function InitialIncomeMint({ chainId, fundProjectId, incomeProjectId, manifestUri }: { chainId: JBChainId; fundProjectId: bigint; incomeProjectId: bigint; manifestUri: string | null }) {
   const { address } = useWallet()
   const client = usePublicClient({ chainId }) as PublicClient | undefined
-  const cache = useQueryClient(), tx = useSafeTx(chainId)
+  const cache = useQueryClient(), tx = useReviewedAction(chainId)
   const [error, setError] = useState<string | null>(null), [preparing, setPreparing] = useState(false)
   const confirmed = useRef<string | null>(null)
   const query = useQuery({

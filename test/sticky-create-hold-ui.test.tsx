@@ -13,8 +13,8 @@ import { checkedItLabel, HELD_SUCCESS_LINE, SAVED_ATTEMPT_CHECK_LINE } from '@ba
 
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@wagmi/core', async importOriginal => {
-  const { wallet } = await import('./support/fake-wallet')
-  return { ...(await importOriginal<typeof import('@wagmi/core')>()), getAccount: () => ({ address: wallet.account, chainId: 1 }) }
+  const { wallet, walletCore } = await import('./support/fake-wallet')
+  return { ...(await importOriginal<typeof import('@wagmi/core')>()), ...walletCore, getAccount: () => ({ address: wallet.account, chainId: 1 }) }
 })
 vi.mock('wagmi', async importOriginal => {
   const { walletHooks } = await import('./support/fake-wallet')
@@ -23,10 +23,6 @@ vi.mock('wagmi', async importOriginal => {
 vi.mock('@/hooks/useWallet', async () => {
   const { useFakeWallet } = await import('./support/fake-wallet')
   return { useWallet: useFakeWallet }
-})
-vi.mock('@/lib/transaction-review', async importOriginal => {
-  const { wallet } = await import('./support/fake-wallet')
-  return { ...(await importOriginal<typeof import('@/lib/transaction-review')>()), requestContractTransactionReview: wallet.requestReview }
 })
 vi.mock('@/lib/safe-connector', async importOriginal => ({ ...(await importOriginal<typeof import('@/lib/safe-connector')>()), isSafeConnection: () => false, useSafeConnection: () => false }))
 vi.mock('@/lib/fund-global-manifest', async importOriginal => ({
@@ -55,7 +51,7 @@ import type { FundProjectState } from '@/lib/fund-state'
 const OWNER = '0x4444444444444444444444444444444444444444' as Address
 const DEPLOYER = '0x1111111111111111111111111111111111111111' as Address
 const FUND = '0x2222222222222222222222222222222222222222' as Address
-const EXIT = 'I checked my wallet. Send again'
+const EXIT = 'I checked my wallet'
 const state = { chainId: 1, projectId: 7n, blockNumber: 120n, owner: OWNER, tokenAddress: FUND } as unknown as FundProjectState
 const request = {
   chainId: 1, address: DEPLOYER, abi: stickyCreateAbi, functionName: 'deployStickyFor' as const,
@@ -134,12 +130,12 @@ it('records a creation its hold settled while the page was away, and never reope
   // The page is left before the creation is saved; the chain then places it.
   await act(async () => root.unmount()); root = createRoot(host)
   await act(async () => { wallet.confirm(`0x${'1'.padStart(64, '0')}` as `0x${string}`) })
-  // The SDK settles it meanwhile (another tab's look, say): the hold is clear, with its settlement.
+  // The SDK settles it meanwhile (the run that sent it, or another tab's look): the hold is clear.
   const { holds } = await import('@/lib/write-hold')
   const hold = holds.open({ chainId: 1, account: OWNER, safe: false, namespace: stickyCreateIntent(7n), call: { to: DEPLOYER, data: encodeFunctionData(request), value: 1n } })
   const receipt = await wallet.client.getTransactionReceipt({ hash: `0x${'1'.padStart(64, '0')}` as `0x${string}` })
   const away = await hold.onReceipt(receipt as never, wallet.client as never)
-  expect(away).toMatchObject({ status: 'clear', settled: { result: 'success' } })
+  expect(away).toMatchObject({ status: 'clear' })
   await act(async () => root.render(createElement(StickyCreate, { state, client: wallet.client as unknown as PublicClient, manifest: {}, onCreated })))
   await settle(); await settle(); await settle()
   expect(readStickyCreated(localStorage, 1, 7n), host.textContent ?? '').toMatchObject({ projectId: '9' })

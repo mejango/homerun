@@ -14,8 +14,8 @@ import { installRecoveryLocks } from './runtime/write-recovery-fixture'
 
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@wagmi/core', async importOriginal => {
-  const { wallet } = await import('./support/fake-wallet')
-  return { ...(await importOriginal<typeof import('@wagmi/core')>()), getAccount: () => ({ address: wallet.account, chainId: 10 }), getPublicClient: () => wallet.client }
+  const { wallet, walletCore } = await import('./support/fake-wallet')
+  return { ...(await importOriginal<typeof import('@wagmi/core')>()), ...walletCore, getAccount: () => ({ address: wallet.account, chainId: 10 }) }
 })
 vi.mock('wagmi', async importOriginal => {
   const { walletHooks } = await import('./support/fake-wallet')
@@ -25,14 +25,10 @@ vi.mock('@/hooks/useWallet', async () => {
   const { useFakeWallet } = await import('./support/fake-wallet')
   return { useWallet: useFakeWallet }
 })
-vi.mock('@/lib/transaction-review', async importOriginal => {
-  const { wallet } = await import('./support/fake-wallet')
-  return { ...(await importOriginal<typeof import('@/lib/transaction-review')>()), requestContractTransactionReview: wallet.requestReview }
-})
 vi.mock('@/lib/safe-connector', async importOriginal => ({ ...(await importOriginal<typeof import('@/lib/safe-connector')>()), isSafeConnection: () => false, useSafeConnection: () => false }))
 
 import { wallet } from './support/fake-wallet'
-import { useSafeTx, type TxRequest } from '@/hooks/useSafeTx'
+import { useReviewedAction, type TxRequest } from '@/hooks/useReviewedAction'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const TERMINAL = '0x2db6d704058e552defe415753465df8df0361846' as Address
@@ -44,9 +40,9 @@ const REQUESTS: Record<string, TxRequest> = {
   permissions: buildSetPermissionsTx({ chainId: 10, account: ALICE, operator: TERMINAL, projectId: 4n, permissionIds: [1, 17] }),
 }
 
-type Hook = ReturnType<typeof useSafeTx>
+type Hook = ReturnType<typeof useReviewedAction>
 const Harness = forwardRef<Hook>(function Harness(_, ref) {
-  const value = useSafeTx(10)
+  const value = useReviewedAction(10)
   useImperativeHandle(ref, () => value, [value])
   return null
 })

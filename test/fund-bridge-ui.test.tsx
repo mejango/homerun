@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 import { encodeFunctionData, parseAbi, type Address } from 'viem'
 import { WRITE_EXIT_LABEL, writeExitMessage, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
-import type { TxRequest, TxSendOptions } from '../src/hooks/useSafeTx'
+import type { TxRequest, TxSendOptions } from '../src/hooks/useReviewedAction'
 import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import type { FundBridgeRoute } from '../src/lib/fund-bridge'
 
@@ -35,9 +35,9 @@ vi.mock('@/lib/jbcenter-public-client', () => ({
   jbCenterPublicClient: (chainId: number) => chainId === 10 ? runtime.destinationClient : runtime.sourceClient,
 }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address, isConnected: !!runtime.address }) }))
-vi.mock('@/hooks/useSafeTx', () => ({
+vi.mock('@/hooks/useReviewedAction', () => ({
   txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,
-  useSafeTx: () => {
+  useReviewedAction: () => {
     useEffect(() => { runtime.mounted++; return () => { runtime.unmounted++ } }, [])
     if (runtime.engine) return { held: null, ...runtime.engine, busy: ['pending', 'simulating', 'signing'].includes(runtime.engine.phase), error: null, hash: runtime.engine.receipt?.transactionHash ?? null, safeProposalHash: null, isSafe: runtime.safe, send: runtime.send, reset: vi.fn() }
     return runtime.idle
@@ -295,7 +295,7 @@ it('frees the move once the engine reads its Safe execution as failed', async ()
   runtime.engine = { phase: 'pending', receipt: null }
   await render()
   expect(approve().disabled).toBe(true)
-  // The receipt succeeds, but the Safe logged ExecutionFailure: useSafeTx reports an error.
+  // The receipt succeeds, but the Safe logged ExecutionFailure: useReviewedAction reports an error.
   runtime.engine = { phase: 'error', receipt: { status: 'success', transactionHash: `0x${'cd'.repeat(32)}`, blockNumber: 11n } }
   await render()
   expect(approve().disabled).toBe(false)

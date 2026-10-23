@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { encodeFunctionData, parseAbi, zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
 import type { Project721Tier } from '@bananapus/nana-sdk-core/v6'
-import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
+import type { TxRequest, TxSendOptions } from '@/hooks/useReviewedAction'
 import type { ProjectShopState } from '@/lib/project-shop'
 import type { PreparedProjectShopWrite, ProjectShopWriteState } from '@/lib/project-shop-write'
 import type { ShopWriteSession, ShopWriteStorage } from '@/lib/project-shop-session'
@@ -23,8 +23,8 @@ const runtime = vi.hoisted(() => ({
 
 vi.mock('wagmi', () => ({ usePublicClient: () => runtime.client }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.account }) }))
-vi.mock('@/hooks/useSafeTx', () => ({
-  useSafeTx: () => ({ phase: runtime.phase, receipt: runtime.txReceipt, hash: runtime.txReceipt?.transactionHash ?? null, submissionHash: runtime.txReceipt ? HASH : null,
+vi.mock('@/hooks/useReviewedAction', () => ({
+  useReviewedAction: () => ({ phase: runtime.phase, receipt: runtime.txReceipt, hash: runtime.txReceipt?.transactionHash ?? null, submissionHash: runtime.txReceipt ? HASH : null,
     busy: false, error: null, notice: runtime.phase === 'submitted' ? 'Your earlier transaction hasn’t confirmed yet. Check your wallet.' : null, held: null,
     isSafe: runtime.safe, send: runtime.send, reset: runtime.reset, track: runtime.track }),
   txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,

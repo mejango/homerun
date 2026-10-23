@@ -3,7 +3,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { formatUnits, isAddressEqual, zeroAddress, type Address, type PublicClient } from 'viem'
-import { useSafeTx, txPhaseLabel } from '@/hooks/useSafeTx'
+import { useReviewedAction, txPhaseLabel } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { assertIncomeReservedProject, assertSameIncomeReservedTokens, buildSendIncomeReservedTokensTx, readIncomeReservedTokens, verifyIncomeReservedReceipt, type IncomeReservedSnapshot } from '@/lib/income-reserved'
@@ -25,7 +25,7 @@ function splitAmount(snapshot: IncomeReservedSnapshot, percent: number) { return
 export function IncomeReservedTokens({ state, client }: { state: IncomeProjectState; client: PublicClient }) {
   const { address } = useWallet()
   const cache = useQueryClient()
-  const tx = useSafeTx(state.chainId)
+  const tx = useReviewedAction(state.chainId)
   const [preparing, setPreparing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [intent, setIntent] = useState<{ snapshot: IncomeReservedSnapshot; account: Address } | null>(null)

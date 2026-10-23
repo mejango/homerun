@@ -9,7 +9,7 @@ import { erc20Abi, formatUnits, getAddress, isAddress, isAddressEqual, zeroAddre
 import { ProjectPayment } from '@/components/ProjectPayment'
 import { chosenOrAuto } from '@/lib/transaction-builders'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
-import { useSafeTx, type TxRequest } from '@/hooks/useSafeTx'
+import { useReviewedAction, type TxRequest } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { displayChainName, explorerTxUrl } from '@/lib/chainDisplay'
 import { readFundWriteState, type FundProjectState } from '@/lib/fund-state'
@@ -33,7 +33,7 @@ function units(value: bigint, decimals = 18): string {
   return formatUnits(value, decimals)
 }
 
-type Tx = ReturnType<typeof useSafeTx>
+type Tx = ReturnType<typeof useReviewedAction>
 
 function TransactionStatus({ tx, chainId }: { tx: Tx; chainId: number }) {
   const explorer = tx.hash && !tx.safeProposalHash ? explorerTxUrl(chainId, tx.hash) : null
@@ -121,7 +121,7 @@ function useConfirmedRefresh(tx: Tx, state: FundProjectState) {
 }
 
 function useProjectTransaction(state: FundProjectState) {
-  const tx = useSafeTx(state.chainId)
+  const tx = useReviewedAction(state.chainId)
   useConfirmedRefresh(tx, state)
   return tx
 }

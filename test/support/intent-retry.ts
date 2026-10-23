@@ -1,11 +1,11 @@
 import { encodeFunctionData } from 'viem'
 import { expect, vi } from 'vitest'
 import { createHeldWriteStorage, createWriteHold, WriteHeldError } from '@bananapus/nana-sdk-core/review'
-import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
+import type { TxRequest, TxSendOptions } from '@/hooks/useReviewedAction'
 import { installRecoveryLocks } from '../runtime/write-recovery-fixture'
 import { wallet } from './fake-wallet'
 
-/** One attempt at a write, as a flow handed it to useSafeTx. */
+/** One attempt at a write, as a flow handed it to useReviewedAction. */
 export type SentWrite = { request: TxRequest; options: TxSendOptions }
 
 const callOf = (request: TxRequest) => ({

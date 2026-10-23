@@ -37,6 +37,13 @@
       "test": "test/sticky-create.test.ts"
     },
     {
+      "file": "src/components/TransactionReviewProvider.tsx",
+      "line": 152,
+      "api": "registerReviewHandler",
+      "boundary": "The one review UI core's prompts reach: it returns core's confirmation only when the person confirms the dialog, and null on close or when core withdraws the prompt.",
+      "test": "test/transaction-review-dialog.test.tsx"
+    },
+    {
       "file": "src/hooks/useProjectAdminTx.ts",
       "line": 110,
       "api": "request",
@@ -49,27 +56,6 @@
       "api": "request",
       "boundary": "Web Locks, not a wallet: prunes the project's settled admin reservations under the same lock.",
       "test": "test/project-admin-reservation.test.ts"
-    },
-    {
-      "file": "src/hooks/useSafeTx.ts",
-      "line": 457,
-      "api": "useWriteContract",
-      "boundary": "The app's reviewed contract write: every call is reviewed, simulated, held and gated on the reviewed account, chain and connection before the wallet opens.",
-      "test": "test/runtime/use-safe-tx.test.ts"
-    },
-    {
-      "file": "src/hooks/useSafeTx.ts",
-      "line": 870,
-      "api": "reviewedInParent",
-      "boundary": "A flow whose parent already reviewed the exact call skips this hook's own review; the call is still simulated, held and gated.",
-      "test": "test/runtime/use-safe-tx.test.ts"
-    },
-    {
-      "file": "src/hooks/useSafeTx.ts",
-      "line": 954,
-      "api": "writeContractAsync",
-      "boundary": "Sends only the simulated request of the reviewed call, after the final synchronous gate on account, chain, connection and request.",
-      "test": "test/runtime/use-safe-tx.test.ts"
     },
     {
       "file": "src/lib/forwarder-authorization.ts",

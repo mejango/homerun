@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { parseAbi, type Address, type Hex } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FundProjectState } from '@/lib/fund-state'
-import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
+import type { TxRequest, TxSendOptions } from '@/hooks/useReviewedAction'
 import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import { expectRetryHeldByIntent } from './support/intent-retry'
 
@@ -27,7 +27,7 @@ const runtime = vi.hoisted(() => ({
 vi.mock('wagmi', async importOriginal => ({ ...await importOriginal<typeof import('wagmi')>(), usePublicClient: () => ({}) }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address }) }))
 vi.mock('@/lib/fund-state', () => ({ readFundWriteState: async (_client: unknown, _state: unknown, account: Address) => { runtime.readFor.push(account); return runtime.fresh } }))
-vi.mock('@/hooks/useSafeTx', () => ({ txPhaseLabel: (_: string, labels: { idle: string }) => labels.idle, useSafeTx: () => runtime.tx }))
+vi.mock('@/hooks/useReviewedAction', () => ({ txPhaseLabel: (_: string, labels: { idle: string }) => labels.idle, useReviewedAction: () => runtime.tx }))
 vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
   ...await importOriginal<typeof import('@bananapus/nana-sdk-core/v6')>(),
   getHookAwareCashOutQuote: runtime.quote,

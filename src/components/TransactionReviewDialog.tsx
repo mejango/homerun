@@ -509,15 +509,22 @@ function ReviewModal({
   pending: PendingReview
   onFinish: (approved: boolean) => void
 }) {
-  const { request } = pending
-  const model = useMemo(() => buildReviewModel(request), [request])
-  const feeReview = useFeeBuybackReview(request.calls)
+  const model = useMemo(() => pending.model ?? buildReviewModel(pending.request!), [pending])
+  const feeCalls = useMemo(() => model.calls.map(call => ({
+    chainId: call.chainId,
+    to: call.to,
+    data: call.data,
+    value: call.value,
+    ...(call.from ? { from: call.from } : {}),
+    ...(call.functionName ? { functionName: call.functionName } : {}),
+  })), [model])
+  const feeReview = useFeeBuybackReview(feeCalls)
   const [agreed, setAgreed] = useState(false)
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
 
   const copyPrompt = async () => {
     try {
-      await navigator.clipboard.writeText(buildTransactionReviewPrompt(request))
+      await navigator.clipboard.writeText(buildTransactionReviewPrompt(model))
       setCopyState('copied')
     } catch {
       setCopyState('failed')
@@ -533,11 +540,11 @@ function ReviewModal({
 
   const isAuthorization = model.kind !== 'transaction'
   /** Some authorizations are signed as a plain message rather than typed data. */
-  const authorizationIsMessage = (request.authorization as { kind?: string } | undefined)?.kind === 'message'
+  const authorizationIsMessage = (model.authorization as { kind?: string } | null)?.kind === 'message'
   const kinds = model.signatures.map(signature => signature.kind)
-  const signsMessage = (Boolean(request.authorization) && authorizationIsMessage) || kinds.includes('message')
+  const signsMessage = (Boolean(model.authorization) && authorizationIsMessage) || kinds.includes('message')
   const signsTypedData =
-    (Boolean(request.authorization) && !authorizationIsMessage) || kinds.some(kind => kind !== 'message')
+    (Boolean(model.authorization) && !authorizationIsMessage) || kinds.some(kind => kind !== 'message')
   const commitment = signsMessage ? (signsTypedData ? 'both' : 'message') : signsTypedData ? 'typed' : null
 
   return (

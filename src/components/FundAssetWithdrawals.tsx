@@ -6,7 +6,7 @@ import { getPublicClient } from '@wagmi/core'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { decodeEventLog, formatUnits, getAddress, isAddress, isAddressEqual, zeroAddress, type Address, type PublicClient, type TransactionReceipt } from 'viem'
-import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
+import { txPhaseLabel, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { buildFundUseAllowance, FUND_CASH_OUTS_DISABLED, parseAmount, type FundTransaction } from '@/lib/fund-contracts'
@@ -124,7 +124,7 @@ export function confirmedAssetWithdrawal(receipt: TransactionReceipt, intent: Wi
 export function FundAssetWithdrawals({ state, client, contextIndex, onConfigureAllowance, disabled = false, onBusyChange }: Props) {
   const { address } = useWallet()
   const cache = useQueryClient()
-  const tx = useSafeTx(state.chainId)
+  const tx = useReviewedAction(state.chainId)
   const [allowanceAmount, setAllowanceAmount] = useState('')
   const [allowanceAcknowledged, setAllowanceAcknowledged] = useState(false)
   const [withdrawalAmount, setWithdrawalAmount] = useState('')

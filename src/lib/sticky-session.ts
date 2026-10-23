@@ -14,7 +14,7 @@ import {
 import type { FundTransaction } from "./fund-contracts";
 import { verifyReviewedWriteReceipt, writeIntentKey, type SavedAttempt } from "@bananapus/nana-sdk-core/review";
 import { jbControllerAbi, jbMultiTerminalAbi } from "@bananapus/nana-sdk-core";
-import type { TxRequest } from "@/hooks/useSafeTx";
+import type { TxRequest } from "@/hooks/useReviewedAction";
 import {
   heldCall,
   type SafeAppCall,

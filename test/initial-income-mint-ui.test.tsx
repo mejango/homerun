@@ -3,7 +3,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Address, Hex } from 'viem'
 import type { InitialIncomeAllocationState } from '../src/lib/income-initial-allocation'
-import type { TxSendOptions } from '../src/hooks/useSafeTx'
+import type { TxSendOptions } from '../src/hooks/useReviewedAction'
 
 const runtime = vi.hoisted(() => ({
   address: '0x1111111111111111111111111111111111111111' as Address | undefined,
@@ -23,9 +23,9 @@ vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries: runtime.invalidateQueries }),
   useQuery: (options: { queryKey: unknown[] }) => { runtime.keys.push(options.queryKey); return runtime.allocation },
 }))
-vi.mock('@/hooks/useSafeTx', () => ({
+vi.mock('@/hooks/useReviewedAction', () => ({
   txPhaseLabel: (_phase: string, labels: { idle: string; pending: string }) => _phase === 'pending' ? labels.pending : labels.idle,
-  useSafeTx: () => {
+  useReviewedAction: () => {
     useEffect(() => { runtime.mounted++; return () => { runtime.unmounted++ } }, [])
     return { phase: runtime.phase, busy: runtime.busy, error: runtime.error, hash: runtime.hash, safeProposalHash: runtime.safeProposalHash, receipt: runtime.receipt, send: runtime.send }
   },

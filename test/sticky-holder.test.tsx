@@ -3,7 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { encodeAbiParameters, encodeFunctionData, erc20Abi, getAddress, type Address } from "viem";
-import type { TxRequest, TxSendOptions } from "../src/hooks/useSafeTx";
+import type { TxRequest, TxSendOptions } from "../src/hooks/useReviewedAction";
 import { jbV6ContractAddress, type JBChainId } from "@bananapus/nana-sdk-core";
 import { v6Address } from "@bananapus/nana-sdk-core/v6";
 import { StickyHolder } from "../src/components/StickyHolder";
@@ -34,8 +34,8 @@ vi.mock("@/hooks/useWallet", () => ({
 }));
 vi.mock("wagmi", () => ({ usePublicClient: () => mocks.client }));
 vi.mock("@/providers/Providers", () => ({ wagmiConfig: {} }));
-vi.mock("@/hooks/useSafeTx", () => ({
-  useSafeTx: () => ({
+vi.mock("@/hooks/useReviewedAction", () => ({
+  useReviewedAction: () => ({
     send: mocks.send,
     track: mocks.track,
     phase: mocks.phase,

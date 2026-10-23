@@ -7,7 +7,7 @@ Homerun uses the Juicebox Money wallet and transaction runtime on the same Next/
 - The live route is `/project/<chainId>/<projectId>`. The project NFT, controller, active/queued rulesets, terminal accounting, permissions, balances and receipts are contract reads.
 - Metadata is pinned through Juicebox Center. Names, photographs, wallet role descriptions, budgets, planned income allocations and minimum monthly revenue with written consequences are presentation data, not permission or withdrawal authorization. Minimum revenue creates no automatic contract action.
 - Local storage preserves drafts and transaction recovery records. It cannot prove project creation, success, failure, funds returned, or an executed Safe proposal.
-- `useSafeTx` is the shared reviewed write boundary. Wallet review, account/chain checks, fresh prerequisite reads, exact simulation, gas estimation, signing, receipt tracking and result verification remain separate steps.
+- `useReviewedAction` is the shared reviewed write boundary, over core's `useReviewedRun`. Core reviews, checks the account and chain, simulates, holds, sends and follows each write to its receipt, or a Safe proposal until its hold settles it; flows keep their fresh prerequisite reads and result verification.
 
 ## FUND creation
 

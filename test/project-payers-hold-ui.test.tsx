@@ -14,8 +14,8 @@ import { checkedItLabel, HELD_SUCCESS_LINE, SAVED_ATTEMPT_CHECK_LINE } from '@ba
 
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@wagmi/core', async importOriginal => {
-  const { wallet } = await import('./support/fake-wallet')
-  return { ...(await importOriginal<typeof import('@wagmi/core')>()), getAccount: () => ({ address: wallet.account, chainId: 1 }) }
+  const { wallet, walletCore } = await import('./support/fake-wallet')
+  return { ...(await importOriginal<typeof import('@wagmi/core')>()), ...walletCore, getAccount: () => ({ address: wallet.account, chainId: 1 }) }
 })
 vi.mock('wagmi', async importOriginal => {
   const { walletHooks } = await import('./support/fake-wallet')
@@ -24,10 +24,6 @@ vi.mock('wagmi', async importOriginal => {
 vi.mock('@/hooks/useWallet', async () => {
   const { useFakeWallet } = await import('./support/fake-wallet')
   return { useWallet: useFakeWallet }
-})
-vi.mock('@/lib/transaction-review', async importOriginal => {
-  const { wallet } = await import('./support/fake-wallet')
-  return { ...(await importOriginal<typeof import('@/lib/transaction-review')>()), requestContractTransactionReview: wallet.requestReview }
 })
 vi.mock('@/lib/safe-connector', async importOriginal => ({ ...(await importOriginal<typeof import('@/lib/safe-connector')>()), isSafeConnection: () => false, useSafeConnection: () => false }))
 const factory = vi.hoisted(() => ({ check: async (): Promise<{ acceptsNative: boolean }> => ({ acceptsNative: true }) }))
@@ -43,7 +39,7 @@ import { buildPayerTransaction, payerAttemptKey, payerIntent, type PayerAttempt 
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const KEY = payerAttemptKey(1, 7n)
-const EXIT = 'I checked my wallet. Send again'
+const EXIT = 'I checked my wallet'
 const legacy = (extra: Partial<PayerAttempt> = {}): PayerAttempt => ({
   version: 1, id: '11111111-1111-4111-8111-111111111111', account: ALICE, safe: false, phase: 'signing', afterBlock: '100',
   settings: { chainId: 1, projectId: '7', beneficiary: '0x0000000000000000000000000000000000000000', owner: '0x0000000000000000000000000000000000000000', memo: '', addToBalance: false },
@@ -169,7 +165,7 @@ it('gap 8: a payer deployment that settled while away is shown and followed, and
   await act(async () => { wallet.confirm(hash) })
   const { holds } = await import('@/lib/write-hold')
   const hold = holds.open({ chainId: 1, account: ALICE, safe: false, namespace: payerIntent(7n), call: { to: ALICE, data: '0x' } })
-  expect(await hold.onReceipt(await wallet.client.getTransactionReceipt({ hash }) as never, wallet.client as never)).toMatchObject({ status: 'clear', settled: { result: 'success' } })
+  expect(await hold.onReceipt(await wallet.client.getTransactionReceipt({ hash }) as never, wallet.client as never)).toMatchObject({ status: 'clear' })
   await render()
   // Its result is shown, never hidden behind a separate send: until it can be proven, nothing else is created.
   expect(host.textContent).toContain(HELD_SUCCESS_LINE)

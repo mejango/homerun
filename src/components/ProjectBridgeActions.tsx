@@ -13,10 +13,10 @@ import {
 } from "viem";
 import { USDC_ADDRESSES, type JBChainId } from "@bananapus/nana-sdk-core";
 import {
-  useSafeTx,
+  useReviewedAction,
   type TxRequest,
   type TxSendOptions,
-} from "@/hooks/useSafeTx";
+} from "@/hooks/useReviewedAction";
 import { TxConfirmDialog } from "@/components/ui/TxConfirmDialog";
 import { HeldNotice } from "@/components/ui/HeldWriteExit";
 import { useWallet } from "@/hooks/useWallet";
@@ -76,7 +76,7 @@ const notices = {
 
 /** Verifies the exact event and payload before describing a bridge step as complete. */
 function useBridgeTransaction(chainId: JBChainId) {
-  const tx = useSafeTx(chainId);
+  const tx = useReviewedAction(chainId);
   const { address } = useWallet();
   const cache = useQueryClient();
   const [active, setActive] = useState<{

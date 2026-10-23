@@ -24,9 +24,9 @@ vi.mock("@/hooks/useWallet", () => ({
     isConnected: !!runtime.address,
   }),
 }));
-vi.mock("@/hooks/useSafeTx", () => ({
+vi.mock("@/hooks/useReviewedAction", () => ({
   txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,
-  useSafeTx: () => {
+  useReviewedAction: () => {
     useEffect(() => {
       runtime.mounted++;
       return () => {

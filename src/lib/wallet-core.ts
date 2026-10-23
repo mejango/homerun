@@ -7,12 +7,14 @@ import {
   switchChain,
 } from '@wagmi/core'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
+import { ReviewLineError, viemWalletAdapter, type ReviewedSendDeps } from '@bananapus/nana-sdk-core/review'
 import type { Address, PublicClient } from 'viem'
 import { wagmiConfig } from '@/providers/Providers'
 import { chainName } from '@/lib/urn'
 import { assertReviewedAccountConnected } from '@/lib/contract-write'
 import { assertNoViewAs } from '@/lib/viewAs'
 import { isSafeConnection } from '@/lib/safe-connector'
+import { holds } from '@/lib/write-hold'
 
 /**
  * Shared wagmi identity plumbing for transaction and signature boundaries.
@@ -80,3 +82,24 @@ export async function connectedWallet(
   assertReviewedWallet({ account: expected ?? (requireUnchanged ? before.address : account), connectorUid: before.connector?.uid, chainId, safe }, changedError)
   return { wallet, account }
 }
+
+/** Homerun's wallet as core's reviewed sends use it: the connected wagmi wallet, switched to the chain each call is on. */
+export const walletAdapter = viemWalletAdapter({
+  walletClient: () => getWalletClient(wagmiConfig),
+  account: () => getAccount(wagmiConfig).address,
+  chainId: () => getAccount(wagmiConfig).chainId,
+  isSafe: () => isSafeConnection(wagmiConfig),
+  switchChain: chainId => switchChain(wagmiConfig, { chainId: chainId as JBChainId }).catch(() => {
+    throw new ReviewLineError(`Switch your wallet to ${chainName(chainId)} to continue.`)
+  }),
+})
+
+/** What every reviewed send goes through: the wallet, each chain's client, and the app's one write hold. */
+export const reviewedSendDeps: ReviewedSendDeps = {
+  adapter: walletAdapter,
+  clientFor: chainId => publicClient(chainId as JBChainId),
+  hold: holds,
+}
+
+/** Core's send engine, out of every page's first load: a reviewed run loads it, and the review provider preloads it on intent. */
+export const loadReviewEngine = () => import('@bananapus/nana-sdk-core/review')

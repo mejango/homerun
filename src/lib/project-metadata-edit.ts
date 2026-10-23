@@ -1,7 +1,7 @@
 import { jbControllerAbi, jbDirectoryAbi, jbPermissionsAbi, jbProjectsAbi, revOwnerAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { JBPermissionIdsV6, v6Address } from '@bananapus/nana-sdk-core/v6'
 import { getAddress, isAddress, isAddressEqual, zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
-import type { TxRequest } from '@/hooks/useSafeTx'
+import type { TxRequest } from '@/hooks/useReviewedAction'
 import { fundIpfsUrl } from './fund-project-metadata'
 import { jbCenterIpfs, JBCENTER_MAX_IMAGE_BYTES, type JBCenterIpfsClient } from './jbcenter-ipfs'
 

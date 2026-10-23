@@ -1,8 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { parseAbi } from 'viem'
-import { requireContractTransactionReview } from '@/lib/transaction-review'
+import { encodeFunctionData, parseAbi } from 'viem'
+import { requireTransactionReview } from '@/lib/transaction-review'
 
 const abi = parseAbi(['function transfer(address recipient, uint256 amount)'])
 
@@ -12,15 +12,21 @@ export function TransactionReviewBrowserFixture() {
   async function openReview() {
     setResult('Review open.')
     try {
-      await requireContractTransactionReview({
-        chainId: 10,
-        address: '0x1111111111111111111111111111111111111111',
-        account: '0x3333333333333333333333333333333333333333',
-        abi,
-        functionName: 'transfer',
-        args: ['0x2222222222222222222222222222222222222222', 5n],
-        value: 0n,
-      }, { title: 'Review fixture transaction', label: 'Transfer test tokens' })
+      const args = ['0x2222222222222222222222222222222222222222', 5n] as const
+      await requireTransactionReview({
+        title: 'Review fixture transaction',
+        calls: [{
+          chainId: 10,
+          to: '0x1111111111111111111111111111111111111111',
+          from: '0x3333333333333333333333333333333333333333',
+          data: encodeFunctionData({ abi, functionName: 'transfer', args }),
+          value: 0n,
+          abi,
+          functionName: 'transfer',
+          args,
+          label: 'Transfer test tokens',
+        }],
+      })
       setResult('Review approved. No wallet action requested.')
     } catch {
       setResult('Review cancelled. No wallet action requested.')

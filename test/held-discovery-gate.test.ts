@@ -34,8 +34,8 @@ it('takes the held, released, checked and away lines from the SDK, never a copy'
 })
 
 it('leaves the SDK’s hold records to the SDK: no storage keys, and held states read only by the write adapter', () => {
-  // The write hold adapter (useSafeTx), its controller, and the cross-wallet project-admin scan open holds directly.
-  const adapters = ['src/lib/write-hold.ts', 'src/hooks/useSafeTx.ts', 'src/lib/project-admin-reservation.ts']
+  // The write hold adapter (useReviewedAction), its controller, and the cross-wallet project-admin scan open holds directly.
+  const adapters = ['src/lib/write-hold.ts', 'src/hooks/useReviewedAction.ts', 'src/lib/project-admin-reservation.ts']
   for (const { path, source } of src) {
     expect(/nana-sdk:/.test(source), `${path} names an SDK storage key`).toBe(false)
     if (adapters.includes(path)) continue

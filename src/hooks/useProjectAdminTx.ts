@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { encodeFunctionData, zeroAddress, type Address, type Hex } from 'viem'
 import { usePublicClient } from 'wagmi'
-import { useSafeTx, type TxRequest } from './useSafeTx'
+import { useReviewedAction, type TxRequest } from './useReviewedAction'
 import { useWallet } from './useWallet'
 import { assertNoViewAs } from '@/lib/viewAs'
 import { WRITE_EXIT_LABEL, browserLocks, hidesShownExit, writeExitMessage, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
@@ -42,7 +42,7 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
   const client = usePublicClient({ chainId })
   const { address } = useWallet()
   const cache = useQueryClient()
-  const tx = useSafeTx(chainId)
+  const tx = useReviewedAction(chainId)
   const resetTx = tx.reset
   const [error, setError] = useState<string | null>(null)
   const [label, setLabel] = useState('Project update')

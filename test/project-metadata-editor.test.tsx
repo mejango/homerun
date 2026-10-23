@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { v6Address, JBPermissionIdsV6 } from '@bananapus/nana-sdk-core/v6'
 import type { Address, PublicClient } from 'viem'
 import type { ProjectAdminSendOptions } from '@/hooks/useProjectAdminTx'
-import type { TxPhase, TxRequest } from '@/hooks/useSafeTx'
+import type { TxPhase, TxRequest } from '@/hooks/useReviewedAction'
 
 const runtime = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111' as Address | undefined,

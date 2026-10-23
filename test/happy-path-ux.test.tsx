@@ -16,8 +16,8 @@ vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 /** The chain the wallet is on. */
 const connected = vi.hoisted(() => ({ chainId: 8453 }))
 vi.mock('@wagmi/core', async importOriginal => {
-  const { wallet } = await import('./support/fake-wallet')
-  return { ...(await importOriginal<typeof import('@wagmi/core')>()), getAccount: () => ({ address: wallet.account, chainId: connected.chainId }), getPublicClient: () => wallet.client }
+  const { wallet, walletCore } = await import('./support/fake-wallet')
+  return { ...(await importOriginal<typeof import('@wagmi/core')>()), ...walletCore, getAccount: () => ({ address: wallet.account, chainId: connected.chainId }) }
 })
 vi.mock('wagmi', async importOriginal => {
   const { walletHooks } = await import('./support/fake-wallet')
@@ -26,10 +26,6 @@ vi.mock('wagmi', async importOriginal => {
 vi.mock('@/hooks/useWallet', async () => {
   const { useFakeWallet } = await import('./support/fake-wallet')
   return { useWallet: useFakeWallet }
-})
-vi.mock('@/lib/transaction-review', async importOriginal => {
-  const { wallet } = await import('./support/fake-wallet')
-  return { ...(await importOriginal<typeof import('@/lib/transaction-review')>()), requestContractTransactionReview: wallet.requestReview }
 })
 vi.mock('@/lib/safe-connector', async importOriginal => ({ ...(await importOriginal<typeof import('@/lib/safe-connector')>()), isSafeConnection: () => false, useSafeConnection: () => false }))
 vi.mock('@/components/WalletButton', () => ({ WalletButton: () => null }))
@@ -46,7 +42,7 @@ import { wallet } from './support/fake-wallet'
 import { FundDeploy } from '../src/components/FundDeploy'
 import type { CreateValues } from '../src/components/CreateFlow'
 import { saveLaunch } from '../src/lib/fund-launch-session'
-import { useSafeTx } from '../src/hooks/useSafeTx'
+import { useReviewedAction } from '../src/hooks/useReviewedAction'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as Address
 const TERMINAL = '0x2222222222222222222222222222222222222222' as Address
@@ -88,8 +84,8 @@ it('launch: one press reaches the wallet once, with no recovery notice', async (
 
 const PAY = parseAbi(['function pay(uint256 projectId, address token, uint256 amount, address beneficiary, uint256 minReturnedTokens, string memo, bytes metadata) payable returns (uint256)'])
 const CASH_OUT = parseAbi(['function cashOutTokensOf(address holder, uint256 projectId, uint256 cashOutCount, address tokenToReclaim, uint256 minTokensReclaimed, address beneficiary, bytes metadata) returns (uint256)'])
-function Action({ label, request, namespace }: { label: string; request: Parameters<ReturnType<typeof useSafeTx>['send']>[0]; namespace: string }) {
-  const tx = useSafeTx(8453)
+function Action({ label, request, namespace }: { label: string; request: Parameters<ReturnType<typeof useReviewedAction>['send']>[0]; namespace: string }) {
+  const tx = useReviewedAction(8453)
   const [done, setDone] = useState(false)
   return <><button type="button" onClick={() => void tx.send(request, { reviewedAccount: OWNER, recoveryNamespace: namespace }).then(() => setDone(true))}>{label}</button>{done && <p>{tx.notice}</p>}</>
 }

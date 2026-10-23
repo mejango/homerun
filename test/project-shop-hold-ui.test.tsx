@@ -16,8 +16,8 @@ import { checkedItLabel, HELD_SUCCESS_LINE, SAVED_ATTEMPT_CHECK_LINE } from '@ba
 const m = vi.hoisted(() => ({ read: vi.fn() }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@wagmi/core', async importOriginal => {
-  const { wallet } = await import('./support/fake-wallet')
-  return { ...(await importOriginal<typeof import('@wagmi/core')>()), getAccount: () => ({ address: wallet.account, chainId: 8453 }) }
+  const { wallet, walletCore } = await import('./support/fake-wallet')
+  return { ...(await importOriginal<typeof import('@wagmi/core')>()), ...walletCore, getAccount: () => ({ address: wallet.account, chainId: 8453 }) }
 })
 vi.mock('wagmi', async importOriginal => {
   const { walletHooks } = await import('./support/fake-wallet')
@@ -26,10 +26,6 @@ vi.mock('wagmi', async importOriginal => {
 vi.mock('@/hooks/useWallet', async () => {
   const { useFakeWallet } = await import('./support/fake-wallet')
   return { useWallet: useFakeWallet }
-})
-vi.mock('@/lib/transaction-review', async importOriginal => {
-  const { wallet } = await import('./support/fake-wallet')
-  return { ...(await importOriginal<typeof import('@/lib/transaction-review')>()), requestContractTransactionReview: wallet.requestReview }
 })
 vi.mock('@/lib/safe-connector', async importOriginal => ({ ...(await importOriginal<typeof import('@/lib/safe-connector')>()), isSafeConnection: () => false, useSafeConnection: () => false }))
 vi.mock('@/lib/project-shop-write', async importOriginal => ({
@@ -54,7 +50,7 @@ import { shopStepIntent, shopWriteSessionKey, startShopWriteSession } from '@/li
 const OWNER = '0x1111111111111111111111111111111111111111' as Address
 const DIGEST = `0x${'ab'.repeat(32)}` as const
 const KEY = shopWriteSessionKey(8453, 7n)
-const EXIT = 'I checked my wallet. Send again'
+const EXIT = 'I checked my wallet'
 function plan(): PreparedProjectShopWrite {
   const facts = {
     version: 1, snapshot: {
@@ -164,7 +160,7 @@ async function settleAway(blockNumber: bigint) {
   await act(async () => { wallet.confirm(hash, blockNumber) })
   const { holds } = await import('@/lib/write-hold')
   const hold = holds.open({ chainId: 8453, account: session.plan.snapshot.account, safe: false, namespace: shopStepIntent(session, 0), call: { to: session.plan.snapshot.account, data: '0x' } })
-  expect(await hold.onReceipt(await wallet.client.getTransactionReceipt({ hash }) as never, wallet.client as never)).toMatchObject({ status: 'clear', settled: { result: 'success' } })
+  expect(await hold.onReceipt(await wallet.client.getTransactionReceipt({ hash }) as never, wallet.client as never)).toMatchObject({ status: 'clear' })
   await render()
   if (button('Resume shop update')) await click('Resume shop update')
 }

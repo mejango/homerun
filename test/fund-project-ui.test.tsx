@@ -61,9 +61,9 @@ vi.mock('@tanstack/react-query', () => ({
     : queryKey[0] === 'fund-reward-activation' ? { data: runtime.delegated, isError: false, isFetching: false }
     : { data: undefined, isError: false, isFetching: false },
 }))
-vi.mock('@/hooks/useSafeTx', () => ({
+vi.mock('@/hooks/useReviewedAction', () => ({
   txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,
-  useSafeTx: () => {
+  useReviewedAction: () => {
     useEffect(() => { runtime.mounted += 1; return () => { runtime.unmounted += 1 } }, [])
     return { phase: runtime.phase, busy: runtime.phase === 'pending', error: null, hash: `0x${'a'.repeat(64)}`, safeProposalHash: null, receipt: null, send: runtime.send, reset: vi.fn() }
   },

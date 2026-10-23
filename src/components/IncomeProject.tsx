@@ -17,7 +17,7 @@ import { ProjectActivity } from '@/components/ProjectActivity'
 import { DisplayTokenAmount } from '@/components/DisplayTokenAmount'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
 import { getLoans } from '@/lib/loans-queries'
-import { useSafeTx, txPhaseLabel, type TxRequest } from '@/hooks/useSafeTx'
+import { useReviewedAction, txPhaseLabel, type TxRequest } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { displayChainName, explorerTxUrl } from '@/lib/chainDisplay'
 import { HomerunProjectLayout, OwnersTabs } from '@/components/HomerunProjectLayout'
@@ -47,7 +47,7 @@ import { loanRepaymentIntent } from '@/lib/income-loan-tools'
 function message(reason: unknown) { return readableError(reason, 'The transaction could not be prepared. Refresh and try again.') }
 function amount(value: string, decimals = 18) { try { return parseAmount(value.trim(), decimals) } catch { return 0n } }
 function units(value: bigint, decimals = 18) { return formatUnits(value, decimals) }
-type IncomeTx = ReturnType<typeof useSafeTx>
+type IncomeTx = ReturnType<typeof useReviewedAction>
 
 function Panel({ title, children }: { title: string; children: ReactNode }) {
   return <section className="demo-section"><h2>{title}</h2>{children}</section>
@@ -64,7 +64,7 @@ function Status({ tx, chainId }: { tx: IncomeTx; chainId: number }) {
 }
 
 function useIncomeTx(state: IncomeProjectState) {
-  const tx = useSafeTx(state.chainId)
+  const tx = useReviewedAction(state.chainId)
   const cache = useQueryClient()
   const confirmed = useRef<string | null>(null)
   useEffect(() => {

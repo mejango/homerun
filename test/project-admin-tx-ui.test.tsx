@@ -7,7 +7,7 @@ import { WRITE_EXIT_LABEL, writeExitMessage, writeHeldMessage } from '@bananapus
 import { createBrowserWriteRecovery } from '@bananapus/nana-sdk-core/review'
 import { installRecoveryLocks, recoveryRecords } from './runtime/write-recovery-fixture'
 import { noteProjectAdminAccount, projectAdminLockName, projectAdminNamespace } from '@/lib/project-admin-reservation'
-import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
+import type { TxRequest, TxSendOptions } from '@/hooks/useReviewedAction'
 import type { ProjectAdminTx } from '@/hooks/useProjectAdminTx'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as Address
@@ -24,7 +24,7 @@ const runtime = vi.hoisted(() => ({
 }))
 vi.mock('wagmi', () => ({ usePublicClient: () => runtime.client }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.account }) }))
-vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({
+vi.mock('@/hooks/useReviewedAction', () => ({ useReviewedAction: () => ({
   phase: 'idle', busy: false, error: null, isSafe: false, notice: null, hash: null, submissionHash: null, receipt: null,
   held: null, confirmationUncertain: false, settled: false,
   send: runtime.send, reset: runtime.reset, dismiss: runtime.dismiss, ...runtime.engine,
