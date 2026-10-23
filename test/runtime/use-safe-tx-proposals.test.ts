@@ -18,7 +18,7 @@ import {
 } from '@bananapus/nana-sdk-core/safe-service'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildPermit2ApproveTx } from '@bananapus/nana-sdk-core/v6'
-import { WRITE_EXIT_LABEL, WRITE_HOLD_SAFE_UNPROVEN_LINE, WRITE_HOLD_UNCHECKED_LINE, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
+import { HELD_FAILED_LINE, WRITE_EXIT_LABEL, WRITE_HOLD_SAFE_UNPROVEN_LINE, WRITE_HOLD_UNCHECKED_LINE, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
 import { installRecoveryLocks, recoveryRecords } from './write-recovery-fixture'
 const STAMPED_CHAIN = 10
 const STAMPED_SITES = [['Permit2 allowance expiration', (stamp: bigint, other = 0n) => buildPermit2ApproveTx({ chainId: STAMPED_CHAIN, token: '0x3333333333333333333333333333333333333333', amount: 5n + other, expiration: Number(stamp) })]] as const
@@ -478,7 +478,7 @@ describe('a Safe proposal', () => {
       EXECUTION,
       (hash: Hex) => ({
         ...receiptOf(hash, PROPOSAL),
-        logs: [{ address: SAFE, topics: [FAILURE], data: `${PROPOSAL}${WORD.slice(2)}` as Hex }],
+        logs: [{ address: SAFE, topics: [FAILURE], data: `${PROPOSAL}${WORD.slice(2)}` as Hex, removed: false, transactionHash: hash, blockHash: BLOCK, blockNumber: 9n, transactionIndex: 0 }],
       }),
     ],
     ['executed at once', PROPOSAL, (hash: Hex) => receiptOf(hash, UNSEEN, FAILURE)],
@@ -495,7 +495,7 @@ describe('a Safe proposal', () => {
     expect(flow.tx).toMatchObject({
       phase: 'error',
       busy: false,
-      error: `Safe executed the proposal, but the onchain transaction failed (${execution}).`,
+      error: HELD_FAILED_LINE,
       reverted: true,
     })
   })
@@ -518,7 +518,7 @@ describe('a Safe proposal', () => {
       expect(mocks.reportedSafeExecution).toHaveBeenCalledWith(reported, 10, SAFE, PROPOSAL)
       expect(flow.tx).toMatchObject({ phase, hash: EXECUTION })
       if (phase === 'error') {
-        expect(flow.tx.error).toBe(`Safe executed the proposal, but the onchain transaction failed (${EXECUTION}).`)
+        expect(flow.tx.error).toBe(HELD_FAILED_LINE)
       }
     },
   )
@@ -1037,7 +1037,7 @@ describe("a Safe proposal's last look at the chain", () => {
     expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 
-  it('fails a reverted execution returned at once without waiting on its transaction', async () => {
+  it('keeps a reverted execution returned at once held while the chain cannot prove it ran this proposal', async () => {
     mocks.atOnceExecution.mockResolvedValue(null)
     mocks.waitForSafeExecutionHash.mockResolvedValue(PROPOSAL)
     mocks.publicClient.waitForTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => ({
@@ -1050,11 +1050,10 @@ describe("a Safe proposal's last look at the chain", () => {
     const flow = await mount()
     await flow.send()
     await settle()
-    expect(flow.tx).toMatchObject({
-      phase: 'error',
-      error: `Safe executed the proposal, but the onchain transaction failed (${PROPOSAL}).`,
-      reverted: true,
-    })
+    // Its follower saw a revert, but only the hold says it failed: until then it can end on Done and is never proposed again.
+    expect(flow.tx).toMatchObject({ phase: 'submitted', error: null, reverted: false, notice: 'Executed by your Safe. Confirming it onchain.' })
+    await flow.send()
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 })
 

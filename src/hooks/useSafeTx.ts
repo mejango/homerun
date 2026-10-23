@@ -513,6 +513,10 @@ export function useSafeTx(chainId: number) {
   const [settledReceipt, setSettledReceipt] = useState<TransactionReceipt | null>(null)
   /** The hold settled this flow's write as failed onchain, with or without a receipt read here. */
   const [settledFailed, setSettledFailed] = useState(false)
+  /** How the hold settled the Safe proposal this flow shows: only the hold says a proposal succeeded or failed. */
+  const [safeSettled, setSafeSettled] = useState<{ success: boolean; line: string | null } | null>(null)
+  const shownKeyRef = useRef<string | null>(null)
+  shownKeyRef.current = shownKey
   useEffect(() => {
     mounted.current = true
     return () => { mounted.current = false; generation.current += 1 }
@@ -579,10 +583,15 @@ export function useSafeTx(chainId: number) {
   // its action goes out until it ends, or the user dismisses an unproven
   // result after its line. One the registry no longer holds (dismissed in
   // another flow) shows nothing.
+  // The registry follows a proposal to its execution; its success or failure shows once the hold settles it.
+  const followerEnded = proposal?.phase === 'success' || proposal?.phase === 'failed'
   const shownPhase: TxPhase = shownKey
-    ? proposal
-      ? SHOWN_AS[proposal.phase]
-      : 'idle'
+    ? safeSettled
+      ? safeSettled.success ? 'success' : 'error'
+      : proposal
+        // Its success is in flight until the hold verifies it; a failure the hold has not proven can end on Done.
+        ? proposal.phase === 'success' ? 'pending' : proposal.phase === 'failed' ? 'submitted' : SHOWN_AS[proposal.phase]
+        : 'idle'
     // A held write's success shows only once the hold verified it and let go, never from the raw receipt.
     : phase === 'pending' && receiptData?.status === 'success' && !hold
       ? 'success'
@@ -597,16 +606,18 @@ export function useSafeTx(chainId: number) {
     : watchGaveUp ? (held?.line ?? WRITE_HOLD_PENDING_LINE) : recoveryNotice ?? (
     proposal?.phase === 'awaiting'
       ? (proposal.message ?? SAFE_PROPOSAL_AWAITING)
-      : proposal?.phase === 'confirming'
+      : proposal?.phase === 'confirming' || (proposal?.phase === 'failed' && !safeSettled)
         ? SAFE_EXECUTION_CONFIRMING
         : proposal?.phase === 'unproven'
           ? (proposal.message ?? SAFE_PROPOSAL_UNCONFIRMED)
           : settledNotice)
   const notice = [shownNotice, holdNotice].filter(Boolean).join(' ') || null
   const effectiveError = shownKey
-    ? proposal && SHOWN_AS[proposal.phase] === 'error'
-      ? proposal.message
-      : null
+    ? safeSettled
+      ? safeSettled.line
+      : proposal && !followerEnded && SHOWN_AS[proposal.phase] === 'error'
+        ? proposal.message
+        : null
     : receiptReverted
       ? hold ? HELD_FAILED_LINE : `Transaction reverted onchain${hash ? ` (${hash})` : ''}.`
       : error
@@ -672,6 +683,12 @@ export function useSafeTx(chainId: number) {
       if (!tracked.current) { setError(SAFE_PROPOSAL_EXPIRED); setPhase('error') }
       return
     }
+    if (shownKeyRef.current) {
+      // A Safe proposal's execution, which the hold authenticated: its result is this flow's.
+      if (settledReceipt) setSettledReceipt(settledReceipt)
+      setSafeSettled(settled.result === 'success' ? { success: true, line: null } : { success: false, line: settledLine(settled) })
+      return
+    }
     const untracked = !tracked.current
     // A Safe proposal's own hash is followed through its registry entry, which shows its result.
     if (!untracked && tracked.current!.toLowerCase() !== settled.hash.toLowerCase()) return
@@ -726,7 +743,7 @@ export function useSafeTx(chainId: number) {
       generation.current += 1
       inFlightRef.current = false
       tracked.current = null
-      setHeld(null); setHash(null); setShownKey(null); setError(null); setRecoveryNotice(null); setPhase('idle')
+      setHeld(null); setHash(null); setShownKey(null); setSafeSettled(null); setError(null); setRecoveryNotice(null); setPhase('idle')
       return true
     } catch (reason) { setError(friendlyTxError(reason)); return false }
   }, [exitAction, held])
@@ -777,7 +794,7 @@ export function useSafeTx(chainId: number) {
       setAwaySuccess(false)
       setHeld(null)
       setRecoveryNotice(null)
-      setSettledReceipt(null); setSettledFailed(false)
+      setSettledReceipt(null); setSettledFailed(false); setSafeSettled(null)
       // Read once: the review, the sent gas and the proposal tracking must all
       // agree on whether a Safe proposes this call.
       const viaSafe = isSafeConnection(wagmiConfig)
@@ -1052,7 +1069,7 @@ export function useSafeTx(chainId: number) {
     setHash(null)
     setShownKey(null)
     setRecoveryNotice(null)
-    setSettledReceipt(null); setSettledFailed(false)
+    setSettledReceipt(null); setSettledFailed(false); setSafeSettled(null)
     setMode(null); setTracking(null)
     setHeld(null)
     setAwaySuccess(false)
@@ -1088,14 +1105,14 @@ export function useSafeTx(chainId: number) {
     isSafe,
     error: effectiveError,
     /** The write was mined and reverted (its receipt, the hold's settlement or the Safe registry says so): not why. */
-    reverted: effectivePhase === 'error' && (shownKey ? proposal?.phase === 'failed'
+    reverted: effectivePhase === 'error' && (shownKey ? safeSettled?.success === false
       : receiptReverted || settledFailed || (!held && (receiptData ?? settledReceipt)?.status === 'reverted')),
     hash: shownKey ? (proposal?.executionHash ?? null) : hash,
     /** The wallet-returned identity, including a Safe proposal before execution. */
     submissionHash: shownKey ? (proposal?.proposalHash ?? null) : hash,
     safeProposalHash: awaitingProposal,
     safeNonceGuidance: awaitingProposal ? SAFE_NONCE_GUIDANCE : null,
-    receipt: held ? null : shownKey ? (proposal?.receipt ?? null) : (receiptData ?? settledReceipt ?? null),
+    receipt: held ? null : shownKey ? (safeSettled ? settledReceipt ?? proposal?.receipt ?? null : null) : (receiptData ?? settledReceipt ?? null),
     /** A write the chain has not placed, with the user's one exit; null otherwise. */
     held: held?.exit
       ? { kind: 'exit' as const, line: held.line, warning: 'warning' in held && held.warning ? held.warning : writeExitMessage(held.record.call), label: WRITE_EXIT_LABEL, release }
