@@ -138,4 +138,18 @@ describe('transaction review dialog', () => {
     act(() => buttons().find(button => button.textContent === 'Cancel')!.click())
     await expect(closed.outcome).resolves.toBe('cancelled')
   })
+
+  it("shows why core's simulation saw the send revert, and offers only Cancel", async () => {
+    act(() => root.render(<TransactionReviewProvider>{null}</TransactionReviewProvider>))
+    const buttons = () => [...(document.querySelector('dialog')?.querySelectorAll('button') ?? [])]
+    const failing = promptReviewForTests(REVIEW_REQUESTS['pay with 721 metadata'], {
+      simulation: { status: 'failed', message: 'The payment would mint fewer tokens than your minimum.', explained: true },
+    })
+    await act(async () => { await vi.dynamicImportSettled() })
+    act(() => document.querySelector<HTMLInputElement>('dialog input[type="checkbox"]')!.click())
+    expect(document.querySelector('dialog [role="alert"]')?.textContent).toBe('The payment would mint fewer tokens than your minimum.')
+    expect(buttons().at(-1)!.disabled).toBe(true)
+    act(() => buttons().find(button => button.textContent === 'Cancel')!.click())
+    await expect(failing.outcome).resolves.toBe('cancelled')
+  })
 })

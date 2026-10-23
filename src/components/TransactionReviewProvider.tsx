@@ -9,7 +9,7 @@ import {
   useState,
 } from 'react'
 import type { Address } from 'viem'
-import { registerReviewHandler, type ReviewModel } from '@bananapus/nana-sdk-core/review'
+import { registerReviewHandler, type ReviewModel, type ReviewSimulation } from '@bananapus/nana-sdk-core/review'
 import { useAccount } from 'wagmi'
 import { ModalDialog } from '@/components/ui/ModalShell'
 import {
@@ -25,6 +25,8 @@ export type PendingReview = {
   /** A boolean review's request, or core's prompt model, confirmed only by its own confirmation. */
   request?: TransactionReviewRequest
   model?: ReviewModel
+  /** Core's review-time simulation, which runs while the review is open. */
+  simulation?: Promise<ReviewSimulation>
   resolve: (approved: boolean) => void
 }
 
@@ -151,7 +153,7 @@ export function TransactionReviewProvider({ children }: PropsWithChildren) {
     () =>
       registerReviewHandler(async prompt => {
         const approved = await new Promise<boolean>(resolve => {
-          const pending: PendingReview = { kind: 'review', id: nextId.current++, model: prompt.model, resolve }
+          const pending: PendingReview = { kind: 'review', id: nextId.current++, model: prompt.model, simulation: prompt.simulation, resolve }
           // Core withdrew the prompt: its dialog closes, or it leaves the queue.
           prompt.signal.addEventListener('abort', () => {
             if (activeRef.current === pending) finish(pending.id, null)
