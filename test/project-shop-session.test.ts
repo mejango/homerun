@@ -36,7 +36,7 @@ function plan(): PreparedProjectShopWrite {
       maxTierId: 0n, rulesetId: 1, identity: 'reviewed project configuration',
       create: { configuration: initialFundRuleset(), projectUri: 'ipfs://project', deployerCanQueue: false, deployerPermissions: 1n << 255n, canManagePermissions: true },
     },
-    pinned: [{ draft: { ...newDemoShopItem(), name: 'A weekend stay', price: '25', supply: '10' }, encodedIpfsUri: BLOCK_HASH }],
+    pinned: [{ draft: { ...newDemoShopItem(), name: 'A weekend stay', price: '25', supply: '10', votingUnits: '42' }, encodedIpfsUri: BLOCK_HASH }],
     removeTierIds: [], removalIdentity: '[]', salt: BLOCK_HASH,
   }
   const prepared = parseProjectShopWrite(JSON.stringify(facts, (_key, value) => typeof value === 'bigint' ? { $bigint: value.toString() } : value))
@@ -146,6 +146,9 @@ describe('durable live shop updates', () => {
     const { storage } = pending()
     let session = readShopWriteSession(storage, key)!
     expect(session.plan.requestKinds).toEqual(['grant', 'create', 'restore'])
+    expect(session.plan.votingPolicy).toBeUndefined()
+    const historical = projectShopWriteRequest(session.plan, 1)
+    expect((historical.args[1] as { tiersConfig: { tiers: { votingUnits: number; flags: { useVotingUnits: boolean } }[] } }).tiersConfig.tiers[0]).toMatchObject({ votingUnits: 42, flags: { useVotingUnits: true } })
     for (let step = 0; step < 3; step++) {
       if (step) session = withPending(storage, session, { safe: false, afterBlock: 100n + BigInt(step) })
       session = withPending(storage, session, { ...sentOf(session), hash: executionHash(step) })

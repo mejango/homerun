@@ -27,7 +27,7 @@ vi.mock('wagmi', () => ({
   useWaitForTransactionReceipt: () => ({ data: undefined, isError: false }),
   useWriteContract: () => ({ writeContractAsync: runtime.write }),
 }))
-vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: WALLET, chainId: 1, connector: { uid: 'reviewed' } }) }))
+vi.mock('@wagmi/core', () => ({ getWalletClient: async () => ({ writeContract: runtime.write }), getAccount: () => ({ address: WALLET, chainId: 1, connector: { uid: 'reviewed' } }) }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ isConnected: true, address: WALLET, isCenterWallet: false, openSignIn: vi.fn() }) }))
 vi.mock('@/lib/transaction-review', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/transaction-review')>()),

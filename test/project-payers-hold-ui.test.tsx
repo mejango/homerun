@@ -15,7 +15,7 @@ import { checkedItLabel, HELD_SUCCESS_LINE, SAVED_ATTEMPT_CHECK_LINE } from '@ba
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@wagmi/core', async importOriginal => {
   const { wallet } = await import('./support/fake-wallet')
-  return { ...(await importOriginal<typeof import('@wagmi/core')>()), getAccount: () => ({ address: wallet.account, chainId: 1 }) }
+  return { ...(await importOriginal<typeof import('@wagmi/core')>()), getWalletClient: async () => ({ writeContract: wallet.writeContract }), getAccount: () => ({ address: wallet.account, chainId: 1 }) }
 })
 vi.mock('wagmi', async importOriginal => {
   const { walletHooks } = await import('./support/fake-wallet')

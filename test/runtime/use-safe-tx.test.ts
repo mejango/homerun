@@ -40,6 +40,8 @@ const mocks = vi.hoisted(() => ({
     isError: boolean
   },
   getAccount: vi.fn(),
+  acquire: vi.fn(),
+  walletInvocations: [] as string[],
   requestReview: vi.fn(),
   safeConnection: false,
   switchChain: vi.fn(),
@@ -49,6 +51,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@wagmi/core', () => ({
   getAccount: mocks.getAccount,
+  getWalletClient: async () => { const uid = mocks.connectorUid; await mocks.acquire(); return { writeContract: (...args: unknown[]) => { mocks.walletInvocations.push(uid); return mocks.writeContract(...args) } } },
 }))
 vi.mock('wagmi', () => ({
   usePublicClient: () => mocks.publicClient,
@@ -143,6 +146,8 @@ beforeEach(() => {
   mocks.centerWallet = false
   mocks.chainId = 1
   mocks.connectorUid = 'reviewed'
+  mocks.acquire.mockReset().mockResolvedValue(undefined)
+  mocks.walletInvocations = []
   mocks.connected = true
   mocks.receipt = { data: undefined, isError: false }
   mocks.publicClient.getBlockNumber.mockResolvedValue(90n)
@@ -704,7 +709,7 @@ describe('useSafeTx', () => {
     expect(mocks.waitForSafeExecutionHash).not.toHaveBeenCalled()
   })
 
-  it.each(['chain', 'connector', 'view-as'] as const)('withdraws an unsent marker if %s changes during persistence', async changed => {
+  it.each(['chain', 'view-as'] as const)('withdraws an unsent marker if %s changes during persistence', async changed => {
     const hook = await renderHook()
     const abort = vi.fn()
     try {
@@ -714,7 +719,6 @@ describe('useSafeTx', () => {
           beforeWrite: async () => {
             await Promise.resolve()
             if (changed === 'chain') mocks.chainId = 8453
-            else if (changed === 'connector') mocks.connectorUid = 'replacement'
             else setViewAs(BOB)
           },
           onBeforeWriteAborted: abort,
@@ -724,6 +728,38 @@ describe('useSafeTx', () => {
       expect(mocks.writeContract).not.toHaveBeenCalled()
       expect(hook.ref.current!.phase).toBe('error')
     } finally { clearViewAs() }
+  })
+
+  it('uses the current same-account connector after awaited simulation and wallet acquisition', async () => {
+    const hook = await renderHook()
+    mocks.publicClient.estimateContractGas.mockImplementationOnce(async () => {
+      await Promise.resolve()
+      mocks.connectorUid = 'after-simulation'
+      return 80_000n
+    })
+    mocks.acquire.mockImplementationOnce(async () => {
+      await Promise.resolve()
+      mocks.connectorUid = 'after-acquisition'
+    })
+    await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+    expect(mocks.acquire).toHaveBeenCalledTimes(2)
+    expect(mocks.walletInvocations).toEqual(['after-acquisition'])
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    expect(hook.ref.current!.phase).toBe('pending')
+  })
+
+  it('withdraws the unsent durable marker if account changes during final client acquisition', async () => {
+    const hook = await renderHook()
+    const aborted = vi.fn()
+    mocks.acquire.mockImplementationOnce(async () => {
+      await Promise.resolve()
+      mocks.account = BOB
+    })
+    await act(async () => { await hook.ref.current!.send(request, { ...reviewedByAlice, onBeforeWriteAborted: aborted }) })
+    expect(mocks.writeContract).not.toHaveBeenCalled()
+    expect(aborted).toHaveBeenCalledOnce()
+    expect(recoveryRecords()).toHaveLength(0)
+    expect(hook.ref.current!.phase).toBe('error')
   })
 
   it('pins the wallet write to the reviewed chain', async () => {

@@ -23,13 +23,12 @@ beforeEach(() => {
   state.getWalletClient.mockReset().mockResolvedValue({ marker: 'captured wallet' })
 })
 
-it.each(['account', 'chain', 'connector', 'safe', 'center', 'view-as'] as const)(
+it.each(['account', 'chain', 'safe', 'center', 'view-as'] as const)(
   'rejects a %s change while the wallet client is acquired', async changed => {
     state.getWalletClient.mockImplementationOnce(async () => {
       await Promise.resolve()
       if (changed === 'account') state.address = other
       if (changed === 'chain') state.chainId = 8453
-      if (changed === 'connector') state.uid = 'replacement'
       if (changed === 'safe') state.safe = true
       if (changed === 'center') state.id = 'juicebox-center'
       if (changed === 'view-as') setViewAs(other)
@@ -46,4 +45,20 @@ it('returns the reviewed wallet only after its requested chain is current', asyn
   expect(state.switchChain).toHaveBeenCalledWith({}, { chainId: 8453 })
   expect(state.getWalletClient).toHaveBeenCalledWith({}, { chainId: 8453 })
   expect(result).toEqual({ wallet: { marker: 'captured wallet' }, account })
+})
+
+it('resolves a replacement same-account connector at invocation, including a switch during acquisition', async () => {
+  const { withReviewedWallet } = await import('@/lib/wallet-core')
+  const stale = vi.fn()
+  const current = vi.fn().mockResolvedValue('sent')
+  state.getWalletClient.mockImplementationOnce(async () => {
+    await Promise.resolve()
+    state.uid = 'replacement'
+    return { sendTransaction: stale }
+  }).mockResolvedValue({ sendTransaction: current })
+  const result = await withReviewedWallet({ account, connectorUid: 'reviewed', chainId: 1, safe: false }, wallet => wallet.sendTransaction({ to: other } as never))
+  expect(result).toBe('sent')
+  expect(stale).not.toHaveBeenCalled()
+  expect(current).toHaveBeenCalledOnce()
+  expect(state.getWalletClient).toHaveBeenLastCalledWith({}, expect.objectContaining({ connector: expect.objectContaining({ uid: 'replacement' }) }))
 })

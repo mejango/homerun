@@ -95,7 +95,7 @@ describe('live shop write state and preparation', () => {
     expect(plan.requests[0]).toMatchObject({ address: HOOK, functionName: 'adjustTiers' })
     const tier = (plan.requests[0].args[0] as { price: bigint; flags: { useVotingUnits: boolean } }[])[0]
     expect(tier.price).toBe(1_000_000_000_000_000_001n)
-    expect(tier.flags.useVotingUnits).toBe(true)
+    expect(tier.flags.useVotingUnits).toBe(false)
     expect(mocks.pinJson).toHaveBeenCalledOnce()
     await expect(reverifyProjectShopWrite(f.client, plan, OWNER, 0, plan.requests[0])).resolves.toBeUndefined()
   })
@@ -132,15 +132,18 @@ describe('live shop write state and preparation', () => {
     expect(mocks.pinJson).not.toHaveBeenCalled()
   })
 
-  it('enforces immutable flags before upload but permits explicit zero votes', async () => {
+  it('enforces immutable flags before upload, including price-based votes for explicit zero', async () => {
     const f = fixture()
     f.runtime.flags = { ...flags, noNewTiersWithVotes: true, noNewTiersWithReserves: true, noNewTiersWithOwnerMinting: true }
     const snapshot = await readProjectShopWriteState(f.client, f.input)
     await expect(prepareProjectShopWrite(f.client, { snapshot, items: [item({ votingUnits: '1' })] })).rejects.toThrow('voting units')
     await expect(prepareProjectShopWrite(f.client, { snapshot, items: [item({ reserveN: '2', reserveBeneficiary: OWNER })] })).rejects.toThrow('reserved inventory')
-    await expect(prepareProjectShopWrite(f.client, { snapshot, items: [item({ allowOwnerMint: true })] })).rejects.toThrow('owner minting')
+    f.runtime.flags.noNewTiersWithVotes = false
+    const ownerSnapshot = await readProjectShopWriteState(f.client, f.input)
+    await expect(prepareProjectShopWrite(f.client, { snapshot: ownerSnapshot, items: [item({ allowOwnerMint: true })] })).rejects.toThrow('owner minting')
+    f.runtime.flags.noNewTiersWithVotes = true
     expect(mocks.pinJson).not.toHaveBeenCalled()
-    await expect(prepareProjectShopWrite(f.client, { snapshot, items: [item()] })).resolves.toMatchObject({ requestKinds: ['adjust'] })
+    await expect(prepareProjectShopWrite(f.client, { snapshot, items: [item({ votingUnits: '0' })] })).rejects.toThrow('voting units')
   })
 
   it('fails on changed permissions, rulesets, RPC errors, and wrong chains', async () => {
@@ -234,4 +237,27 @@ describe('first shop permission sequence and recovered plans', () => {
     f.runtime.owner = OTHER
     await expect(reverifyProjectShopWrite(f.client, plan, OWNER, 2)).rejects.toThrow('ownership')
   })
+})
+
+
+it('retains legacy exact voting bytes for recovery and refuses their fresh wallet authorization', async () => {
+  const f = fixture()
+  const snapshot = await readProjectShopWriteState(f.client, f.input)
+  const current = await prepareProjectShopWrite(f.client, { snapshot, items: [item({ votingUnits: 'junk' })] })
+  expect(current.votingPolicy).toBe('price')
+  expect((current.requests[0].args[0] as { votingUnits: number }[])[0].votingUnits).toBe(0)
+  const legacy = parseProjectShopWrite(serializeProjectShopWrite({ ...current, votingPolicy: undefined, pinned: current.pinned.map(row => ({ ...row, draft: { ...row.draft, votingUnits: '42' } })) }))!
+  expect(legacy.votingPolicy).toBeUndefined()
+  const request = projectShopWriteRequest(legacy, 0)
+  expect((request.args[0] as { flags: { useVotingUnits: boolean } }[])[0]).toMatchObject({ votingUnits: 42, flags: { useVotingUnits: true } })
+  const write = vi.fn()
+  const { submitReviewedContractWrite } = await import('@/lib/contract-write')
+  await expect(submitReviewedContractWrite({
+    request, expectedAccount: OWNER, currentAccount: () => OWNER,
+    review: async () => undefined, switchChain: async () => undefined,
+    simulate: async () => request,
+    reverify: () => reverifyProjectShopWrite(f.client, legacy, OWNER, 0, request),
+    write,
+  })).rejects.toThrow('old voting settings')
+  expect(write).not.toHaveBeenCalled()
 })
