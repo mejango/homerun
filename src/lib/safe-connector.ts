@@ -47,15 +47,9 @@ export function useSafeConnection(config: Config): boolean {
 }
 
 export {
-  atOnceExecution,
-  chainAnswer,
-  findPendingSafeAppProposal,
   heldCall,
   readSafeAppExecution,
-  reportedSafeExecution,
-  SAFE_PROPOSAL_AWAITING,
   SAFE_PROPOSAL_UNCONFIRMED,
-  watchSafeProposal,
   type SafeAppCall,
 } from '@bananapus/nana-sdk-core/safe-service'
 

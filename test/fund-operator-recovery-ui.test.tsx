@@ -21,7 +21,7 @@ const runtime = vi.hoisted(() => ({
 }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.account }) }))
-vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({ phase: 'idle', busy: false, send: runtime.send, track: runtime.track, ...runtime.tx }), txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle }))
+vi.mock('@/hooks/useReviewedAction', () => ({ useReviewedAction: () => ({ phase: 'idle', busy: false, send: runtime.send, track: runtime.track, ...runtime.tx }), txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle }))
 vi.mock('@/lib/fund-state', async importOriginal => ({
   ...await importOriginal<typeof import('../src/lib/fund-state')>(),
   readFundProjectState: async () => runtime.states[0],

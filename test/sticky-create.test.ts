@@ -60,8 +60,8 @@ vi.mock("../src/hooks/useWallet", () => ({
   useWallet: () => ({ address: connected.address ?? OWNER }),
 }));
 const engine = vi.hoisted(() => ({ send: vi.fn(), track: vi.fn() }));
-vi.mock("../src/hooks/useSafeTx", () => ({
-  useSafeTx: () => ({ phase: "idle", busy: false, error: null, isSafe: false, send: engine.send, track: engine.track }),
+vi.mock("../src/hooks/useReviewedAction", () => ({
+  useReviewedAction: () => ({ phase: "idle", busy: false, error: null, isSafe: false, send: engine.send, track: engine.track }),
   txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,
 }));
 vi.mock("../src/providers/Providers", () => ({ wagmiConfig: {} }));

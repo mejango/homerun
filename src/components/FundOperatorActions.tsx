@@ -8,7 +8,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
 import { HeldWritesNotice, useHeldIntents, useSavedAttempt } from '@bananapus/nana-sdk-core/review/react'
 import { decodeEventLog, decodeFunctionData, encodeFunctionData, erc20Abi, formatUnits, getAddress, isAddress, isAddressEqual, zeroAddress, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
-import { useSafeTx, txPhaseLabel } from '@/hooks/useSafeTx'
+import { useReviewedAction, txPhaseLabel } from '@/hooks/useReviewedAction'
 import { FundAssetWithdrawals, type FundAssetAllowanceConfiguration } from '@/components/FundAssetWithdrawals'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { TxSteps } from '@/components/ui/TxSteps'
@@ -31,7 +31,7 @@ import { attempts, callOf, holds } from '@/lib/write-hold'
 import type { WriteHoldClient } from '@bananapus/nana-sdk-core/review'
 
 type Props = { state: FundProjectState; client: PublicClient; contextIndex: number }
-type Tx = ReturnType<typeof useSafeTx>
+type Tx = ReturnType<typeof useReviewedAction>
 
 function message(error: unknown): string {
   return readableError(error, 'The transaction could not be prepared. Refresh the verified project state and try again.')
@@ -383,7 +383,7 @@ function usePlanChainHold(plan: RulesetPlan, index: number, { submission, done =
 }) {
   const state = plan.states[index]
   const request = plan.requests[index] as FundTransaction | undefined
-  const tx = useSafeTx(state.chainId)
+  const tx = useReviewedAction(state.chainId)
   useConfirmedRefresh(tx, state)
   const delivered = useRef(false)
   const namespace = planIntent(plan, state.projectId)
@@ -556,8 +556,8 @@ function useConfirmedRefresh(tx: Tx, state: Pick<FundProjectState, 'chainId' | '
 /** No campaign outcome is inferred from browser storage or a submitted hash. */
 export function FundOperatorActions({ state, client, contextIndex }: Props) {
   const { address } = useWallet()
-  const tx = useSafeTx(state.chainId)
-  const approval = useSafeTx(state.chainId)
+  const tx = useReviewedAction(state.chainId)
+  const approval = useReviewedAction(state.chainId)
   useConfirmedRefresh(tx, state)
   useConfirmedRefresh(approval, state)
   const [preparing, setPreparing] = useState(false)

@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useSavedAttempt } from '@bananapus/nana-sdk-core/review/react'
 import { isAddressEqual, type PublicClient } from 'viem'
 import { useWallet } from '@/hooks/useWallet'
-import { useSafeTx, txPhaseLabel } from '@/hooks/useSafeTx'
+import { useReviewedAction, txPhaseLabel } from '@/hooks/useReviewedAction'
 import { newDemoShopItem, type DemoShopItem } from '@/lib/demo-shop'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { assertNoViewAs } from '@/lib/viewAs'
@@ -37,7 +37,7 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
 }) {
   const { address } = useWallet()
   const cache = useQueryClient()
-  const tx = useSafeTx(chainId)
+  const tx = useReviewedAction(chainId)
   const resetTx = tx.reset
   const key = shopWriteSessionKey(chainId, projectId)
   const [session, setSession] = useState<ShopWriteSession | null>(null)

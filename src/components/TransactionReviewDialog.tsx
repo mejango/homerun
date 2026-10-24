@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   addressLabel,
   currencyLabel,
@@ -25,6 +25,9 @@ import { chainName } from '@/lib/urn'
 import { FeeBuybackNotice, useFeeBuybackReview } from './FeeBuybackNotice'
 
 import type { PendingReview, PendingFundingChainSelection, TransactionReviewDialogProps } from './TransactionReviewProvider'
+
+/** What the review says when core's simulation saw this send revert: nothing is sent, and what to do next. */
+export const SIMULATION_FAILED_LINE = "This would fail onchain right now, so it can't be sent. Cancel, then try again in a moment."
 
 const ARRAY_TYPE = /\[\d*\]$/
 
@@ -509,15 +512,31 @@ function ReviewModal({
   pending: PendingReview
   onFinish: (approved: boolean) => void
 }) {
-  const { request } = pending
-  const model = useMemo(() => buildReviewModel(request), [request])
-  const feeReview = useFeeBuybackReview(request.calls)
+  const model = useMemo(() => pending.model ?? buildReviewModel(pending.request!), [pending])
+  const feeCalls = useMemo(() => model.calls.map(call => ({
+    chainId: call.chainId,
+    to: call.to,
+    data: call.data,
+    value: call.value,
+    ...(call.from ? { from: call.from } : {}),
+    ...(call.functionName ? { functionName: call.functionName } : {}),
+  })), [model])
+  const feeReview = useFeeBuybackReview(feeCalls)
   const [agreed, setAgreed] = useState(false)
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
+  // Core refuses a confirm once its simulation saw a revert: the dialog says why when core decoded it, and offers only Cancel.
+  const [wouldFail, setWouldFail] = useState<string | null>(null)
+  useEffect(() => {
+    let live = true
+    pending.simulation?.then(simulated => {
+      if (live && simulated.status === 'failed') setWouldFail(simulated.explained ? simulated.message : SIMULATION_FAILED_LINE)
+    }, () => undefined)
+    return () => { live = false }
+  }, [pending.simulation])
 
   const copyPrompt = async () => {
     try {
-      await navigator.clipboard.writeText(buildTransactionReviewPrompt(request))
+      await navigator.clipboard.writeText(buildTransactionReviewPrompt(model))
       setCopyState('copied')
     } catch {
       setCopyState('failed')
@@ -533,11 +552,11 @@ function ReviewModal({
 
   const isAuthorization = model.kind !== 'transaction'
   /** Some authorizations are signed as a plain message rather than typed data. */
-  const authorizationIsMessage = (request.authorization as { kind?: string } | undefined)?.kind === 'message'
+  const authorizationIsMessage = (model.authorization as { kind?: string } | null)?.kind === 'message'
   const kinds = model.signatures.map(signature => signature.kind)
-  const signsMessage = (Boolean(request.authorization) && authorizationIsMessage) || kinds.includes('message')
+  const signsMessage = (Boolean(model.authorization) && authorizationIsMessage) || kinds.includes('message')
   const signsTypedData =
-    (Boolean(request.authorization) && !authorizationIsMessage) || kinds.some(kind => kind !== 'message')
+    (Boolean(model.authorization) && !authorizationIsMessage) || kinds.some(kind => kind !== 'message')
   const commitment = signsMessage ? (signsTypedData ? 'both' : 'message') : signsTypedData ? 'typed' : null
 
   return (
@@ -650,6 +669,7 @@ function ReviewModal({
               agree to {isAuthorization ? 'authorize' : 'send'} this exact call.
             </span>
           </label>
+          {wouldFail ? <p role="alert" className="mt-3 text-sm text-red-800">{wouldFail}</p> : null}
           <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <button
               type="button"
@@ -661,7 +681,7 @@ function ReviewModal({
             <button
               type="button"
               onClick={async () => { if (await feeReview.confirm()) onFinish(true) }}
-              disabled={!agreed || feeReview.busy}
+              disabled={!agreed || wouldFail !== null || feeReview.busy}
               className="btn-primary min-h-[44px] px-5 text-sm"
             >
               {feeReview.confirmLabel ?? model.confirmLabel ??

@@ -17,8 +17,8 @@ import { checkedItLabel, HELD_RELEASE_LABEL, SAVED_ATTEMPT_CHECK_LINE } from '@b
 const runtime = vi.hoisted(() => ({ states: [] as unknown[] }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@wagmi/core', async importOriginal => {
-  const { wallet } = await import('./support/fake-wallet')
-  return { ...(await importOriginal<typeof import('@wagmi/core')>()), getAccount: () => ({ address: wallet.account, chainId: 8453 }), getPublicClient: () => wallet.client }
+  const { wallet, walletCore } = await import('./support/fake-wallet')
+  return { ...(await importOriginal<typeof import('@wagmi/core')>()), ...walletCore, getAccount: () => ({ address: wallet.account, chainId: 8453 }) }
 })
 vi.mock('wagmi', async importOriginal => {
   const { walletHooks } = await import('./support/fake-wallet')
@@ -27,10 +27,6 @@ vi.mock('wagmi', async importOriginal => {
 vi.mock('@/hooks/useWallet', async () => {
   const { useFakeWallet } = await import('./support/fake-wallet')
   return { useWallet: useFakeWallet }
-})
-vi.mock('@/lib/transaction-review', async importOriginal => {
-  const { wallet } = await import('./support/fake-wallet')
-  return { ...(await importOriginal<typeof import('@/lib/transaction-review')>()), requestContractTransactionReview: wallet.requestReview }
 })
 vi.mock('@/lib/safe-connector', async importOriginal => ({ ...(await importOriginal<typeof import('@/lib/safe-connector')>()), isSafeConnection: () => false, useSafeConnection: () => false }))
 vi.mock('@/lib/fund-state', async importOriginal => ({
@@ -50,7 +46,7 @@ import { allowanceIntent, deserializeRulesetRecovery, FundOperatorActions, seria
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111' as Address
 const ROOT = { chainId: 8453, projectId: 7n }
-const EXIT = 'I checked my wallet. Send again'
+const EXIT = 'I checked my wallet'
 const KEY = `homerun:fund-ruleset-recovery:${ROOT.chainId}:${ROOT.projectId}:${ACCOUNT.toLowerCase()}`
 
 function plan() {

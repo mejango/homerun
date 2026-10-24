@@ -8,7 +8,7 @@ import { PAY_QUOTE_FAILED_MESSAGE } from '@bananapus/nana-sdk-core/v6'
 import { encodeAbiParameters, encodeFunctionData, decodeFunctionData, type Address, type Hex } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectPayQuote, ProjectPayTokenOption } from '@/lib/project-pay-quote'
-import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
+import type { TxRequest, TxSendOptions } from '@/hooks/useReviewedAction'
 import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import { approvalIntentKey } from '@/lib/transaction-builders'
 import { expectRetryHeldByIntent } from './support/intent-retry'
@@ -29,9 +29,9 @@ const runtime = vi.hoisted(() => ({
 vi.mock('wagmi', () => ({ usePublicClient: () => ({ readContract: runtime.readContract, waitForTransactionReceipt: runtime.waitForTransactionReceipt, getTransactionReceipt: runtime.getTransactionReceipt }) }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address, openSignIn: runtime.openSignIn }) }))
 vi.mock('@/lib/project-pay-quote', () => ({ prepareProjectPayQuote: runtime.quote, readProjectPayTokenOptions: runtime.options }))
-vi.mock('@/hooks/useSafeTx', () => ({
+vi.mock('@/hooks/useReviewedAction', () => ({
   txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,
-  useSafeTx: () => {
+  useReviewedAction: () => {
     const [index] = useState(() => runtime.nextHook++)
     useEffect(() => { runtime.mounts++; return () => { runtime.unmounts++ } }, [])
     return runtime.handles[index]

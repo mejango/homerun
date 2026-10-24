@@ -10,7 +10,7 @@ import { usePublicClient } from 'wagmi'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
 import { displayChainName } from '@/lib/chainDisplay'
 import { DisplayTokenAmount } from '@/components/DisplayTokenAmount'
-import { useSafeTx, type TxRequest } from '@/hooks/useSafeTx'
+import { useReviewedAction, type TxRequest } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { parseAmount } from '@/lib/fund-contracts'
@@ -30,7 +30,7 @@ export function ProjectPayment(props: Parameters<typeof ExternalProjectPayment>[
   return isCenterWallet ? <CenterProjectPayment {...props} /> : <ExternalProjectPayment {...props} />
 }
 
-type PaymentTx = ReturnType<typeof useSafeTx>
+type PaymentTx = ReturnType<typeof useReviewedAction>
 type PaymentContext = { token: Address; terminal: Address; decimals: number; symbol: string }
 
 function inputAmount(value: string, decimals: number) {
@@ -46,7 +46,7 @@ function Status({ tx, chainId, stale }: { tx: PaymentTx; chainId: number; stale?
   </div>
 }
 
-/** Same bounded receipt lookup used by JBM's payment sequence. The useSafeTx
+/** Same bounded receipt lookup used by JBM's payment sequence. The useReviewedAction
  * watchers remain mounted if this waiter times out or a Safe needs execution. */
 async function paymentReceipt(client: PublicClient, hash: Hex) {
   try { return await client.waitForTransactionReceipt({ hash, timeout: 120_000 }) }
@@ -103,8 +103,8 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
   const attempt = useRef(0)
   const mounted = useRef(true)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
-  const tx = useSafeTx(chainId)
-  const approval = useSafeTx(chainId)
+  const tx = useReviewedAction(chainId)
+  const approval = useReviewedAction(chainId)
   const cache = useQueryClient()
   const count = inputAmount(input, context.decimals)
   const paymentInputs = `${chainId}:${projectId}:${context.terminal}:${context.token}:${count}:${address ?? ''}`

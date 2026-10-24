@@ -4,7 +4,7 @@
  * proceeds, its collateral, the authority read for it. When the wallet
  * switches to another account before the confirm, or between a loan's
  * permission and its borrow, nothing more reaches the wallet: the real
- * useSafeTx and the SDK's reviewed write refuse the send before its review
+ * useReviewedAction and the SDK's reviewed write refuse the send before its review
  * opens, and the dialog says why.
  */
 import './dialog-shim'
@@ -34,9 +34,9 @@ const m = vi.hoisted(() => ({ quote: vi.fn(), prepare: vi.fn(), permitted: false
 
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@wagmi/core', async importOriginal => {
-  const { wallet } = await import('./support/fake-wallet')
+  const { wallet, walletCore } = await import('./support/fake-wallet')
   return {
-    ...(await importOriginal<typeof import('@wagmi/core')>()),
+    ...(await importOriginal<typeof import('@wagmi/core')>()), ...walletCore,
     getAccount: () => ({ address: wallet.account, chainId: 1 }),
   }
 })
@@ -47,13 +47,6 @@ vi.mock('wagmi', async importOriginal => {
 vi.mock('@/hooks/useWallet', async () => {
   const { useFakeWallet } = await import('./support/fake-wallet')
   return { useWallet: useFakeWallet }
-})
-vi.mock('@/lib/transaction-review', async importOriginal => {
-  const { wallet } = await import('./support/fake-wallet')
-  return {
-    ...(await importOriginal<typeof import('@/lib/transaction-review')>()),
-    requestContractTransactionReview: wallet.requestReview,
-  }
 })
 vi.mock('@/lib/safe-connector', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/safe-connector')>()),

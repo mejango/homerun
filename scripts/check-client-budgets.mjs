@@ -16,15 +16,16 @@ const KIB = 1024
 const distDir = process.env.NEXT_DIST_DIR || '.next'
 const dist = resolve(distDir)
 // SDK 4.0.0 (2026-10-23): core's review model and write hold add 1.7-3.5 KiB to eight routes; each raised ceiling is the measure rounded up plus 1.
+// H3 (core reviewed runs replace useSafeTx): /create/preview 440.5 and /create/success 260.2, from core's write hold pulling its Relayr and send modules into the shared chunk.
 const budgets = {
   '/': { js: 217, css: 16 },
   '/founderhaus': { js: 273, css: 27 },
   '/project': { js: 273, css: 27 },
   '/projects': { js: 246, css: 14 },
   '/create': { js: 231, css: 20 },
-  '/create/preview': { js: 438, css: 27 },
+  '/create/preview': { js: 442, css: 27 },
   '/create/recover': { js: 401, css: 19 },
-  '/create/success': { js: 257, css: 14 },
+  '/create/success': { js: 262, css: 14 },
   '/center/callback': { js: 200, css: 13 },
   '/account/0x0000000000000000000000000000000000000001': { js: 271, css: 16 },
   '/intent/00000000-0000-4000-8000-000000000000': { js: 412, css: 27 },

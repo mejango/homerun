@@ -1,7 +1,7 @@
 import { jb721TiersHookAbi, jb721TiersHookStoreAbi, jbControllerAbi, jbDirectoryAbi, jbPermissionsAbi, jbProjectsAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { BASE_CURRENCY_ETH, BASE_CURRENCY_USD, buildSetPermissionsTx, decodePermissionBitmap, getProject721Shop, JBPermissionIdsV6, v6Address, type JBRulesetConfig, type Project721Shop } from '@bananapus/nana-sdk-core/v6'
 import { encodeFunctionData, isAddress, isAddressEqual, keccak256, toHex, zeroAddress, type Address, type ContractFunctionReturnType, type Hex, type PublicClient } from 'viem'
-import type { TxRequest } from '@/hooks/useSafeTx'
+import type { TxRequest } from '@/hooks/useReviewedAction'
 import type { DemoShopCurrency, DemoShopItem } from './demo-shop'
 import { readFundProjectState } from './fund-state'
 import { readVerifiedProject721Hook } from './fund-hooks'

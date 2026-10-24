@@ -7,7 +7,7 @@ import { netLoanProceeds } from '@bananapus/nana-sdk-core/v6/loan-math'
 import { formatUnits, type Address, type Hex } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { IncomeProjectState } from '@/lib/income-state'
-import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
+import type { TxRequest, TxSendOptions } from '@/hooks/useReviewedAction'
 import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 
 const WALLET = '0x1111111111111111111111111111111111111111' as Address
@@ -24,9 +24,9 @@ const runtime = vi.hoisted(() => ({
   allowance: 0n, reallocation: undefined as unknown, partial: undefined as unknown,
 }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: WALLET }) }))
-vi.mock('@/hooks/useSafeTx', () => ({
+vi.mock('@/hooks/useReviewedAction', () => ({
   txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,
-  useSafeTx: () => {
+  useReviewedAction: () => {
     const [index] = useState(() => runtime.next++)
     useEffect(() => undefined, [])
     return runtime.handles[index]

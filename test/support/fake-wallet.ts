@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react'
-import { encodeFunctionData, type Abi, type Address, type Hex } from 'viem'
+import type { Address, Hex } from 'viem'
+import { registerReviewHandler, type ReviewPrompt } from '@bananapus/nana-sdk-core/review'
 import { vi } from 'vitest'
 
 type Receipt = { status: 'success' | 'reverted'; blockNumber: bigint; blockHash: Hex; transactionHash: Hex; transactionIndex: number; from: Address; to: Address; logs: [] }
@@ -12,9 +13,10 @@ export function sentHash(n: number): Hex {
 
 /**
  * The wallet, the chain's receipts and the app review under the real
- * useSafeTx and the SDK's reviewed write. Flow tests mock `wagmi`,
- * `@wagmi/core` and `@/hooks/useWallet` with the hooks below, so the engine
- * decides what reaches the wallet: `writeContract` records it.
+ * useReviewedAction and core's reviewed send. Flow tests mock `wagmi`,
+ * `@wagmi/core` (with `walletCore`) and `@/hooks/useWallet` with the hooks
+ * below, so the engine decides what reaches the wallet: `writeContract`
+ * records each transaction, named by the function its review decoded.
  *
  * Switching the account re-renders every hook that reads it, as wagmi's
  * account subscription does.
@@ -35,18 +37,37 @@ function createFakeWallet() {
     }
   }
   let sentCount = 0
-  const writeContract = vi.fn(async (request: { address: Address; account: Address; chainId: number; abi: Abi; functionName: string; args: readonly unknown[]; value?: bigint }) => {
+  /** Each reviewed call's function, by its calldata, as core's review decoded it. */
+  const reviewed = new Map<string, string>()
+  const writeContract = vi.fn(async (request: { address: Address; account: Address; chainId: number; data: Hex; value?: bigint; functionName?: string }) => {
     const hash = sentHash((sentCount += 1))
     chainId = request.chainId
     transactions.set(hash, { hash, chainId, from: request.account, to: request.address, nonce: sentCount - 1,
-      input: encodeFunctionData(request), value: request.value ?? 0n, blockHash: null, blockNumber: null, transactionIndex: null })
+      input: request.data, value: request.value ?? 0n, blockHash: null, blockNumber: null, transactionIndex: null })
     return hash
   })
-  const requestReview = vi.fn(async () => true)
-  const switchChain = vi.fn(async () => undefined)
+  /** The wallet client core's adapter sends through. */
+  const walletClient = {
+    get chain() { return { id: chainId } },
+    sendTransaction: ({ account: from, chain, to, data, value }: { account: Address; chain: { id: number }; to: Address; data: Hex; value?: bigint }) =>
+      writeContract({ address: to, account: from, chainId: chain.id, data, value, functionName: reviewed.get(data.toLowerCase()) }),
+  }
+  const requestReview = vi.fn(async (_prompt?: ReviewPrompt) => true)
+  registerReviewHandler(async prompt => {
+    for (const call of prompt.model.calls) if (call.functionName) reviewed.set(call.data.toLowerCase(), call.functionName)
+    return (await requestReview(prompt)) ? prompt.confirmation : null
+  })
+  const switchChain = vi.fn(async (_parameters?: { chainId: number }) => undefined)
   /** One RPC for every chain: simulations pass and receipts are what `confirm` set. */
   const client = {
     getChainId: vi.fn(async () => chainId),
+    /** Core's simulation: every call succeeds unless a test says otherwise. */
+    request: vi.fn(async ({ method }: { method: string; params?: unknown }): Promise<unknown> => {
+      if (method === 'eth_call') return '0x'
+      throw new Error(`Unexpected RPC ${method}`)
+    }),
+    simulateCalls: vi.fn(async ({ calls }: { calls: readonly unknown[] }) => ({ results: calls.map(() => ({ status: 'success' as const })) })),
+    estimateGas: vi.fn(async () => 50_000n),
     getBlock: vi.fn(async ({ blockNumber = 1_000n }: { blockNumber?: bigint; blockTag?: string }) => ({ number: blockNumber, hash: sentHash(Number(blockNumber)), timestamp: 1_000n })),
     getTransaction: vi.fn(async ({ hash }: { hash: Hex }) => transactions.get(hash.toLowerCase()) ?? null),
     simulateContract: vi.fn(async (request: Record<string, unknown>) => ({ request: { ...request } })),
@@ -71,6 +92,7 @@ function createFakeWallet() {
 
   return {
     client,
+    walletClient,
     writeContract,
     requestReview,
     switchChain,
@@ -99,6 +121,13 @@ function createFakeWallet() {
     awaits(hash: Hex) {
       return awaiting.has(hash.toLowerCase())
     },
+    /** The exact transactions the wallet was asked to send, in order. */
+    sent() {
+      return writeContract.mock.calls.map(call => {
+        const request = (call as unknown[])[0] as Parameters<typeof writeContract>[0]
+        return { chainId: request.chainId, to: request.address.toLowerCase(), data: request.data, value: String(request.value ?? 0n) }
+      })
+    },
     /** What reached the wallet: each write's function and sender. */
     writes() {
       return writeContract.mock.calls.map(call => {
@@ -109,6 +138,7 @@ function createFakeWallet() {
     reset() {
       account = undefined
       sentCount = 0
+      reviewed.clear()
       chainId = 1
       receipts.clear()
       transactions.clear()
@@ -118,6 +148,11 @@ function createFakeWallet() {
       requestReview.mockImplementation(async () => true)
       switchChain.mockClear()
       client.simulateContract.mockClear()
+      client.request.mockReset().mockImplementation(async ({ method }) => {
+        if (method === 'eth_call') return '0x'
+        throw new Error(`Unexpected RPC ${method}`)
+      })
+      client.simulateCalls.mockClear()
       client.getChainId.mockReset().mockImplementation(async () => chainId)
       client.getTransaction.mockReset().mockImplementation(async ({ hash }) => transactions.get(hash.toLowerCase()) ?? null)
       client.getBlock.mockReset().mockImplementation(async ({ blockNumber = 1_000n }) => ({ number: blockNumber, hash: sentHash(Number(blockNumber)), timestamp: 1_000n }))
@@ -149,6 +184,13 @@ export const walletHooks = {
     data: wallet.useReceipt(hash),
     isError: false,
   }),
+}
+
+/** The engine's `@wagmi/core` actions, answered by the fake wallet; a test adds its own `getAccount`. */
+export const walletCore = {
+  getPublicClient: () => wallet.client,
+  getWalletClient: async () => wallet.walletClient,
+  switchChain: (_config: unknown, parameters: { chainId: number }) => wallet.switchChain(parameters),
 }
 
 /** `useWallet`, connected as the fake wallet's account. */

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { formatUnits, isAddressEqual, type Hex, type PublicClient } from "viem";
 import { useSavedAttempt } from '@bananapus/nana-sdk-core/review/react';
 import { useWallet } from "@/hooks/useWallet";
-import { txPhaseLabel, useSafeTx } from "@/hooks/useSafeTx";
+import { txPhaseLabel, useReviewedAction } from "@/hooks/useReviewedAction";
 import { jbCenterIpfs } from "@/lib/jbcenter-ipfs";
 import { explorerTxUrl } from "@/lib/chainDisplay";
 import {
@@ -59,7 +59,7 @@ export function StickyCreate({
   onCreated,
 }: StickyCreateProps) {
   const { address } = useWallet(),
-    tx = useSafeTx(state.chainId);
+    tx = useReviewedAction(state.chainId);
   const [name, setName] = useState("Homerun SHARE"),
     [prepared, setPrepared] = useState<PreparedStickyCreate | null>(null);
   const [preparing, setPreparing] = useState(false),

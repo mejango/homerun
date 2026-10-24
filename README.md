@@ -113,7 +113,7 @@ Start the app before the individual browser checks, or let `npm run test:suites`
 | Path | Responsibility |
 | --- | --- |
 | [src/app](src/app) | Native Next routes, layout and metadata |
-| [src/providers](src/providers), [src/hooks/useSafeTx.ts](src/hooks/useSafeTx.ts), [src/components/TransactionReviewProvider.tsx](src/components/TransactionReviewProvider.tsx) | Shared wallet connections, query lifecycle and reviewed transaction boundary |
+| [src/providers](src/providers), [src/hooks/useReviewedAction.ts](src/hooks/useReviewedAction.ts), [src/components/TransactionReviewProvider.tsx](src/components/TransactionReviewProvider.tsx) | Shared wallet connections, query lifecycle and reviewed transaction boundary |
 | [src/components/LiveCreate.tsx](src/components/LiveCreate.tsx), [src/lib/fund-launch-session.ts](src/lib/fund-launch-session.ts), [src/lib/fund-launch-verification.ts](src/lib/fund-launch-verification.ts) | Initial FUND launch, persisted recovery and receipt/postcondition verification |
 | [src/components/FundProject.tsx](src/components/FundProject.tsx), [src/components/FundOperatorActions.tsx](src/components/FundOperatorActions.tsx), [src/lib/fund-state.ts](src/lib/fund-state.ts), [src/lib/fund-contracts.ts](src/lib/fund-contracts.ts) | Live FUND reads and holder/operator transaction preparation |
 | [src/components/IncomeLaunch.tsx](src/components/IncomeLaunch.tsx), [src/components/IncomeProject.tsx](src/components/IncomeProject.tsx), [src/lib/income-launch.ts](src/lib/income-launch.ts) | Gated INCOME composition and contract-based INCOME interfaces |

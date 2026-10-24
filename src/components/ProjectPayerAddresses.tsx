@@ -6,7 +6,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { formatUnits, isAddress, isAddressEqual, zeroAddress, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { useSavedAttempt } from '@bananapus/nana-sdk-core/review/react'
-import { useSafeTx, txPhaseLabel } from '@/hooks/useSafeTx'
+import { useReviewedAction, txPhaseLabel } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { displayChainName, explorerAddressUrl, explorerTxUrl } from '@/lib/chainDisplay'
 import { buildPayerTransaction, checkPayerFactory, decodePayerAttempt, getProjectPayerAddresses, payerAttemptKey, payerIntent, payerSavedAttempt, payerSettingsOfCall, verifyPayerReceipt, type PayerAttempt, type PayerSettings, type ProjectPayerRow } from '@/lib/project-payers'
@@ -35,7 +35,7 @@ export function ProjectPayerAddresses(props: Props) {
 function ProjectPayerAddressContext({ chainId, projectId, tokenLabel = 'Project token' }: Props) {
   const client = usePublicClient({ chainId })
   const wallet = useWallet()
-  const tx = useSafeTx(chainId)
+  const tx = useReviewedAction(chainId)
   const prefix = useId()
   const [error, setError] = useState<string | null>(null)
   const [preparing, setPreparing] = useState(false)

@@ -8,7 +8,7 @@ import { jbProjectsAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import { encodeFunctionData, toHex, type Hex, type PublicClient } from 'viem'
 import { useWallet } from '@/hooks/useWallet'
-import { useSafeTx } from '@/hooks/useSafeTx'
+import { useReviewedAction } from '@/hooks/useReviewedAction'
 import { wagmiConfig } from '@/providers/Providers'
 import type { CreateValues } from './CreateFlow'
 import { buildFundLaunch, type FundTransaction } from '@/lib/fund-contracts'
@@ -46,8 +46,8 @@ function LaunchChain({ session, chainId, request, status, update, refreshFee, ru
   request?: FundTransaction
   status: LaunchStatus; update: (status: LaunchStatus, expectedPhase?: LaunchStatus['phase'], expectedStatus?: LaunchStatus) => void; refreshFee: (fee: bigint) => void
 }) {
-  const tx = useSafeTx(chainId)
-  const setupTx = useSafeTx(chainId)
+  const tx = useReviewedAction(chainId)
+  const setupTx = useReviewedAction(chainId)
   const [error, setError] = useState('')
   const [verifying, setVerifying] = useState(false)
   useEffect(() => { onFeedback?.(setupTx.busy || setupTx.phase === 'review' ? setupTx.phase : tx.phase, error || tx.error || setupTx.error || '') }, [tx.phase, tx.error, setupTx.phase, setupTx.busy, setupTx.error, error, onFeedback])

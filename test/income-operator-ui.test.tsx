@@ -5,7 +5,7 @@ import { encodeFunctionData, zeroAddress, type Address, type Hex, type PublicCli
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import type { IncomeOperatorSnapshot } from '../src/lib/income-operator'
 import type { IncomeProjectState } from '../src/lib/income-state'
-import type { TxSendOptions } from '../src/hooks/useSafeTx'
+import type { TxSendOptions } from '../src/hooks/useReviewedAction'
 
 const runtime = vi.hoisted(() => ({
   address: undefined as Address | undefined, snapshot: undefined as IncomeOperatorSnapshot | undefined,
@@ -15,8 +15,8 @@ const runtime = vi.hoisted(() => ({
   verificationEnabled: false, read: vi.fn(), send: vi.fn(), invalidate: vi.fn(), setQueryData: vi.fn(),
 }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address }) }))
-vi.mock('@/hooks/useSafeTx', () => ({
-  useSafeTx: () => ({ phase: runtime.phase, notice: runtime.notice, busy: runtime.busy, receipt: runtime.receipt, safeProposalHash: runtime.safeProposalHash, hash: runtime.receipt?.transactionHash, error: null, send: runtime.send }),
+vi.mock('@/hooks/useReviewedAction', () => ({
+  useReviewedAction: () => ({ phase: runtime.phase, notice: runtime.notice, busy: runtime.busy, receipt: runtime.receipt, safeProposalHash: runtime.safeProposalHash, hash: runtime.receipt?.transactionHash, error: null, send: runtime.send }),
   txPhaseLabel: (_: unknown, labels: { idle: string }) => labels.idle,
 }))
 vi.mock('@tanstack/react-query', () => ({

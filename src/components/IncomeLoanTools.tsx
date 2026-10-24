@@ -5,7 +5,7 @@ import { buildSetPermissionsTx, REVLOANS_BURN_PERMISSION_ID } from '@bananapus/n
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { erc20Abi, formatUnits, isAddressEqual, type PublicClient } from 'viem'
-import { useSafeTx, txPhaseLabel } from '@/hooks/useSafeTx'
+import { useReviewedAction, txPhaseLabel } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { parseAmount } from '@/lib/fund-contracts'
@@ -25,7 +25,7 @@ function loanIdInput(value: string) { return /^\d{1,78}$/.test(value.trim()) ? B
 function Field({ label, value, onChange, address = false }: { label: string; value: string; onChange: (value: string) => void; address?: boolean }) {
   return <label className="grid gap-2 text-sm">{label}<input className="min-h-12 w-full rounded border border-[#bfc9b5] bg-white px-3 text-base" value={value} onChange={event => onChange(event.target.value)} inputMode={address ? 'text' : 'decimal'} autoComplete="off" /></label>
 }
-function TransactionStatus({ tx, chainId }: { tx: ReturnType<typeof useSafeTx>; chainId: number }) {
+function TransactionStatus({ tx, chainId }: { tx: ReturnType<typeof useReviewedAction>; chainId: number }) {
   return <div className="mt-4 break-words text-sm" role="status" aria-live="polite">
     {tx.phase === 'submitted' ? <HeldNotice tx={tx} /> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? <p>Confirmed onchain. Loan balances are refreshing.</p> : null}
     {tx.error && <p className="text-red-800">{tx.error}</p>}
@@ -37,8 +37,8 @@ function TransactionStatus({ tx, chainId }: { tx: ReturnType<typeof useSafeTx>; 
 export function IncomeLoanTools({ state, client }: Props) {
   const { address } = useWallet()
   const cache = useQueryClient()
-  const tx = useSafeTx(state.chainId)
-  const prerequisite = useSafeTx(state.chainId)
+  const tx = useReviewedAction(state.chainId)
+  const prerequisite = useReviewedAction(state.chainId)
   const seenReceipts = useRef(new Set<string>())
   const [loanInput, setLoanInput] = useState('')
   const [action, setAction] = useState<LoanAction>('partialRepay')

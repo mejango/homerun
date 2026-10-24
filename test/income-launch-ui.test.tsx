@@ -2,7 +2,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodeAbiParameters, encodeEventTopics, type Address, type Hex, type PublicClient } from 'viem'
-import type { TxSendOptions } from '../src/hooks/useSafeTx'
+import type { TxSendOptions } from '../src/hooks/useReviewedAction'
 import type { FundProjectState } from '../src/lib/fund-state'
 import type { FundGlobalManifest } from '../src/lib/fund-global-manifest'
 
@@ -17,7 +17,7 @@ const runtime = vi.hoisted(() => ({
 }))
 vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: runtime.account }), getPublicClient: (_config: unknown, options: {chainId: number}) => runtime.clients.get(options.chainId) }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.account }) }))
-vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({ ...runtime.tx, busy: false, error: null, send: runtime.send, track: runtime.track }), txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle }))
+vi.mock('@/hooks/useReviewedAction', () => ({ useReviewedAction: () => ({ ...runtime.tx, busy: false, error: null, send: runtime.send, track: runtime.track }), txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle }))
 vi.mock('@tanstack/react-query', () => { const cache = { invalidateQueries: runtime.invalidate }; return { keepPreviousData: (data: unknown) => data, useQuery: ({ queryKey }: {queryKey: [string, number, string]}) => ({ data: queryKey[0] === 'income-launch-fund' ? runtime.funds.get(queryKey[1]) : runtime.bindings.get(queryKey[1]) ?? null, isError: queryKey[0] === 'income-binding' && runtime.bindingError, isPending: false }), useQueryClient: () => cache } })
 vi.mock('@/components/IncomeProject', () => ({ IncomeProject: ({ chainId, projectId }: {chainId: number; projectId: bigint}) => <div>Existing INCOME {chainId}/{projectId.toString()}</div> }))
 vi.mock('@/lib/income-contracts', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/income-contracts')>(), registeredHomerunDeployer: () => runtime.helper }))

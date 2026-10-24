@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { parseAbi, type Address, type Hex } from 'viem'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { FundProjectState } from '@/lib/fund-state'
-import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
+import type { TxRequest, TxSendOptions } from '@/hooks/useReviewedAction'
 import { allowanceIntent, intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import { expectRetryHeldByIntent } from './support/intent-retry'
 
@@ -20,9 +20,9 @@ const runtime = vi.hoisted(() => ({ net: 0n, sends: [] as { request: TxRequest; 
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: OPERATOR }) }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@wagmi/core', () => ({ getPublicClient: () => client }))
-vi.mock('@/hooks/useSafeTx', () => ({
+vi.mock('@/hooks/useReviewedAction', () => ({
   txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,
-  useSafeTx: () => ({ phase: 'idle', busy: false, error: null, hash: null, safeProposalHash: null, receipt: null, held: null, notice: null, reset: vi.fn(), dismiss: vi.fn(),
+  useReviewedAction: () => ({ phase: 'idle', busy: false, error: null, hash: null, safeProposalHash: null, receipt: null, held: null, notice: null, reset: vi.fn(), dismiss: vi.fn(),
     // Handed over, then nothing follows it: a lost reply or a Safe proposal.
     send: async (request: TxRequest, options: TxSendOptions) => { runtime.sends.push({ request, options }); return null } }),
 }))

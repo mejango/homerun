@@ -16,11 +16,11 @@ import {
 } from "viem";
 import { usePublicClient } from "wagmi";
 import {
-  useSafeTx,
+  useReviewedAction,
   txPhaseLabel,
   type TxRequest,
   type TxSendOptions,
-} from "@/hooks/useSafeTx";
+} from "@/hooks/useReviewedAction";
 import { useWallet } from "@/hooks/useWallet";
 import { displayChainName, explorerTxUrl } from "@/lib/chainDisplay";
 import { parseAmount } from "@/lib/fund-contracts";
@@ -59,7 +59,7 @@ export type StickyHolderProps = {
   stickyProjectId: bigint;
   incomeProjectId?: bigint;
 };
-type StickyTx = ReturnType<typeof useSafeTx>;
+type StickyTx = ReturnType<typeof useReviewedAction>;
 const STAKE_ACTIONS = ["claimTokensFor", "approve", "pay"] as const;
 const UNSTAKE_ACTIONS = ["cashOutTokensOf"] as const;
 const REWARD_ACTIONS = ["beginVesting", "collectVestedRewards"] as const;
@@ -153,7 +153,7 @@ function Status({ tx, chainId, hideError }: { tx: StickyTx; chainId: number; hid
   );
 }
 function useStickyTx(state: StickyProjectState, actions: readonly string[]) {
-  const tx = useSafeTx(state.chainId),
+  const tx = useReviewedAction(state.chainId),
     cache = useQueryClient(),
     previous = useRef<string | null>(null),
     prerequisite = useRef<bigint | undefined>(undefined);
