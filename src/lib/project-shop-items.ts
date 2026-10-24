@@ -27,8 +27,8 @@ function decimalUnits(value: string, decimals: number): bigint | null {
 }
 
 /** Shared item rules, with precision taken from the existing shop's on-chain pricing. */
-export function validateProjectShopItem(item: DemoShopItem, pricing: ProjectShopPricing): Record<string, string> {
-  const errors = validateDemoShopItem(item, pricing.currency === 1 ? 'ETH' : 'USD', pricing.decimals)
+export function validateProjectShopItem(item: DemoShopItem, pricing: ProjectShopPricing, historicalCustomVoting = false): Record<string, string> {
+  const errors = validateDemoShopItem(item, pricing.currency === 1 ? 'ETH' : 'USD', pricing.decimals, historicalCustomVoting)
   if (!validPricing(pricing)) {
     errors.price = 'This shop has invalid pricing settings.'
     return errors
@@ -40,13 +40,13 @@ export function validateProjectShopItem(item: DemoShopItem, pricing: ProjectShop
   return errors
 }
 
-function snapshotItems(items: readonly DemoShopItem[], pricing: ProjectShopPricing): DemoShopItem[] {
+function snapshotItems(items: readonly DemoShopItem[], pricing: ProjectShopPricing, historicalCustomVoting = false): DemoShopItem[] {
   if (!validPricing(pricing)) throw new Error('This shop has invalid pricing settings.')
   if (!Array.isArray(items) || items.length === 0 || items.length > MAX_PROJECT_SHOP_ITEMS) throw new Error(`Add between 1 and ${MAX_PROJECT_SHOP_ITEMS} items at a time.`)
   const ids = new Set<string>()
   return items.map((item: DemoShopItem, index: number) => {
     if (!item || typeof item !== 'object') throw new Error(`Item ${index + 1} is invalid.`)
-    const errors = validateProjectShopItem(item, pricing)
+    const errors = validateProjectShopItem(item, pricing, historicalCustomVoting)
     if (Object.keys(errors).length) throw new Error(`Item ${index + 1}: ${Object.values(errors).join(' ')}`)
     if (ids.has(item.id)) throw new Error('Each item needs a different identifier.')
     ids.add(item.id)
@@ -54,7 +54,7 @@ function snapshotItems(items: readonly DemoShopItem[], pricing: ProjectShopPrici
     return {
       id: item.id, name: item.name, description: item.description, price: item.price,
       supply: item.supply, category: item.category, discountPct: item.discountPct,
-      reserveN: item.reserveN, reserveBeneficiary: item.reserveBeneficiary, votingUnits: item.votingUnits,
+      reserveN: item.reserveN, reserveBeneficiary: item.reserveBeneficiary, votingUnits: historicalCustomVoting ? item.votingUnits : '',
       allowOwnerMint: item.allowOwnerMint, transfersPausable: item.transfersPausable,
       cantBeRemoved: item.cantBeRemoved, allowCredits: item.allowCredits,
       ownerCanEditDiscount: item.ownerCanEditDiscount,
@@ -150,12 +150,13 @@ export function buildProjectShopTierConfigs(
   pinned: readonly PinnedProjectShopItem[],
   pricing: ProjectShopPricing,
   knownCategories?: Readonly<Record<string, number>>,
+  historicalCustomVoting = false,
 ): ProjectShopTierConfig[] {
   if (pinned.length === 0) {
     if (!validPricing(pricing)) throw new Error('This shop has invalid pricing settings.')
     return []
   }
-  const drafts = snapshotItems(pinned.map(item => item.draft), pricing)
+  const drafts = snapshotItems(pinned.map(item => item.draft), pricing, historicalCustomVoting)
   const categories = categoryIds(drafts, knownCategories)
   return drafts.map((item, index): ProjectShopTierConfig => {
     const encodedIpfsUri = pinned[index].encodedIpfsUri
@@ -171,9 +172,8 @@ export function buildProjectShopTierConfigs(
       discountPercent: discount ? Number(decimalUnits(discount, 1)! / 5n) : 0,
       flags: {
         allowOwnerMint: item.allowOwnerMint, useReserveBeneficiaryAsDefault: false,
-        // The editor's empty value means zero votes. Without this flag the
-        // contract would instead assign the item's full price as voting units.
-        transfersPausable: item.transfersPausable, useVotingUnits: true,
+        // Historical custom mode only reconstructs exact saved settlement bytes.
+        transfersPausable: item.transfersPausable, useVotingUnits: historicalCustomVoting,
         cantBeRemoved: item.cantBeRemoved, cantIncreaseDiscountPercent: !item.ownerCanEditDiscount,
         cantBuyWithCredits: !item.allowCredits,
       },

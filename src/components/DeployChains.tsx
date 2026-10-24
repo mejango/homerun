@@ -2,7 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
-import { getAccount, getPublicClient, getWalletClient, switchChain, waitForTransactionReceipt } from '@wagmi/core'
+import { getAccount, getPublicClient, switchChain, waitForTransactionReceipt } from '@wagmi/core'
 import { decodeFunctionData } from 'viem'
 import { erc2771ForwarderAbi, jbProjectsAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
@@ -21,7 +21,7 @@ import {
 import { holdDeployment, loadHeldDeployments, releaseDeployment } from '@/lib/relay-held'
 import { requireTransactionReview, TransactionReviewCancelledError } from '@/lib/transaction-review'
 import { isSafeConnection } from '@/lib/safe-connector'
-import { assertReviewedWallet } from '@/lib/wallet-core'
+import { assertReviewedWallet, withReviewedWallet } from '@/lib/wallet-core'
 import { VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import { displayChainName } from '@/lib/chainDisplay'
 import { SUPPORTED_CHAINS } from '@/lib/chains'
@@ -186,12 +186,10 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
     const sendReviewed = async (call: Pick<FundRelayRequest, 'to' | 'data' | 'value'>) => {
       ordinaryWallet()
       assertReviewedWallet({ ...authority, chainId: request.chainId }, CHANGED_WALLET_MESSAGE)
-      const wallet = await fromWallet(() => getWalletClient(wagmiConfig, { account, chainId: request.chainId as JBChainId, connector: connection.connector }))
-      ordinaryWallet()
-      assertReviewedWallet({ ...authority, chainId: request.chainId }, CHANGED_WALLET_MESSAGE)
-      return fromWallet(() => wallet.sendTransaction({
-        account, chain, chainId: request.chainId, to: call.to, data: call.data, value: call.value,
-      }))
+      return withReviewedWallet({ ...authority, chainId: request.chainId }, wallet => {
+        ordinaryWallet()
+        return fromWallet<`0x${string}`>(() => wallet.sendTransaction({ account, chain, chainId: request.chainId, to: call.to, data: call.data, value: call.value }))
+      }, CHANGED_WALLET_MESSAGE)
     }
     for (const entry of setup) {
       const setupHash = await sendReviewed(entry)

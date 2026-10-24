@@ -59,7 +59,7 @@ const mocks = vi.hoisted(() => ({
   writeContract: vi.fn(),
 }))
 
-vi.mock('@wagmi/core', () => ({ getAccount: mocks.getAccount }))
+vi.mock('@wagmi/core', () => ({ getAccount: mocks.getAccount, getWalletClient: async () => ({ writeContract: mocks.writeContract }) }))
 vi.mock('wagmi', () => ({
   usePublicClient: () => mocks.publicClient,
   useSwitchChain: () => ({ switchChainAsync: mocks.switchChain }),
