@@ -15,7 +15,6 @@ import {
   usePublicClient,
   useSwitchChain,
   useWaitForTransactionReceipt,
-  useWriteContract,
 } from 'wagmi'
 import { useWallet } from '@/hooks/useWallet'
 import { useHeldSend, useHeldWrite, type HeldSendInput } from '@bananapus/nana-sdk-core/review/react'
@@ -34,7 +33,7 @@ import {
   TransactionReviewCancelledError,
 } from '@/lib/transaction-review'
 import { chainName } from '@/lib/urn'
-import { assertReviewedWallet } from '@/lib/wallet-core'
+import { assertReviewedWallet, withReviewedWallet } from '@/lib/wallet-core'
 import { wagmiConfig } from '@/providers/Providers'
 import {
   atOnceExecution,
@@ -454,7 +453,6 @@ function recordProposal(
 export function useSafeTx(chainId: number) {
   const { isConnected, isCenterWallet } = useWallet()
   const publicClient = usePublicClient({ chainId })
-  const { writeContractAsync } = useWriteContract()
   const { switchChainAsync } = useSwitchChain()
   const isSafe = useSafeConnection(wagmiConfig)
 
@@ -951,7 +949,24 @@ export function useSafeTx(chainId: number) {
               assertReviewedWallet({ account, connectorUid, chainId: request.chainId, safe: viaSafe })
               options.assertWriteState?.()
             },
-            write: simulated => writeContractAsync({ ...simulated, chainId: request.chainId }),
+            write: async simulated => {
+              let invoked = false
+              try {
+                return await withReviewedWallet({ account, connectorUid, chainId: request.chainId, safe: viaSafe }, wallet => {
+                  assertCurrent()
+                  assertReviewedRequest()
+                  options.assertWriteState?.()
+                  invoked = true
+                  return wallet.writeContract({ ...simulated, account, chain: wallet.chain, chainId: request.chainId })
+                })
+              } catch (error) {
+                if (!invoked) {
+                  gate?.onRejected()
+                  await options.onBeforeWriteAborted?.()
+                }
+                throw error
+              }
+            },
             onPhase: next => { if (generation.current === at) setPhase(next) },
           })
           if (!mounted.current || generation.current !== at) return txHash
@@ -1036,7 +1051,7 @@ export function useSafeTx(chainId: number) {
         sending.current = false
       }
     },
-    [isConnected, isCenterWallet, publicClient, switchChainAsync, writeContractAsync, apply],
+    [isConnected, isCenterWallet, publicClient, switchChainAsync, apply],
   )
 
   /**

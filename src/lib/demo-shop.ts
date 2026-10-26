@@ -110,7 +110,8 @@ function mediaOk(media: DemoShopItem['media']): boolean {
   } catch { return false }
 }
 
-export function validateDemoShopItem(item: DemoShopItem, currency: DemoShopCurrency, priceDecimals = currency === 'ETH' ? 18 : 6): Record<string, string> {
+export function validateDemoShopItem(item: DemoShopItem, currency: DemoShopCurrency, priceDecimals = currency === 'ETH' ? 18 : 6, historicalCustomVoting = false): Record<string, string> {
+  if (!historicalCustomVoting) item = { ...item, votingUnits: '' }
   if (!Number.isInteger(priceDecimals) || priceDecimals < 0 || priceDecimals > 255) return { price: 'The shop pricing precision could not be read.' }
   const errors: Record<string, string> = {}
   for (const [field, limit] of Object.entries(stringLimits)) {
@@ -184,7 +185,7 @@ export function parseDemoShopStorage(raw: string | null): { currency: DemoShopCu
     const items: DemoShopItem[] = []
     const ids = new Set<string>()
     for (const candidate of saved.items) {
-      if (!record(candidate) || Object.entries(stringLimits).some(([key, max]) => typeof candidate[key] !== 'string' || candidate[key].length > max)
+      if (!record(candidate) || Object.entries(stringLimits).some(([key, max]) => key !== 'votingUnits' && (typeof candidate[key] !== 'string' || candidate[key].length > max))
         || flags.some(flag => typeof candidate[flag] !== 'boolean') || !Array.isArray(candidate.splits) || candidate.splits.length > MAX_SPLITS) return null
       const media = candidate.media
       if (media !== null && (!record(media) || ['url', 'type', 'name'].some(key => typeof media[key] !== 'string'))) return null
@@ -194,7 +195,7 @@ export function parseDemoShopStorage(raw: string | null): { currency: DemoShopCu
       const item: DemoShopItem = {
         id: source.id, name: source.name, description: source.description, price: source.price,
         supply: source.supply, category: source.category, discountPct: source.discountPct,
-        reserveN: source.reserveN, reserveBeneficiary: source.reserveBeneficiary, votingUnits: source.votingUnits,
+        reserveN: source.reserveN, reserveBeneficiary: source.reserveBeneficiary, votingUnits: '',
         allowOwnerMint: source.allowOwnerMint, transfersPausable: source.transfersPausable,
         cantBeRemoved: source.cantBeRemoved, allowCredits: source.allowCredits, ownerCanEditDiscount: source.ownerCanEditDiscount,
         media: source.media ? { url: source.media.url, type: source.media.type, name: source.media.name } : null,

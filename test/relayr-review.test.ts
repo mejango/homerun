@@ -32,7 +32,7 @@ const m = vi.hoisted(() => ({
   noClient: [] as number[],
 }))
 
-vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: m.account, chainId: m.chainId, connector: { uid: m.connectorUid, id: 'injected' } }) }))
+vi.mock('@wagmi/core', () => ({ getWalletClient: async () => { await m.acquire(); return { sendTransaction: m.send, signTypedData: m.signTypedData } }, getAccount: () => ({ address: m.account, chainId: m.chainId, connector: { uid: m.connectorUid, id: 'injected' } }) }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@/lib/transaction-review', async importOriginal => ({
   ...await importOriginal<typeof import('@/lib/transaction-review')>(), requireTransactionReview: m.review,
@@ -98,13 +98,12 @@ describe('relayed request review', () => {
 })
 
 describe('forwarder signature identity', () => {
-  it.each(['account', 'chain', 'connector', 'safe', 'view-as'] as const)('refuses %s changed during wallet acquisition', async changed => {
+  it.each(['account', 'chain', 'safe', 'view-as'] as const)('refuses %s changed during wallet acquisition', async changed => {
     const prepared = await prepareForwardedTx({ chainId: 1, target: TARGET, data: '0x1234' }, m.account)
     m.acquire.mockImplementationOnce(async () => {
       await Promise.resolve()
       if (changed === 'account') m.account = TARGET
       if (changed === 'chain') m.chainId = 8453
-      if (changed === 'connector') m.connectorUid = 'replacement'
       if (changed === 'safe') m.safe = true
       if (changed === 'view-as') setViewAs(TARGET)
     })
@@ -113,6 +112,31 @@ describe('forwarder signature identity', () => {
       expect(m.signTypedData).not.toHaveBeenCalled()
     } finally { clearViewAs() }
   })
+})
+
+it('signs through the current connector after the awaited nonce recheck', async () => {
+  const prepared = await prepareForwardedTx({ chainId: 1, target: TARGET, data: '0x1234' }, m.account)
+  client.readContract.mockImplementationOnce(async () => {
+    await Promise.resolve()
+    m.connectorUid = 'replacement'
+    return 0n
+  })
+  await prepared.sign()
+  expect(m.signTypedData).toHaveBeenCalledOnce()
+})
+
+it('refuses a relay signature that expires during final wallet acquisition', async () => {
+  const prepared = await prepareForwardedTx({ chainId: 1, target: TARGET, data: '0x1234' }, m.account)
+  const deadline = Number((prepared.review.authorization as { message: { deadline: number } }).message.deadline)
+  const now = vi.spyOn(Date, 'now')
+  m.acquire.mockResolvedValueOnce(undefined).mockImplementationOnce(async () => {
+    await Promise.resolve()
+    now.mockReturnValue((deadline + 1) * 1000)
+  })
+  try {
+    await expect(prepared.sign()).rejects.toThrow('expired')
+    expect(m.signTypedData).not.toHaveBeenCalled()
+  } finally { now.mockRestore() }
 })
 
 describe('payment', () => {
@@ -158,7 +182,7 @@ describe('payment', () => {
     expect(m.send.mock.calls[0][0].gas).toBe(reviewed.gas)
   })
 
-  it.each(['account', 'chain', 'connector', 'safe'] as const)('refuses a changed %s after the final asynchronous recheck', async changed => {
+  it.each(['account', 'chain', 'safe'] as const)('refuses a changed %s after the final asynchronous recheck', async changed => {
     const reviewedAccount = m.account
     let checks = 0
     const onSending = vi.fn()
@@ -168,7 +192,6 @@ describe('payment', () => {
       if (changed === 'account') m.account = TARGET
       if (changed === 'chain') m.chainId = 1
       if (changed === 'safe') m.safe = true
-      if (changed === 'connector') m.connectorUid = 'replacement'
     } })).rejects.toThrow('Connected wallet changed')
     expect(onSending).not.toHaveBeenCalled()
     expect(m.send).not.toHaveBeenCalled()
@@ -191,14 +214,13 @@ describe('payment', () => {
     expect(m.send).not.toHaveBeenCalled()
   })
 
-  it.each(['account', 'chain', 'connector', 'safe', 'view-as', 'quote'] as const)('proves no payment was sent when %s changes during the awaited journal marker', async changed => {
+  it.each(['account', 'chain', 'safe', 'view-as', 'quote'] as const)('proves no payment was sent when %s changes during the awaited journal marker', async changed => {
     const changingPayment = { ...payment }
     const onSending = vi.fn(async () => {
       await Promise.resolve()
       expect(m.send).not.toHaveBeenCalled()
       if (changed === 'account') m.account = TARGET
       if (changed === 'chain') m.chainId = 1
-      if (changed === 'connector') m.connectorUid = 'replacement'
       if (changed === 'safe') m.safe = true
       if (changed === 'view-as') setViewAs(TARGET)
       if (changed === 'quote') changingPayment.amount = '201'

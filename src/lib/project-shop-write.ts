@@ -46,6 +46,8 @@ export type ProjectShopWriteState = {
 
 export type PreparedProjectShopWrite = {
   version: 1
+  /** Absent on historical journals whose exact submitted tiers used custom voting. */
+  votingPolicy?: 'price'
   snapshot: ProjectShopWriteState
   pinned: PinnedProjectShopItem[]
   removeTierIds: number[]
@@ -162,8 +164,8 @@ async function readRemovalIdentity(client: PublicClient, state: ProjectShopWrite
   return stable(tiers)
 }
 
-function checkFlags(state: ProjectShopWriteState, pinned: PinnedProjectShopItem[]): void {
-  const tiers = buildProjectShopTierConfigs(pinned, state.pricing)
+function checkFlags(state: ProjectShopWriteState, pinned: PinnedProjectShopItem[], legacy = false): void {
+  const tiers = buildProjectShopTierConfigs(pinned, state.pricing, undefined, legacy)
   if (state.maxTierId + BigInt(tiers.length) > 65_535n) throw new Error('This shop has reached the supported item limit.')
   for (const tier of tiers) {
     if (state.flags?.noNewTiersWithReserves && tier.reserveFrequency !== 0) throw new Error('This shop permanently disallows new items with reserved inventory.')
@@ -178,8 +180,9 @@ function materialize(plan: Omit<PreparedProjectShopWrite, 'requests' | 'requestK
   validateRemovalIds(removeTierIds)
   if (!isAddress(state.account) || !isAddress(state.owner) || !/^0x[\da-f]{64}$/i.test(plan.salt)) throw new Error('The saved shop update has an invalid identity.')
   if (!pinned.length && !removeTierIds.length) throw new Error('Add or remove an item first.')
-  checkFlags(state, pinned)
-  const tiers = buildProjectShopTierConfigs(pinned, state.pricing)
+  const legacy = plan.votingPolicy !== 'price'
+  checkFlags(state, pinned, legacy)
+  const tiers = buildProjectShopTierConfigs(pinned, state.pricing, undefined, legacy)
   if (state.shop) {
     if ((pinned.length && !state.canAdd) || (removeTierIds.length && !state.canRemove)) throw new Error(state.blockedReason ?? 'This account cannot manage this shop.')
     if (!isAddress(state.shop.hook)) throw new Error('The saved shop address is invalid.')
@@ -194,7 +197,10 @@ function materialize(plan: Omit<PreparedProjectShopWrite, 'requests' | 'requestK
     if (!state.create.canManagePermissions) throw new Error('The owner must authorize the shop deployer first.')
     requests.push(permissions(state.create.deployerPermissions | QUEUE_BIT, 'Authorize shop creation for this project')); requestKinds.push('grant')
   }
-  requests.push(buildCreateProjectShopRequest({ chainId: state.chainId, projectId: state.projectId, configuration: state.create.configuration, tiers, projectUri: state.create.projectUri, salt: plan.salt })); requestKinds.push('create')
+  const creation = buildCreateProjectShopRequest({ chainId: state.chainId, projectId: state.projectId, configuration: state.create.configuration, tiers, projectUri: state.create.projectUri, salt: plan.salt })
+  // Reconstruct historical submitted bytes only; reverify refuses new legacy authorizations.
+  if (legacy) (creation.args[1] as { tiersConfig: { tiers: typeof tiers } }).tiersConfig.tiers = tiers
+  requests.push(creation); requestKinds.push('create')
   if (!state.create.deployerCanQueue) { requests.push(permissions(state.create.deployerPermissions, 'Restore the shop deployer’s previous permissions')); requestKinds.push('restore') }
   return { ...plan, requests, requestKinds, notice: `Create this project’s USD shop and first items in one transaction, attaching it through a new ruleset with the existing project terms.${requestKinds.includes('grant') ? ' First authorize the shop deployer for this project, then restore its previous permissions after creation. Complete all three steps.' : ''}` }
 }
@@ -213,7 +219,7 @@ export async function prepareProjectShopWrite(client: PublicClient, input: { sna
   const pinned = items.length ? await pinProjectShopItems(items, state.pricing, input.onStatus) : []
   const random = new Uint8Array(32)
   globalThis.crypto.getRandomValues(random)
-  return materialize({ version: 1, snapshot: state, pinned, removeTierIds, removalIdentity, salt: keccak256(toHex(random)) })
+  return materialize({ version: 1, votingPolicy: 'price', snapshot: state, pinned, removeTierIds, removalIdentity, salt: keccak256(toHex(random)) })
 }
 
 /** Rebuild canonical calldata; never use a saved ABI, target, or arbitrary request. */
@@ -231,6 +237,7 @@ export async function reverifyProjectShopWrite(client: PublicClient, plan: Prepa
   const canonical = projectShopWriteRequest(plan, requestIndex)
   if (reviewedRequest && (reviewedRequest.chainId !== canonical.chainId || !isAddressEqual(reviewedRequest.address, canonical.address) || (reviewedRequest.value ?? 0n) !== 0n || encodeFunctionData(reviewedRequest) !== encodeFunctionData(canonical))) throw new Error('The transaction differs from the reviewed shop update.')
   const kind = materialize(plan).requestKinds[requestIndex]
+  if (plan.votingPolicy !== 'price' && plan.pinned.length && kind !== 'restore') throw new Error('This saved shop update uses old voting settings. Reopen the editor and review price-based voting before signing.')
   if (kind === 'restore') {
     const owner = await client.readContract({ address: v6Address('JBProjects', state.chainId), abi: jbProjectsAbi, functionName: 'ownerOf', args: [state.projectId] })
     if (!isAddressEqual(owner, state.owner) || !await permission(client, state.chainId, account, owner, state.projectId, JBPermissionIdsV6.ROOT)) throw new Error('Project ownership or permission-management authority changed. Review the remaining shop-deployer permission in the owner account.')
@@ -276,7 +283,7 @@ export function parseProjectShopWrite(raw: string | null): PreparedProjectShopWr
       }
       return value
     }) as Omit<PreparedProjectShopWrite, 'requests' | 'requestKinds' | 'notice'>
-    if (facts.version !== 1 || typeof facts.snapshot.identity !== 'string' || facts.snapshot.identity.length > 500_000 || typeof facts.removalIdentity !== 'string' || !Array.isArray(facts.pinned) || facts.pinned.length > 50 || facts.snapshot.create && (typeof facts.snapshot.create.deployerPermissions !== 'bigint' || facts.snapshot.create.deployerPermissions < 0n || facts.snapshot.create.deployerPermissions >= 1n << 256n)) return null
+    if (facts.version !== 1 || (facts.votingPolicy !== undefined && facts.votingPolicy !== 'price') || typeof facts.snapshot.identity !== 'string' || facts.snapshot.identity.length > 500_000 || typeof facts.removalIdentity !== 'string' || !Array.isArray(facts.pinned) || facts.pinned.length > 50 || facts.snapshot.create && (typeof facts.snapshot.create.deployerPermissions !== 'bigint' || facts.snapshot.create.deployerPermissions < 0n || facts.snapshot.create.deployerPermissions >= 1n << 256n)) return null
     return materialize(facts)
   } catch { return null }
 }

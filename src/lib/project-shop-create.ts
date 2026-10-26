@@ -68,6 +68,7 @@ export function buildCreateProjectShopRequest(input: {
   if (input.projectId <= 0n || input.projectId >= 1n << 64n) throw new Error('A valid project ID is required to create a shop.')
   if (!/^0x[\da-fA-F]{64}$/.test(input.salt) || input.salt.toLowerCase() === zeroHash) throw new Error('A nonzero bytes32 shop deployment salt is required.')
   if (input.tiers.length === 0) throw new Error('Add at least one item before creating a shop.')
+  if (input.tiers.some(tier => tier.initialSupply === 1 && tier.reserveFrequency > 0)) throw new Error('Reserved inventory needs at least 2 items, or unlimited supply.')
   assertConfiguration(input.configuration)
   const chainId = input.chainId as JBChainId
   const name = input.name?.trim() || `Project #${input.projectId} shop`
@@ -86,7 +87,7 @@ export function buildCreateProjectShopRequest(input: {
       baseUri: 'ipfs://',
       tokenUriResolver: zeroAddress,
       contractUri: input.projectUri,
-      tiersConfig: { tiers: input.tiers, currency: BASE_CURRENCY_USD, decimals: 6 },
+      tiersConfig: { tiers: input.tiers.map(tier => ({ ...tier, votingUnits: 0, flags: { ...tier.flags, useVotingUnits: false } })), currency: BASE_CURRENCY_USD, decimals: 6 },
       flags: {
         noNewTiersWithReserves: false,
         noNewTiersWithVotes: false,
