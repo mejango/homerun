@@ -10,7 +10,9 @@ import {
   transactionMessage,
   viemWalletAdapter,
   writeExitMessage,
+  type ReviewContextRow,
   type ReviewedCall,
+  type ReviewedPriorBlock,
   type ReviewedResult,
   type ReviewedSendDeps,
   type WriteHoldClient,
@@ -50,11 +52,17 @@ export type TxRequest = {
   label?: string
 }
 
+/** One step of a multi-step action (an approval, then its payment): its own hold keys and simulation block. */
+export type TxStep = TxRequest & Pick<TxSendOptions, 'recoveryNamespace' | 'recoveryLegacy' | 'simulationBlockNumber'> & {
+  /** Simulate on the previous step's receipt block (a payment after its approval). */
+  dependsOnPrior?: boolean
+}
+
 export type TxSendOptions = {
   /** The account this request was built for: while another is connected, nothing is reviewed or sent. */
   reviewedAccount: Address
-  /** A stale-state check before the wallet opens; it throws to stop with nothing sent. */
-  reverify?: (request: TxRequest) => Promise<unknown>
+  /** A stale-state check before each step's wallet prompt; it throws to stop with nothing sent. `prior` is where the step before confirmed. */
+  reverify?: (request: TxRequest, index: number, prior?: ReviewedPriorBlock) => Promise<unknown>
   /** A flow's own record at the wallet boundary; it throws to stop with nothing sent. */
   beforeWrite?: () => unknown | Promise<unknown>
   /** Synchronous caller intent/mount check at the final wallet boundary. */
@@ -71,7 +79,16 @@ export type TxSendOptions = {
   simulationBlockNumber?: bigint
   /** Plain-language sentence shown at the top of the review. */
   reviewNotice?: string
+  /** What the action does, as rows at the top of its one review. */
+  context?: readonly ReviewContextRow[]
+  /** A multi-step action's key: its steps are one review and resume as one action after a reload. */
+  scope?: string
+  /** A step's wallet reply, before its receipt (a flow's own journal, its progress). */
+  onStepSubmitted?: (index: number, hash: Hex, safe: boolean) => void
 }
+
+/** What a saved multi-step action shows: the steps it continues are the ones the person reviewed. */
+export const SAVED_SEQUENCE_LINE = 'This continues your saved action exactly as you reviewed it. Its remaining steps are below.'
 
 /** Homerun's wallet as core's reviewed sends use it: the connected wagmi wallet, switched to the chain each call is on. */
 const walletAdapter = viemWalletAdapter({
@@ -96,7 +113,7 @@ const reviewedSendDeps: ReviewedSendDeps = {
  * Only its two entry points are marked used: a whole-namespace import marks every core review export used, and webpack then
  * bundles their imports into the shared chunk every page with a write hold loads.
  */
-const loadReviewEngine = () => import(/* webpackExports: ["sendReviewed", "resumeReviewed"] */ '@bananapus/nana-sdk-core/review')
+const loadReviewEngine = () => import(/* webpackExports: ["sendReviewed", "resumeReviewed", "findReviewedSequence", "discardReviewedSequence"] */ '@bananapus/nana-sdk-core/review')
 
 const CENTER_WALLET_REFUSED = 'This action needs an external wallet. Juicebox wallet payments use their own payment review.'
 const CLOSED_LINE = 'This review closed. Open the action again before sending.'
@@ -194,7 +211,7 @@ export function useReviewedAction(chainId: number) {
     })
   }, [])
 
-  const send = useCallback(async (request: TxRequest, options: TxSendOptions): Promise<Hex | null> => {
+  const send = useCallback(async (requested: TxRequest | readonly TxStep[], options: TxSendOptions): Promise<Hex | null> => {
     if (inFlight.current) return null
     const { runner, isConnected, isCenterWallet } = live.current
     if (!isConnected && !isCenterWallet && !getViewAs()) {
@@ -204,49 +221,70 @@ export function useReviewedAction(chainId: number) {
     inFlight.current = true
     clear()
     const viaSafe = isSafeConnection(wagmiConfig)
-    const description = [options.reviewNotice, holds.reviewLine(), viaSafe ? SAFE_NONCE_GUIDANCE : null].filter(Boolean).join('\n\n')
-    const { data } = callOf(request)
-    const call: ReviewedCall = {
-      chainId: request.chainId, to: request.address, data, value: request.value ?? 0n,
-      abi: request.abi, functionName: request.functionName, args: request.args,
-      ...(request.label ? { label: request.label } : {}),
-      ...(options.recoveryNamespace ? { intent: options.recoveryNamespace } : {}),
-      ...(options.recoveryLegacy ? { legacy: options.recoveryLegacy } : {}),
-      ...(options.simulationBlockNumber !== undefined ? { simulationBlockNumber: options.simulationBlockNumber } : {}),
-    }
-    // A success that settled while the user was away is shown with its "Send it again", never sent over.
-    const away = { reviewedAccount: options.reviewedAccount, safe: viaSafe, ...(options.recoveryNamespace ? { recoveryNamespace: options.recoveryNamespace } : {}), ...(options.recoveryLegacy ? { recoveryLegacy: options.recoveryLegacy } : {}) }
-    if (openStepHold(holds, options.reviewedAccount, viaSafe, call).unacknowledgedSuccess()) {
+    // A lone request takes its hold keys from the options; each step of an action carries its own.
+    const steps: readonly TxStep[] = 'address' in requested
+      ? [{ ...(requested as TxRequest), recoveryNamespace: options.recoveryNamespace, recoveryLegacy: options.recoveryLegacy, simulationBlockNumber: options.simulationBlockNumber }]
+      : requested as readonly TxStep[]
+    const reviewedCall = (step: TxStep): ReviewedCall => ({
+      chainId: step.chainId, to: step.address, data: callOf(step).data, value: step.value ?? 0n,
+      abi: step.abi, functionName: step.functionName, args: step.args,
+      ...(step.label ? { label: step.label } : {}),
+      ...(step.recoveryNamespace ? { intent: step.recoveryNamespace } : {}),
+      ...(step.recoveryLegacy ? { legacy: step.recoveryLegacy } : {}),
+      ...(step.dependsOnPrior ? { dependsOnPrior: true } : step.simulationBlockNumber !== undefined ? { simulationBlockNumber: step.simulationBlockNumber } : {}),
+    })
+    let calls = steps.map(reviewedCall)
+    const last = steps.at(-1)!, action = calls.at(-1)!
+    // A success of the action that settled while the user was away is shown with its "Send it again", never sent over.
+    const away = { reviewedAccount: options.reviewedAccount, safe: viaSafe, ...(last.recoveryNamespace ? { recoveryNamespace: last.recoveryNamespace } : {}), ...(last.recoveryLegacy ? { recoveryLegacy: last.recoveryLegacy } : {}) }
+    if (openStepHold(holds, options.reviewedAccount, viaSafe, action).unacknowledgedSuccess()) {
       inFlight.current = false
-      track(request, away)
+      track(last, away)
       return null
     }
-    // The send resolves with the wallet's reply, as the flow journals it; core follows it to its receipt.
+    // A saved action with a step in flight continues exactly as reviewed; one with nothing in flight starts over.
+    let saved = false
+    if (options.scope && calls.length > 1) {
+      try {
+        const engine = await loadReviewEngine()
+        const unfinished = engine.findReviewedSequence(options.scope, options.reviewedAccount)
+        if (unfinished && !unfinished.sending && !unfinished.proposed) await engine.discardReviewedSequence(unfinished).catch(() => { saved = true })
+        else if (unfinished) saved = true
+        if (saved && unfinished) calls = [...unfinished.calls]
+      } catch { /* The run loads the engine again and reports its failure. */ }
+    }
+    const description = [saved ? SAVED_SEQUENCE_LINE : options.reviewNotice, holds.reviewLine(), viaSafe ? SAFE_NONCE_GUIDANCE : null].filter(Boolean).join('\n\n')
+    const total = calls.length
+    // The send resolves with the wallet's reply for the action's last step, as the flow journals it; core follows it to its receipt.
     return new Promise<Hex | null>(resolve => {
       let answered = false
       const answer = (hash: Hex | null) => { if (!answered) { answered = true; resolve(hash) } }
       void runner.run({
         account: options.reviewedAccount,
-        calls: [call],
+        calls,
+        ...(total > 1 && options.scope ? { scope: options.scope } : {}),
         ...(description ? { description } : {}),
+        ...(!saved && options.context?.length ? { context: options.context } : {}),
         ...(viaSafe ? { confirmLabel: 'Agree & continue to Safe' } : {}),
-        ...(options.reverify ? { reverify: async () => { await Promise.resolve(options.reverify!(request)).catch(reason => { throw asLine(reason) }) } } : {}),
+        ...(options.reverify ? { reverify: async (_call, index, prior) => { await Promise.resolve(options.reverify!(steps[index] ?? last, index, prior)).catch(reason => { throw asLine(reason) }) } } : {}),
         ...(options.beforeWrite ? { beforeWallet: async () => { await Promise.resolve().then(options.beforeWrite).catch(reason => { throw asLine(reason) }) } } : {}),
         assertWriteState: () => {
           if (!mounted.current) throw new ReviewLineError(CLOSED_LINE)
           try { options.assertWriteState?.() } catch (reason) { throw asLine(reason) }
         },
-        onSubmitted: async (sent, _step, hash, how) => {
+        onSubmitted: async (sent, step, hash, how) => {
           if (how.adopted) await options.onExistingProposal?.({ proposalHash: hash, call: { to: sent.to, data: sent.data, value: sent.value ?? 0n } })
+          options.onStepSubmitted?.(step, hash, how.safe)
+          if (step !== total - 1) return
           if (mounted.current) setSubmission({ hash, safe: how.safe })
           answer(hash)
         },
       }).then(ended => {
         // Done is success only once the hold settled it: a receipt it did not verify (a same-nonce
         // replacement, a block since reorged out) leaves the call held, so the hold is shown.
-        const unsettled = ended?.status === 'done' && openStepHold(holds, options.reviewedAccount, viaSafe, call).peek().status !== 'clear'
+        const unsettled = ended?.status === 'done' && openStepHold(holds, options.reviewedAccount, viaSafe, calls.at(-1)!).peek().status !== 'clear'
         if (ended?.status === 'failed') { if (!answered) options.onFailure?.(ended.failure) }
-        else if (unsettled) { if (mounted.current) { inFlight.current = false; track(request, away) } }
+        else if (unsettled) { if (mounted.current) { inFlight.current = false; track(last, away) } }
         else if (mounted.current) setResult(ended)
         answer(ended?.status === 'done' ? ended.hashes.at(-1) ?? null : ended?.status === 'proposed' ? ended.safeTxHash : null)
       }, () => answer(null)).finally(() => { inFlight.current = false })
@@ -337,6 +375,11 @@ export function useReviewedAction(chainId: number) {
     held,
     /** The transaction has a hash, but its result could not be confirmed here. */
     confirmationUncertain: !!actions.exitAction || shown?.phase === 'held',
+    /** The step of a multi-step action the run is on, of `total`. */
+    step: runner.step,
+    total: runner.total,
+    /** The step a Safe was proposed, when a multi-step run stopped there for the Safe to execute it. */
+    proposedStep: !tracking && result?.status === 'proposed' ? result.step : null,
     send,
     track,
     reset,

@@ -165,7 +165,6 @@ it('shows a held owner action and its exit after a reload, while its own button 
   const show = (current: FundProjectState) => act(async () => root.render(<FundOperatorActions state={current} client={wallet.client as unknown as PublicClient} contextIndex={0} />))
   await show(single(false)); await settle(); await settle()
   await click('Review pause')
-  await act(async () => [...host.querySelectorAll<HTMLButtonElement>('[data-tx-confirm] button')].find(node => node.textContent === 'Confirm & queue')!.click())
   await settle(); await settle()
   expect(wallet.writeContract).toHaveBeenCalledOnce()
   // Reloaded after another action (close) changed the rules: pause is no longer offered.

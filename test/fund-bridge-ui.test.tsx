@@ -82,6 +82,7 @@ vi.mock('@/lib/project-bridge', async importOriginal => ({
 
 import { FundBridgeActions } from '../src/components/FundBridgeActions'
 import { expectNotHeldBy, expectRetryHeldByIntent } from './support/intent-retry'
+import { runSteps } from './support/reviewed-steps'
 
 let host: HTMLDivElement
 let root: Root
@@ -105,7 +106,7 @@ afterEach(async () => { await act(async () => { root.unmount() }); host.remove()
 it('reads the route and mounts trackers as soon as the section renders', async () => {
   await render()
   expect(runtime.enabled.at(-1)).toBe(true)
-  expect(runtime.mounted).toBe(6)
+  expect(runtime.mounted).toBe(5)
 })
 it('keeps submitted trackers through a wallet switch and disables incompatible new actions', async () => {
   await render()
@@ -134,7 +135,7 @@ it('keeps receipt tracking mounted when refreshed route verification fails', asy
   expect(host.querySelector('fieldset')?.disabled).toBe(true)
 })
 
-it('reviews a move in the confirm dialog, listing its approval before any prompt', async () => {
+it('reviews a move with its approval as one action', async () => {
   runtime.idle = true
   const route = makeRoute()
   runtime.route = { ...route, canPrepare: true, prepareIssue: undefined, source: { ...route.source, erc20Balance: 10n * 10n ** 18n } } as unknown as FundBridgeRoute
@@ -153,7 +154,10 @@ it('reviews a move in the confirm dialog, listing its approval before any prompt
   expect([...dialog.querySelectorAll('li[data-state]')].map(step => step.textContent)).toEqual([
     expect.stringContaining('Approve FUND'), expect.stringContaining('Prepare the move'),
   ])
-  expect([...dialog.querySelectorAll('button')].some(button => button.textContent === 'Approve FUND')).toBe(true)
+  // Review move opens the approval and the move as one review, and resumes them as one action.
+  const [steps, options] = runtime.send.mock.calls[0] as [TxRequest[], TxSendOptions]
+  expect(steps.map(step => step.functionName)).toEqual(['approve', expect.not.stringMatching(/^approve/)])
+  expect(options.scope).toMatch(/^homerun:bridge-prepare:/)
 })
 
 
@@ -170,13 +174,12 @@ async function reviewApproval(allowance = 0n) {
   })
   await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Review move')!.click())
 }
-const approve = () => [...host.querySelectorAll<HTMLButtonElement>('[data-tx-confirm] button')].find(button => button.textContent === 'Approve FUND')!
-const prepare = () => [...host.querySelectorAll<HTMLButtonElement>('[data-tx-confirm] button')].find(button => button.textContent === 'Confirm & prepare')!
+/** The progress's own start, after an error or a closed review. */
+const retry = () => [...host.querySelectorAll<HTMLButtonElement>('[data-tx-confirm] button')].find(button => /^(Try|Review) again$/.test(button.textContent ?? ''))
 
 it('rejects a destination mint denial before offering the source preparation to the wallet', async () => {
-  await reviewApproval(2n * 10n ** 18n)
   runtime.verifyDestinationMint.mockRejectedValue(new Error('Destination peer cannot mint project tokens.'))
-  await act(async () => prepare().click())
+  await reviewApproval(2n * 10n ** 18n)
   expect(runtime.send).not.toHaveBeenCalled()
   expect(runtime.verifyDestinationMint).toHaveBeenCalledWith(runtime.destinationClient, {
     chainId: 10, projectId: 9n, sucker: runtime.route!.destinationSucker,
@@ -185,19 +188,14 @@ it('rejects a destination mint denial before offering the source preparation to 
   expect(host.textContent).toContain('Destination peer cannot mint project tokens.')
   expect(host.textContent).toContain('Incoming FUND')
   expect(runtime.unmounted).toBe(0)
-  expect(prepare().disabled).toBe(false)
+  expect(retry()?.disabled).toBe(false)
 })
 
 it('rechecks destination mint authority before source submission and permits retry after a pre-wallet denial', async () => {
-  await reviewApproval(2n * 10n ** 18n)
   const write = vi.fn()
-  runtime.send.mockImplementation(async (request: TxRequest, options: TxSendOptions) => {
-    await options.reverify?.()
-    options.beforeWrite?.()
-    write(request)
-  })
+  runtime.send.mockImplementation(async (requested: TxRequest[], options: TxSendOptions) => runSteps(requested, options, request => { options.beforeWrite?.(); write(request); return null }))
   runtime.verifyDestinationMint.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('Destination peer cannot mint project tokens.'))
-  await act(async () => prepare().click())
+  await reviewApproval(2n * 10n ** 18n)
   expect(write).not.toHaveBeenCalled()
   expect(runtime.verifyDestinationMint).toHaveBeenCalledTimes(2)
   for (const call of runtime.verifyDestinationMint.mock.calls) expect(call).toEqual([
@@ -206,21 +204,20 @@ it('rechecks destination mint authority before source submission and permits ret
       beneficiary: runtime.address, tokenCount: 2n * 10n ** 18n },
   ])
   expect(host.textContent).toContain('Destination peer cannot mint project tokens.')
-  expect(prepare().disabled).toBe(false)
-  await act(async () => prepare().click())
+  expect(retry()?.disabled).toBe(false)
+  await act(async () => retry()!.click())
   expect(write).toHaveBeenCalledOnce()
   expect(runtime.verifyDestinationMint).toHaveBeenCalledTimes(4)
   // Its minimum backing comes from a quote: a retry is held by the move the user chose.
-  expect(runtime.send.mock.calls.at(-1)![1].recoveryNamespace).toBe(writeIntentKey('bridge-prepare', {
+  expect(runtime.send.mock.calls.at(-1)![0][0].recoveryNamespace).toBe(writeIntentKey('bridge-prepare', {
     sourceProject: 17n, destinationProject: 9n, token: intent.address(runtime.route!.sourceToken), destination: 10,
     amount: 2n * 10n ** 18n, beneficiary: intent.address(runtime.address) }))
 })
 
 it("prepares a move under its own projects, so another project's move with the same currency, chain, amount and beneficiary is not held by it", async () => {
   const sends: { request: TxRequest; options: TxSendOptions }[] = []
-  runtime.send.mockImplementation(async (request: TxRequest, options: TxSendOptions) => { await options.reverify?.(); options.beforeWrite?.(); sends.push({ request, options }); return null })
+  runtime.send.mockImplementation(async (requested: TxRequest[], options: TxSendOptions) => runSteps(requested, options, (request, _index, sent) => { options.beforeWrite?.(); sends.push({ request, options: sent as TxSendOptions }); return null }))
   await reviewApproval(2n * 10n ** 18n)
-  await act(async () => prepare().click())
   await act(async () => root.unmount())
   root = createRoot(host)
   // Another FUND, bridged in the same currency to the same chain, through its own suckers.
@@ -236,7 +233,6 @@ it("prepares a move under its own projects, so another project's move with the s
     input.dispatchEvent(new Event('input', { bubbles: true }))
   })
   await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Review move')!.click())
-  await act(async () => prepare().click())
   const prepared = sends.filter(sent => !sent.request.functionName.startsWith('approve'))
   expect(prepared).toHaveLength(2)
   await expectNotHeldBy(prepared[0], prepared[1])
@@ -244,9 +240,8 @@ it("prepares a move under its own projects, so another project's move with the s
 
 it('closes an unproven Safe outer revert without counting its approval or releasing the bridge lock', async () => {
   runtime.safe = true
-  await reviewApproval()
   runtime.send.mockImplementation(async () => `0x${'ab'.repeat(32)}`)
-  await act(async () => approve().click())
+  await reviewApproval()
   runtime.engine = { phase: 'error', receipt: { status: 'reverted', transactionHash: `0x${'cd'.repeat(32)}`, blockNumber: 100n } }
   await render()
   const dialog = host.querySelector('[data-tx-confirm]')!
@@ -265,19 +260,17 @@ it('closes an unproven Safe outer revert without counting its approval or releas
 })
 
 it('frees the move when its approval stops before the wallet', async () => {
-  await reviewApproval()
   runtime.send.mockImplementation(async () => null)
-  await act(async () => approve().click())
+  await reviewApproval()
   expect(runtime.send).toHaveBeenCalledOnce()
   expect(runtime.send.mock.calls[0][1].reviewedAccount).toBe(runtime.address)
-  expect(approve().disabled).toBe(false)
+  expect(retry()?.disabled).toBe(false)
 })
 
 it('leaves a held approval to the engine: its one line and its exit, never a lock until reload', async () => {
-  await reviewApproval()
   const release = vi.fn()
   runtime.send.mockImplementation(async () => null)
-  await act(async () => approve().click())
+  await reviewApproval()
   runtime.engine = { phase: 'submitted', notice: writeHeldMessage(), receipt: null,
     held: { line: writeHeldMessage(), warning: writeExitMessage({ to: '0x', data: '0x', value: 0n }), label: WRITE_EXIT_LABEL, release } } as never
   await render()
@@ -289,16 +282,15 @@ it('leaves a held approval to the engine: its one line and its exit, never a loc
 })
 
 it('frees the move once the engine reads its Safe execution as failed', async () => {
-  await reviewApproval()
   runtime.send.mockImplementation(async () => `0x${'ab'.repeat(32)}`)
-  await act(async () => approve().click())
+  await reviewApproval()
   runtime.engine = { phase: 'pending', receipt: null }
   await render()
-  expect(approve().disabled).toBe(true)
+  expect(retry()).toBeUndefined()
   // The receipt succeeds, but the Safe logged ExecutionFailure: useReviewedAction reports an error.
   runtime.engine = { phase: 'error', receipt: { status: 'success', transactionHash: `0x${'cd'.repeat(32)}`, blockNumber: 11n } }
   await render()
-  expect(approve().disabled).toBe(false)
+  expect(retry()?.disabled).toBe(false)
 })
 
 it('relays a prepared movement under its batch, and a retry with a fresh fee is held by the first', async () => {

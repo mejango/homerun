@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useId, type ReactNode } from 'react'
+import { useEffect, useId, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import type { ReviewContextRow } from '@bananapus/nana-sdk-core/review'
 import {
   ModalCloseButton,
   ModalDialog,
@@ -11,7 +12,14 @@ import {
 import { TxSteps } from '@/components/ui/TxSteps'
 import { HeldWriteExit, type HeldWrite } from '@/components/ui/HeldWriteExit'
 
-export type TxConfirmRow = {
+/** The rows a progress shows, as its write's review shows them: a row whose value is not plain text stays on the progress only. */
+export function reviewContext(rows: readonly TxProgressRow[]): ReviewContextRow[] {
+  return rows.flatMap(row => typeof row.label === 'string' && (typeof row.value === 'string' || typeof row.value === 'number')
+    ? [{ label: row.label, value: String(row.value), ...(row.mono ? { mono: true } : {}), ...(row.strong ? { strong: true } : {}) }]
+    : [])
+}
+
+export type TxProgressRow = {
   label: ReactNode
   value: ReactNode
   /** Render the value in a monospace face (addresses, hashes). */
@@ -21,11 +29,12 @@ export type TxConfirmRow = {
 }
 
 /**
- * The one review surface for every wallet write: a frozen plan (label/value
- * rows), the wallet-prompt queue, then a single action. Closing is refused
- * while `busy`; once `complete` the footer collapses to Done.
+ * A write's progress: what it does (label/value rows), the wallet-prompt queue,
+ * its status and error. It never confirms: `start` opens the write's one review
+ * as soon as the progress is open and ready, and again from Try again after an
+ * error. Closing is refused while `busy`; once `complete` the footer is Done.
  */
-export function TxConfirmDialog({
+export function TxProgress({
   open,
   onClose,
   eyebrow = 'Review',
@@ -35,10 +44,8 @@ export function TxConfirmDialog({
   steps,
   activeIndex,
   stepsIntro,
-  action,
-  actionDisabled = false,
+  start,
   cancelLabel = 'Cancel',
-  onConfirm,
   busy = false,
   complete = false,
   settled = false,
@@ -51,16 +58,15 @@ export function TxConfirmDialog({
   onClose: () => void
   eyebrow?: string
   title: ReactNode
-  rows?: readonly TxConfirmRow[]
+  rows?: readonly TxProgressRow[]
   /** Extra body content under the rows (warnings, notes, custom grids). */
   children?: ReactNode
   steps: readonly { key?: string; title: ReactNode; detail?: string }[]
   activeIndex: number
   stepsIntro?: string
-  action: string
-  actionDisabled?: boolean
+  /** Opens the write's review; absent while it can't start yet (a quote still loading, say). */
+  start?: () => void
   cancelLabel?: string
-  onConfirm: () => void
   busy?: boolean
   complete?: boolean
   /** The action is submitted to a Safe; Done dismisses it without marking its steps confirmed. */
@@ -73,6 +79,19 @@ export function TxConfirmDialog({
   error?: ReactNode
 }) {
   const titleId = useId()
+  const ready = open && !busy && !preparing && !complete && !settled && !error && !!start
+  // Once per opening or preparation: a cancelled review leaves the progress to its site, never
+  // reopens itself; a new preparation is a new write.
+  const started = useRef(false)
+  const startRef = useRef(start)
+  startRef.current = start
+  useEffect(() => {
+    if (!open || preparing) started.current = false
+    else if (ready && !started.current) {
+      started.current = true
+      startRef.current?.()
+    }
+  }, [open, preparing, ready])
   // Inside a ModalShell already, the confirm replaces that card's content in
   // place: one scrim, one card, and closing brings the form back.
   const host = useEnclosingModalCard()
@@ -129,7 +148,7 @@ export function TxConfirmDialog({
               {rows && rows.length > 0 ? (
                 <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
                   {rows.map((row, index) => (
-                    <TxConfirmRowItem key={index} row={row} />
+                    <TxProgressRowItem key={index} row={row} />
                   ))}
                 </div>
               ) : null}
@@ -165,15 +184,17 @@ export function TxConfirmDialog({
               >
                 {cancelLabel}
               </button>
-              <button
-                type="button"
-                className="btn-primary min-h-[44px] px-5 text-sm"
-                disabled={busy || preparing || actionDisabled}
-                aria-busy={preparing || undefined}
-                onClick={onConfirm}
-              >
-                {action}
-              </button>
+              {/* After an error, or a review the person closed, the write starts again only from here. */}
+              {start && !busy && (error || (ready && started.current)) ? (
+                <button
+                  type="button"
+                  className="btn-primary min-h-[44px] px-5 text-sm"
+                  disabled={preparing}
+                  onClick={start}
+                >
+                  {error ? 'Try again' : 'Review again'}
+                </button>
+              ) : null}
             </>
           )}
         </footer>
@@ -192,7 +213,7 @@ export function TxConfirmDialog({
   )
 }
 
-function TxConfirmRowItem({ row }: { row: TxConfirmRow }) {
+function TxProgressRowItem({ row }: { row: TxProgressRow }) {
   return (
     <>
       <span className="text-smoke-500">{row.label}</span>

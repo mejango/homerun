@@ -75,20 +75,19 @@ describe('payment freshness at the wallet boundary', () => {
     flushSync(() => root.render(<QueryClientProvider client={cache}><ProjectPayment chainId={1} projectId={7n} tokenLabel="FUND" title="Contribute"
       context={{ token: NATIVE_TOKEN, terminal, decimals: 18, symbol: 'ETH' }} paused={false} reservedPercent={0} rulesetId="100" verify={runtime.verify} /></QueryClientProvider>))
   }
-  const confirm = () => [...host.querySelectorAll('button')].find(element => /^Confirm & contribute$/.test(element.textContent ?? ''))!
   async function settle(assertion: () => void) {
     await vi.waitFor(async () => { await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) }); assertion() }, { timeout: 5000, interval: 10 })
   }
   async function start() {
     await act(async () => draw())
-    await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent?.startsWith('Pay on '))!.click())
     const input = host.querySelector('input')!
     await act(async () => flushSync(() => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '1')
       input.dispatchEvent(new Event('input', { bubbles: true }))
     }))
-    await settle(() => expect(confirm().disabled).toBe(false))
-    await act(async () => confirm().click())
+    await settle(() => expect(runtime.quote).toHaveBeenCalled())
+    // Pay opens the payment's one review once its quote is in.
+    await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent?.startsWith('Pay on '))!.click())
   }
   function deferred() {
     let resolve!: (value: unknown) => void

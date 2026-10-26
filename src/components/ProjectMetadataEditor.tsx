@@ -8,7 +8,7 @@ import { useWallet } from '@/hooks/useWallet'
 import { useProjectAdminTx } from '@/hooks/useProjectAdminTx'
 import { ProjectAdminTransactionStatus } from '@/components/ProjectAdminTransactionStatus'
 import { ModalShell } from '@/components/ui/ModalShell'
-import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { reviewContext, TxProgress } from '@/components/ui/TxProgress'
 import { displayChainName } from '@/lib/chainDisplay'
 import { assertNoViewAs } from '@/lib/viewAs'
 import {
@@ -100,6 +100,7 @@ function ProjectMetadataEditorContent({ chainId, projectId, client, unavailable 
       const request = buildProjectMetadataEditTx(editing.snapshot, pinned.uri)
       await tx.send(request, {
         reviewedAccount: address,
+        context: reviewContext([{ label: 'Project', value: `#${projectId} on ${displayChainName(chainId)}` }, ...changes]),
         reviewNotice: `Update the published details for project #${projectId} on ${displayChainName(chainId)}. Other phases and networks have separate project details. The published operating plan describes expectations; this transaction does not transfer ownership, change payment splits, or change contract terms.`,
         reverify: async () => {
           if (!mounted.current) throw new Error('The details editor has closed. Reopen it to review this update.')
@@ -115,6 +116,11 @@ function ProjectMetadataEditorContent({ chainId, projectId, client, unavailable 
   }
   const photo = (key: MetadataImageKey, title: string) => editing && <MetadataImageInput key={key} id={`${id}-${key}-image`} label={title} existing={editing.document.images[key]} value={images[key]} disabled={busy} onChange={value => { setImages(current => ({ ...current, [key]: value })); setError(null) }} />
 
+  // Each change as it will be published, in the progress and at the top of its one review.
+  const changes = editing ? [
+    ...fieldKeys.filter(key => editing.draft[key] !== editing.document.draft[key]).map(key => ({ label: metadataFieldLabel(key), value: `${editing.document.draft[key] || 'Not specified'} → ${editing.draft[key] || 'Not specified'}` })),
+    ...(['cover', 'logo', 'owner', 'operator'] as MetadataImageKey[]).filter(key => images[key]?.remove || images[key]?.file).map(key => ({ label: `${key[0].toUpperCase()}${key.slice(1)} image`, value: images[key]?.remove ? 'Removed' : `New: ${images[key]!.file!.name}` })),
+  ] : []
   function closeReview() { setReview(false); if (tx.phase === 'success') { setEditing(null); setImages({}) } tx.dismiss() }
 
   return <div className="grid gap-3">
@@ -128,19 +134,17 @@ function ProjectMetadataEditorContent({ chainId, projectId, client, unavailable 
     </div>}>
       <div className="demo-shop-editor grid gap-6">
         <p className="text-xs text-[var(--muted)]">These details apply to this phase on {displayChainName(chainId)} only.</p>
-        <TxConfirmDialog
+        <TxProgress
           open={review}
           eyebrow="Project details"
           title={tx.phase === 'success' ? 'Details published' : 'Publish project details'}
           rows={[
             { label: 'Project', value: `#${projectId.toString()} on ${displayChainName(chainId)}` },
-            { label: 'Changes', value: String(fieldKeys.filter(key => editing.draft[key] !== editing.document.draft[key]).length + (['cover', 'logo', 'owner', 'operator'] as MetadataImageKey[]).filter(key => images[key]?.remove || images[key]?.file).length), strong: true },
+            { label: 'Changes', value: String(changes.length), strong: true },
           ]}
           steps={[{ key: 'publish', title: 'Publish the new details', detail: 'Pins them to IPFS, then points this project at them.' }]}
           activeIndex={busy ? 0 : -1}
-          action="Confirm & publish"
-          actionDisabled={!tx.ready || unavailable}
-          onConfirm={() => void publish()}
+          start={!tx.ready || unavailable || tx.pending ? undefined : () => void publish()}
           busy={preparing || (tx.busy && !tx.pending) || tx.phase === 'review'}
           complete={tx.phase === 'success'}
           settled={tx.phase === 'submitted'}
@@ -148,12 +152,11 @@ function ProjectMetadataEditorContent({ chainId, projectId, client, unavailable 
           onClose={closeReview}
         >
           <dl className="grid gap-3 text-sm">
-            {fieldKeys.filter(key => editing.draft[key] !== editing.document.draft[key]).map(key => <div key={key}><dt className="text-smoke-600">{metadataFieldLabel(key)}</dt><dd className="whitespace-pre-line break-words">{editing.document.draft[key] || 'Not specified'} → {editing.draft[key] || 'Not specified'}</dd></div>)}
-            {(['cover', 'logo', 'owner', 'operator'] as MetadataImageKey[]).filter(key => images[key]?.remove || images[key]?.file).map(key => <div key={key}><dt className="capitalize text-smoke-600">{key} image</dt><dd>{images[key]?.remove ? 'Removed' : `New: ${images[key]!.file!.name}`}</dd></div>)}
+            {changes.map(change => <div key={change.label}><dt className="text-smoke-600">{change.label}</dt><dd className="whitespace-pre-line break-words">{change.value}</dd></div>)}
           </dl>
           <p className="text-xs text-smoke-600">Profile addresses only describe the people shown. Ownership, payment recipients and contract terms don’t change.</p>
           <ProjectAdminTransactionStatus tx={tx} />
-        </TxConfirmDialog>
+        </TxProgress>
         <form id={`${id}-form`} className="grid gap-7" onSubmit={event => { event.preventDefault(); reviewDetails() }} noValidate>
           <fieldset className="grid gap-4"><legend className="mb-4 text-[15px] font-medium">Project details</legend>{basicFields.filter(key => editing.document.supportsPlan || key === 'name' || key === 'description').map(field)}<div className="grid gap-5 sm:grid-cols-2">{photo('cover', 'Cover image')}{photo('logo', 'Project logo')}</div></fieldset>
           {editing.document.supportsPlan && <>

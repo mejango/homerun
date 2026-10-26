@@ -179,7 +179,7 @@ describe("Sticky holder recovery and independent loading", () => {
     expect(quoteStickyStake).toHaveBeenCalled();
     expect(
       [...element.querySelectorAll("button")].find(
-        (button) => button.textContent === "Review FUND approval",
+        (button) => button.textContent === "Review stake",
       )?.disabled,
     ).toBe(false);
   });

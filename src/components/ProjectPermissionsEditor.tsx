@@ -10,7 +10,7 @@ import { buildProjectPermissionsTx, PROJECT_PERMISSION_CATALOG, projectPermissio
 import { displayChainName } from '@/lib/chainDisplay'
 import { ProjectAdminTransactionStatus } from './ProjectAdminTransactionStatus'
 import type { ProjectAuthorityEditorProps } from './ProjectOwnershipEditor'
-import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { reviewContext, TxProgress } from '@/components/ui/TxProgress'
 
 const message = (error: unknown) => error instanceof Error ? error.message : 'Project permissions could not be read.'
 const permissionNames = (ids: number[]) => ids.map(id => PROJECT_PERMISSION_CATALOG.find(entry => entry.id === id)?.label ?? `Permission ${id}`).join(', ') || 'None'
@@ -49,11 +49,25 @@ export function ProjectPermissionsEditor({ chainId, projectId, client, unavailab
       await tx.send(request, {
         // Built from the authority read when Review was pressed, for the account connected then.
         reviewedAccount: reviewed.account,
+        context: reviewContext(rows),
         reviewNotice: `On ${displayChainName(chainId)}, update ${reviewed.operator} as a delegate of owner ${reviewed.owner} for project #${projectId} only. Grant: ${names(added)}. Revoke: ${names(removed)}. ${selected.includes(JBPermissionIdsV6.ROOT) ? 'ROOT authorizes every Juicebox project permission and lets this delegate grant non-ROOT permissions to others. It does not transfer the project NFT. ' : ''}${unknown.length ? `Preserve unrecognized permissions ${unknown.join(', ')}. ` : ''}Permissions inherited from the owner’s global grants remain effective and are not edited here.`,
         reverify: checked => reverifyProjectAuthority(client, reviewed, checked, latest => buildProjectPermissionsTx(latest, selected)),
       })
     } catch (reason) { setError(message(reason)); void query.refetch() } finally { setPreparing(false) }
   }
+
+  // What the save does, in the progress and at the top of its one review.
+  const rows = review ? (() => {
+    const previous = projectPermissionIds(review.state.operatorPermissions)
+    const added = review.selected.filter(id => !previous.includes(id))
+    const removed = previous.filter(id => PROJECT_PERMISSION_CATALOG.some(entry => entry.id === id) && !review.selected.includes(id))
+    return [
+      { label: 'Wallet', value: review.state.operator ?? '', mono: true },
+      { label: 'Project', value: `#${projectId.toString()} on ${displayChainName(chainId)}` },
+      { label: 'Grant', value: permissionNames(added), strong: added.length > 0 },
+      { label: 'Revoke', value: permissionNames(removed) },
+    ]
+  })() : []
 
   return <section className="demo-section" aria-label="Project permissions">
     <h2>{state ? `${state.kind === 'revnet' ? 'INCOME' : 'FUND'} permissions` : 'Permissions'}</h2>
@@ -70,25 +84,14 @@ export function ProjectPermissionsEditor({ chainId, projectId, client, unavailab
     {state?.operator && <PermissionSelection key={state.identity} state={state} disabled={busy || !tx.ready || unavailable || query.isError} onSubmit={async (reviewed, selected, rootConfirmed) => { tx.reset(); setError(null); setReview({ state: reviewed, selected, rootConfirmed }) }} />}
     {error && !review && <p className="mt-4 text-sm text-red-800" role="alert">{error}</p>}
     {!review && <ProjectAdminTransactionStatus tx={tx} />}
-    <TxConfirmDialog
+    <TxProgress
       open={!!review}
       eyebrow="Project permissions"
       title={tx.phase === 'success' ? 'Permissions saved' : 'Save permissions'}
-      rows={review ? (() => {
-        const previous = projectPermissionIds(review.state.operatorPermissions)
-        const added = review.selected.filter(id => !previous.includes(id))
-        const removed = previous.filter(id => PROJECT_PERMISSION_CATALOG.some(entry => entry.id === id) && !review.selected.includes(id))
-        return [
-          { label: 'Wallet', value: review.state.operator ?? '', mono: true },
-          { label: 'Project', value: `#${projectId.toString()} on ${displayChainName(chainId)}` },
-          { label: 'Grant', value: permissionNames(added), strong: added.length > 0 },
-          { label: 'Revoke', value: permissionNames(removed) },
-        ]
-      })() : []}
+      rows={rows}
       steps={[{ key: 'permissions', title: 'Save the permissions', detail: 'For this project only. Global grants are not edited here.' }]}
       activeIndex={busy ? 0 : -1}
-      action="Confirm & save"
-      onConfirm={() => { if (review) void submit(review.state, review.selected, review.rootConfirmed) }}
+      start={review && !tx.pending ? () => void submit(review.state, review.selected, review.rootConfirmed) : undefined}
       busy={preparing || (tx.busy && !tx.pending)}
       complete={tx.phase === 'success'}
       settled={tx.phase === 'submitted'}
@@ -97,7 +100,7 @@ export function ProjectPermissionsEditor({ chainId, projectId, client, unavailab
     >
       {review?.selected.includes(JBPermissionIdsV6.ROOT) && <p className="text-sm text-smoke-600">ROOT gives every Juicebox project permission and lets this wallet delegate non-ROOT powers. It does not transfer the project NFT.</p>}
       <ProjectAdminTransactionStatus tx={tx} />
-    </TxConfirmDialog>
+    </TxProgress>
   </section>
 }
 

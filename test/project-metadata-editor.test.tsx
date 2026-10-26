@@ -189,9 +189,6 @@ describe('live project metadata editor', () => {
     expect(host.textContent).toContain('Project #7 on Base')
     expect(host.textContent).toContain('These details apply to this phase on Base only.')
     expect(host.textContent).toContain('Profile addresses only describe the people shown.')
-    expect(runtime.publish).not.toHaveBeenCalled()
-    expect(runtime.send).not.toHaveBeenCalled()
-    await click('Confirm & publish')
     expect(runtime.publish).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ raw: fundMetadata() }), expect.objectContaining({ name: 'Updated garden', ownerIntroduction: 'The community owns the garden.', ownerWallet: DELEGATE, operatorWallet: OWNER }), {})
     expect(vi.mocked(reverifyProjectMetadataEdit).mock.invocationCallOrder[0]).toBeLessThan(runtime.publish.mock.invocationCallOrder[0])
     expect(runtime.publish.mock.invocationCallOrder[0]).toBeLessThan(runtime.send.mock.invocationCallOrder[0])
@@ -206,7 +203,6 @@ describe('live project metadata editor', () => {
     // Pinning never finishes, so the publish stays in flight.
     runtime.publish.mockImplementation(() => new Promise(() => {}))
     await open(); await change('Project name', 'Updated garden'); await review()
-    await click('Confirm & publish')
     const shell = host.querySelector('dialog')!
     await act(async () => { shell.dispatchEvent(new Event('cancel', { cancelable: true })) })
     await act(async () => { shell.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })) })
@@ -219,9 +215,9 @@ describe('live project metadata editor', () => {
   })
 
   it('preserves a concurrent metadata update by rejecting the stale URI before pinning or submitting', async () => {
-    await open(); await change('Description', 'My draft'); await review()
+    await open(); await change('Description', 'My draft')
     runtime.uri = 'ipfs://bafyconcurrent'
-    await click('Confirm & publish')
+    await review()
     expect(host.textContent).toContain('Project details changed while you were editing. Reload to preserve the latest update.')
     expect(runtime.publish).not.toHaveBeenCalled()
     expect(runtime.send).not.toHaveBeenCalled()
@@ -229,9 +225,9 @@ describe('live project metadata editor', () => {
   })
 
   it('rejects a lagging RPC before publishing when another update confirmed after review opened', async () => {
-    await open(); await change('Description', 'My draft'); await review()
+    await open(); await change('Description', 'My draft')
     cache.setQueryData(['project-admin-confirmed-block', 8453, '7'], 101n)
-    await click('Confirm & publish')
+    await review()
     expect(host.textContent).toContain('The RPC is behind the last confirmed project update. Wait for it to catch up before editing.')
     expect(runtime.publish).not.toHaveBeenCalled()
     expect(runtime.send).not.toHaveBeenCalled()
@@ -239,9 +235,8 @@ describe('live project metadata editor', () => {
   })
 
   it('rechecks authority after publishing if project ownership changes before wallet review', async () => {
-    await open(); await review()
     runtime.publish.mockImplementation(async () => { runtime.owner = DELEGATE; return { uri: 'ipfs://bafyupdated' } })
-    await click('Confirm & publish')
+    await open(); await review()
     expect(runtime.publish).toHaveBeenCalledOnce()
     expect(runtime.send).toHaveBeenCalledOnce()
     expect(reverifyProjectMetadataEdit).toHaveBeenCalledTimes(2)
@@ -252,9 +247,9 @@ describe('live project metadata editor', () => {
   it('does not submit a completed metadata upload after navigating to a different project', async () => {
     let resolveUpload!: (result: { uri: string }) => void
     runtime.publish.mockImplementation(() => new Promise<{ uri: string }>(resolve => { resolveUpload = resolve }))
-    await open(); await review(); await click('Confirm & publish')
+    await open(); await review()
     await settle(() => expect(runtime.publish).toHaveBeenCalledOnce())
-    expect(button('Confirm & publish')?.disabled).toBe(true)
+    expect(button('Try again')).toBeUndefined()
     await act(async () => root.render(<QueryClientProvider client={cache}><ProjectMetadataEditor chainId={8453} projectId={8n} client={client} /></QueryClientProvider>))
     expect(host.querySelector('[role="dialog"]')).toBeNull()
     await act(async () => resolveUpload({ uri: 'ipfs://bafyupdated' }))
@@ -272,12 +267,13 @@ describe('live project metadata editor', () => {
       runtime.tx = { ...runtime.tx, pending: true, phase: 'pending', safe: true, pendingLabel: 'Update project details' }
       return EXECUTION_HASH
     })
-    await open(); await review(); await click('Confirm & publish')
-    expect(button('Waiting for confirmation…')?.disabled).toBe(true)
+    await open(); await review()
+    // Nothing in the progress starts the write again while it is pending.
+    expect(button('Try again')).toBeUndefined()
+    expect(button('Review again')).toBeUndefined()
     expect(button('Edit project details')?.disabled).toBe(true)
     expect(host.textContent).toContain('Check Safe for signatures and execution.')
     expect(host.textContent).not.toContain('confirmed.')
-    await act(async () => button('Waiting for confirmation…')!.click())
     expect(runtime.publish).toHaveBeenCalledOnce()
     expect(runtime.send).toHaveBeenCalledOnce()
     expect(host.querySelector('[role="dialog"]')).not.toBeNull()
@@ -312,7 +308,7 @@ describe('live project metadata editor', () => {
     expect(field('Description').value).toBe('Our income phase.')
     expect(field('About Ownership').value).toBe('We own the land.')
     expect(field('Expected monthly revenue').value).toBe('4000')
-    await review(); await click('Confirm & publish')
+    await review()
     const [document] = runtime.publish.mock.calls[0]
     expect(document.raw).toMatchObject({ name: income.name, homerun: { type: 'income', manifestUri: 'ipfs://bafymanifest', operatorBps: 6000, fundHolderBps: 2500 } })
     expect(document.raw.homerun).not.toHaveProperty('kind')
@@ -336,7 +332,7 @@ describe('live project metadata editor', () => {
     expect(field('About Ownership').value).toBe('')
     expect(field('Expected monthly revenue').value).toBe('')
     expect(field('Location').value).toBe('')
-    await review(); await click('Confirm & publish')
+    await review()
     const [document, draft] = runtime.publish.mock.calls[0]
     expect(document.raw).toEqual(income)
     expect(draft).toMatchObject({ ownerName: 'New trust', ownerIntroduction: '', monthlyRent: '', location: '' })

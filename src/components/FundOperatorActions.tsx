@@ -8,9 +8,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
 import { HeldWritesNotice, useHeldIntents, useSavedAttempt } from '@bananapus/nana-sdk-core/review/react'
 import { decodeEventLog, decodeFunctionData, encodeFunctionData, erc20Abi, formatUnits, getAddress, isAddress, isAddressEqual, zeroAddress, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
-import { useReviewedAction, txPhaseLabel } from '@/hooks/useReviewedAction'
+import { useReviewedAction, txPhaseLabel, type TxStep } from '@/hooks/useReviewedAction'
 import { FundAssetWithdrawals, type FundAssetAllowanceConfiguration } from '@/components/FundAssetWithdrawals'
-import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { reviewContext, TxProgress, type TxProgressRow } from '@/components/ui/TxProgress'
 import { TxSteps } from '@/components/ui/TxSteps'
 import { useWallet } from '@/hooks/useWallet'
 import { displayChainName, explorerTxUrl } from '@/lib/chainDisplay'
@@ -557,9 +557,7 @@ function useConfirmedRefresh(tx: Tx, state: Pick<FundProjectState, 'chainId' | '
 export function FundOperatorActions({ state, client, contextIndex }: Props) {
   const { address } = useWallet()
   const tx = useReviewedAction(state.chainId)
-  const approval = useReviewedAction(state.chainId)
   useConfirmedRefresh(tx, state)
-  useConfirmedRefresh(approval, state)
   const [preparing, setPreparing] = useState(false)
   const [assetBusy, setAssetBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -574,8 +572,6 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
   const [contributionReference, setContributionReference] = useState('')
   const [returnAmount, setReturnAmount] = useState('')
   const [returnReason, setReturnReason] = useState<'refunds' | 'asset-sale'>('refunds')
-  const [approvalNeeded, setApprovalNeeded] = useState(false)
-  const [approvedIntent, setApprovedIntent] = useState<string | null>(null)
   const [plan, setPlan] = useState<RulesetPlan | null>(null)
   const [completed, setCompleted] = useState<Map<number, RulesetCompletion>>(new Map())
   const completedRef = useRef<Map<number, RulesetCompletion>>(new Map())
@@ -599,7 +595,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
     setOffchainUsd(''); setContributionReference(''); setLinkedOperatorCount(''); setReturnAmount('')
     setPurchased(false); setRefundAttestation(false)
   }, [tx.phase, tx.receipt])
-  const baseBusy = !storageChecked || recoveryLoadError || preparing || tx.busy || approval.busy || tx.phase === 'review' || approval.phase === 'review' || !!plan
+  const baseBusy = !storageChecked || recoveryLoadError || preparing || tx.busy || tx.phase === 'review' || !!plan
   const busy = baseBusy || assetBusy
   const linked = state.linkedChainIds.length > 1
   // Single-chain owner actions keep no record of their own: their result is the project's state. Whatever
@@ -639,8 +635,12 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
   const mintRecipient = mintKind === 'operator-share' ? state.owner : destination(recipient)
   const returnRaw = context ? amountOrZero(returnAmount, context.decimals) : 0n
   const returnIntent = context && address ? encoded([state.chainId, state.projectId, address, context.terminal, context.token, returnRaw, returnReason]) : null
-  const approvalBlock = approval.phase === 'success' && approvedIntent === returnIntent ? approval.receipt?.blockNumber : undefined
   const returnNative = !!context && isAddressEqual(context.token, NATIVE_TOKEN)
+  const returnRows: TxProgressRow[] = [
+    { label: 'Return', value: `${returnAmount || '0'} ${context?.symbol ?? ''}`, strong: true },
+    { label: 'For', value: returnReason === 'asset-sale' ? 'Asset-sale proceeds' : 'Campaign refunds' },
+    { label: 'To', value: `FUND treasury on ${displayChainName(state.chainId)}` },
+  ]
   // Whether the return needs an approval first, read before the first prompt so the step list is right.
   const returnAllowance = useQuery({
     queryKey: ['fund-return-allowance', state.chainId, state.projectId.toString(), context?.terminal, context?.token, address],
@@ -732,7 +732,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
     return savedRecovery.current?.key === recoveryKey(active.account) && window.localStorage.getItem(recoveryKey(active.account)) === savedRecovery.current.raw
   }
   function chainScope(active: RulesetPlan, index: number, submission = submissionsRef.current.get(active.states[index].chainId)) {
-    return planChainScope(active, index, submission, approval.isSafe, chainRetirable(active.states[index].chainId))
+    return planChainScope(active, index, submission, tx.isSafe, chainRetirable(active.states[index].chainId))
   }
   /**
    * A chain's verified write is recorded. Its settlement is followed only as the plan closes: until
@@ -795,7 +795,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
   }
 
   async function importRecovery(file: File | undefined) {
-    if (!file || !address || preparing || tx.busy || approval.busy || tx.phase === 'review' || approval.phase === 'review' || plan) return
+    if (!file || !address || preparing || tx.busy || tx.phase === 'review' || plan) return
     setError(null); setPreparing(true)
     try {
       if (file.size > MAX_RECOVERY_BYTES) throw new Error('The recovery file is too large.')
@@ -952,8 +952,8 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
 
   async function returnFunds() {
     await run(async () => {
-      if (!context || !address || returnRaw <= 0n) throw new Error('Enter a positive treasury return amount.')
-      const current = await fresh(approvalBlock)
+      if (!context || !address || returnRaw <= 0n || !returnIntent) throw new Error('Enter a positive treasury return amount.')
+      const current = await fresh()
       const native = isAddressEqual(context.token, NATIVE_TOKEN)
       const verifyContext = (latest: FundProjectState) => {
         const verified = latest.accountingContexts.find(item => isAddressEqual(item.token, context.token) && isAddressEqual(item.terminal, context.terminal))
@@ -962,30 +962,21 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
       }
       verifyContext(current)
       const terminal = { chainId: state.chainId, projectId: state.projectId, terminal: context.terminal, token: context.token }
-      if (!native) {
-        const available = await client.readContract({ address: context.token, abi: erc20Abi, functionName: 'allowance', args: [address, context.terminal], blockNumber: current.blockNumber })
-        if (available < returnRaw) {
-          setApprovalNeeded(true)
-          const request = buildFundApproval({ ...terminal, amount: returnRaw })
-          if (!request) throw new Error('The required token approval could not be built.')
-          setApprovedIntent(returnIntent)
-          await approval.send({ ...request, label: `Approve exactly ${formatUnits(returnRaw, context.decimals)} ${context.symbol} for the treasury return` }, {
-            reviewedAccount: address,
-            reverify: async () => { verifyContext(await fresh()) },
-          })
-          return
-        }
-      }
-      setApprovalNeeded(false)
+      const approving = !native && await client.readContract({ address: context.token, abi: erc20Abi, functionName: 'allowance', args: [address, context.terminal], blockNumber: current.blockNumber }) < returnRaw
+      const approvalRequest = approving ? buildFundApproval({ ...terminal, amount: returnRaw }) : null
+      if (approving && !approvalRequest) throw new Error('The required token approval could not be built.')
       const request = buildFundReturn({ ...terminal, amount: returnRaw, reason: returnReason, shouldReturnHeldFees: true })
-      await tx.send({ ...request, label: `Return ${formatUnits(returnRaw, context.decimals)} ${context.symbol} to FUND for ${returnReason === 'asset-sale' ? 'the asset sale' : 'refunds'}` }, {
+      const back: TxStep = { ...request, label: `Return ${formatUnits(returnRaw, context.decimals)} ${context.symbol} to FUND for ${returnReason === 'asset-sale' ? 'the asset sale' : 'refunds'}`, ...(approving ? { dependsOnPrior: true } : {}) }
+      // The approval and the return are one review, and resume as one action after a reload.
+      await tx.send(approvalRequest ? [{ ...approvalRequest, label: `Approve exactly ${formatUnits(returnRaw, context.decimals)} ${context.symbol} for the treasury return` }, back] : [back], {
         reviewedAccount: address,
-        simulationBlockNumber: approvalBlock,
+        scope: `homerun:fund-return:${returnIntent}`,
+        context: reviewContext(returnRows),
         reviewNotice: 'This adds money to the project treasury without minting FUND. It does not change cash-out rules. Opening zero-tax refunds or asset-sale cash-outs is a separate reviewed transaction.',
-        reverify: async () => {
-          const latest = await fresh(approvalBlock)
+        reverify: async (step, _index, prior) => {
+          const latest = await fresh(prior?.blockNumber)
           verifyContext(latest)
-          if (!native) {
+          if (!native && step.functionName !== 'approve') {
             const available = await client.readContract({ address: context.token, abi: erc20Abi, functionName: 'allowance', args: [address, context.terminal], blockNumber: latest.blockNumber })
             if (available < returnRaw) throw new Error('The token approval changed. Confirm a sufficient approval before returning funds.')
           }
@@ -1070,9 +1061,8 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
     <section className="grid gap-4 border-t border-[var(--line)] pt-6" aria-labelledby="fund-return-controls">
       <h3 id="fund-return-controls" className="text-[15px] font-medium">Return funds to the treasury</h3>
       <p className="text-sm">Add money for refunds or net asset-sale proceeds. No FUND is minted.</p>
-      {context ? <div className="grid gap-4"><div className="grid gap-4 sm:grid-cols-2"><label className="grid gap-2 text-sm">Reason<select className={select} value={returnReason} disabled={busy} onChange={event => { setReturnReason(event.target.value as typeof returnReason); setApprovalNeeded(false) }}><option value="refunds">Campaign refunds</option><option value="asset-sale">Asset-sale proceeds</option></select></label><Field label={`Amount in ${context.symbol}`} value={returnAmount} onChange={value => { setReturnAmount(value); setApprovalNeeded(false) }} disabled={busy} /></div>
-        {approvalBlock !== undefined && <p className="text-sm">Token approval confirmed. Review the treasury return to continue.</p>}
-        <button type="button" className="btn-primary min-h-11 w-fit px-5" disabled={busy || returnRaw <= 0n} onClick={() => openReview('return')}>Review treasury return</button><p className="text-xs text-[var(--muted)]">A token approval, if needed, is reviewed and confirmed first.</p></div> : <p className="text-sm">No supported treasury currency has been verified.</p>}
+      {context ? <div className="grid gap-4"><div className="grid gap-4 sm:grid-cols-2"><label className="grid gap-2 text-sm">Reason<select className={select} value={returnReason} disabled={busy} onChange={event => setReturnReason(event.target.value as typeof returnReason)}><option value="refunds">Campaign refunds</option><option value="asset-sale">Asset-sale proceeds</option></select></label><Field label={`Amount in ${context.symbol}`} value={returnAmount} onChange={setReturnAmount} disabled={busy} /></div>
+        <button type="button" className="btn-primary min-h-11 w-fit px-5" disabled={busy || returnRaw <= 0n} onClick={() => openReview('return')}>Review treasury return</button><p className="text-xs text-[var(--muted)]">A token approval, if needed, is reviewed with the return.</p></div> : <p className="text-sm">No supported treasury currency has been verified.</p>}
     </section>
 
     <section className="grid gap-4 border-t border-[var(--line)] pt-6" aria-labelledby="fund-refund-controls">
@@ -1085,12 +1075,12 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
 
     {!review && <div className="grid gap-3">
       {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
-      <Status tx={approval} chainId={state.chainId} /><Status tx={tx} chainId={state.chainId} />
+      <Status tx={tx} chainId={state.chainId} />
     </div>}
     {review && (() => {
       const chain = displayChainName(state.chainId)
-      const returnNeedsApproval = review === 'return' && !returnNative && approvalBlock === undefined && (approvalNeeded || returnAllowance.data === undefined || returnAllowance.data < returnRaw)
-      const spec: { title: string; rows: TxConfirmRow[]; steps: { key: string; title: string; detail?: string }[]; action: string; notice?: string; run: () => Promise<void> } =
+      const returnNeedsApproval = review === 'return' && !returnNative && (returnAllowance.data === undefined || returnAllowance.data < returnRaw)
+      const spec: { title: string; rows: TxProgressRow[]; steps: { key: string; title: string; detail?: string }[]; notice?: string; run: () => Promise<void> } =
         review === 'mint' ? {
           title: 'Mint FUND',
           rows: [
@@ -1100,50 +1090,41 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
             { label: 'On', value: chain },
           ],
           steps: [{ key: 'mint', title: 'Mint FUND', detail: 'Checked again with fresh contract reads before your wallet opens.' }],
-          action: 'Confirm & mint',
           run: mint,
         } : review === 'return' ? {
           title: 'Return funds to the treasury',
-          rows: [
-            { label: 'Return', value: `${returnAmount || '0'} ${context?.symbol ?? ''}`, strong: true },
-            { label: 'For', value: returnReason === 'asset-sale' ? 'Asset-sale proceeds' : 'Campaign refunds' },
-            { label: 'To', value: `FUND treasury on ${chain}` },
-          ],
+          rows: returnRows,
           steps: [
-            ...(!returnNative && (returnNeedsApproval || approvalBlock !== undefined) ? [{ key: 'approve', title: `Approve ${context?.symbol ?? 'the token'}`, detail: 'Lets the treasury take exactly this amount.' }] : []),
+            ...(returnNeedsApproval ? [{ key: 'approve', title: `Approve ${context?.symbol ?? 'the token'}`, detail: 'Lets the treasury take exactly this amount.' }] : []),
             { key: 'return', title: 'Return to the treasury', detail: 'No FUND is minted.' },
           ],
-          action: returnNeedsApproval ? `Approve ${context?.symbol ?? 'the token'}` : 'Confirm & return',
           run: returnFunds,
         } : {
           title: 'Change the rules',
           rows: [{ label: 'Change', value: RULESET_LABELS[review] }, { label: 'On', value: chain }],
           steps: [{ key: 'queue', title: 'Queue the new rules' }],
-          action: 'Confirm & queue',
           notice: rulesetNotice(review),
           run: () => changeRules(review),
         }
-      const running = preparing || tx.busy || approval.busy || tx.phase === 'review' || approval.phase === 'review'
-      const approving = approval.busy || approval.phase === 'review'
-      return <TxConfirmDialog
+      const running = preparing || tx.busy || tx.phase === 'review'
+      return <TxProgress
         open
         eyebrow="Owner action"
         title={tx.phase === 'success' ? `${spec.title}: confirmed` : spec.title}
         rows={spec.rows}
         steps={spec.steps}
-        activeIndex={approving ? 0 : running ? spec.steps.length - 1 : spec.steps.length > 1 && approvalBlock !== undefined ? 1 : -1}
-        action={spec.action}
-        onConfirm={() => void spec.run()}
-        busy={running && !tx.safeProposalHash && !approval.safeProposalHash}
+        activeIndex={running ? Math.min(spec.steps.length - 1, spec.steps.length - tx.total + tx.step) : -1}
+        start={() => void spec.run()}
+        busy={running && !tx.safeProposalHash}
         complete={tx.phase === 'success'}
-        settled={tx.phase === 'submitted' || approval.phase === 'submitted'}
-        held={tx.held ?? approval.held}
-        status={tx.notice ?? approval.notice ?? (tx.phase === 'pending' || approval.phase === 'pending' ? 'Submitted. Waiting for onchain confirmation…' : approvalBlock !== undefined && review === 'return' && tx.phase !== 'success' ? 'Token approval confirmed. Confirm the return to continue.' : null)}
-        error={error ?? tx.error ?? approval.error}
-        onClose={() => { setReview(null); if (tx.phase === 'submitted') tx.dismiss(); if (approval.phase === 'submitted') approval.dismiss() }}
+        settled={tx.phase === 'submitted'}
+        held={tx.held}
+        status={tx.notice ?? (tx.phase === 'pending' ? 'Submitted. Waiting for onchain confirmation…' : null)}
+        error={error ?? tx.error}
+        onClose={() => { setReview(null); if (tx.phase === 'submitted') tx.dismiss() }}
       >
         {spec.notice && <p className="text-sm text-smoke-600">{spec.notice}</p>}
-      </TxConfirmDialog>
+      </TxProgress>
     })()}
   </div>
 }

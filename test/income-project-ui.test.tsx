@@ -467,11 +467,9 @@ describe('INCOME transaction surfaces', () => {
     const pay = panel.querySelector('dialog')!
     await setInput(panel.querySelector('input')!, '1')
     expect(pay.textContent).toContain('gives you no INCOME')
-    const button = [...pay.querySelectorAll('button')].find(button => button.textContent === 'Confirm & pay')!
-    expect(button.disabled).toBe(false)
-    await act(async () => button.click())
-    expect(runtime.send).toHaveBeenCalledTimes(1)
-    const [request, options] = runtime.send.mock.calls[0]
+    // The quote in, the payment opens its one review.
+    await vi.waitFor(() => expect(runtime.send).toHaveBeenCalledTimes(1))
+    const [[request], options] = runtime.send.mock.calls[0]
     expect(request.functionName).toBe('pay')
     expect(request.args[4]).toBe(0n)
     expect(options.reviewNotice).toContain('You receive no INCOME')
@@ -484,7 +482,8 @@ describe('INCOME transaction surfaces', () => {
     await act(async () => panel.querySelector('button')!.click())
     const pay = panel.querySelector('dialog')!
     await setInput(panel.querySelector('input')!, '1')
-    expect([...pay.querySelectorAll('button')].find(button => button.textContent === 'Confirm & pay')?.disabled).toBe(true)
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)) })
+    expect(pay.textContent).not.toContain('Try again')
     expect(runtime.send).not.toHaveBeenCalled()
   })
 

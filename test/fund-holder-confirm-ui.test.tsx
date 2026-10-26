@@ -82,9 +82,7 @@ describe('FUND holder actions confirm like Juicebox Money', () => {
     expect(dialogText()).toContain('Confirm cash out')
     expect(dialogText()).toContain('10 FUND')
     expect(dialogText()).toContain('8.9 USDC')
-    expect(runtime.tx.send).not.toHaveBeenCalled()
-
-    await click('Confirm & cash out')
+    // Opening the plan is its one review: nothing else to confirm here.
     expect(runtime.tx.send).toHaveBeenCalledOnce()
     const [request, options] = runtime.tx.send.mock.calls[0] as [TxRequest, TxSendOptions]
     expect(request.label).toBe('Cash out 10 FUND for at least 8.9 USDC')
@@ -113,7 +111,6 @@ describe('FUND holder actions confirm like Juicebox Money', () => {
       await render(<CashOutPanel state={current} client={{} as never} contextIndex={0} />)
       await click('Use full balance'); await settle()
       await click('Review cash-out'); await settle()
-      await click('Confirm & cash out'); await settle()
       await click('Cancel'); await settle()
     }
     await fullBalance(100n * UNIT)
@@ -133,7 +130,6 @@ describe('FUND holder actions confirm like Juicebox Money', () => {
       await render(<CashOutPanel state={current} client={{} as never} contextIndex={0} currencyChosen={currencyChosen} />)
       await type('FUND to cash out', '10'); await settle()
       await click('Review cash-out'); await settle()
-      await click('Confirm & cash out'); await settle()
       await click('Cancel'); await settle()
     }
     await cashOut(state)
@@ -189,10 +185,9 @@ describe('FUND holder actions confirm like Juicebox Money', () => {
     await type('FUND to cash out', '10'); await settle()
     await click('Review cash-out'); await settle()
     expect(runtime.prepare).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ holder: WALLET, beneficiary: WALLET }))
-    // The wallet switches accounts while the confirm is open.
+    // The wallet switches accounts while the review is open.
     runtime.address = OTHER_WALLET
     await render(<CashOutPanel state={state} client={{} as never} contextIndex={0} />)
-    await click('Confirm & cash out')
     const [, options] = runtime.tx.send.mock.calls[0] as [TxRequest, TxSendOptions]
     expect(options.reviewedAccount).toBe(WALLET)
     runtime.readFor = []
@@ -201,9 +196,9 @@ describe('FUND holder actions confirm like Juicebox Money', () => {
   })
 
   it.each([
-    ['burn', 'Review burn', 'Confirm & burn'],
-    ['transferTokens', 'Review transfer', 'Confirm & transfer'],
-  ] as const)('sends a %s as the account it was reviewed for', async (action, review, confirm) => {
+    ['burn', 'Review burn'],
+    ['transferTokens', 'Review transfer'],
+  ] as const)('sends a %s as the account it was reviewed for', async (action, review) => {
     await render(<HolderActions state={state} client={{} as never} />)
     await act(async () => {
       const select = host.querySelector('select')!
@@ -215,7 +210,6 @@ describe('FUND holder actions confirm like Juicebox Money', () => {
     await click(review); await settle()
     runtime.address = OTHER_WALLET
     await render(<HolderActions state={state} client={{} as never} />)
-    await click(confirm)
     const [, options] = runtime.tx.send.mock.calls[0] as [TxRequest, TxSendOptions]
     expect(options.reviewedAccount).toBe(WALLET)
     runtime.readFor = []
@@ -232,7 +226,6 @@ describe('FUND holder actions confirm like Juicebox Money', () => {
     expect(dialogText()).toContain('Confirm transfer')
     expect(dialogText()).toContain('5 FUND')
     expect(dialogText()).toContain(recipient)
-    await click('Confirm & transfer')
     const [request] = runtime.tx.send.mock.calls[0] as [TxRequest]
     expect(request.functionName).toBe('transfer')
     expect(request.args).toEqual([recipient, 5n * UNIT])

@@ -8,7 +8,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { erc20Abi, formatUnits, getAddress, isAddress, isAddressEqual, zeroAddress, type Address, type PublicClient } from 'viem'
 import { ProjectPayment } from '@/components/ProjectPayment'
 import { chosenOrAuto } from '@/lib/transaction-builders'
-import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { reviewContext, TxProgress, type TxProgressRow } from '@/components/ui/TxProgress'
 import { useReviewedAction, type TxRequest } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { displayChainName, explorerTxUrl } from '@/lib/chainDisplay'
@@ -183,6 +183,7 @@ export function CashOutPanel({ state, client, contextIndex, currencyChosen = fal
   const send = () => confirm.run((plan, account) => tx.send(plan.request, {
     reviewedAccount: account,
     reviewNotice: plan.reviewNotice,
+    context: reviewContext(rows),
     // Its minimum comes from a fresh quote: a retry is held by the cash out the user chose, all of
     // the balance when they chose that, whatever it is by the retry.
     recoveryNamespace: writeIntentKey('cash-out', { project: state.projectId, token: chosenOrAuto('token', intent.address(context.token), currencyChosen), ...(plan.max ? { max: true } : { count: plan.count }) }),
@@ -192,7 +193,7 @@ export function CashOutPanel({ state, client, contextIndex, currencyChosen = fal
     },
   }))
   const plan = confirm.plan
-  const rows: TxConfirmRow[] = plan ? [
+  const rows: TxProgressRow[] = plan ? [
     { label: 'Cash out', value: `${units(plan.count)} FUND`, strong: true },
     { label: 'On', value: displayChainName(state.chainId) },
     { label: 'You get at least', value: `${units(plan.minimum, context.decimals)} ${context.symbol}`, strong: true },
@@ -208,15 +209,14 @@ export function CashOutPanel({ state, client, contextIndex, currencyChosen = fal
     <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={!address || confirm.preparing || tx.busy || tx.phase === 'review' || count <= 0n || count > total || state.metadata.cashOutTaxRate >= 10_000 || !quote.data || quote.data.minimumReturn <= 0n} onClick={() => void review()}>Review cash-out</button>
     {!plan && !confirm.preparing && confirm.error && <p role="alert" className="mt-4 text-sm text-red-800">{confirm.error}</p>}
     {!plan && <TransactionStatus tx={tx} chainId={state.chainId} />}
-    <TxConfirmDialog
+    <TxProgress
       open={!!plan || confirm.preparing}
       preparing={confirm.preparing}
       title={tx.phase === 'success' ? 'Cashed out' : 'Confirm cash out'}
       rows={rows}
       steps={[{ key: 'cash-out', title: 'Cash out FUND', detail: 'Burns your FUND and pays its share of the treasury to your wallet.' }]}
       activeIndex={0}
-      action="Confirm & cash out"
-      onConfirm={() => void send()}
+      start={() => void send()}
       busy={confirm.busy}
       complete={tx.phase === 'success'}
       settled={tx.phase === 'submitted'}
@@ -247,14 +247,14 @@ export function HolderActions({ state, client }: { state: FundProjectState; clie
     if (!state.tokenAddress) throw new Error('No FUND ERC-20 is deployed.')
     return { action, count, destination, request: { chainId: state.chainId, address: state.tokenAddress, abi: erc20Abi, functionName: 'transfer', args: [destination, count], label: `Transfer ${units(count)} FUND tokens to ${destination}` } }
   })
-  const send = () => confirm.run((plan, account) => tx.send(plan.request, { reviewedAccount: account, reverify: async () => {
+  const send = () => confirm.run((plan, account) => tx.send(plan.request, { reviewedAccount: account, context: reviewContext(rows), reverify: async () => {
     const fresh = await freshState(client, state, account)
     if (plan.count > (plan.action === 'burn' ? fresh.creditBalance + fresh.erc20Balance : fresh.erc20Balance)) throw new Error('Your token balance changed. Review a new amount.')
     if (fresh.tokenAddress !== state.tokenAddress) throw new Error('The project token changed. Refresh and review again.')
   } }))
   const plan = confirm.plan
   const burning = plan?.action === 'burn'
-  const rows: TxConfirmRow[] = plan ? [
+  const rows: TxProgressRow[] = plan ? [
     { label: burning ? 'Burn' : 'Transfer', value: `${units(plan.count)} FUND`, strong: true },
     ...(burning ? [] : [{ label: 'To', value: plan.destination, mono: true }]),
     { label: 'On', value: displayChainName(state.chainId) },
@@ -268,14 +268,13 @@ export function HolderActions({ state, client }: { state: FundProjectState; clie
     <button type="button" className="btn-primary min-h-11 w-fit px-5" disabled={confirm.preparing || tx.busy || tx.phase === 'review' || unavailable || (count <= 0n || count > available) || !destination} onClick={() => void review()}>{action === 'burn' ? 'Review burn' : 'Review transfer'}</button>
     {!plan && confirm.error && <p role="alert" className="text-sm text-red-800">{confirm.error}</p>}
     {!plan && <TransactionStatus tx={tx} chainId={state.chainId} />}
-    <TxConfirmDialog
+    <TxProgress
       open={!!plan}
       title={tx.phase === 'success' ? (burning ? 'Burned' : 'Transferred') : burning ? 'Confirm burn' : 'Confirm transfer'}
       rows={rows}
       steps={[{ key: plan?.action ?? 'action', title: burning ? 'Burn FUND' : 'Transfer FUND' }]}
       activeIndex={0}
-      action={burning ? 'Confirm & burn' : 'Confirm & transfer'}
-      onConfirm={() => void send()}
+      start={() => void send()}
       busy={confirm.busy}
       complete={tx.phase === 'success'}
       settled={tx.phase === 'submitted'}

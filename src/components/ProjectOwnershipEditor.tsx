@@ -9,7 +9,7 @@ import { useProjectAdminTx } from '@/hooks/useProjectAdminTx'
 import { buildProjectOwnershipTx, readProjectAuthority, reverifyProjectAuthority } from '@/lib/project-authority'
 import { displayChainName } from '@/lib/chainDisplay'
 import { ProjectAdminTransactionStatus } from './ProjectAdminTransactionStatus'
-import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { reviewContext, TxProgress } from '@/components/ui/TxProgress'
 
 export type ProjectAuthorityEditorProps = { chainId: JBChainId; projectId: bigint; client: PublicClient | null | undefined; unavailable?: boolean }
 const message = (error: unknown) => error instanceof Error ? error.message : 'Project ownership could not be read.'
@@ -34,6 +34,13 @@ export function ProjectOwnershipEditor({ chainId, projectId, client, unavailable
   const isRevnet = state?.kind === 'revnet'
   const different = valid && !!state && !isAddressEqual(recipient.trim() as Address, isRevnet ? address ?? zeroAddress : state.owner)
 
+  // What the transfer does, in the progress and at the top of its one review.
+  const rows = state ? [
+    { label: 'Project', value: `#${projectId.toString()} on ${displayChainName(chainId)}` },
+    { label: 'From', value: isRevnet ? address ?? '' : state.owner, mono: true },
+    { label: 'To', value: recipient.trim(), mono: true, strong: true },
+  ] : []
+
   async function submit() {
     if (!client || !address || !confirmed || !state || busy || !tx.ready) return
     setPreparing(true); setError(null)
@@ -43,6 +50,7 @@ export function ProjectOwnershipEditor({ chainId, projectId, client, unavailable
       const request = buildProjectOwnershipTx(fresh, recipient)
       await tx.send(request, {
         reviewedAccount: address,
+        context: reviewContext(rows),
         reviewNotice: fresh.kind === 'revnet'
           ? `On ${displayChainName(chainId)}, move INCOME control from ${address} to ${recipient.trim()}. This clears the current control wallet’s project permission slot and replaces the new wallet’s slot with this revnet’s configured Operator permissions. The project NFT remains with REVOwner. Economic Operator split recipients are configured separately under Owners → Splits.`
           : `On ${displayChainName(chainId)}, transfer project #${projectId} ownership from ${fresh.owner} to ${recipient.trim()}. The recipient controls this project’s owner powers. Existing permissions are scoped to the previous owner and will no longer authorize this project; any permissions the recipient previously granted for this project become effective. Other chains require separate ownership transfers. Token balances and economic split recipients are unchanged.`,
@@ -54,7 +62,7 @@ export function ProjectOwnershipEditor({ chainId, projectId, client, unavailable
   return <section className="demo-section" aria-label="Project ownership">
     <h2>{state ? isRevnet ? 'INCOME control' : 'FUND ownership' : 'Project ownership'}</h2>
     {state && <>
-      <dl className="demo-live-rows"><div><dt>Project</dt><dd>#{projectId.toString()} on {displayChainName(chainId)}</dd></div><div><dt>{isRevnet ? 'Project NFT owner · REVOwner' : 'Current project owner'}</dt><dd className="break-all">{state.owner}</dd></div>{isRevnet && state.isRevnetOperator && <div><dt>Connected control wallet</dt><dd className="break-all">{address}</dd></div>}</dl>
+      <dl className="demo-live-rows"><div><dt>Project</dt><dd>#{projectId.toString()} on {displayChainName(chainId)}</dd></div><div><dt>{isRevnet ? 'Project NFT owner, REVOwner' : 'Current project owner'}</dt><dd className="break-all">{state.owner}</dd></div>{isRevnet && state.isRevnetOperator && <div><dt>Connected control wallet</dt><dd className="break-all">{address}</dd></div>}</dl>
       <p className="mt-4 text-xs text-[var(--muted)]">{isRevnet ? 'The revnet contract holds the project NFT. Its control wallet can move the management permissions to another wallet.' : 'The project NFT controls this project. It is separate from holding FUND or INCOME.'}</p>
     </>}
     {!state && <p className="text-sm text-[var(--muted)]">Project #{projectId.toString()} on {displayChainName(chainId)}</p>}
@@ -69,19 +77,14 @@ export function ProjectOwnershipEditor({ chainId, projectId, client, unavailable
     </form>}
     {error && !reviewing && <p className="mt-4 text-sm text-red-800" role="alert">{error}</p>}
     {!reviewing && <ProjectAdminTransactionStatus tx={tx} />}
-    <TxConfirmDialog
+    <TxProgress
       open={reviewing && !!state}
       eyebrow={isRevnet ? 'INCOME control' : 'Project ownership'}
       title={tx.phase === 'success' ? (isRevnet ? 'Control moved' : 'Ownership transferred') : isRevnet ? 'Move INCOME control' : 'Transfer ownership'}
-      rows={state ? [
-        { label: 'Project', value: `#${projectId.toString()} on ${displayChainName(chainId)}` },
-        { label: 'From', value: isRevnet ? address ?? '' : state.owner, mono: true },
-        { label: 'To', value: recipient.trim(), mono: true, strong: true },
-      ] : []}
+      rows={rows}
       steps={[{ key: 'transfer', title: isRevnet ? 'Move the control permissions' : 'Transfer the project NFT', detail: isRevnet ? 'The project NFT stays with REVOwner.' : 'Other chains need their own transfers.' }]}
       activeIndex={busy ? 0 : -1}
-      action="Confirm & transfer"
-      onConfirm={() => void submit()}
+      start={tx.pending ? undefined : () => void submit()}
       busy={preparing || (tx.busy && !tx.pending)}
       complete={tx.phase === 'success'}
       settled={tx.phase === 'submitted'}
@@ -90,6 +93,6 @@ export function ProjectOwnershipEditor({ chainId, projectId, client, unavailable
     >
       <p className="text-sm text-smoke-600">{isRevnet ? 'The selected wallet gets this revnet’s Operator permissions; the connected wallet’s are cleared.' : 'The new owner controls this project on this chain. Existing permissions granted by the previous owner stop applying.'}</p>
       <ProjectAdminTransactionStatus tx={tx} />
-    </TxConfirmDialog>
+    </TxProgress>
   </section>
 }

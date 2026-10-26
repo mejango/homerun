@@ -16,8 +16,13 @@ import {
   useReviewedAction,
   type TxRequest,
   type TxSendOptions,
+  type TxStep,
 } from "@/hooks/useReviewedAction";
-import { TxConfirmDialog } from "@/components/ui/TxConfirmDialog";
+import {
+  reviewContext,
+  TxProgress,
+  type TxProgressRow,
+} from "@/components/ui/TxProgress";
 import { HeldNotice } from "@/components/ui/HeldWriteExit";
 import { useWallet } from "@/hooks/useWallet";
 import {
@@ -128,27 +133,46 @@ function useBridgeTransaction(chainId: JBChainId) {
       cancelled = true;
     };
   }, [active, cache, chainId, tx.phase, tx.receipt, verificationAttempt]);
-  async function send(request: TxRequest, options: TxSendOptions) {
+  async function send(
+    requested: TxRequest | readonly TxStep[],
+    options: TxSendOptions,
+  ) {
     // The write's hold is the SDK's: an unplaced write is held with its exit, never locked until reload.
     if (!address || tx.busy) return;
+    // A multi-step action's receipt is its last step's: that is the bridge action verified.
+    const request: TxRequest =
+      "address" in requested ? requested : requested[requested.length - 1];
     checked.current = null;
     setVerified(null);
     setVerificationError(null);
     setActive({ request, account: options.reviewedAccount, safe: tx.isSafe });
-    await tx.send(request, {
+    await tx.send(requested, {
       ...options,
       onExistingProposal: async (proposal) => {
-        const decoded = decodeFunctionData({ abi: request.abi, data: proposal.call.data });
-        if (decoded.functionName !== request.functionName) throw new Error("The saved Safe bridge call changed.");
+        const decoded = decodeFunctionData({
+          abi: request.abi,
+          data: proposal.call.data,
+        });
+        if (decoded.functionName !== request.functionName)
+          throw new Error("The saved Safe bridge call changed.");
         await options.onExistingProposal?.(proposal);
-        setActive({ request: { ...request, address: proposal.call.to, args: decoded.args ?? [], value: proposal.call.value }, account: options.reviewedAccount, safe: true });
+        setActive({
+          request: {
+            ...request,
+            address: proposal.call.to,
+            args: decoded.args ?? [],
+            value: proposal.call.value,
+          },
+          account: options.reviewedAccount,
+          safe: true,
+        });
       },
     });
   }
   const safeOuterRevert = !!active?.safe && tx.receipt?.status === "reverted";
   return {
     ...tx,
-    phase: safeOuterRevert ? "submitted" as const : tx.phase,
+    phase: safeOuterRevert ? ("submitted" as const) : tx.phase,
     notice: safeOuterRevert ? SAFE_PROPOSAL_UNCONFIRMED : tx.notice,
     error: safeOuterRevert ? null : tx.error,
     settled: safeOuterRevert || tx.settled,
@@ -427,7 +451,6 @@ function BridgePreparation<State extends BridgeProjectState>({
   // The confirm dialog, with the steps it opened with (an approval confirming mid-flow keeps its row).
   const [review, setReview] = useState<{ needsApproval: boolean } | null>(null);
   const preparationLock = useRef(false);
-  const approval = useBridgeTransaction(route.source.chainId);
   const tx = useBridgeTransaction(route.source.chainId);
   const count = positive(amount);
   const beneficiary = address ?? "";
@@ -452,11 +475,36 @@ function BridgePreparation<State extends BridgeProjectState>({
     staleTime: 10_000,
     retry: false,
   });
-  const busy = preparing || approval.locked || tx.locked;
+  const busy = preparing || tx.locked;
   useEffect(() => {
     setLock("prepare", busy);
     return () => setLock("prepare", false);
   }, [busy, setLock]);
+  const rows: TxProgressRow[] = [
+    {
+      label: "Move",
+      value: `${formatUnits(count, 18)} ${adapter.tokenLabel}`,
+      strong: true,
+    },
+    {
+      label: "From",
+      value: `${displayChainName(route.source.chainId)} project ${route.source.projectId.toString()}`,
+    },
+    {
+      label: "To",
+      value: `${displayChainName(route.destination.chainId)} project ${route.destination.projectId.toString()}`,
+    },
+    ...(quote.data
+      ? [
+          {
+            label: "Backing at least",
+            value: `${formatUnits(quote.data.minTokensReclaimed, route.sourceContext.decimals)} ${route.sourceContext.symbol}`,
+            strong: true,
+          },
+        ]
+      : []),
+    ...(address ? [{ label: "Beneficiary", value: address, mono: true }] : []),
+  ];
   async function submit() {
     if (
       preparationLock.current ||
@@ -476,14 +524,6 @@ function BridgePreparation<State extends BridgeProjectState>({
         route.destination.chainId,
         route.sourceToken,
       );
-      const minimumBlock =
-        approval.verified === "approved"
-          ? approval.receipt?.blockNumber
-          : undefined;
-      if (minimumBlock !== undefined && fresh.source.blockNumber < minimumBlock)
-        throw new Error(
-          "The source RPC has not caught up with your approval. Wait and refresh.",
-        );
       const nextQuote = await adapter.readQuote(
         clientFor(fresh.source.chainId),
         fresh,
@@ -494,35 +534,7 @@ function BridgePreparation<State extends BridgeProjectState>({
         fresh,
         { amount: count, beneficiary },
       );
-      if (nextQuote.allowance < count) {
-        const request = adapter.approval(fresh, count);
-        await approval.send(
-          {
-            ...request,
-            label: `Approve ${formatUnits(count, 18)} ${adapter.tokenLabel} for the verified bridge`,
-          },
-          {
-            reviewedAccount: address,
-            reverify: async () => {
-              const latest = await adapter.readRoute(
-                clientFor,
-                { ...fresh.source, account: address },
-                fresh.destination.chainId,
-                fresh.sourceToken,
-              );
-              const next = adapter.approval(latest, count);
-              if (
-                !isAddressEqual(next.address, request.address) ||
-                !isAddressEqual(latest.sourceSucker, fresh.sourceSucker)
-              )
-                throw new Error(
-                  "The project token or registered bridge changed during review.",
-                );
-            },
-          },
-        );
-        return;
-      }
+      const approving = nextQuote.allowance < count;
       // Keep the displayed minimum even when a later quote is worse.
       const minimum = quote.data.minTokensReclaimed;
       if (nextQuote.netReclaimAmount < minimum)
@@ -534,33 +546,63 @@ function BridgePreparation<State extends BridgeProjectState>({
         beneficiary,
         minTokensReclaimed: minimum,
       });
+      // Its minimum backing comes from a quote: a retry is held by the move the user chose.
+      // The token is the backing currency, which other projects share: the projects identify the move.
+      const moveKey = writeIntentKey("bridge-prepare", {
+        sourceProject: fresh.source.projectId,
+        destinationProject: fresh.destination.projectId,
+        token: intent.address(fresh.sourceToken),
+        destination: fresh.destination.chainId,
+        amount: count,
+        beneficiary: intent.address(beneficiary),
+      });
+      const prepare: TxStep = {
+        ...request,
+        label: `Prepare ${formatUnits(count, 18)} ${adapter.tokenLabel} for ${displayChainName(fresh.destination.chainId)}`,
+        recoveryNamespace: moveKey,
+        ...(approving ? { dependsOnPrior: true } : {}),
+      };
+      const approval = approving ? adapter.approval(fresh, count) : null;
+      // The approval and the move are one review, and resume as one action after a reload.
       await tx.send(
-        {
-          ...request,
-          label: `Prepare ${formatUnits(count, 18)} ${adapter.tokenLabel} for ${displayChainName(fresh.destination.chainId)}`,
-        },
+        approval
+          ? [
+              {
+                ...approval,
+                label: `Approve ${formatUnits(count, 18)} ${adapter.tokenLabel} for the verified bridge`,
+              },
+              prepare,
+            ]
+          : [prepare],
         {
           reviewedAccount: address,
-          // Its minimum backing comes from a quote: a retry is held by the move the user chose.
-          // The token is the backing currency, which other projects share: the projects identify the move.
-          recoveryNamespace: writeIntentKey("bridge-prepare", {
-            sourceProject: fresh.source.projectId,
-            destinationProject: fresh.destination.projectId,
-            token: intent.address(fresh.sourceToken),
-            destination: fresh.destination.chainId,
-            amount: count,
-            beneficiary: intent.address(beneficiary),
-          }),
+          scope: `homerun:bridge-prepare:${moveKey}`,
+          context: reviewContext(rows),
           reviewNotice: `Beneficiary: ${beneficiary}. At least ${formatUnits(minimum, fresh.sourceContext.decimals)} ${fresh.sourceContext.symbol} of treasury backing moves with your ${adapter.tokenLabel}. Relay and destination claim are separate transactions.`,
-          simulationBlockNumber:
-            minimumBlock === undefined ? undefined : fresh.source.blockNumber,
-          reverify: async () => {
+          reverify: async (step, _index, prior) => {
             const latest = await adapter.readRoute(
               clientFor,
               { ...fresh.source, account: address },
               fresh.destination.chainId,
               fresh.sourceToken,
             );
+            if (prior && latest.source.blockNumber < prior.blockNumber)
+              throw new Error(
+                "The source RPC has not caught up with your approval. Wait and refresh.",
+              );
+            if (step.functionName === "approve") {
+              if (
+                !isAddressEqual(
+                  adapter.approval(latest, count).address,
+                  step.address,
+                ) ||
+                !isAddressEqual(latest.sourceSucker, fresh.sourceSucker)
+              )
+                throw new Error(
+                  "The project token or registered bridge changed during review.",
+                );
+              return;
+            }
             const current = await adapter.readQuote(
               clientFor(latest.source.chainId),
               latest,
@@ -688,13 +730,8 @@ function BridgePreparation<State extends BridgeProjectState>({
           {error}
         </p>
       )}
-      {!review && (
-        <>
-          <BridgeStatus tx={approval} chainId={route.source.chainId} />
-          <BridgeStatus tx={tx} chainId={route.source.chainId} />
-        </>
-      )}
-      <TxConfirmDialog
+      {!review && <BridgeStatus tx={tx} chainId={route.source.chainId} />}
+      <TxProgress
         open={!!review}
         eyebrow="Move between chains"
         title={
@@ -702,33 +739,7 @@ function BridgePreparation<State extends BridgeProjectState>({
             ? "Move prepared"
             : `Move ${adapter.tokenLabel} to ${displayChainName(route.destination.chainId)}`
         }
-        rows={[
-          {
-            label: "Move",
-            value: `${formatUnits(count, 18)} ${adapter.tokenLabel}`,
-            strong: true,
-          },
-          {
-            label: "From",
-            value: `${displayChainName(route.source.chainId)} project ${route.source.projectId.toString()}`,
-          },
-          {
-            label: "To",
-            value: `${displayChainName(route.destination.chainId)} project ${route.destination.projectId.toString()}`,
-          },
-          ...(quote.data
-            ? [
-                {
-                  label: "Backing at least",
-                  value: `${formatUnits(quote.data.minTokensReclaimed, route.sourceContext.decimals)} ${route.sourceContext.symbol}`,
-                  strong: true,
-                },
-              ]
-            : []),
-          ...(address
-            ? [{ label: "Beneficiary", value: address, mono: true }]
-            : []),
-        ]}
+        rows={rows}
         steps={[
           ...(review?.needsApproval
             ? [
@@ -747,29 +758,16 @@ function BridgePreparation<State extends BridgeProjectState>({
               "Relaying it and claiming on the destination follow as separate transactions below.",
           },
         ]}
-        activeIndex={
-          review?.needsApproval && approval.verified !== "approved"
-            ? 0
-            : review?.needsApproval
-              ? 1
-              : 0
-        }
-        action={
-          review?.needsApproval && approval.verified !== "approved"
-            ? `Approve ${adapter.tokenLabel}`
-            : "Confirm & prepare"
-        }
-        actionDisabled={!quote.data || count <= 0n}
-        onConfirm={() => void submit()}
-        busy={busy && approval.phase !== "submitted" && tx.phase !== "submitted"}
+        activeIndex={review?.needsApproval && tx.total > 1 ? tx.step : 0}
+        start={!quote.data || count <= 0n ? undefined : () => void submit()}
+        busy={busy && tx.phase !== "submitted"}
         complete={tx.verified === "prepared"}
-        settled={tx.phase === "submitted" || approval.phase === "submitted"}
+        settled={tx.phase === "submitted"}
         error={error}
         onClose={() => setReview(null)}
       >
-        <BridgeStatus tx={approval} chainId={route.source.chainId} />
         <BridgeStatus tx={tx} chainId={route.source.chainId} />
-      </TxConfirmDialog>
+      </TxProgress>
     </div>
   );
 }

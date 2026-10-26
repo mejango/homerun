@@ -7,7 +7,7 @@ import { usePublicClient } from 'wagmi'
 import { useReviewedAction, type TxRequest } from './useReviewedAction'
 import { useWallet } from './useWallet'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { WRITE_EXIT_LABEL, browserLocks, hidesShownExit, writeExitMessage, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
+import { WRITE_EXIT_LABEL, browserLocks, hidesShownExit, writeExitMessage, type ReviewContextRow, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
 import { useHeldWrite } from '@bananapus/nana-sdk-core/review/react'
 import { holds } from '@/lib/write-hold'
 import {
@@ -26,6 +26,8 @@ export type ProjectAdminSendOptions = {
   /** Re-read authority and rebuild the exact request from current mined state. */
   reverify: (request: TxRequest) => Promise<unknown>
   reviewNotice?: string
+  /** What the update does, as rows at the top of its one review. */
+  context?: readonly ReviewContextRow[]
 }
 function requestIdentity(request: TxRequest): string {
   return `${request.chainId}:${request.address.toLowerCase()}:${request.value ?? 0n}:${encodeFunctionData(request).toLowerCase()}`
@@ -120,6 +122,7 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
           return await tx.send(captured, {
             reviewedAccount: options.reviewedAccount,
             reviewNotice: options.reviewNotice,
+            context: options.context,
             recoveryNamespace: projectAdminNamespace(projectId),
         // Adopting a proposal the Safe already has skips the wallet, so the account is registered here, still under the lock.
         onExistingProposal: () => { noteProjectAdminAccount(localStorage, chainId, projectId, options.reviewedAccount) },
