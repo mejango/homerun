@@ -18,7 +18,7 @@ const runtime = vi.hoisted(() => ({ states: [] as unknown[] }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@wagmi/core', async importOriginal => {
   const { wallet } = await import('./support/fake-wallet')
-  return { ...(await importOriginal<typeof import('@wagmi/core')>()), getAccount: () => ({ address: wallet.account, chainId: 8453 }), getPublicClient: () => wallet.client }
+  return { ...(await importOriginal<typeof import('@wagmi/core')>()), getWalletClient: async () => ({ writeContract: wallet.writeContract }), getAccount: () => ({ address: wallet.account, chainId: 8453 }), getPublicClient: () => wallet.client }
 })
 vi.mock('wagmi', async importOriginal => {
   const { walletHooks } = await import('./support/fake-wallet')

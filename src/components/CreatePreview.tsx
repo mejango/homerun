@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
-import { getAccount, getPublicClient, getWalletClient } from '@wagmi/core'
+import { getAccount, getPublicClient } from '@wagmi/core'
 import { jbProjectsAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import { isAddressEqual, toHex, type PublicClient } from 'viem'
@@ -17,7 +17,7 @@ import { jbCenterClient } from '@/lib/jbcenter-client'
 import { loadCreateValues } from '@/lib/create-preview'
 import { displayChainName } from '@/lib/chainDisplay'
 import { isSafeConnection } from '@/lib/safe-connector'
-import { assertReviewedWallet } from '@/lib/wallet-core'
+import { assertReviewedWallet, withReviewedWallet } from '@/lib/wallet-core'
 import { SAFE_CREATE_ABI, SAFE_SINGLETON, multisigCreationData, multisigInitializer, multisigReview, resolveCreateMultisigs } from '@/lib/create-multisig'
 import { buildFundLaunch } from '@/lib/fund-contracts'
 import { buildFundIntent, fundIntentEligibleChains, publishFundIntent, UNSUPPORTED_CHAINS_MESSAGE } from '@/lib/fund-intent'
@@ -178,9 +178,7 @@ export default function CreatePreview() {
         client: jbCenterClient, input, name: values.name, publisher: sender,
         sign: async publicationMessage => {
           assertReviewedWallet(authority)
-          const wallet = await getWalletClient(wagmiConfig, { account: authority.account, connector })
-          assertReviewedWallet(authority)
-          return wallet.signMessage({ account: authority.account, message: publicationMessage })
+          return withReviewedWallet(authority, wallet => wallet.signMessage({ account: authority.account, message: publicationMessage }))
         },
       })
       try {

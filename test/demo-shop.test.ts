@@ -49,7 +49,7 @@ describe('demo item rules mirror the stock shop', () => {
     expect(validateDemoShopItem(item({ supply: '999999998', votingUnits: '4294967295' }), 'USD')).toEqual({})
     expect(validateDemoShopItem(item({ supply: '1', votingUnits: '0' }), 'USD')).toEqual({})
     for (const supply of ['0', '999999999', '1.5', '1e2']) expect(validateDemoShopItem(item({ supply }), 'USD')).toHaveProperty('supply')
-    for (const votingUnits of ['-1', '4294967296', '1e3', '1.5']) expect(validateDemoShopItem(item({ votingUnits }), 'USD')).toHaveProperty('votingUnits')
+    for (const votingUnits of ['-1', '4294967296', '1e3', '1.5', 'junk']) expect(validateDemoShopItem(item({ votingUnits }), 'USD')).toEqual({})
   })
   it('checks reserve frequency, beneficiary, and minimum finite inventory together', () => {
     for (const reserveN of ['1', '65535']) expect(validateDemoShopItem(item({ supply: '2', reserveN, reserveBeneficiary: WALLET }), 'USD')).toEqual({})

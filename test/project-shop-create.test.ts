@@ -114,3 +114,13 @@ test('create shop requires items, valid chain/project and a stable nonzero salt'
   const named = buildCreateProjectShopRequest({ ...input(), name: '  Founder Haus shop  ' })
   assert.equal((named.args[1] as { name: string }).name, 'Founder Haus shop')
 })
+
+
+test('direct shop creation rejects deadlocked reserves and enforces price-based new tiers', () => {
+  const prepared = input()
+  assert.throws(() => buildCreateProjectShopRequest({ ...prepared, tiers: prepared.tiers.map(tier => ({ ...tier, initialSupply: 1, reserveFrequency: 2 })) }), /at least 2/)
+  const request = buildCreateProjectShopRequest({ ...prepared, tiers: prepared.tiers.map(tier => ({ ...tier, votingUnits: 42, flags: { ...tier.flags, useVotingUnits: true } })) })
+  const config = request.args[1] as { tiersConfig: { tiers: { votingUnits: number; flags: { useVotingUnits: boolean } }[] } }
+  assert.equal(config.tiersConfig.tiers[0].flags.useVotingUnits, false)
+  assert.equal(config.tiersConfig.tiers[0].votingUnits, 0)
+})
