@@ -16,12 +16,11 @@ const mocks = vi.hoisted(() => ({
   getAccount: vi.fn(),
   writeContract: vi.fn(),
 }))
-vi.mock('@wagmi/core', () => ({ getAccount: mocks.getAccount }))
+vi.mock('@wagmi/core', () => ({ getAccount: mocks.getAccount, getWalletClient: async () => ({ writeContract: mocks.writeContract }) }))
 vi.mock('wagmi', () => ({
   usePublicClient: () => mocks.publicClient,
   useSwitchChain: () => ({ switchChainAsync: vi.fn() }),
   useWaitForTransactionReceipt: () => ({ data: undefined, isError: false }),
-  useWriteContract: () => ({ writeContractAsync: mocks.writeContract }),
 }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ isConnected: true, address: SAFE, isCenterWallet: false }) }))
 vi.mock('@/lib/transaction-review', async importOriginal => ({
