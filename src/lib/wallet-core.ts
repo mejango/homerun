@@ -19,17 +19,37 @@ import { isSafeConnection } from '@/lib/safe-connector'
  * Product journals and execution policy remain in their owning adapters.
  */
 
-/** The live wallet must still be the one whose exact request was reviewed. */
-export function assertReviewedWallet({ account, connectorUid, chainId, safe, allowCenter = false }: {
+/** The live account, chain and execution route must match the reviewed request. */
+export function assertReviewedWallet({ account, chainId, safe, allowCenter = false }: {
   account: Address; connectorUid: string | undefined; chainId?: number; safe: boolean; allowCenter?: boolean
 }, message = 'Wallet connection changed. Review the transaction again.'): void {
   assertNoViewAs()
   const current = getAccount(wagmiConfig)
   assertReviewedAccountConnected(account, current.address, message)
-  if ((chainId !== undefined && current.chainId !== chainId) || current.connector?.uid !== connectorUid ||
+  if ((chainId !== undefined && current.chainId !== chainId) ||
       isSafeConnection(wagmiConfig) !== safe || (!allowCenter && current.connector?.id === 'juicebox-center')) {
     throw new Error(message)
   }
+}
+
+/** Acquire the live connector after preparation, then invoke without another await. */
+export async function withReviewedWallet<T>(
+  authority: Parameters<typeof assertReviewedWallet>[0],
+  invoke: (wallet: Awaited<ReturnType<typeof getWalletClient>>) => T,
+  message?: string,
+): Promise<Awaited<T>> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    assertReviewedWallet(authority, message)
+    const connection = getAccount(wagmiConfig)
+    const wallet = await getWalletClient(wagmiConfig, {
+      account: authority.account, connector: connection.connector,
+      ...(authority.chainId !== undefined ? { chainId: authority.chainId as JBChainId } : {}),
+    })
+    assertReviewedWallet(authority, message)
+    if (getAccount(wagmiConfig).connector?.uid !== connection.connector?.uid) continue
+    return await invoke(wallet)
+  }
+  throw new Error(message ?? 'Wallet connection changed. Review the transaction again.')
 }
 
 export function publicClient(chainId: JBChainId): PublicClient {

@@ -3,14 +3,14 @@
   "sites": [
     {
       "file": "src/components/CreatePreview.tsx",
-      "line": 183,
+      "line": 181,
       "api": "signMessage",
       "boundary": "The project publication message is signed by the reviewed authority account only after the person confirms its review; the signature authorizes publishing, never a transaction.",
       "test": "test/create-preview-ui.test.tsx"
     },
     {
       "file": "src/components/DeployChains.tsx",
-      "line": 192,
+      "line": 191,
       "api": "sendTransaction",
       "boundary": "A paid relay of a reviewed chain deployment: the person confirms the exact relay call in the review before the wallet opens, and a refusal leaves nothing sent.",
       "test": "test/deploy-chains-ui.test.tsx"
@@ -87,14 +87,14 @@
     },
     {
       "file": "src/lib/relayr.ts",
-      "line": 259,
+      "line": 262,
       "api": "signTypedData",
       "boundary": "Signs the Relayr forward requests the person reviewed, with the exact typed data shown in the review.",
       "test": "test/relayr-review.test.ts"
     },
     {
       "file": "src/lib/relayr.ts",
-      "line": 439,
+      "line": 447,
       "api": "sendTransaction",
       "boundary": "Pays the reviewed Relayr quote after the payment is reviewed and simulated; only a 4001 means not sent.",
       "test": "test/relayr-review.test.ts"

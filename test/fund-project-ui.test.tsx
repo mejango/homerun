@@ -603,6 +603,7 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     expect(runtime.mounted).toBe(mounted)
     expect(runtime.unmounted).toBe(0)
     expect(host.querySelector('fieldset[aria-label="Project transactions"]')?.hasAttribute('disabled')).toBe(true)
+    expect(host.textContent).not.toContain('as unclaimed credits')
   })
 
   it('fails closed for an unsupported controller without destroying pending receipt watchers', async () => {

@@ -298,3 +298,29 @@ Brief: `ALIGN/migration-brief.md`, frozen rules `ALIGN/recovery-rule.md`, gaps `
 - **Evidence and unknowns:** 2.41.2 was validated against Homerun by the coordinator; the only timing dependence found is this test's single `await Promise.resolve()`.
 - **Verification:** The updated test, then the full `npm run check`, `typecheck` and all browser suites.
 - **Resource budget:** One writer, no subagents.
+
+
+# Correctness convergence, 2026-10-24
+
+Resources: /Users/jango/Documents/jb/v6/evm/AGENTS.md, /Users/jango/Documents/jb/v6/evm/workflow/ponytail/SKILL.md, /Users/jango/Documents/jb/v6/evm/docs/PLAN_REFINEMENT.md, /Users/jango/Documents/jb/v6/evm/tasks/lessons.md and /Users/jango/Documents/jb/v6/evm/extensions/homerun/AGENTS.md apply in this isolated checkout.
+
+## Plan refinement
+- **Objective:** Enforce all five user-selected correctness rules in Homerun without contracts, Plugin, deployment or merges; all new item voting is price-based, confirmed by user.
+- **System fit:** Existing shop validation/compiler, wallet-core, SDK contract-write adapter, relay signing/payment and deployment adapters own encoding and final wallet authority; preserve reviewed payload, account, chain, Safe route and durable recovery. Preserve legacy saved shop voting bytes for settlement with an explicit price-policy marker for new plans; reject obsolete plans before new authorization while permitting permission restoration.
+- **Reuse and simplicity:** Reuse wallet-core and wagmi current-client acquisition, existing test renderer harness and shop validator; avoid SDK upgrades or new review UX.
+- **Evidence and unknowns:** Main 848b46620b1533f6ae8aca983927fe751ebaa1a5 uses SDK3.5.2; inspect real adapter and balance/asset owners before changing semantics. Existing supply1 validator appears correct; prove reachable compilers. User confirmed always price-based, including nonzero imported custom values.
+- **Verification:** Add await-race regression checks for actual hooks and adapters, all changed source gates, full unit/component tests, lint, typecheck, production build and budgets; identify external/browser limitations explicitly.
+- **Resource budget:** One isolated checkout, physical locked dependency install, bounded owner/caller search, no unrelated refactor. Replan on shared SDK limitations or material findings.
+
+- [x] Trace all five rules and implement applicable gaps.
+- [x] Add durable regression coverage and run required gates.
+- [x] Record source-bound results and limits.
+
+
+Review evidence: New tiers always encode price-based voting, including imported nonzero custom values and direct shop creation. Legacy unmarked shop facts reconstruct historical custom-voting calldata for receipt/recovery verification, while new authorization is refused until rebuilt under the price policy; permission restoration remains available. Current price-only validation and encoding ignore obsolete hidden custom-vote fields, while historical reconstruction validates and retains their exact original units. All actual contract-write, Relayr signing/payment, publication signing and paid-deployment wallet boundaries resolve the current connector after awaited work and recheck account, chain, Safe route and reviewed payload. The new asynchronous acquisition preserves proven-unsent rollback and relay authorization expiry checks.
+
+Applicability: Live FUND/INCOME treasury/accounting contexts and selectors are scoped to a single authenticated chain. Bridge snapshots keep each source/destination token tree separately and validate the explicit mapping before combining economic claims; no chainless custom-token treasury aggregation was found. Account/treasury RPC reads reject on failure instead of coalescing to zero. A real component regression reproduced the FUND unclaimed-credit footnote leaking the previous account during a wallet switch; the footnote now uses the same account guard as its primary balance. Existing source-bound fund-state and fund-project regression suites cover these data invariants. Supply-one reserved inventory is rejected by the shared draft validator and now also by the direct precompiled shop-creation boundary.
+
+Final verification: Node 26.12.1, npm 12.0.1, physical locked dependencies. The frozen final source passed all 3,053 component/integration tests across 179 files with two workers, the 340-test model/unit suite, lint, production build, standalone typecheck, all 13 unchanged route budgets, and the offline persisted indexer registry check for 17 documents. The production shop browser flow passed at 1440, 390 and 320 pixels, including upload, review, save, reload, edit, remove, overflow and axe accessibility checks; the review visibly states “Price-based.” Independent configuration review approved the final price/legacy-recovery behavior, and independent wallet approval remains valid. The final plan checker and whitespace check pass.
+
+Limits: No full multi-group browser run, contract/deployment tests, Docker smoke test, production dependency audit or live third-party schema/network check was run for these frontend-only changes. No contract source, SDK dependency, original-worktree file, push, merge, deployment or wallet transaction changed. Screenshots and complete check logs are local artifacts under /private/tmp/homerun-convergence-browser and /tmp/homerun-*-frozen.log. Earlier exploratory check failures were resolved; final source is the source described above.

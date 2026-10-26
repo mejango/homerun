@@ -346,7 +346,7 @@ function ProjectActions({ chainId, projectId, intentId, indexedOwner, indexedRai
             <div>
               <dt>FUND</dt>
               <dd>{!address ? '—' : state.account && isAddressEqual(state.account, address) ? <Revalidating pending={unconfirmed}><DisplayTokenAmount value={totalBalance} /></Revalidating> : <Skeleton as="span" className="inline-block h-6 w-20 align-middle" />}</dd>
-              {address && state.creditBalance > 0n && <dd className="text-xs"><DisplayTokenAmount value={state.creditBalance} /> as unclaimed credits</dd>}
+              {address && state.account && isAddressEqual(state.account, address) && state.creditBalance > 0n && <dd className="text-xs"><DisplayTokenAmount value={state.creditBalance} /> as unclaimed credits</dd>}
               <dd className="project-action-guide"><div className="pag-actions" role="group" aria-label="FUND actions">
                 {context && <button type="button" className="outline-button pag-control" aria-pressed={accountAction === 'cashout'} onClick={() => setAccountAction(accountAction === 'cashout' ? null : 'cashout')}>Cash out FUND</button>}
                 <button type="button" className="outline-button pag-control" aria-pressed={accountAction === 'tokens'} onClick={() => setAccountAction(accountAction === 'tokens' ? null : 'tokens')}>Transfer or burn FUND</button>
