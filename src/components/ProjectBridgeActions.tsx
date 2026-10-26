@@ -149,6 +149,9 @@ function useBridgeTransaction(chainId: JBChainId) {
     await tx.send(requested, {
       ...options,
       onExistingProposal: async (proposal) => {
+        // An adopted approval is the action's first step: only the bridge call itself is verified here.
+        if (!isAddressEqual(proposal.call.to, request.address))
+          return options.onExistingProposal?.(proposal);
         const decoded = decodeFunctionData({
           abi: request.abi,
           data: proposal.call.data,

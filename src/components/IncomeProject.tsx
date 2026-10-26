@@ -380,15 +380,17 @@ export function IncomeBorrow({ state, client, context, currencyChosen = false }:
   const needsPermission = permission.data !== true
   const borrowable = quote.data && quote.data.borrowableNow > 0n ? quote.data.borrowableNow : undefined
   const optionLabel = PREPAID_OPTIONS.find(option => option.value === prepaid)?.label ?? `${Number(prepaid) / 10}%`
-  const rows = [
+  // The loan as quoted: the card's quote here, the fresh one the borrow is built from in its review.
+  const loanRows = (quoted: bigint | undefined) => [
     { label: 'Collateral', value: `${units(count)} INCOME`, strong: true },
-    ...(borrowable !== undefined ? [
-      { label: 'Borrow at least', value: `${units(protectedIncomeMinimum(borrowable), context.decimals)} ${context.symbol}` },
+    ...(quoted !== undefined ? [
+      { label: 'Borrow at least', value: `${units(protectedIncomeMinimum(quoted), context.decimals)} ${context.symbol}` },
       { label: 'Prepaid fee', value: optionLabel },
-      { label: 'You receive about', value: `${units(netLoanProceeds(borrowable, prepaid), context.decimals)} ${context.symbol}`, strong: true },
+      { label: 'You receive about', value: `${units(netLoanProceeds(quoted, prepaid), context.decimals)} ${context.symbol}`, strong: true },
     ] : []),
     { label: 'On', value: displayChainName(state.chainId) },
   ]
+  const rows = loanRows(borrowable)
   async function run() {
     if (!address || count <= 0n) return
     setPreparing(true); setError(null)
@@ -408,7 +410,7 @@ export function IncomeBorrow({ state, client, context, currencyChosen = false }:
       await tx.send(permitted ? [borrow] : [{ ...buildSetPermissionsTx({ chainId: state.chainId, account: address, operator: loans, projectId: state.projectId, permissionIds: [REVLOANS_BURN_PERMISSION_ID] }), label: 'Allow REVLoans to burn this project’s INCOME as loan collateral' }, borrow], {
         reviewedAccount: address,
         scope: `homerun:income-borrow:${borrow.recoveryNamespace}`,
-        context: reviewContext(rows),
+        context: reviewContext(loanRows(latestQuote.borrowableNow)),
         reviewNotice: `The prepaid source fee is ${optionLabel}. Protocol and REV fees also reduce wallet proceeds. Your INCOME becomes loan collateral; repayment is required to recover it. Unpaid loans can be liquidated after the contract’s ten-year term.`,
         onStepSubmitted: (index, _hash, safe) => { if (!permitted && index === 0 && !safe) setStage('borrow') },
         reverify: async (_step, _index, prior) => { const again = await fresh(client, state, address, prior?.blockNumber); matchingContext(again, context); if (!again.cashOutsAvailable || count > again.totalBalance) throw new Error('The borrowing conditions changed during review.') },
@@ -461,11 +463,13 @@ function IncomeRepayDialog({ state, client, loanId, tx, onClose }: { state: Inco
   const native = loan.data ? isAddressEqual(loan.data.sourceContext.token, NATIVE_TOKEN) : true
   const allowance = useQuery({ queryKey: ['income-allowance', state.chainId, state.projectId.toString(), loan.data?.sourceContext.token, address], enabled: !!address && !!loan.data && !native, queryFn: () => client.readContract({ address: loan.data!.sourceContext.token, abi: erc20Abi, functionName: 'allowance', args: [address!, loansContract] }), staleTime: 10_000, retry: false })
   const needsApproval = !native && !!loan.data && (allowance.data === undefined || allowance.data < loan.data.loan.amount + loan.data.accruedFee)
-  const rows = loan.data ? [
-    { label: 'Pay at most', value: `${units(loan.data.repayCeiling, loan.data.sourceContext.decimals)} ${loan.data.sourceContext.symbol}`, strong: true },
-    { label: 'You get back', value: `${units(loan.data.loan.collateral)} INCOME`, strong: true },
+  // The repayment as read: the card's read here, the fresh one the repayment is built from in its review.
+  const repayRows = (read: NonNullable<typeof loan.data>, maximum: bigint) => [
+    { label: 'Pay at most', value: `${units(maximum, read.sourceContext.decimals)} ${read.sourceContext.symbol}`, strong: true },
+    { label: 'You get back', value: `${units(read.loan.collateral)} INCOME`, strong: true },
     { label: 'On', value: displayChainName(state.chainId) },
-  ] : []
+  ]
+  const rows = loan.data ? repayRows(loan.data, loan.data.repayCeiling) : []
   async function run() {
     if (!address || !loanId) return
     setPreparing(true); setError(null)
@@ -492,7 +496,7 @@ function IncomeRepayDialog({ state, client, loanId, tx, onClose }: { state: Inco
         recoveryNamespace: approvalIntentKey(loanRepaymentIntent(state.projectId, loanId), { token: current.sourceContext.token, spender: loansContract, step: 'repay' }) }, repay] : [repay], {
         reviewedAccount: address,
         scope: `homerun:income-repay:${loanRepaymentIntent(state.projectId, loanId)}`,
-        context: reviewContext(rows),
+        context: reviewContext(repayRows(reviewed, maximum)),
         reviewNotice: `Recover ${units(reviewed.loan.collateral)} INCOME. The maximum includes outstanding principal, accrued fees, and a 0.1% principal buffer. Unused funds are refunded.`,
         onStepSubmitted: (index, _hash, safe) => { if (approving && index === 0 && !safe) setStage('repay') },
         reverify: async (step, _index, prior) => {

@@ -22,6 +22,7 @@ const runtime = vi.hoisted(() => ({
   permitted: false, loans: [] as unknown[], loan: undefined as unknown,
   sends: [] as { request: TxRequest; options: TxSendOptions }[],
   allowance: 0n, reallocation: undefined as unknown, partial: undefined as unknown,
+  borrowable: 1_000_000n,
 }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: WALLET }) }))
 vi.mock('@/hooks/useReviewedAction', () => ({
@@ -34,7 +35,7 @@ vi.mock('@/hooks/useReviewedAction', () => ({
 }))
 vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
   ...await importOriginal<typeof import('@bananapus/nana-sdk-core/v6')>(),
-  getBorrowableAmount: async () => ({ borrowableNow: 1_000_000n, borrowableCapacity: 1_000_000n }),
+  getBorrowableAmount: async () => ({ borrowableNow: runtime.borrowable, borrowableCapacity: runtime.borrowable }),
   hasPermissions: async () => runtime.permitted,
 }))
 vi.mock('@/lib/income-state', async importOriginal => ({
@@ -57,7 +58,7 @@ import { expectRetryHeldByIntent } from './support/intent-retry'
 import { runSteps } from './support/reviewed-steps'
 import { loanRepaymentIntent } from '@/lib/income-loan-tools'
 import { approvalIntentKey } from '@/lib/transaction-builders'
-import { v6Address } from '@/lib/income-contracts'
+import { protectedIncomeMinimum, v6Address } from '@/lib/income-contracts'
 
 const context = { token: USDC, terminal: TERMINAL, decimals: 6, currency: 1, symbol: 'USDC', isPrimary: true, balance: 0n }
 const state = {
@@ -78,7 +79,7 @@ async function type(label: string, value: string) {
 
 beforeEach(() => {
   runtime.next = 0; runtime.permitted = false; runtime.loans = []; runtime.loan = undefined; runtime.sends = []
-  runtime.allowance = 0n; runtime.reallocation = undefined; runtime.partial = undefined
+  runtime.allowance = 0n; runtime.reallocation = undefined; runtime.partial = undefined; runtime.borrowable = 1_000_000n
   client.readContract.mockReset().mockImplementation(async ({ functionName }: { functionName: string }) => functionName === 'hasPermission' ? true : runtime.allowance)
   runtime.handles = Array.from({ length: 4 }, () => {
     const handle: Handle = {
@@ -133,6 +134,17 @@ describe('INCOME loans like Juicebox Money', () => {
     expect(borrow.options.reviewNotice).toContain('The prepaid source fee is 5%')
     // Its borrow amount and minimum come from a fresh quote: a retry is held by the collateral the user chose.
     expect(borrow.options.recoveryNamespace).toBe(writeIntentKey('borrow', { project: state.projectId, token: 'auto:token', collateral: 10n * UNIT, fee: 50n }))
+  })
+
+  it('names the fresh quote the borrow is built from in its review, not the card\'s', async () => {
+    runtime.permitted = true
+    await act(async () => root.render(<QueryClientProvider client={cache}><IncomeBorrow state={state} client={client as never} context={context} /></QueryClientProvider>))
+    await type('INCOME collateral', '10'); await settle()
+    // Borrowing capacity fell after the card's quote.
+    runtime.borrowable = 500_000n
+    await act(async () => button('Review loan').click()); await settle()
+    const [, options] = runtime.handles[0].send.mock.calls[0] as [TxRequest[], TxSendOptions]
+    expect(options.context).toContainEqual({ label: 'Borrow at least', value: `${formatUnits(protectedIncomeMinimum(500_000n), 6)} USDC` })
   })
 
   it('keys a borrow with the default prepaid fee as that default, not its value', async () => {

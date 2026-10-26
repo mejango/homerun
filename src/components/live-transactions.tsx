@@ -62,16 +62,18 @@ function useConfirmPlan<Plan>(tx: Tx) {
   const [reviewed, setReviewed] = useState<{ plan: Plan; account: Address } | null>(null)
   const [preparing, setPreparing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Closing drops a preparation still reading: its late plan would open the progress, and with it the review.
+  const attempt = useRef(0)
   return {
     plan: reviewed?.plan ?? null, preparing, error, setError,
     /** Fresh reads first; the dialog shows them as "preparing" and opens on the plan. */
     async prepare(read: () => Promise<Plan>) {
-      const account = address
+      const account = address, mine = ++attempt.current
       setError(null); setPreparing(true)
       try {
         const plan = await read()
-        setReviewed(account ? { plan, account } : null)
-      } catch (reason) { setReviewed(null); setError(errorMessage(reason)) } finally { setPreparing(false) }
+        if (attempt.current === mine) setReviewed(account ? { plan, account } : null)
+      } catch (reason) { if (attempt.current === mine) { setReviewed(null); setError(errorMessage(reason)) } } finally { if (attempt.current === mine) setPreparing(false) }
     },
     /** Sends the plan as the account it was built for; the engine refuses any other connected account. */
     async run(write: (plan: Plan, account: Address) => Promise<unknown>) {
@@ -82,6 +84,7 @@ function useConfirmPlan<Plan>(tx: Tx) {
     /** A Safe proposal keeps tracking after close; anything else starts over. */
     close(onDone?: () => void) {
       const done = tx.phase === 'success'
+      attempt.current++
       setReviewed(null); setPreparing(false); setError(null)
       tx.dismiss()
       if (done) onDone?.()

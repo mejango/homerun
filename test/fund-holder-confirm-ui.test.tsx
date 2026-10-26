@@ -170,6 +170,19 @@ describe('FUND holder actions confirm like Juicebox Money', () => {
     expect(document.querySelector<HTMLButtonElement>('[data-tx-confirm] button[aria-label="Close"]')!.disabled).toBe(true)
   })
 
+  it('drops a cash out closed while its fresh quote is read: the late quote opens nothing and sends nothing', async () => {
+    const read = Promise.withResolvers<{ route: { minimumReturn: bigint }; transaction: TxRequest }>()
+    runtime.prepare.mockReturnValueOnce(read.promise)
+    await render(<CashOutPanel state={state} client={{} as never} contextIndex={0} />)
+    await type('FUND to cash out', '10'); await settle()
+    await click('Review cash-out'); await settle()
+    expect(dialogText()).toContain('Getting a fresh cash-out quote')
+    await click('Cancel'); await settle()
+    await act(async () => { read.resolve({ route: { minimumReturn: 8_900_000n }, transaction: cashOutRequest }); await read.promise }); await settle()
+    expect(document.querySelector('[data-tx-confirm]')).toBeNull()
+    expect(runtime.tx.send).not.toHaveBeenCalled()
+  })
+
   it('shows a failed fresh read inline without opening a plan', async () => {
     runtime.prepare.mockRejectedValueOnce(new Error('No positive protected return'))
     await render(<CashOutPanel state={state} client={{} as never} contextIndex={0} />)

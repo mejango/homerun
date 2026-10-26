@@ -233,7 +233,8 @@ export function useReviewedAction(chainId: number) {
       ...(step.recoveryLegacy ? { legacy: step.recoveryLegacy } : {}),
       ...(step.dependsOnPrior ? { dependsOnPrior: true } : step.simulationBlockNumber !== undefined ? { simulationBlockNumber: step.simulationBlockNumber } : {}),
     })
-    let calls = steps.map(reviewedCall)
+    const requestedCalls = steps.map(reviewedCall)
+    let calls = requestedCalls
     const last = steps.at(-1)!, action = calls.at(-1)!
     // A success of the action that settled while the user was away is shown with its "Send it again", never sent over.
     const away = { reviewedAccount: options.reviewedAccount, safe: viaSafe, ...(last.recoveryNamespace ? { recoveryNamespace: last.recoveryNamespace } : {}), ...(last.recoveryLegacy ? { recoveryLegacy: last.recoveryLegacy } : {}) }
@@ -244,10 +245,12 @@ export function useReviewedAction(chainId: number) {
     }
     // A saved action with a step in flight continues exactly as reviewed; one with nothing in flight starts over.
     let saved = false
-    if (options.scope && calls.length > 1) {
+    // A sequence is the same action only on the same chain: its project IDs and amounts alone repeat across chains.
+    const scope = options.scope ? `${options.scope}:chain-${last.chainId}` : undefined
+    if (scope && calls.length > 1) {
       try {
         const engine = await loadReviewEngine()
-        const unfinished = engine.findReviewedSequence(options.scope, options.reviewedAccount)
+        const unfinished = engine.findReviewedSequence(scope, options.reviewedAccount)
         if (unfinished && !unfinished.sending && !unfinished.proposed) await engine.discardReviewedSequence(unfinished).catch(() => { saved = true })
         else if (unfinished) saved = true
         if (saved && unfinished) calls = [...unfinished.calls]
@@ -262,11 +265,17 @@ export function useReviewedAction(chainId: number) {
       void runner.run({
         account: options.reviewedAccount,
         calls,
-        ...(total > 1 && options.scope ? { scope: options.scope } : {}),
+        ...(total > 1 && scope ? { scope } : {}),
         ...(description ? { description } : {}),
         ...(!saved && options.context?.length ? { context: options.context } : {}),
         ...(viaSafe ? { confirmLabel: 'Agree & continue to Safe' } : {}),
-        ...(options.reverify ? { reverify: async (_call, index, prior) => { await Promise.resolve(options.reverify!(steps[index] ?? last, index, prior)).catch(reason => { throw asLine(reason) }) } } : {}),
+        // A step's recheck is the flow's for that request; a saved step that differs from it (another amount, say)
+        // continues as reviewed, guarded by its simulation and hold.
+        ...(options.reverify ? { reverify: async (call, index, prior) => {
+          const requested = requestedCalls[index]
+          if (!requested || requested.chainId !== call.chainId || requested.to.toLowerCase() !== call.to.toLowerCase() || requested.data !== call.data || requested.value !== (call.value ?? 0n)) return
+          await Promise.resolve(options.reverify!(steps[index], index, prior)).catch(reason => { throw asLine(reason) })
+        } } : {}),
         ...(options.beforeWrite ? { beforeWallet: async () => { await Promise.resolve().then(options.beforeWrite).catch(reason => { throw asLine(reason) }) } } : {}),
         assertWriteState: () => {
           if (!mounted.current) throw new ReviewLineError(CLOSED_LINE)

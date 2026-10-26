@@ -259,6 +259,19 @@ it('closes an unproven Safe outer revert without counting its approval or releas
   expect([...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Review move')?.disabled).toBe(true)
 })
 
+it("adopts another owner's Safe approval of the move without reading it as the bridge call", async () => {
+  runtime.safe = true
+  runtime.send.mockImplementation(async (requested: TxRequest[], options: TxSendOptions & { onExistingProposal?: (proposal: { proposalHash: `0x${string}`; call: { to: `0x${string}`; data: `0x${string}`; value: bigint } }) => Promise<void> }) => {
+    const [approval] = requested
+    await options.onExistingProposal?.({ proposalHash: `0x${'ab'.repeat(32)}`, call: { to: approval.address, data: encodeFunctionData({ abi: approval.abi, functionName: approval.functionName, args: approval.args }), value: 0n } })
+    return `0x${'ab'.repeat(32)}`
+  })
+  await reviewApproval()
+  expect(runtime.send).toHaveBeenCalledOnce()
+  // No error: the move goes on as the Safe proposal it is.
+  expect([...host.querySelectorAll<HTMLButtonElement>('[data-tx-confirm] button')].some(button => button.textContent === 'Try again')).toBe(false)
+})
+
 it('frees the move when its approval stops before the wallet', async () => {
   runtime.send.mockImplementation(async () => null)
   await reviewApproval()
