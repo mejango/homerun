@@ -308,7 +308,7 @@ describe('choosing the chains a published project is deployed on', () => {
   })
 
   for (const boundary of ['review', 'wallet acquisition', 'setup receipt'] as const) {
-    it.each(['account', 'disconnect', 'connector', 'chain', 'view-as', 'Safe', 'Center'] as const)(`refuses %s drift during ${boundary} before the next send`, async change => {
+    it.each(['account', 'disconnect', 'chain', 'view-as', 'Safe', 'Center'] as const)(`refuses %s drift during ${boundary} before the next send`, async change => {
       let release!: () => void
       const waiting = new Promise<void>(resolve => { release = resolve })
       if (boundary === 'review') runtime.review.mockImplementationOnce(() => waiting)
@@ -327,7 +327,6 @@ describe('choosing the chains a published project is deployed on', () => {
       expect(boundary === 'review' ? runtime.review : boundary === 'wallet acquisition' ? runtime.getWalletClient : runtime.receipt).toHaveBeenCalledOnce()
       if (change === 'account') runtime.address = '0x2222222222222222222222222222222222222222'
       if (change === 'disconnect') runtime.address = undefined
-      if (change === 'connector') runtime.connector = { id: 'injected', uid: 'replacement' }
       if (change === 'chain') runtime.chainId = 10
       if (change === 'view-as') setViewAs(wallet)
       if (change === 'Safe') runtime.safe = true
@@ -336,9 +335,19 @@ describe('choosing the chains a published project is deployed on', () => {
       await settle()
       expect(runtime.send).toHaveBeenCalledTimes(boundary === 'setup receipt' ? 1 : 0)
       expect(runtime.recordDeployment).not.toHaveBeenCalled()
-      expect(alert()).toContain(change === 'view-as' ? VIEW_AS_WRITE_BLOCKED : change === 'Safe' ? 'Deploying from a Safe' : 'Wallet connection changed')
+      expect(alert()).toContain(change === 'view-as' ? VIEW_AS_WRITE_BLOCKED : change === 'Safe' && boundary !== 'wallet acquisition' ? 'Deploying from a Safe' : 'Wallet connection changed')
     })
   }
+
+  it('uses the replacement connector after review instead of refusing the same account', async () => {
+    runtime.review.mockImplementationOnce(async () => { runtime.connector = { id: 'injected', uid: 'replacement' } })
+    await render(intent([1]))
+    await act(async () => { rowFor(1)!.click() })
+    await act(async () => { button('Deploy selected')!.click() })
+    await settle()
+    expect(runtime.send).toHaveBeenCalledOnce()
+    expect(runtime.getWalletClient).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ connector: expect.objectContaining({ uid: 'replacement' }) }))
+  })
 
   it('refuses a Safe before switching chains or reviewing anything', async () => {
     runtime.safe = true

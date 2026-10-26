@@ -37,7 +37,7 @@ vi.mock('@wagmi/core', async importOriginal => {
   const { wallet } = await import('./support/fake-wallet')
   return {
     ...(await importOriginal<typeof import('@wagmi/core')>()),
-    getAccount: () => ({ address: wallet.account, chainId: 1 }),
+    getWalletClient: async () => ({ writeContract: wallet.writeContract }), getAccount: () => ({ address: wallet.account, chainId: 1 }),
   }
 })
 vi.mock('wagmi', async importOriginal => {

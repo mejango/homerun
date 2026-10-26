@@ -51,6 +51,7 @@ import { assertNoViewAs } from '@/lib/viewAs'
 import { isSafeConnection } from '@/lib/safe-connector'
 import {
   assertReviewedWallet,
+  withReviewedWallet,
   connectedWallet as connectedWalletCore,
   publicClient,
 } from '@/lib/wallet-core'
@@ -252,16 +253,19 @@ export async function prepareForwardedTx(
     ],
   }
   return { review, sign: async () => {
-    const { wallet } = await connectedWallet(call.chainId)
+    await connectedWallet(call.chainId)
     const currentNonce = await client.readContract({ address: forwarder, abi: erc2771ForwarderAbi, functionName: 'nonces', args: [expectedAccount] })
     if (currentNonce !== nonce || request.deadline <= Math.floor(Date.now() / 1000) + RELAYR_SIGNATURE_REFRESH_SECONDS) throw new Error('The launch authorization changed or expired. Review it again.')
     assertReviewedWallet({ account: expectedAccount, connectorUid: preparedWallet.connector?.uid, chainId: call.chainId, safe: false }, 'Connected wallet changed. Review the cross-chain request again.')
-    const signature = await wallet.signTypedData({
-      account: expectedAccount,
-      domain: typedDomain,
-      types: FORWARD_REQUEST_TYPES,
-      primaryType: 'ForwardRequest',
-      message: request,
+    const signature = await withReviewedWallet({ account: expectedAccount, connectorUid: preparedWallet.connector?.uid, chainId: call.chainId, safe: false }, wallet => {
+      if (request.deadline <= Math.floor(Date.now() / 1000) + RELAYR_SIGNATURE_REFRESH_SECONDS) throw new Error('The launch authorization changed or expired. Review it again.')
+      return wallet.signTypedData({
+        account: expectedAccount,
+        domain: typedDomain,
+        types: FORWARD_REQUEST_TYPES,
+        primaryType: 'ForwardRequest',
+        message: request,
+        })
     })
   
     const live = getAccount(wagmiConfig).address
@@ -404,7 +408,7 @@ export async function relayrPay({
 
   readReviewed()
   await reverify?.()
-  const { wallet, account } = await connectedWallet(chainId)
+  const { account } = await connectedWallet(chainId)
   if (account.toLowerCase() !== expectedAccount.toLowerCase()) {
     throw new Error('Connected account changed. Review the payment again.')
   }
@@ -435,16 +439,22 @@ export async function relayrPay({
     throw new RelayrPaymentNotSentError(error)
   }
   let hash: Hex
+  let invoked = false
   try {
-    hash = await wallet.sendTransaction({
-      account,
-      chain: SUPPORTED_CHAINS.find(chain => chain.id === chainId)!,
-      to: details.target,
-      value: details.amount,
-      data: details.calldata,
-      gas: RELAYR_PAYMENT_GAS,
+    hash = await withReviewedWallet({ account: expectedAccount, connectorUid: reviewedConnectorUid, chainId, safe: false }, wallet => {
+      assertReadyToSend()
+      invoked = true
+      return wallet.sendTransaction({
+        account,
+        chain: SUPPORTED_CHAINS.find(chain => chain.id === chainId)!,
+        to: details.target,
+        value: details.amount,
+        data: details.calldata,
+        gas: RELAYR_PAYMENT_GAS,
+      })
     })
   } catch (error) {
+    if (!invoked) throw new RelayrPaymentNotSentError(error)
     const walletError = relayrWalletPaymentError(error)
     if (isDefiniteWalletRejection(walletError)) throw walletError
     throw new RelayrPaymentSendingError()

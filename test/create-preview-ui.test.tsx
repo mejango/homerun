@@ -262,7 +262,7 @@ describe('the preview of a project that is not created yet', () => {
   })
 
   for (const boundary of ['Center preparation', 'wallet acquisition'] as const) {
-    it.each(['account', 'disconnect', 'connector', 'view-as', 'Safe', 'Center'] as const)(`refuses %s drift during ${boundary} before signing the prepared publication`, async change => {
+    it.each(['account', 'disconnect', 'view-as', 'Safe', 'Center'] as const)(`refuses %s drift during ${boundary} before signing the prepared publication`, async change => {
       let release!: () => void
       const waiting = new Promise<void>(resolve => { release = resolve })
       if (boundary === 'Center preparation') runtime.prepareIntent.mockImplementationOnce(async (envelope: unknown) => { await waiting; return prepareIntentEnvelope(envelope) })
@@ -272,7 +272,6 @@ describe('the preview of a project that is not created yet', () => {
       expect(boundary === 'Center preparation' ? runtime.prepareIntent : runtime.getWalletClient).toHaveBeenCalledOnce()
       if (change === 'account') runtime.address = '0x2222222222222222222222222222222222222222'
       if (change === 'disconnect') runtime.address = undefined
-      if (change === 'connector') runtime.connector = { id: 'injected', uid: 'replacement' }
       if (change === 'view-as') setViewAs(wallet)
       if (change === 'Safe') runtime.safe = true
       if (change === 'Center') runtime.centerWallet = true
@@ -284,6 +283,17 @@ describe('the preview of a project that is not created yet', () => {
       expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()
     })
   }
+
+  it('signs with the replacement connector after Center preparation', async () => {
+    runtime.prepareIntent.mockImplementationOnce(async (envelope: unknown) => {
+      runtime.connector = { id: 'injected', uid: 'replacement' }
+      return prepareIntentEnvelope(envelope)
+    })
+    await render()
+    await act(async () => { button('Make it real')!.click() })
+    expect(runtime.signMessage).toHaveBeenCalledOnce()
+    expect(runtime.getWalletClient).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ connector: expect.objectContaining({ uid: 'replacement' }) }))
+  })
 
   it('allows a chain change while preparing the chainless publication message', async () => {
     runtime.getWalletClient.mockImplementationOnce(async () => { runtime.chainId = 8453; return { signMessage: runtime.signMessage } })

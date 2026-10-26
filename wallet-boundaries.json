@@ -3,14 +3,14 @@
   "sites": [
     {
       "file": "src/components/CreatePreview.tsx",
-      "line": 183,
+      "line": 181,
       "api": "signMessage",
       "boundary": "The project publication message is signed by the reviewed authority account only after the person confirms its review; the signature authorizes publishing, never a transaction.",
       "test": "test/create-preview-ui.test.tsx"
     },
     {
       "file": "src/components/DeployChains.tsx",
-      "line": 192,
+      "line": 191,
       "api": "sendTransaction",
       "boundary": "A paid relay of a reviewed chain deployment: the person confirms the exact relay call in the review before the wallet opens, and a refusal leaves nothing sent.",
       "test": "test/deploy-chains-ui.test.tsx"
@@ -52,22 +52,15 @@
     },
     {
       "file": "src/hooks/useSafeTx.ts",
-      "line": 457,
-      "api": "useWriteContract",
-      "boundary": "The app's reviewed contract write: every call is reviewed, simulated, held and gated on the reviewed account, chain and connection before the wallet opens.",
-      "test": "test/runtime/use-safe-tx.test.ts"
-    },
-    {
-      "file": "src/hooks/useSafeTx.ts",
-      "line": 846,
+      "line": 844,
       "api": "reviewedInParent",
       "boundary": "A flow whose parent already reviewed the exact call skips this hook's own review; the call is still simulated, held and gated.",
       "test": "test/runtime/use-safe-tx.test.ts"
     },
     {
       "file": "src/hooks/useSafeTx.ts",
-      "line": 930,
-      "api": "writeContractAsync",
+      "line": 936,
+      "api": "writeContract",
       "boundary": "Sends only the simulated request of the reviewed call, after the final synchronous gate on account, chain, connection and request.",
       "test": "test/runtime/use-safe-tx.test.ts"
     },
@@ -101,14 +94,14 @@
     },
     {
       "file": "src/lib/relayr.ts",
-      "line": 259,
+      "line": 262,
       "api": "signTypedData",
       "boundary": "Signs the Relayr forward requests the person reviewed, with the exact typed data shown in the review.",
       "test": "test/relayr-review.test.ts"
     },
     {
       "file": "src/lib/relayr.ts",
-      "line": 439,
+      "line": 447,
       "api": "sendTransaction",
       "boundary": "Pays the reviewed Relayr quote after the payment is reviewed and simulated; only a 4001 means not sent.",
       "test": "test/relayr-review.test.ts"
