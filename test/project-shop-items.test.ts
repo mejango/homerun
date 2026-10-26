@@ -138,7 +138,7 @@ describe('stock hook item encoding', () => {
       price: 125_000_000n, initialSupply: 2, votingUnits: 0, reserveFrequency: 65535,
       reserveBeneficiary: WALLET, encodedIpfsUri: DIGEST, category: 12, discountPercent: 199,
       flags: { allowOwnerMint: true, useReserveBeneficiaryAsDefault: false, transfersPausable: true,
-        useVotingUnits: true, cantBeRemoved: true, cantIncreaseDiscountPercent: true, cantBuyWithCredits: true },
+        useVotingUnits: false, cantBeRemoved: true, cantIncreaseDiscountPercent: true, cantBuyWithCredits: true },
       splitPercent: 0, splits: [],
     })
     const encoded = encodeFunctionData({ abi: jb721TiersHookAbi, functionName: 'adjustTiers', args: [tiers, []] })
@@ -148,7 +148,7 @@ describe('stock hook item encoding', () => {
   it('uses unlimited inventory and leaves the hook-wide reserve beneficiary unchanged', () => {
     const [tier] = buildProjectShopTierConfigs([pinned(item({ reserveBeneficiary: WALLET }))], USD6)
     expect(tier).toMatchObject({ initialSupply: 999_999_999, reserveFrequency: 0, reserveBeneficiary: zeroAddress, votingUnits: 0,
-      flags: { useReserveBeneficiaryAsDefault: false, useVotingUnits: true, cantBuyWithCredits: false, cantIncreaseDiscountPercent: false } })
+      flags: { useReserveBeneficiaryAsDefault: false, useVotingUnits: false, cantBuyWithCredits: false, cantIncreaseDiscountPercent: false } })
   })
 
   it('supports removal-only transactions without adding tiers', () => {
@@ -202,4 +202,15 @@ describe('stock hook item encoding', () => {
       expect(() => buildProjectShopTierConfigs([{ draft: stays, encodedIpfsUri }], USD6)).toThrow('valid pinned metadata')
     }
   })
+})
+
+
+it.each(['', '0', '42', 'junk', '4294967296'])('new tiers use price-based votes even for imported custom value %s', votingUnits => {
+  const [tier] = buildProjectShopTierConfigs([pinned(item({ votingUnits }))], { currency: 2, decimals: 6 })
+  expect(tier.flags.useVotingUnits).toBe(false)
+  expect(tier.votingUnits).toBe(0)
+})
+
+it.each(['1', '01'])('rejects reserved supply %s at the publishing compiler boundary', supply => {
+  expect(() => buildProjectShopTierConfigs([pinned(item({ supply, reserveN: '2', reserveBeneficiary: WALLET }))], { currency: 2, decimals: 6 })).toThrow('at least 2')
 })
