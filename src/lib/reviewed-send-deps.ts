@@ -110,7 +110,8 @@ async function invoke<T>(chainId: number | undefined, call: (client: Client, acc
         }
         forwarded = true
       }
-      return inner.request(args as never)
+      // Every real dispatch passes the check: the fetched client never retries one after a wait on its own.
+      return inner.request(args as never, { retryCount: 0 })
     } }, { retryCount: 0 }),
   }) as unknown as Client
   try {

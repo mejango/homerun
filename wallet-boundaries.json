@@ -109,35 +109,35 @@
     },
     {
       "file": "src/lib/reviewed-send-deps.ts",
-      "line": 113,
+      "line": 114,
       "api": "request",
       "boundary": "The adapter's guarded transport: it forwards a signing or sending request to the provider only after the synchronous recheck passes, so a change that lands while viem prepares the request never reaches a wallet.",
       "test": "test/reviewed-send-deps-dispatch.test.ts"
     },
     {
       "file": "src/lib/reviewed-send-deps.ts",
-      "line": 140,
+      "line": 141,
       "api": "sendTransaction",
       "boundary": "Core's wallet adapter: it fetches the live connector's client and hands each call a client whose signing and sending requests recheck account, chain, Safe mode, view-as, the Center wallet and the connector uid as they are forwarded to the provider, with nothing awaited in between. A write refused before any request went out is tagged as core's 4001, so its held step is released; the wallet's own errors stay as they are.",
       "test": "test/reviewed-send-deps-dispatch.test.ts"
     },
     {
       "file": "src/lib/reviewed-send-deps.ts",
-      "line": 143,
+      "line": 144,
       "api": "signTypedData",
       "boundary": "Core's wallet adapter: it fetches the live connector's client and hands each call a client whose signing and sending requests recheck account, chain, Safe mode, view-as, the Center wallet and the connector uid as they are forwarded to the provider, with nothing awaited in between. A write refused before any request went out is tagged as core's 4001, so its held step is released; the wallet's own errors stay as they are.",
       "test": "test/reviewed-send-deps-dispatch.test.ts"
     },
     {
       "file": "src/lib/reviewed-send-deps.ts",
-      "line": 144,
+      "line": 145,
       "api": "signMessage",
       "boundary": "Core's wallet adapter: it fetches the live connector's client and hands each call a client whose signing and sending requests recheck account, chain, Safe mode, view-as, the Center wallet and the connector uid as they are forwarded to the provider, with nothing awaited in between. A write refused before any request went out is tagged as core's 4001, so its held step is released; the wallet's own errors stay as they are.",
       "test": "test/reviewed-send-deps-dispatch.test.ts"
     },
     {
       "file": "src/lib/reviewed-send-deps.ts",
-      "line": 146,
+      "line": 147,
       "api": "sendCalls",
       "boundary": "Core's wallet adapter: it fetches the live connector's client and hands each call a client whose signing and sending requests recheck account, chain, Safe mode, view-as, the Center wallet and the connector uid as they are forwarded to the provider, with nothing awaited in between. A write refused before any request went out is tagged as core's 4001, so its held step is released; the wallet's own errors stay as they are.",
       "test": "test/reviewed-send-deps-dispatch.test.ts"
