@@ -10,7 +10,7 @@ vi.mock('@wagmi/core', () => ({
     if (state.fetchError) throw state.fetchError
     // The provider records each signing or sending request as it is dispatched: which connector's it is, and which is live.
     const dispatched = <T,>(result: T) => { state.invoked.push({ connector: connector.uid, live: state.connector.uid }); return result }
-    return { account: { address: '0x1111111111111111111111111111111111111111', type: 'json-rpc' }, chain: undefined,
+    return { account: { address: '0x1111111111111111111111111111111111111111', type: 'json-rpc' }, chain: undefined, transport: { type: 'custom' },
       request: async ({ method }: { method: string }) => {
         if (method === 'eth_chainId') return '0x1'
         if (method === 'personal_sign') return dispatched(connector.uid)

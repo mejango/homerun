@@ -11,7 +11,7 @@ import { erc2771ForwarderAbi } from '@bananapus/nana-sdk-core'
 const runtime = vi.hoisted(() => ({
   requestDeploy: vi.fn(), requestRelay: vi.fn(), getIntent: vi.fn(), recordDeployment: vi.fn(),
   review: vi.fn(), send: vi.fn(), switchChain: vi.fn(), receipt: vi.fn(), gasPrice: vi.fn(),
-  readContract: vi.fn(), getCode: vi.fn(),
+  readContract: vi.fn(), getCode: vi.fn(), follow: vi.fn(), unverified: null as Error | null,
   address: '0x1111111111111111111111111111111111111111' as string | undefined, openSignIn: vi.fn(),
   safe: false, connector: { id: 'injected', uid: 'original' }, chainId: 1, getWalletClient: vi.fn(),
 }))
@@ -29,12 +29,13 @@ vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => {
       action.assertWriteState?.()
       await action.beforeWallet?.(call, index)
       const sent = await runtime.send({}, { to: call.to, data: call.data, value: call.value })
+      if (runtime.unverified) throw (runtime.unverified = new core.ReviewedReceiptUnverifiedError(index, sent, undefined, { call: call as never, reservation: 'r' }))
       const receipt = await runtime.receipt({}, { chainId: call.chainId, hash: sent })
       if (receipt.status !== 'success') throw new core.ReviewedCallRevertedError(index, sent, receipt)
       hashes.push(sent); receipts.push(receipt)
     }
     return { status: 'done', hashes, receipts }
-  } }
+  }, followReviewedStep: runtime.follow }
 })
 vi.mock('@/lib/reviewed-send-deps', () => ({ reviewedSendDeps: {}, readableEngine: <E,>(engine: E) => engine }))
 vi.mock('@/lib/safe-connector', async importOriginal => ({
@@ -44,7 +45,7 @@ vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address, openSignIn: runtime.openSignIn }) }))
 vi.mock('@wagmi/core', () => ({
   getAccount: () => ({ address: runtime.address, connector: runtime.connector, chainId: runtime.chainId }),
-  getPublicClient: () => ({ getGasPrice: runtime.gasPrice, readContract: runtime.readContract, getCode: runtime.getCode }),
+  getPublicClient: () => ({ getGasPrice: runtime.gasPrice, readContract: runtime.readContract, getCode: runtime.getCode, getTransactionReceipt: (args: unknown) => runtime.receipt({}, args) }),
   getWalletClient: runtime.getWalletClient,
   switchChain: runtime.switchChain,
   waitForTransactionReceipt: runtime.receipt,
@@ -78,6 +79,8 @@ describe('choosing the chains a published project is deployed on', () => {
     runtime.gasPrice.mockReset().mockResolvedValue(2_000_000_000n)
     runtime.readContract.mockReset().mockResolvedValue(0n)
     runtime.getCode.mockReset().mockResolvedValue('0x')
+    runtime.follow.mockReset()
+    runtime.unverified = null
     client = new QueryClient({ defaultOptions: { queries: { retry: false, retryDelay: 0, gcTime: Infinity } } })
     host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   })
@@ -294,6 +297,26 @@ describe('choosing the chains a published project is deployed on', () => {
     await settle()
     expect(alert()).toContain('failed onchain')
     expect(runtime.recordDeployment).not.toHaveBeenCalled()
+  })
+
+  it('shows a launch whose receipt is still confirming as pending, and records it once its hold settles, with no second press', async () => {
+    runtime.unverified = new Error('armed')
+    let release!: (settled: unknown) => void
+    runtime.follow.mockImplementation(() => new Promise(resolve => { release = resolve }))
+    await render(intent([1]))
+    await act(async () => { rowFor(1)!.click() })
+    await act(async () => { button('Deploy selected')!.click() })
+    await settle()
+    expect(alert()).toBeUndefined()
+    expect(host.querySelector('[role="status"]')?.textContent).toContain('Confirming your transaction.')
+    expect(button('Deploying')!.disabled).toBe(true)
+    expect(runtime.follow).toHaveBeenCalledWith(runtime.unverified, { account: wallet, scope: `homerun:deploy:${intentId}:1` }, {}, expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    await act(async () => { release({ result: 'success', hash: relayHash }) })
+    await settle()
+    expect(runtime.recordDeployment.mock.calls[0].slice(0, 2)).toEqual([intentId, { chainId: 1, projectId: '9', transactionHash: relayHash }])
+    expect(runtime.review).toHaveBeenCalledOnce()
+    expect(alert()).toBeUndefined()
+    expect(host.textContent).not.toContain('Confirming your transaction.')
   })
 
   it('says a created project is not recorded yet, and records it without the wallet next time', async () => {
