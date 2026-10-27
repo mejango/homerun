@@ -125,6 +125,10 @@ function createFakeWallet() {
       awaiting.delete(key)
       notify()
     },
+    /** A reload: flows waiting on a receipt stop waiting, and the chain still reports what `confirm` sets later. */
+    forget() {
+      awaiting.clear()
+    },
     /** Whether a flow is waiting on `hash`'s receipt. */
     awaits(hash: Hex) {
       return awaiting.has(hash.toLowerCase())

@@ -141,13 +141,13 @@ async function renderDeploy() {
   await act(async () => host.querySelector<HTMLInputElement>('input[type="checkbox"][value="1"]')!.click())
 }
 /** Presses deploy and confirms its one review. */
-async function deployAndConfirm(label: string) {
+async function deployAndConfirm(label: string, confirmLabel = 'Continue to wallet') {
   await act(async () => buttons().find(button => button.textContent === label)!.click())
   await vi.waitFor(async () => { await settle(); expect(reviewOpen()).toBe(true) })
   const review = document.querySelector('button[aria-label="Cancel transaction review"]')!.closest('dialog')!
   expect(buttons().some(button => /^Confirm & /.test(button.textContent ?? ''))).toBe(false)
   await act(async () => review.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click())
-  const confirm = () => buttons().find(button => button.textContent === 'Continue to wallet')
+  const confirm = () => buttons().find(button => button.textContent === confirmLabel)
   await vi.waitFor(async () => { await settle(); expect(confirm()?.disabled).toBe(false) })
   await act(async () => confirm()!.click())
   return review
@@ -181,7 +181,7 @@ it('deploy chains: a launch the wallet rejected after its multisig was created f
   await vi.waitFor(async () => { await settle(); expect(host.querySelector('[role="alert"]')?.textContent).toBe('The wallet did not send the transaction.') })
 
   // The multisig exists now: the retry reviews and sends only the launch.
-  vi.mocked(wallet.client as unknown as { getCode: () => Promise<string> }).getCode = vi.fn(async () => '0x6000')
+  Object.assign(wallet.client, { getCode: vi.fn(async ({ address }: { address: string }) => address.toLowerCase() === safeAddress.toLowerCase() ? '0x6000' : '0x') })
   await deployAndConfirm('Deploy selected')
   await vi.waitFor(async () => { await settle(); expect(wallet.writeContract).toHaveBeenCalledTimes(3) })
   await act(async () => wallet.confirm(sentHash(2), 102n, 'success', launchReceipt(1, 9n, safeAddress).logs))
@@ -189,6 +189,51 @@ it('deploy chains: a launch the wallet rejected after its multisig was created f
   expect(reviews).toBe(2)
   const request: ReturnType<typeof safeRelayRequest> = await center.requestRelay.mock.results.at(-1)!.value
   expect(wallet.sent().at(-1)).toMatchObject({ to: request.to.toLowerCase(), data: request.data })
+})
+
+it('deploy chains: a launch sent before a reload is recorded on the next try, with no new review or relay', async () => {
+  await renderDeploy()
+  await deployAndConfirm('Deploy selected')
+  await vi.waitFor(async () => { await settle(); expect(wallet.writeContract).toHaveBeenCalledOnce() })
+  await act(async () => wallet.confirm(sentHash(1), 101n))
+  await vi.waitFor(async () => { await settle(); expect(wallet.writeContract).toHaveBeenCalledTimes(2) })
+  // The page reloads while the launch is pending, and the launch lands meanwhile.
+  wallet.forget()
+  await act(async () => root.unmount())
+  root = createRoot(host)
+  await act(async () => wallet.confirm(sentHash(2), 102n, 'success', launchReceipt(1, 9n, safeAddress).logs))
+  const relays = center.requestRelay.mock.calls.length
+  await renderDeploy()
+  await act(async () => buttons().find(button => button.textContent === 'Deploy selected')!.click())
+  await vi.waitFor(async () => { await settle(); expect(center.recordDeployment).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ chainId: 1, projectId: '9', transactionHash: sentHash(2) }), expect.anything()) })
+  expect(reviews).toBe(1)
+  expect(wallet.writeContract).toHaveBeenCalledTimes(2)
+  expect(center.requestRelay.mock.calls.length).toBe(relays)
+})
+
+it('deploy chains: a launch the wallet may have sent waits for the wallet check, then is reviewed again', async () => {
+  await renderDeploy()
+  await deployAndConfirm('Deploy selected')
+  await vi.waitFor(async () => { await settle(); expect(wallet.writeContract).toHaveBeenCalledOnce() })
+  wallet.writeContract.mockRejectedValueOnce(new Error('Internal JSON-RPC error.'))
+  await act(async () => wallet.confirm(sentHash(1), 101n))
+  const alert = () => host.querySelector('[role="alert"]')?.textContent
+  await vi.waitFor(async () => { await settle(); expect(alert()).toBe('Your wallet may have sent this transaction. Check its activity before you try again.') })
+  const check = () => buttons().find(button => button.textContent === 'I checked my wallet')
+  expect(check()).toBeDefined()
+  // Until the visitor checks, the launch is held: nothing is sent.
+  await act(async () => buttons().find(button => button.textContent === 'Deploy selected')!.click())
+  await settle()
+  expect(wallet.writeContract).toHaveBeenCalledTimes(2)
+  await act(async () => check()!.click())
+  await vi.waitFor(async () => { await settle(); expect(check()).toBeUndefined() })
+
+  // The saved launch, as first reviewed, is reviewed once more and sent.
+  await deployAndConfirm('Deploy selected', 'Agree & continue')
+  await vi.waitFor(async () => { await settle(); expect(wallet.writeContract).toHaveBeenCalledTimes(3) })
+  await act(async () => wallet.confirm(sentHash(2), 102n, 'success', launchReceipt(1, 9n, safeAddress).logs))
+  await vi.waitFor(async () => { await settle(); expect(center.recordDeployment).toHaveBeenCalled() })
+  expect(reviews).toBe(2)
 })
 
 it('wallet-action:one-confirmation fund launch with Relayr', async () => {

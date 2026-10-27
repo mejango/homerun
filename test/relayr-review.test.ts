@@ -175,7 +175,10 @@ describe('destination records', () => {
       .mockRejectedValue(new TypeError('Failed to fetch'))
     vi.stubGlobal('fetch', fetch)
     try {
-      expect(await relayrRecords(BUNDLE, 2)).toEqual(records)
+      const seen = vi.fn()
+      expect(await relayrRecords(BUNDLE, 2, { onRecords: seen })).toEqual(records)
+      // The journal has every read as it arrives, before the poll ends.
+      expect(seen).toHaveBeenCalledWith(records)
     } finally { vi.unstubAllGlobals() }
   })
 })

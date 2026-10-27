@@ -574,7 +574,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       }
       onProgress('Checking the original payment and destination transactions. No new payment will be requested.')
       // Provider failure labels and timeouts still require independent onchain reconciliation.
-      const records = await relayrRecords(journal.quote!.bundle_uuid, journal.signed.length, 15_000).catch(() => null)
+      const polled = journal
+      const records = await relayrRecords(journal.quote!.bundle_uuid, journal.signed.length, { timeoutMs: 15_000, onRecords: seen => { polled.records = seen; persist() } }).catch(() => null)
       if (records) {
         journal.records = records
         persist()
@@ -820,7 +821,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     persist()
     onProgress('Payment confirmed. Checking each destination launch onchain.')
     // Reconcile exact receipts even when the provider calls the bundle failed.
-    const records = await relayrRecords(journal.quote!.bundle_uuid, journal.signed.length).catch(() => null)
+    const polled = journal
+    const records = await relayrRecords(journal.quote!.bundle_uuid, journal.signed.length, { onRecords: seen => { polled.records = seen; persist() } }).catch(() => null)
     if (records) journal.records = records
     persist()
     if (!(await reconcile())) {

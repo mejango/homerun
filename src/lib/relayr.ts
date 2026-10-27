@@ -298,7 +298,11 @@ const recordsOf = (bundle: RelayrBundle | null) =>
  * failed one, the wait ran out, Relayr is unreachable), its records as last read; null when none can be
  * read. Relayr's word only points at hashes: the caller proves each destination onchain.
  */
-export async function relayrRecords(uuid: string, expectedCount: number, timeoutMs?: number): Promise<RelayrTransactionRecord[] | null> {
+export async function relayrRecords(uuid: string, expectedCount: number, { timeoutMs, onRecords }: {
+  timeoutMs?: number
+  /** Each read's records as they arrive, so a reload keeps every hash already seen. */
+  onRecords?: (records: RelayrTransactionRecord[]) => void
+} = {}): Promise<RelayrTransactionRecord[] | null> {
   const { pollRelayrBundle } = await loadRelayrEngine()
   /** The bundle as the poll last read it: a poll that stops on a failed chain still saw the others' hashes. */
   let last: RelayrBundle | null = null
@@ -306,8 +310,12 @@ export async function relayrRecords(uuid: string, expectedCount: number, timeout
     const response = await fetch(...args)
     try {
       const bundle = await response.clone().json() as RelayrBundle
-      if (String(bundle?.bundle_uuid).toLowerCase() === uuid.toLowerCase()) last = bundle
-    } catch { /* The poll reports the unreadable answer itself. */ }
+      if (String(bundle?.bundle_uuid).toLowerCase() === uuid.toLowerCase()) {
+        last = bundle
+        const records = recordsOf(bundle)
+        if (records?.length) onRecords?.(records)
+      }
+    } catch { /* The poll reports the unreadable answer, and the caller's journal its own failure. */ }
     return response
   }
   try {

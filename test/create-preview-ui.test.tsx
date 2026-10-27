@@ -250,6 +250,7 @@ describe('the preview of a project that is not created yet', () => {
     await render()
     await act(async () => { button('Make it real')!.click() })
     // One review: the exact message, and the call it lets Center's sponsor run, decoded.
+    await vi.waitFor(() => expect(runtime.review).toHaveBeenCalled())
     const review = runtime.review.mock.calls[0][0]
     expect(runtime.review).toHaveBeenCalledOnce()
     expect(review.signatures).toHaveLength(1)

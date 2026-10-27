@@ -17,7 +17,7 @@ import { jbCenterClient } from '@/lib/jbcenter-client'
 import { loadCreateValues } from '@/lib/create-preview'
 import { displayChainName } from '@/lib/chainDisplay'
 import { isSafeConnection } from '@/lib/safe-connector'
-import { walletAdapter } from '@/lib/reviewed-send-deps'
+import { preloadWhenIdle } from '@/lib/idle-preload'
 import { assertReviewedWallet } from '@/lib/wallet-core'
 import { multisigCreationData, multisigReview, resolveCreateMultisigs } from '@/lib/create-multisig'
 import { buildFundLaunch } from '@/lib/fund-contracts'
@@ -29,8 +29,14 @@ import type { CreateValues } from '@/components/CreateFlow'
 import { plannedNetworks } from '../../web/create-networks.mjs'
 import { modelCreatedProject } from '../../web/create-model.mjs'
 
-/** Core's reviewed signing, out of the preview's first load. */
-const loadSignEngine = () => import(/* webpackExports: ["signReviewed"] */ '@bananapus/nana-sdk-core/review')
+/** Core's reviewed signing and the wallet it signs with, out of the preview's first load. */
+const loadSignEngine = async () => {
+  const [{ signReviewed }, { walletAdapter }] = await Promise.all([
+    import(/* webpackExports: ["signReviewed"] */ '@bananapus/nana-sdk-core/review'),
+    import('@/lib/reviewed-send-deps'),
+  ])
+  return { signReviewed, walletAdapter }
+}
 
 const NO_SETUP = 'This project’s setup could not be read in this browser.'
 const BANNER = 'This is a preview'
@@ -88,6 +94,8 @@ export default function CreatePreview() {
   const [progress, setProgress] = useState('')
   const [error, setError] = useState('')
   useEffect(() => { setValues(loadCreateValues()); setLoaded(true) }, [])
+  // The signing engine loads while the preview is read, so pressing create opens its review at once.
+  useEffect(() => preloadWhenIdle([loadSignEngine]), [])
   // A setup keys its own preview, so an edited setup never inherits the shop or
   // the details a previous preview of this browser saved.
   const model = useMemo<CreatedProject | null>(() => {
@@ -156,7 +164,7 @@ export default function CreatePreview() {
         client: jbCenterClient, input, name: values.name, publisher: sender,
         // One review shows the exact message and the calls it lets Center's sponsor run, decoded; core signs only that text.
         sign: async publicationMessage => {
-          const { signReviewed } = await loadSignEngine()
+          const { signReviewed, walletAdapter } = await loadSignEngine()
           const [signature] = await signReviewed([{
             kind: 'message', chainId: chainIds[0], message: publicationMessage,
             calls: intent.deploymentCalls.map(call => ({ chainId: call.chainId, to: call.to, data: call.data })),

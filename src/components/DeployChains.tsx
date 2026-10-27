@@ -19,7 +19,7 @@ import {
   checkRelayRequest, readLaunchedProjectId, relayCostLabel, relaySetupSafes, watchDeployRefusal, type FundRelayRequest,
 } from '@/lib/fund-intent'
 import { holdDeployment, loadHeldDeployments, releaseDeployment } from '@/lib/relay-held'
-import { isDefiniteWalletRejection, ReviewLineError } from '@bananapus/nana-sdk-core/review'
+import { HELD_EXIT_LABEL, isDefiniteWalletRejection, ReviewLineError, WriteHeldError, type ReviewedResult } from '@bananapus/nana-sdk-core/review'
 import { isSafeConnection } from '@/lib/safe-connector'
 import { VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import { displayChainName } from '@/lib/chainDisplay'
@@ -66,20 +66,27 @@ function fixedSentence(cause: unknown): string {
 /** Core's reviewed send for a paid deploy and the wallet it sends through, out of the intent page's first load. */
 const loadDeployEngine = async () => {
   const [engine, { reviewedSendDeps }] = await Promise.all([
-    import(/* webpackExports: ["sendReviewed", "resumeReviewed", "findReviewedSequence", "discardReviewedSequence"] */ '@bananapus/nana-sdk-core/review'),
+    import(/* webpackExports: ["sendReviewed", "resumeReviewed", "findReviewedSequence", "discardReviewedSequence", "openStepHold"] */ '@bananapus/nana-sdk-core/review'),
     import('@/lib/reviewed-send-deps'),
   ])
   return { ...engine, reviewedSendDeps }
 }
+const deployScope = (intentId: string, chainId: number) => `homerun:deploy:${intentId}:${chainId}`
+const deployTitle = (chainId: number) => `Create this project on ${displayChainName(chainId)}`
+/** A WalletConnect peer read can land mid-flow: a Safe would propose, so each send checks again. */
+const assertWriteState = () => { if (isSafeConnection(wagmiConfig)) throw new ReviewLineError(SAFE_MESSAGE) }
 
 /**
  * A wallet's own refusal text is never shown: only its explicit rejection (4001) says nothing was sent. Core's
- * refusals are its own lines; anything else came from the wallet or the receipt read, so it may have been sent.
+ * refusals are its own lines; any other failure once the wallet opened (the wallet's, or the receipt read's) may
+ * have sent the transaction.
  */
-async function fromWallet<T>(action: () => Promise<T>): Promise<T> {
-  try { return await action() } catch (cause) {
+async function fromWallet<T>(action: (opened: () => void) => Promise<T>): Promise<T> {
+  let wallet = false
+  try { return await action(() => { wallet = true }) } catch (cause) {
     if (cause instanceof ReviewLineError) throw cause
-    throw new Error(isDefiniteWalletRejection(cause) ? WALLET_MESSAGE : UNCERTAIN_MESSAGE)
+    if (isDefiniteWalletRejection(cause)) throw new Error(WALLET_MESSAGE)
+    throw wallet ? new Error(UNCERTAIN_MESSAGE) : cause
   }
 }
 
@@ -122,6 +129,8 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
   /** A created project Center has not recorded: the next run records it alone. */
   const unrecorded = useRef(new Map<number, JBCenterDeploymentInput>())
   const [held, setHeld] = useState<number[]>([])
+  /** A chain whose launch the wallet may have sent: the deploy waits on it until the visitor checked their wallet. */
+  const [heldChain, setHeldChain] = useState<number | null>(null)
   const syncHeld = () => setHeld([...unrecorded.current.keys()])
   useEffect(() => () => run.current?.abort(), [])
   // A project this browser created and Center did not record outlives the page
@@ -168,23 +177,20 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
     const existing = await Promise.all(safes.map(address => client.getCode({ address })))
     const setup = request.setup.filter((entry, index) => !existing[index] || existing[index] === '0x')
     const engine = await loadDeployEngine()
-    const scope = `homerun:deploy:${intent.id}:${request.chainId}`
-    const title = `Create this project on ${displayChainName(request.chainId)}`
-    // A WalletConnect peer read can land mid-flow: a Safe would propose, so each send checks again.
-    const assertWriteState = () => { if (isSafeConnection(wagmiConfig)) throw new ReviewLineError(SAFE_MESSAGE) }
-    // An earlier run of this chain's deploy: one with a step in flight continues exactly as saved; one with
-    // nothing in flight starts over, and the multisig it created is already left out above.
+    const scope = deployScope(intent.id, request.chainId)
+    // An earlier run with a step in flight continues exactly as saved; one with nothing in flight starts over,
+    // and the multisig it created is already left out above.
     const saved = engine.findReviewedSequence(scope, account)
-    if (saved && !saved.sending && !saved.proposed) await engine.discardReviewedSequence(saved)
-    const result = await fromWallet(() => saved && (saved.sending || saved.proposed)
-      ? engine.resumeReviewed(saved, { title, assertWriteState }, engine.reviewedSendDeps)
-      : engine.sendReviewed({
+    if (saved && (saved.sending || saved.proposed)) return (await finishSaved(request.chainId))!
+    if (saved) await engine.discardReviewedSequence(saved)
+    const result = await holding(request.chainId, opened => engine.sendReviewed({
       account,
-      title,
+      title: deployTitle(request.chainId),
       description: 'You send these transactions and pay their gas and creation fee. The project keeps the same token and bridge addresses on every network.',
       confirmLabel: 'Continue to wallet',
       scope,
       assertWriteState,
+      beforeWallet: opened,
       calls: [
         ...setup.map(entry => ({
           chainId: request.chainId, to: entry.to, data: entry.data, value: entry.value,
@@ -203,17 +209,43 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
         },
       ],
     }, engine.reviewedSendDeps))
+    return launched(request.chainId, result, client)
+  }
+
+  /** The wallet's send, with the wallet check offered once a launch on `chainId` may have been sent or is held. */
+  async function holding(chainId: number, send: (opened: () => void) => Promise<ReviewedResult>): Promise<ReviewedResult> {
+    try { return await fromWallet(send) } catch (cause) {
+      if (cause instanceof WriteHeldError || (cause instanceof Error && cause.message === UNCERTAIN_MESSAGE)) setHeldChain(chainId)
+      throw cause
+    }
+  }
+
+  /** Finishes this chain's saved run that has a step in flight, as reviewed: null when there is none. */
+  async function finishSaved(chainId: number): Promise<JBCenterDeploymentInput | null> {
+    const account = getAccount(wagmiConfig).address
+    if (!account) return null
+    const engine = await loadDeployEngine()
+    const saved = engine.findReviewedSequence(deployScope(intent.id, chainId), account)
+    if (!saved || (!saved.sending && !saved.proposed)) return null
+    const client = getPublicClient(wagmiConfig, { chainId: chainId as JBChainId })
+    if (!client) throw new Error(NO_CLIENT_MESSAGE)
+    const result = await holding(chainId, opened => engine.resumeReviewed(saved, { title: deployTitle(chainId), assertWriteState, beforeWallet: opened }, engine.reviewedSendDeps))
+    return launched(chainId, result, client)
+  }
+
+  /** The project the run's last call created, held until Center records it. */
+  async function launched(chainId: number, result: ReviewedResult, client: NonNullable<ReturnType<typeof getPublicClient>>) {
     if (result.status !== 'done') throw new Error(SAFE_MESSAGE)
     // A resumed launch that went through while away has no receipt from this run: it is read by its hash.
-    const launched = result.hashes[result.hashes.length - 1]
+    const hash = result.hashes[result.hashes.length - 1]
     const last = result.receipts[result.receipts.length - 1]
-    const receipt = last?.transactionHash.toLowerCase() === launched.toLowerCase() ? last : await client.getTransactionReceipt({ hash: launched })
+    const receipt = last?.transactionHash.toLowerCase() === hash.toLowerCase() ? last : await client.getTransactionReceipt({ hash })
     const deployment: JBCenterDeploymentInput = {
-      chainId: request.chainId,
-      projectId: readLaunchedProjectId(intent, request.chainId, receipt),
+      chainId,
+      projectId: readLaunchedProjectId(intent, chainId, receipt),
       transactionHash: receipt.transactionHash,
     }
-    unrecorded.current.set(request.chainId, deployment)
+    unrecorded.current.set(chainId, deployment)
     holdDeployment(intent.id, deployment)
     syncHeld()
     return deployment
@@ -231,6 +263,8 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
     run.current?.abort()
     run.current = controller
     try {
+      // A launch sent before a reload finishes first: asking Center for a fresh relay could be refused once it exists.
+      if (address) for (const chainId of selected.filter(id => paid.includes(id) && !unrecorded.current.has(id))) await finishSaved(chainId)
       // A project this wallet already created only needs recording. Asking for
       // its relay again is refused, because the creation now exists onchain.
       const created = [...unrecorded.current].filter(([chainId]) => selected.includes(chainId))
@@ -278,6 +312,25 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
     }
   }
 
+  /** The visitor checked their wallet: a launch it never sent is released, and the next deploy reviews it again. */
+  async function checkedWallet(chainId: number) {
+    const account = getAccount(wagmiConfig).address
+    if (!account) return
+    const [engine, { holds }] = await Promise.all([loadDeployEngine(), import('@/lib/write-hold')])
+    const client = engine.reviewedSendDeps.clientFor(chainId)
+    const saved = engine.findReviewedSequence(deployScope(intent.id, chainId), account)
+    const step = saved?.sending ? saved.calls[saved.sending.step] : undefined
+    if (!step) { setHeldChain(null); setError(''); return }
+    const handle = engine.openStepHold(holds, account, false, step)
+    try {
+      const state = await handle.state(client)
+      if (state.status === 'clear' || !state.exit) { setError(state.status === 'clear' ? '' : state.line); if (state.status === 'clear') setHeldChain(null); return }
+      const { released, state: after } = await handle.exit(state, { checkedWallet: true }, client)
+      if (!released) { setError(after.status === 'clear' ? '' : after.line); return }
+      setHeldChain(null); setError('')
+    } catch { setError(DEPLOY_UNAVAILABLE) }
+  }
+
   const heldOnly = selected.length > 0 && selected.every(chainId => held.includes(chainId))
   return <section className="rounded-md border border-[#c4cdbb] bg-[#eef1e7] p-5 sm:p-7">
     <h2 className="text-3xl">{heading}</h2>
@@ -304,5 +357,6 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
     </ul>
     {remaining.length > 0 && <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={deploying || !selected.length} onClick={() => void deploy()}>{deploying ? 'Deploying…' : heldOnly ? 'Finish deploy' : 'Deploy selected'}</button>}
     {error && <p role="alert" className="mt-4 text-sm leading-relaxed text-smoke-700">{error}</p>}
+    {heldChain !== null && !deploying && <button type="button" className="btn-secondary mt-3 min-h-11 px-5" onClick={() => void checkedWallet(heldChain)}>{HELD_EXIT_LABEL}</button>}
   </section>
 }

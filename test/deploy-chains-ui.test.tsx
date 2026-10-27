@@ -22,11 +22,12 @@ vi.mock('@/lib/jbcenter-client', () => ({ jbCenterClient: {
 // Core's reviewed send over this test's wallet: one review of the action, then each call sent and its receipt read.
 vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => {
   const core = await importOriginal<typeof import('@bananapus/nana-sdk-core/review')>()
-  return { ...core, sendReviewed: async (action: { calls: { chainId: number; to: string; data: string; value?: bigint }[]; assertWriteState?: () => void }) => {
+  return { ...core, sendReviewed: async (action: { calls: { chainId: number; to: string; data: string; value?: bigint }[]; assertWriteState?: () => void; beforeWallet?: (call: unknown, step: number) => Promise<void> | void }) => {
     await runtime.review(action)
     const hashes: Hex[] = [], receipts: { status: string }[] = []
     for (const [index, call] of action.calls.entries()) {
       action.assertWriteState?.()
+      await action.beforeWallet?.(call, index)
       const sent = await runtime.send({}, { to: call.to, data: call.data, value: call.value })
       const receipt = await runtime.receipt({}, { chainId: call.chainId, hash: sent })
       if (receipt.status !== 'success') throw new core.ReviewedCallRevertedError(index, sent, receipt)
