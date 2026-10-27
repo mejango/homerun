@@ -682,6 +682,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       const plan = await reviewPlan({
         account,
         title: 'Create your project',
+        confirmLabel: 'Continue to wallet',
         description: ['Your signatures authorize these exact launches onchain. Relayr runs them once its fee is paid.', multisigReview(current.input.multisigs)].filter(Boolean).join('\n\n'),
         calls: authorizations.map(item => ({ ...item.prepared.review, ...(round ? { relayrRound: round } : {}) })),
         ...(round && payOn !== undefined ? { relayrRounds: { [round]: { paymentChainId: payOn } } } : {}),

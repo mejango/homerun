@@ -300,10 +300,20 @@ const recordsOf = (bundle: RelayrBundle | null) =>
  */
 export async function relayrRecords(uuid: string, expectedCount: number, timeoutMs?: number): Promise<RelayrTransactionRecord[] | null> {
   const { pollRelayrBundle } = await loadRelayrEngine()
+  /** The bundle as the poll last read it: a poll that stops on a failed chain still saw the others' hashes. */
+  let last: RelayrBundle | null = null
+  const watched: typeof fetch = async (...args) => {
+    const response = await fetch(...args)
+    try {
+      const bundle = await response.clone().json() as RelayrBundle
+      if (String(bundle?.bundle_uuid).toLowerCase() === uuid.toLowerCase()) last = bundle
+    } catch { /* The poll reports the unreadable answer itself. */ }
+    return response
+  }
   try {
-    return recordsOf(await pollRelayrBundle(uuid, expectedCount, timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}))
+    return recordsOf(await pollRelayrBundle(uuid, expectedCount, { fetch: watched, ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}) }))
   } catch {
-    return recordsOf(await readRelayrBundle(uuid).catch(() => null))
+    return recordsOf(last) ?? recordsOf(await readRelayrBundle(uuid).catch(() => null))
   }
 }
 

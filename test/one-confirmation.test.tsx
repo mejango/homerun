@@ -122,8 +122,8 @@ it('wallet-action:one-confirmation pay', async () => {
   expect(buttons().some(button => /^Confirm & /.test(button.textContent ?? ''))).toBe(false)
 })
 
-it('wallet-action:one-confirmation deploy chains', async () => {
-  // A chain this wallet pays for, whose multisig is created before the project.
+/** DeployChains for a chain the wallet pays for, whose multisig is created before the project, under the site's review. */
+async function renderDeploy() {
   const value = safeIntent([1])
   center.getIntent.mockResolvedValue(value)
   center.requestDeploy.mockResolvedValue({ deploys: [] })
@@ -139,17 +139,25 @@ it('wallet-action:one-confirmation deploy chains', async () => {
   </TransactionReviewProvider></QueryClientProvider>))
   await settle()
   await act(async () => host.querySelector<HTMLInputElement>('input[type="checkbox"][value="1"]')!.click())
-  await act(async () => buttons().find(button => button.textContent === 'Deploy selected')!.click())
+}
+/** Presses deploy and confirms its one review. */
+async function deployAndConfirm(label: string) {
+  await act(async () => buttons().find(button => button.textContent === label)!.click())
   await vi.waitFor(async () => { await settle(); expect(reviewOpen()).toBe(true) })
-
-  // The multisig and the project are one review.
   const review = document.querySelector('button[aria-label="Cancel transaction review"]')!.closest('dialog')!
-  expect(review.textContent).toMatch(/multisig/i)
   expect(buttons().some(button => /^Confirm & /.test(button.textContent ?? ''))).toBe(false)
   await act(async () => review.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click())
-  const confirm = () => buttons().find(button => button.textContent === 'Agree & continue')
+  const confirm = () => buttons().find(button => button.textContent === 'Continue to wallet')
   await vi.waitFor(async () => { await settle(); expect(confirm()?.disabled).toBe(false) })
   await act(async () => confirm()!.click())
+  return review
+}
+
+it('wallet-action:one-confirmation deploy chains', async () => {
+  await renderDeploy()
+  // The multisig and the project are one review.
+  const review = await deployAndConfirm('Deploy selected')
+  expect(review.textContent).toMatch(/multisig/i)
 
   await vi.waitFor(async () => { await settle(); expect(wallet.writeContract).toHaveBeenCalledOnce() })
   await act(async () => wallet.confirm(sentHash(1), 101n))
@@ -162,6 +170,25 @@ it('wallet-action:one-confirmation deploy chains', async () => {
   const request: ReturnType<typeof safeRelayRequest> = await center.requestRelay.mock.results.at(-1)!.value
   expect(wallet.sent().map(sent => [sent.to, sent.data])).toEqual([[SAFE_FACTORY.toLowerCase(), request.setup[0].data], [request.to.toLowerCase(), request.data]])
   expect(buttons().some(button => /^Confirm & /.test(button.textContent ?? ''))).toBe(false)
+})
+
+it('deploy chains: a launch the wallet rejected after its multisig was created finishes on the next try', async () => {
+  await renderDeploy()
+  await deployAndConfirm('Deploy selected')
+  await vi.waitFor(async () => { await settle(); expect(wallet.writeContract).toHaveBeenCalledOnce() })
+  wallet.writeContract.mockRejectedValueOnce(Object.assign(new Error('User rejected the request.'), { code: 4001 }))
+  await act(async () => wallet.confirm(sentHash(1), 101n))
+  await vi.waitFor(async () => { await settle(); expect(host.querySelector('[role="alert"]')?.textContent).toBe('The wallet did not send the transaction.') })
+
+  // The multisig exists now: the retry reviews and sends only the launch.
+  vi.mocked(wallet.client as unknown as { getCode: () => Promise<string> }).getCode = vi.fn(async () => '0x6000')
+  await deployAndConfirm('Deploy selected')
+  await vi.waitFor(async () => { await settle(); expect(wallet.writeContract).toHaveBeenCalledTimes(3) })
+  await act(async () => wallet.confirm(sentHash(2), 102n, 'success', launchReceipt(1, 9n, safeAddress).logs))
+  await vi.waitFor(async () => { await settle(); expect(center.recordDeployment).toHaveBeenCalled() })
+  expect(reviews).toBe(2)
+  const request: ReturnType<typeof safeRelayRequest> = await center.requestRelay.mock.results.at(-1)!.value
+  expect(wallet.sent().at(-1)).toMatchObject({ to: request.to.toLowerCase(), data: request.data })
 })
 
 it('wallet-action:one-confirmation fund launch with Relayr', async () => {
@@ -227,7 +254,7 @@ it('wallet-action:one-confirmation fund launch with Relayr', async () => {
   expect(review.textContent).toMatch(/relayr/i)
   expect(buttons().some(button => /^Confirm & /.test(button.textContent ?? ''))).toBe(false)
   await act(async () => review.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click())
-  const confirm = () => buttons().find(button => /^Agree & /.test(button.textContent ?? ''))
+  const confirm = () => buttons().find(button => button.textContent === 'Continue to wallet')
   await vi.waitFor(async () => { await settle(); running(); expect(confirm()?.disabled).toBe(false) })
   await act(async () => confirm()!.click())
 

@@ -354,7 +354,7 @@ try {
   await review.getByText('Create your project', { exact: false }).first().waitFor()
   await review.getByText('2/2 approvals', { exact: false }).first().waitFor()
   await review.getByRole('checkbox').check()
-  await review.getByRole('button', { name: 'Continue to wallet', exact: true }).click()
+  await review.getByRole('button', { name: 'Agree & authorize', exact: true }).click()
 
   await page.waitForURL(`${appOrigin}/intent/${intentId}`)
   await page.getByText('Deploys on first use', { exact: false }).first().waitFor()

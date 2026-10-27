@@ -34,7 +34,7 @@ vi.mock('@bananapus/nana-sdk-core/review/relayr', async importOriginal => ({
   ...await importOriginal<typeof import('@bananapus/nana-sdk-core/review/relayr')>(), requireRelayrRetry: m.retry, verifyRelayrPayment: m.verify,
 }))
 
-import { prepareForwardedTx, relayrPay, RelayrPaymentSubmittedError } from '@/lib/relayr'
+import { prepareForwardedTx, relayrPay, relayrRecords, RelayrPaymentSubmittedError } from '@/lib/relayr'
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111' as Address
 const TARGET = '0x2222222222222222222222222222222222222222' as Address
@@ -161,5 +161,21 @@ describe('payment', () => {
   it('passes core\'s refusal through when no hash came back', async () => {
     m.pay.mockRejectedValue(new TransactionReviewCancelledError())
     await expect(pay()).rejects.toBeInstanceOf(TransactionReviewCancelledError)
+  })
+})
+
+describe('destination records', () => {
+  it('keeps the hashes a poll saw when it stops on a chain Relayr failed, though Relayr is unreachable after', async () => {
+    const records = [
+      { tx_uuid: '00000000-0000-4000-8000-000000000001', status: { state: 'Success', data: { hash: MINED } } },
+      { tx_uuid: '00000000-0000-4000-8000-000000000002', status: { state: 'Failed' } },
+    ]
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ bundle_uuid: BUNDLE, payment_received: true, transactions: records })))
+      .mockRejectedValue(new TypeError('Failed to fetch'))
+    vi.stubGlobal('fetch', fetch)
+    try {
+      expect(await relayrRecords(BUNDLE, 2)).toEqual(records)
+    } finally { vi.unstubAllGlobals() }
   })
 })

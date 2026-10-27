@@ -238,8 +238,7 @@ describe('choosing the chains a published project is deployed on', () => {
     await act(async () => { rowFor(1)!.click() })
     await act(async () => { button('Deploy selected')!.click() })
     await settle()
-    expect(alert()).not.toContain('did not send')
-    expect(alert()).not.toContain('JSON-RPC')
+    expect(alert()).toBe('Your wallet may have sent this transaction. Check its activity before you try again.')
   })
 
   it('says a closed review sent nothing, not that the wallet failed', async () => {

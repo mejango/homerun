@@ -21,7 +21,6 @@ import {
 import { holdDeployment, loadHeldDeployments, releaseDeployment } from '@/lib/relay-held'
 import { isDefiniteWalletRejection, ReviewLineError } from '@bananapus/nana-sdk-core/review'
 import { isSafeConnection } from '@/lib/safe-connector'
-import { reviewedSendDeps } from '@/lib/reviewed-send-deps'
 import { VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import { displayChainName } from '@/lib/chainDisplay'
 import { ChainIcon } from '@/components/ChainIcon'
@@ -41,6 +40,7 @@ const DEPLOY_UNAVAILABLE = 'This deploy could not start right now. Try again sho
 const DEPLOY_FAILED = 'This project could not be deployed. Try again in a few minutes.'
 const CONNECT_MESSAGE = 'Connect a wallet to deploy the networks you pay for.'
 const WALLET_MESSAGE = 'The wallet did not send the transaction.'
+const UNCERTAIN_MESSAGE = 'Your wallet may have sent this transaction. Check its activity before you try again.'
 const SAFE_MESSAGE = 'Deploying from a Safe isn’t supported here. Connect an ordinary wallet to deploy these networks.'
 const OVER_FEE_MESSAGE = 'The deploy asked for more than the creation fee.'
 const NO_CLIENT_MESSAGE = 'No network connection is configured for this chain.'
@@ -57,19 +57,29 @@ function fixedSentence(cause: unknown): string {
   if (cause instanceof ReviewLineError) return cause.message
   if (cause instanceof JBCenterRequestError || !(cause instanceof Error)) return DEPLOY_UNAVAILABLE
   const own = new Set<string>([
-    CONNECT_MESSAGE, WALLET_MESSAGE, SAFE_MESSAGE, VIEW_AS_WRITE_BLOCKED, OVER_FEE_MESSAGE, NO_CLIENT_MESSAGE,
+    CONNECT_MESSAGE, WALLET_MESSAGE, UNCERTAIN_MESSAGE, SAFE_MESSAGE, VIEW_AS_WRITE_BLOCKED, OVER_FEE_MESSAGE, NO_CLIENT_MESSAGE,
     RELAY_UNREADABLE_MESSAGE, RELAY_EXPIRED_MESSAGE, SAFES_UNREADABLE_MESSAGE, NO_LAUNCH_MESSAGE,
   ])
   return own.has(cause.message) ? cause.message : DEPLOY_UNAVAILABLE
 }
 
-/** Core's reviewed send for a paid deploy, out of the intent page's first load. */
-const loadDeployEngine = () => import(/* webpackExports: ["sendReviewed"] */ '@bananapus/nana-sdk-core/review')
+/** Core's reviewed send for a paid deploy and the wallet it sends through, out of the intent page's first load. */
+const loadDeployEngine = async () => {
+  const [engine, { reviewedSendDeps }] = await Promise.all([
+    import(/* webpackExports: ["sendReviewed", "resumeReviewed", "findReviewedSequence", "discardReviewedSequence"] */ '@bananapus/nana-sdk-core/review'),
+    import('@/lib/reviewed-send-deps'),
+  ])
+  return { ...engine, reviewedSendDeps }
+}
 
-/** A wallet's own refusal text is never shown: only its explicit rejection (4001) says nothing was sent. */
+/**
+ * A wallet's own refusal text is never shown: only its explicit rejection (4001) says nothing was sent. Core's
+ * refusals are its own lines; anything else came from the wallet or the receipt read, so it may have been sent.
+ */
 async function fromWallet<T>(action: () => Promise<T>): Promise<T> {
   try { return await action() } catch (cause) {
-    throw !(cause instanceof ReviewLineError) && isDefiniteWalletRejection(cause) ? new Error(WALLET_MESSAGE) : cause
+    if (cause instanceof ReviewLineError) throw cause
+    throw new Error(isDefiniteWalletRejection(cause) ? WALLET_MESSAGE : UNCERTAIN_MESSAGE)
   }
 }
 
@@ -157,14 +167,24 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
     const safes = relaySetupSafes(intent, request.chainId)
     const existing = await Promise.all(safes.map(address => client.getCode({ address })))
     const setup = request.setup.filter((entry, index) => !existing[index] || existing[index] === '0x')
-    const { sendReviewed } = await loadDeployEngine()
-    const result = await fromWallet(() => sendReviewed({
+    const engine = await loadDeployEngine()
+    const scope = `homerun:deploy:${intent.id}:${request.chainId}`
+    const title = `Create this project on ${displayChainName(request.chainId)}`
+    // A WalletConnect peer read can land mid-flow: a Safe would propose, so each send checks again.
+    const assertWriteState = () => { if (isSafeConnection(wagmiConfig)) throw new ReviewLineError(SAFE_MESSAGE) }
+    // An earlier run of this chain's deploy: one with a step in flight continues exactly as saved; one with
+    // nothing in flight starts over, and the multisig it created is already left out above.
+    const saved = engine.findReviewedSequence(scope, account)
+    if (saved && !saved.sending && !saved.proposed) await engine.discardReviewedSequence(saved)
+    const result = await fromWallet(() => saved && (saved.sending || saved.proposed)
+      ? engine.resumeReviewed(saved, { title, assertWriteState }, engine.reviewedSendDeps)
+      : engine.sendReviewed({
       account,
-      title: `Create this project on ${displayChainName(request.chainId)}`,
+      title,
       description: 'You send these transactions and pay their gas and creation fee. The project keeps the same token and bridge addresses on every network.',
-      scope: `homerun:deploy:${intent.id}:${request.chainId}`,
-      // A WalletConnect peer read can land mid-flow: a Safe would propose, so each send checks again.
-      assertWriteState: () => { if (isSafeConnection(wagmiConfig)) throw new Error(SAFE_MESSAGE) },
+      confirmLabel: 'Continue to wallet',
+      scope,
+      assertWriteState,
       calls: [
         ...setup.map(entry => ({
           chainId: request.chainId, to: entry.to, data: entry.data, value: entry.value,
@@ -182,9 +202,12 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
           ...(setup.length ? { dependsOnPrior: true } : {}),
         },
       ],
-    }, reviewedSendDeps))
+    }, engine.reviewedSendDeps))
     if (result.status !== 'done') throw new Error(SAFE_MESSAGE)
-    const receipt = result.receipts[result.receipts.length - 1]
+    // A resumed launch that went through while away has no receipt from this run: it is read by its hash.
+    const launched = result.hashes[result.hashes.length - 1]
+    const last = result.receipts[result.receipts.length - 1]
+    const receipt = last?.transactionHash.toLowerCase() === launched.toLowerCase() ? last : await client.getTransactionReceipt({ hash: launched })
     const deployment: JBCenterDeploymentInput = {
       chainId: request.chainId,
       projectId: readLaunchedProjectId(intent, request.chainId, receipt),
