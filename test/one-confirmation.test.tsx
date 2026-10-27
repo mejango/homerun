@@ -27,9 +27,12 @@ vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({ ...await impor
 // A destination proven onchain creates its project; reading the project's own logs is fund-launch-verification's test.
 vi.mock('@/lib/fund-launch-verification', async importOriginal => ({ ...await importOriginal<typeof import('@/lib/fund-launch-verification')>(), verifyFundLaunch: async () => 9n }))
 vi.mock('next/image', () => ({ default: (props: Record<string, unknown>) => createElement('img', { ...props, src: 'asset' }) }))
+const connectorDrift = vi.hoisted(() => ({ on: false, reads: 0 }))
 vi.mock('@wagmi/core', async importOriginal => {
   const { wallet, walletCore } = await import('./support/fake-wallet')
-  return { ...(await importOriginal<typeof import('@wagmi/core')>()), ...walletCore, getAccount: () => ({ address: wallet.account, chainId: wallet.chainId }) }
+  // While `connectorDrift.on`, every read sees a new connector, so the adapter refuses before it calls the wallet.
+  return { ...(await importOriginal<typeof import('@wagmi/core')>()), ...walletCore, getAccount: () => ({ address: wallet.account, chainId: wallet.chainId,
+    connector: { id: 'injected', uid: connectorDrift.on ? `drift-${connectorDrift.reads++}` : 'injected' } }) }
 })
 vi.mock('wagmi', async importOriginal => {
   const { wallet, walletHooks } = await import('./support/fake-wallet')
@@ -51,7 +54,7 @@ vi.mock('@/lib/project-pay-quote', () => ({
   readProjectPayTokenOptions: async () => [{ token: USDC, terminal: TERMINAL, decimals: 6, symbol: 'USDC', viaRouter: false }],
 }))
 
-import { sentHash, wallet } from './support/fake-wallet'
+import { sentHash, wallet, walletFaults } from './support/fake-wallet'
 import { TransactionReviewProvider } from '@/components/TransactionReviewProvider'
 import { ProjectPayment } from '@/components/ProjectPayment'
 import { DeployChains } from '@/components/DeployChains'
@@ -86,7 +89,7 @@ beforeEach(() => {
   observer = new MutationObserver(() => { const now = reviewOpen(); if (now && !open) reviews++; open = now })
   observer.observe(document.body, { childList: true, subtree: true })
 })
-afterEach(async () => { observer.disconnect(); await act(async () => root.unmount()); host.remove(); cache.clear(); localStorage.clear() })
+afterEach(async () => { connectorDrift.on = false; walletFaults.chainRead = null; observer.disconnect(); await act(async () => root.unmount()); host.remove(); cache.clear(); localStorage.clear() })
 
 it('wallet-action:one-confirmation pay', async () => {
   await act(async () => root.render(<QueryClientProvider client={cache}><TransactionReviewProvider>
@@ -120,6 +123,66 @@ it('wallet-action:one-confirmation pay', async () => {
   // One wallet send per step: the exact approval to the token, then the payment to the terminal.
   expect(wallet.sent().map(sent => [sent.to, sent.data.slice(0, 10)])).toEqual([[USDC, toFunctionSelector('approve(address,uint256)')], [TERMINAL, expect.any(String)]])
   expect(buttons().some(button => /^Confirm & /.test(button.textContent ?? ''))).toBe(false)
+})
+
+it('a refusal before the wallet is called releases the held step', async () => {
+  await act(async () => root.render(<QueryClientProvider client={cache}><TransactionReviewProvider>
+    <ProjectPayment chainId={1} projectId={7n} tokenLabel="FUND" title="Contribute" context={{ token: USDC, terminal: TERMINAL, decimals: 6, symbol: 'USDC' }}
+      paused={false} reservedPercent={0} rulesetId="1" verify={async (_account, minimumBlock) => ({ blockNumber: minimumBlock ?? 100n })} />
+  </TransactionReviewProvider></QueryClientProvider>))
+  const input = host.querySelector('input')!
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '2'); input.dispatchEvent(new Event('input', { bubbles: true })) })
+  await settle()
+  const payAndConfirm = async (label: string) => {
+    await act(async () => buttons().find(button => button.textContent === label)!.click())
+    await vi.waitFor(async () => { await settle(); expect(reviewOpen()).toBe(true) })
+    const review = document.querySelector('button[aria-label="Cancel transaction review"]')!.closest('dialog')!
+    await act(async () => review.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click())
+    const confirm = () => buttons().find(button => button.textContent === 'Submit without estimate')
+    await vi.waitFor(async () => { await settle(); expect(confirm()?.disabled).toBe(false) })
+    await act(async () => confirm()!.click())
+  }
+  // The connector keeps changing once the review is confirmed: the wallet is never called.
+  connectorDrift.on = true
+  await payAndConfirm('Pay on Ethereum')
+  await vi.waitFor(async () => { await settle(); expect(host.textContent).toContain('Wallet connection changed') })
+  expect(wallet.writeContract).not.toHaveBeenCalled()
+  expect(buttons().some(button => button.textContent === 'I checked my wallet')).toBe(false)
+
+  // Nothing was sent, so nothing is held: the same payment is reviewed and sent at once.
+  connectorDrift.on = false
+  await payAndConfirm('Try again')
+  await vi.waitFor(async () => { await settle(); expect(wallet.writeContract).toHaveBeenCalledOnce() })
+})
+
+it('a chain read that fails before anything is sent releases the held step', async () => {
+  await act(async () => root.render(<QueryClientProvider client={cache}><TransactionReviewProvider>
+    <ProjectPayment chainId={1} projectId={7n} tokenLabel="FUND" title="Contribute" context={{ token: USDC, terminal: TERMINAL, decimals: 6, symbol: 'USDC' }}
+      paused={false} reservedPercent={0} rulesetId="1" verify={async (_account, minimumBlock) => ({ blockNumber: minimumBlock ?? 100n })} />
+  </TransactionReviewProvider></QueryClientProvider>))
+  const input = host.querySelector('input')!
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '2'); input.dispatchEvent(new Event('input', { bubbles: true })) })
+  await settle()
+  const payAndConfirm = async (label: string) => {
+    await act(async () => buttons().find(button => button.textContent === label)!.click())
+    await vi.waitFor(async () => { await settle(); expect(reviewOpen()).toBe(true) })
+    const review = document.querySelector('button[aria-label="Cancel transaction review"]')!.closest('dialog')!
+    await act(async () => review.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click())
+    const confirm = () => buttons().find(button => button.textContent === 'Submit without estimate')
+    await vi.waitFor(async () => { await settle(); expect(confirm()?.disabled).toBe(false) })
+    await act(async () => confirm()!.click())
+  }
+  // viem reads the wallet's chain before it sends; that read fails, with a provider's own text.
+  walletFaults.chainRead = new Error('chain read failed at https://rpc.example/v1/SECRET_TOKEN')
+  await payAndConfirm('Pay on Ethereum')
+  await vi.waitFor(async () => { await settle(); expect(host.textContent).toContain('Your wallet could not be reached. Nothing was sent; try again.') })
+  expect(host.textContent).not.toContain('SECRET_TOKEN')
+  expect(wallet.writeContract).not.toHaveBeenCalled()
+  expect(buttons().some(button => button.textContent === 'I checked my wallet')).toBe(false)
+
+  walletFaults.chainRead = null
+  await payAndConfirm('Try again')
+  await vi.waitFor(async () => { await settle(); expect(wallet.writeContract).toHaveBeenCalledOnce() })
 })
 
 /** DeployChains for a chain the wallet pays for, whose multisig is created before the project, under the site's review. */

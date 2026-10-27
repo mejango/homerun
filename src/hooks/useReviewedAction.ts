@@ -24,7 +24,7 @@ import { preloadWhenIdle } from '@/lib/idle-preload'
 import { getViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import { publicClient } from '@/lib/wallet-core'
 import { callOf, holds } from '@/lib/write-hold'
-import { reviewedSendDeps } from '@/lib/reviewed-send-deps'
+import { readableEngine, reviewedSendDeps } from '@/lib/reviewed-send-deps'
 import { wagmiConfig } from '@/providers/Providers'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 
@@ -92,7 +92,7 @@ export const SAVED_SEQUENCE_LINE = 'This continues your saved action exactly as 
  * Only its two entry points are marked used: a whole-namespace import marks every core review export used, and webpack then
  * bundles their imports into the shared chunk every page with a write hold loads.
  */
-const loadReviewEngine = () => import(/* webpackExports: ["sendReviewed", "resumeReviewed", "findReviewedSequence", "discardReviewedSequence"] */ '@bananapus/nana-sdk-core/review')
+const loadReviewEngine = async () => readableEngine(await import(/* webpackExports: ["sendReviewed", "resumeReviewed", "findReviewedSequence", "discardReviewedSequence"] */ '@bananapus/nana-sdk-core/review'))
 
 const CENTER_WALLET_REFUSED = 'This action needs an external wallet. Juicebox wallet payments use their own payment review.'
 const CLOSED_LINE = 'This review closed. Open the action again before sending.'
