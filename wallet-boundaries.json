@@ -73,6 +73,34 @@
       "test": "test/project-shop-session.test.ts"
     },
     {
+      "file": "src/lib/reviewed-send-deps.ts",
+      "line": 55,
+      "api": "sendTransaction",
+      "boundary": "Core's wallet adapter: it fetches the live connector's client, rechecks account, chain, Safe mode, view-as, the Center wallet and the connector uid, and calls the wallet in that same continuation, fetching again up to three times before refusing.",
+      "test": "test/reviewed-send-deps.test.ts"
+    },
+    {
+      "file": "src/lib/reviewed-send-deps.ts",
+      "line": 58,
+      "api": "signTypedData",
+      "boundary": "Core's wallet adapter: it fetches the live connector's client, rechecks account, chain, Safe mode, view-as, the Center wallet and the connector uid, and calls the wallet in that same continuation, fetching again up to three times before refusing.",
+      "test": "test/reviewed-send-deps.test.ts"
+    },
+    {
+      "file": "src/lib/reviewed-send-deps.ts",
+      "line": 59,
+      "api": "signMessage",
+      "boundary": "Core's wallet adapter: it fetches the live connector's client, rechecks account, chain, Safe mode, view-as, the Center wallet and the connector uid, and calls the wallet in that same continuation, fetching again up to three times before refusing.",
+      "test": "test/reviewed-send-deps.test.ts"
+    },
+    {
+      "file": "src/lib/reviewed-send-deps.ts",
+      "line": 61,
+      "api": "sendCalls",
+      "boundary": "Core's wallet adapter: it fetches the live connector's client, rechecks account, chain, Safe mode, view-as, the Center wallet and the connector uid, and calls the wallet in that same continuation, fetching again up to three times before refusing.",
+      "test": "test/reviewed-send-deps.test.ts"
+    },
+    {
       "file": "src/providers/lazy-center-connector.ts",
       "line": 15,
       "api": "request",
