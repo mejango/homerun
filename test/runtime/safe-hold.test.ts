@@ -18,7 +18,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@wagmi/core', () => ({
   getAccount: () => ({ address: SAFE, chainId: 10 }),
   getPublicClient: () => mocks.client,
-  getWalletClient: async () => ({ chain: { id: 10 }, sendTransaction: mocks.sendTransaction }),
+  getWalletClient: async () => (await import('../support/provider-client')).providerClient({ chain: { id: 10 }, sendTransaction: mocks.sendTransaction }),
   switchChain: vi.fn(),
 }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ isConnected: true, address: SAFE, isCenterWallet: false }) }))

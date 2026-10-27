@@ -30,7 +30,7 @@ vi.mock('wagmi', () => ({ usePublicClient: () => client }))
 vi.mock('@wagmi/core', () => ({
   getAccount: () => ({ address: WALLET, chainId: 1, connector: { uid: 'reviewed' } }),
   getPublicClient: () => client,
-  getWalletClient: async () => ({ chain: { id: 1 }, sendTransaction: runtime.write }),
+  getWalletClient: async () => (await import('./support/provider-client')).providerClient({ chain: { id: 1 }, sendTransaction: runtime.write }),
   switchChain: vi.fn(),
 }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ isConnected: true, address: WALLET, isCenterWallet: false, openSignIn: vi.fn() }) }))

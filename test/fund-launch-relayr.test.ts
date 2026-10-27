@@ -33,7 +33,7 @@ vi.mock('@/lib/transaction-review', async importOriginal => ({
 vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({
   ...await importOriginal<typeof import('@bananapus/nana-sdk-core/review')>(), reviewPlan: m.review,
 }))
-vi.mock('@/lib/reviewed-send-deps', () => ({ reviewedSendDeps: {}, readableEngine: <E,>(engine: E) => engine }))
+vi.mock('@/lib/reviewed-send-deps', async importOriginal => ({ ...await importOriginal<typeof import('@/lib/reviewed-send-deps')>(), reviewedSendDeps: {} }))
 vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => m.safe }))
 vi.mock('@/lib/wallet-core', () => ({ publicClient: m.client }))
 vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original<typeof import('@bananapus/nana-sdk-core/v6')>(), getProjectCreationFee: m.fee }))
@@ -53,6 +53,7 @@ import { relayrPaymentLabel } from '@/lib/relayr'
 const relayrHeldMessage = (until: number) => heldMessage(until, { action: 'launch' })
 import { predictMultisig, MULTICALL3, CREATE_BATCH_ABI, unbundleMultisigLaunch, type CreateMultisig } from '@/lib/create-multisig'
 import { canRelayrLaunch, launchRequestsDead, runRelayrLaunch } from '@/lib/fund-launch-relayr'
+import { walletAdapter } from '@/lib/reviewed-send-deps'
 import { FUND_LAUNCH_KEY, canCancelLaunch, cancelUnsubmittedLaunch, loadLaunchSession, saveLaunch as saveLaunchSession, type FundLaunchSession as LaunchSession } from '@/lib/fund-launch-session'
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111' as Address
@@ -810,6 +811,26 @@ describe('relayed launch execution and recovery', () => {
     await run()
     expect(m.forward).toHaveBeenCalledTimes(2)
     expect(m.funding).toHaveBeenCalledTimes(2)
+  })
+
+  it('leaves a launch unpaid when the wallet was refused before it was called, and the next run pays', async () => {
+    m.pay.mockImplementationOnce(async ({ reverify: verify, onSending: sending }) => {
+      await verify(); await sending()
+      // The adapter's own refusal, as core's payment send rethrows it: no wallet is connected, so nothing was called.
+      const connected = m.account
+      m.account = undefined as unknown as Address
+      const refused = await walletAdapter.sendTransaction({ chainId: 8453, to: TARGET, data: '0x', value: 1n }).catch(error => error)
+      m.account = connected
+      throw refused
+    })
+    const failed = await run().catch(error => error)
+    expect(failed.message).toBe('Connect a wallet first.')
+    // Shown as its own line, not as a cancellation.
+    expect(failed.code).toBeUndefined()
+    expect(loadLaunchSession()?.relayr?.phase).toBe('quoted')
+    await run()
+    expect(m.pay).toHaveBeenCalledTimes(2)
+    expect(loadLaunchSession()?.relayr?.paymentHash).toBe(HASH)
   })
 
   it('accepts supported network families and blocks Safe wallets, mixed chains, direct sessions, and changed accounts', async () => {

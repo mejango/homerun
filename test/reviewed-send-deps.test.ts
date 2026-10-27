@@ -2,15 +2,24 @@
 import { afterEach, expect, it, vi } from 'vitest'
 
 const state = vi.hoisted(() => ({ connector: { id: 'injected', uid: 'a' } as { id: string; uid: string }, onFetch: () => {}, onRead: () => {},
-  failSend: false, fetched: [] as string[], invoked: [] as { connector: string; live: string }[] }))
+  failSend: false, fetchError: undefined as Error | undefined, fetched: [] as string[], invoked: [] as { connector: string; live: string }[] }))
 vi.mock('@wagmi/core', () => ({
   getAccount: () => { state.onRead(); return { address: '0x1111111111111111111111111111111111111111', chainId: 1, connector: state.connector } },
   getWalletClient: async (_config: unknown, { connector }: { connector: { uid: string } }) => {
     state.fetched.push(connector.uid); state.onFetch()
-    // Each call records, as it is made, which connector's client it is and which connector is live.
-    const called = <T,>(result: T) => { state.invoked.push({ connector: connector.uid, live: state.connector.uid }); return Promise.resolve(result) }
-    return { signMessage: () => called(connector.uid),
-      sendTransaction: () => state.failSend ? Promise.reject(new Error('RPC timeout')) : called(`0x${'12'.repeat(32)}`) }
+    if (state.fetchError) throw state.fetchError
+    // The provider records each signing or sending request as it is dispatched: which connector's it is, and which is live.
+    const dispatched = <T,>(result: T) => { state.invoked.push({ connector: connector.uid, live: state.connector.uid }); return result }
+    return { account: { address: '0x1111111111111111111111111111111111111111', type: 'json-rpc' }, chain: undefined,
+      request: async ({ method }: { method: string }) => {
+        if (method === 'eth_chainId') return '0x1'
+        if (method === 'personal_sign') return dispatched(connector.uid)
+        if (method === 'eth_sendTransaction') {
+          if (state.failSend) throw new Error('RPC timeout')
+          return dispatched(`0x${'12'.repeat(32)}`)
+        }
+        throw new Error(method)
+      } }
   },
   switchChain: vi.fn(),
   getPublicClient: vi.fn(),
@@ -22,7 +31,7 @@ import { isWalletNotInvoked, readableEngine, walletAdapter } from '@/lib/reviewe
 import { isDefiniteWalletRejection } from '@bananapus/nana-sdk-core/review'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 
-afterEach(() => { clearViewAs(); state.connector = { id: 'injected', uid: 'a' }; state.onFetch = () => {}; state.onRead = () => {}; state.fetched = []; state.invoked = []; state.failSend = false })
+afterEach(() => { clearViewAs(); state.connector = { id: 'injected', uid: 'a' }; state.onFetch = () => {}; state.onRead = () => {}; state.fetched = []; state.invoked = []; state.failSend = false; state.fetchError = undefined })
 
 const send = () => walletAdapter.sendTransaction({ chainId: 1, to: '0x1111111111111111111111111111111111111111', data: '0x', value: 0n, gas: 21_000n })
 
@@ -84,7 +93,16 @@ it("tags a write refused before the wallet as core's release, and shows it as it
 it('leaves a failure after the wallet was called as it is', async () => {
   state.failSend = true
   const failed = await send().catch(error => error)
-  expect(failed.message).toBe('RPC timeout')
+  expect(failed.message).toContain('RPC timeout')
   expect(isDefiniteWalletRejection(failed)).toBe(false)
   expect(isWalletNotInvoked(failed)).toBe(false)
+})
+
+it("shows a provider's own failure before the wallet as a fixed line, never its text", async () => {
+  state.fetchError = new Error('Request failed: https://rpc.example/v1/SECRET_TOKEN')
+  const refused = await readableEngine({ sendReviewed: send }).sendReviewed().catch(error => error)
+  expect(refused.message).toBe('Your wallet could not be reached. Nothing was sent; try again.')
+  expect(refused.message).not.toContain('SECRET_TOKEN')
+  expect(isWalletNotInvoked(refused)).toBe(true)
+  expect(refused.acquisitionCause).toBe(state.fetchError)
 })

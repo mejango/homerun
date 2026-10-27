@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react'
 import type { Address, Hex } from 'viem'
 import { registerReviewHandler, type ReviewPrompt } from '@bananapus/nana-sdk-core/review'
 import { vi } from 'vitest'
+import { providerClient } from './provider-client'
 
 type Receipt = { status: 'success' | 'reverted'; blockNumber: bigint; blockHash: Hex; transactionHash: Hex; transactionIndex: number; from: Address; to: Address; logs: readonly unknown[] }
 type WrittenTransaction = { hash: Hex; chainId: number; from: Address; to: Address; nonce: number; input: Hex; value: bigint; blockHash: Hex | null; blockNumber: bigint | null; transactionIndex: number | null }
@@ -202,7 +203,9 @@ export const walletHooks = {
 /** The engine's `@wagmi/core` actions, answered by the fake wallet; a test adds its own `getAccount`. */
 export const walletCore = {
   getPublicClient: () => wallet.client,
-  getWalletClient: async () => wallet.walletClient,
+  // wagmi's client for the chain asked for, as a wallet on that chain answers it.
+  getWalletClient: async (_config: unknown, options?: { chainId?: number }) =>
+    providerClient({ ...wallet.walletClient, chain: { id: options?.chainId ?? wallet.walletClient.chain.id } }),
   switchChain: (_config: unknown, parameters: { chainId: number }) => wallet.switchChain(parameters),
 }
 

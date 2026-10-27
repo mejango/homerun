@@ -49,6 +49,7 @@ vi.mock('@bananapus/nana-sdk-core/safe', async original => {
 
 import { registerReviewHandler } from '@bananapus/nana-sdk-core/review'
 import CreatePreview from '../src/components/CreatePreview'
+import { providerClient } from './support/provider-client'
 
 // Core reviews and signs the publication: the review shows its model here, and confirms.
 registerReviewHandler(async prompt => { runtime.review(prompt.model); return prompt.confirmation })
@@ -81,7 +82,7 @@ describe('the preview of a project that is not created yet', () => {
     clearViewAs()
     runtime.connector = { id: 'injected', uid: 'original' }
     runtime.chainId = 1
-    runtime.getWalletClient.mockReset().mockResolvedValue({ signMessage: runtime.signMessage })
+    runtime.getWalletClient.mockReset().mockImplementation(async () => providerClient({ signMessage: runtime.signMessage }))
     vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
     HTMLElement.prototype.scrollIntoView = vi.fn()
     vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })

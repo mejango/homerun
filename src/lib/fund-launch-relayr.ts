@@ -71,7 +71,7 @@ import { publicClient } from '@/lib/wallet-core'
 import { displayChainName as chainName } from '@/lib/chainDisplay'
 import { withForwarderAuthorizationLock } from '@/lib/forwarder-authorization'
 import { requireFundingChainSelection } from '@/lib/transaction-review'
-import { reviewedSendDeps } from '@/lib/reviewed-send-deps'
+import { readableRefusal, reviewedSendDeps } from '@/lib/reviewed-send-deps'
 import type { ReviewedPlan } from '@bananapus/nana-sdk-core/review'
 
 /** Core's one review of the launch, out of every page's first load. */
@@ -815,7 +815,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         delete current.paymentChainId
       }
       if (outcome) persist()
-      throw error
+      // Classified and saved first: an unsent refusal's 4001 is what made it unpaid.
+      throw readableRefusal(error)
     }
     journal.phase = 'executing'
     persist()
