@@ -27,8 +27,8 @@ vi.mock('@wagmi/core', () => ({
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => false }))
 
-import { isWalletNotInvoked, readableEngine, walletAdapter } from '@/lib/reviewed-send-deps'
-import { isDefiniteWalletRejection } from '@bananapus/nana-sdk-core/review'
+import { walletAdapter } from '@/lib/reviewed-send-deps'
+import { WalletNotInvokedError } from '@bananapus/nana-sdk-core/review'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 
 afterEach(() => { clearViewAs(); state.connector = { id: 'injected', uid: 'a' }; state.onFetch = () => {}; state.onRead = () => {}; state.fetched = []; state.invoked = []; state.failSend = false; state.fetchError = undefined })
@@ -78,31 +78,26 @@ it('refuses the Center wallet connected while the wallet was fetched', async () 
   await expect(walletAdapter.signMessage('hi')).rejects.toThrow('Wallet connection changed')
 })
 
-it("tags a write refused before the wallet as core's release, and shows it as its own line", async () => {
+it("refuses a write before the wallet as core's unsent refusal, with its own line", async () => {
   state.connector = { id: 'juicebox-center', uid: 'c' }
   const refused = await send().catch(error => error)
-  expect(isDefiniteWalletRejection(refused)).toBe(true)
-  expect(isWalletNotInvoked(refused)).toBe(true)
-  const shown = await readableEngine({ sendReviewed: send }).sendReviewed().catch(error => error)
-  expect(isDefiniteWalletRejection(shown)).toBe(false)
-  expect(shown.message).toContain('Wallet connection changed')
-  // A signature refused before the wallet is unsent too, but holds no step to release.
-  expect(isDefiniteWalletRejection(await walletAdapter.signMessage('hi').catch(error => error))).toBe(false)
+  expect(refused).toBeInstanceOf(WalletNotInvokedError)
+  expect(refused.message).toContain('Wallet connection changed')
+  expect(await walletAdapter.signMessage('hi').catch(error => error)).toBeInstanceOf(WalletNotInvokedError)
 })
 
 it('leaves a failure after the wallet was called as it is', async () => {
   state.failSend = true
   const failed = await send().catch(error => error)
   expect(failed.message).toContain('RPC timeout')
-  expect(isDefiniteWalletRejection(failed)).toBe(false)
-  expect(isWalletNotInvoked(failed)).toBe(false)
+  expect(failed).not.toBeInstanceOf(WalletNotInvokedError)
 })
 
 it("shows a provider's own failure before the wallet as a fixed line, never its text", async () => {
   state.fetchError = new Error('Request failed: https://rpc.example/v1/SECRET_TOKEN')
-  const refused = await readableEngine({ sendReviewed: send }).sendReviewed().catch(error => error)
+  const refused = await send().catch(error => error)
   expect(refused.message).toBe('Your wallet could not be reached. Nothing was sent; try again.')
   expect(refused.message).not.toContain('SECRET_TOKEN')
-  expect(isWalletNotInvoked(refused)).toBe(true)
-  expect(refused.acquisitionCause).toBe(state.fetchError)
+  expect(refused).toBeInstanceOf(WalletNotInvokedError)
+  expect(refused.cause).toBe(state.fetchError)
 })

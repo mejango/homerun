@@ -3,13 +3,15 @@
  * the adapter's checks, while viem awaits its own reads before it sends, never reaches a wallet.
  */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { isDefiniteWalletRejection } from '@bananapus/nana-sdk-core/review'
+import { WalletNotInvokedError } from '@bananapus/nana-sdk-core/review'
 
 const account = '0x1111111111111111111111111111111111111111'
 const s = vi.hoisted(() => ({
   sends: [] as string[], armed: false, scheduled: false, safe: false,
   /** A wallet that refuses eth_sendTransaction as unsupported, so viem falls back to wallet_sendTransaction; `onRefuse` runs as it refuses. */
   walletNamespace: false, onRefuse: (() => {}) as () => void,
+  /** A wallet error that may have broadcast, answered to the first send. */
+  ambiguous: false,
   /** The change under test, run in a microtask after the adapter's first read once the client is fetched. */
   change: (() => {}) as () => void,
   config: undefined as unknown as { state: { current: string; connections: Map<string, { accounts: string[]; chainId: number; connector: unknown }> } },
@@ -18,7 +20,11 @@ const connector = (id: string, uid = id) => ({ id, uid, getAccounts: async () =>
   getProvider: async () => ({ request: async ({ method }: { method: string }) => {
     if (method === 'eth_chainId') return '0x1'
     if (method === 'eth_sendTransaction' && s.walletNamespace) { s.onRefuse(); throw Object.assign(new Error('unsupported'), { code: -32601 }) }
-    if (method === 'eth_sendTransaction' || method === 'wallet_sendTransaction' || method === 'personal_sign') { s.sends.push(`${method}:${uid}`); return `0x${'12'.repeat(32)}` }
+    if (method === 'eth_sendTransaction' || method === 'wallet_sendTransaction' || method === 'personal_sign') {
+      s.sends.push(`${method}:${uid}`)
+      if (s.ambiguous) throw Object.assign(new Error('Internal error'), { code: -32603 })
+      return `0x${'12'.repeat(32)}`
+    }
     throw new Error(method)
   } }) })
 s.config = { chains: [{ id: 1, name: 'Ethereum', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: ['http://unused'] } } }],
@@ -42,11 +48,11 @@ vi.mock('@wagmi/core', async importOriginal => {
 vi.mock('@/providers/Providers', () => ({ get wagmiConfig() { return s.config } }))
 vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => s.safe }))
 
-import { isWalletNotInvoked, walletAdapter } from '@/lib/reviewed-send-deps'
+import { walletAdapter } from '@/lib/reviewed-send-deps'
 import { clearViewAs, setViewAs } from '@/lib/viewAs'
 
 beforeEach(() => {
-  Object.assign(s, { sends: [], armed: false, scheduled: false, safe: false, change: () => {}, walletNamespace: false, onRefuse: () => {} })
+  Object.assign(s, { sends: [], armed: false, scheduled: false, safe: false, change: () => {}, walletNamespace: false, onRefuse: () => {}, ambiguous: false })
   s.config.state.current = 'old'
   s.config.state.connections = new Map([
     ['old', { accounts: [account], chainId: 1, connector: connector('old') }],
@@ -70,8 +76,7 @@ it.each(changes)('never sends after %s lands while viem prepares the send, and t
   s.change = change
   const refused = await send().catch(error => error)
   expect(s.sends).toEqual([])
-  expect(isWalletNotInvoked(refused)).toBe(true)
-  expect(isDefiniteWalletRejection(refused)).toBe(true)
+  expect(refused).toBeInstanceOf(WalletNotInvokedError)
   expect(refused.message).toMatch(new RegExp(line, 'i'))
 })
 
@@ -85,6 +90,12 @@ it.each(changes)("never sends viem's wallet_sendTransaction fallback after %s, a
   s.onRefuse = change
   const refused = await send().catch(error => error)
   expect(s.sends).toEqual([])
-  expect(isWalletNotInvoked(refused)).toBe(false)
-  expect(isDefiniteWalletRejection(refused)).toBe(false)
+  expect(refused).not.toBeInstanceOf(WalletNotInvokedError)
+})
+
+it('sends once, never retrying a wallet error that may have broadcast', async () => {
+  s.ambiguous = true
+  const failed = await send().catch(error => error)
+  expect(s.sends).toEqual(['eth_sendTransaction:old'])
+  expect(failed).not.toBeInstanceOf(WalletNotInvokedError)
 })

@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { zeroAddress, type Abi, type Address, type Hex, type TransactionReceipt } from 'viem'
 import {
-  openStepHold,
   ReviewedCallRevertedError,
   ReviewLineError,
   settledLine,
@@ -24,7 +23,7 @@ import { preloadWhenIdle } from '@/lib/idle-preload'
 import { getViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import { publicClient } from '@/lib/wallet-core'
 import { callOf, holds } from '@/lib/write-hold'
-import { readableEngine, reviewedSendDeps } from '@/lib/reviewed-send-deps'
+import { reviewedSendDeps } from '@/lib/reviewed-send-deps'
 import { wagmiConfig } from '@/providers/Providers'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 
@@ -92,7 +91,7 @@ export const SAVED_SEQUENCE_LINE = 'This continues your saved action exactly as 
  * Only its two entry points are marked used: a whole-namespace import marks every core review export used, and webpack then
  * bundles their imports into the shared chunk every page with a write hold loads.
  */
-const loadReviewEngine = async () => readableEngine(await import(/* webpackExports: ["sendReviewed", "resumeReviewed", "findReviewedSequence", "discardReviewedSequence"] */ '@bananapus/nana-sdk-core/review'))
+const loadReviewEngine = () => import(/* webpackExports: ["sendReviewed", "resumeReviewed", "completeReviewedStep", "findReviewedSequence", "discardReviewedSequence"] */ '@bananapus/nana-sdk-core/review')
 
 const CENTER_WALLET_REFUSED = 'This action needs an external wallet. Juicebox wallet payments use their own payment review.'
 const CLOSED_LINE = 'This review closed. Open the action again before sending.'
@@ -214,14 +213,7 @@ export function useReviewedAction(chainId: number) {
     })
     const requestedCalls = steps.map(reviewedCall)
     let calls = requestedCalls
-    const last = steps.at(-1)!, action = calls.at(-1)!
-    // A success of the action that settled while the user was away is shown with its "Send it again", never sent over.
-    const away = { reviewedAccount: options.reviewedAccount, safe: viaSafe, ...(last.recoveryNamespace ? { recoveryNamespace: last.recoveryNamespace } : {}), ...(last.recoveryLegacy ? { recoveryLegacy: last.recoveryLegacy } : {}) }
-    if (openStepHold(holds, options.reviewedAccount, viaSafe, action).unacknowledgedSuccess()) {
-      inFlight.current = false
-      track(last, away)
-      return null
-    }
+    const last = steps.at(-1)!
     // A saved action with a step in flight continues exactly as reviewed; one with nothing in flight starts over.
     let saved = false
     // A sequence is the same action only on the same chain: its project IDs and amounts alone repeat across chains.
@@ -268,16 +260,13 @@ export function useReviewedAction(chainId: number) {
           answer(hash)
         },
       }).then(ended => {
-        // Done is success only once the hold settled it: a receipt it did not verify (a same-nonce
-        // replacement, a block since reorged out) leaves the call held, so the hold is shown.
-        const unsettled = ended?.status === 'done' && openStepHold(holds, options.reviewedAccount, viaSafe, calls.at(-1)!).peek().status !== 'clear'
         if (ended?.status === 'failed') { if (!answered) options.onFailure?.(ended.failure) }
-        else if (unsettled) { if (mounted.current) { inFlight.current = false; track(last, away) } }
-        else if (mounted.current) setResult(ended)
+        // A receipt its hold is still verifying: the hook's `receipt` phase shows it, and the hook ends done.
+        else if (ended?.status !== 'receipt' && mounted.current) setResult(ended)
         answer(ended?.status === 'done' ? ended.hashes.at(-1) ?? null : ended?.status === 'proposed' ? ended.safeTxHash : null)
       }, () => answer(null)).finally(() => { inFlight.current = false })
     })
-  }, [clear, track])
+  }, [clear])
 
   const shown = tracking ? (trackView.phase === 'clear' ? null : trackView) : runner.held
   const actions = tracking ? trackView : runner

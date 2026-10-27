@@ -65,11 +65,11 @@ function fixedSentence(cause: unknown): string {
 
 /** Core's reviewed send for a paid deploy and the wallet it sends through, out of the intent page's first load. */
 const loadDeployEngine = async () => {
-  const [engine, { readableEngine, reviewedSendDeps }] = await Promise.all([
+  const [engine, { reviewedSendDeps }] = await Promise.all([
     import(/* webpackExports: ["sendReviewed", "resumeReviewed", "findReviewedSequence", "discardReviewedSequence", "openStepHold", "WriteHeldError", "HELD_EXIT_LABEL"] */ '@bananapus/nana-sdk-core/review'),
     import('@/lib/reviewed-send-deps'),
   ])
-  return { ...readableEngine(engine), reviewedSendDeps }
+  return { ...engine, reviewedSendDeps }
 }
 const deployScope = (intentId: string, chainId: number) => `homerun:deploy:${intentId}:${chainId}`
 const deployTitle = (chainId: number) => `Create this project on ${displayChainName(chainId)}`
