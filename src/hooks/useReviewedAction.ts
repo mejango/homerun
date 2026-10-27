@@ -8,17 +8,14 @@ import {
   ReviewLineError,
   settledLine,
   transactionMessage,
-  viemWalletAdapter,
   writeExitMessage,
   type ReviewContextRow,
   type ReviewedCall,
   type ReviewedPriorBlock,
   type ReviewedResult,
-  type ReviewedSendDeps,
   type WriteHoldClient,
 } from '@bananapus/nana-sdk-core/review'
 import { useHeldWrite, useReviewedRun } from '@bananapus/nana-sdk-core/review/react'
-import { getAccount, getWalletClient, switchChain } from '@wagmi/core'
 import { loadReviewDialog } from '@/components/TransactionReviewProvider'
 import type { HeldWrite } from '@/components/ui/HeldWriteExit'
 import { useWallet } from '@/hooks/useWallet'
@@ -27,9 +24,9 @@ import { preloadWhenIdle } from '@/lib/idle-preload'
 import { getViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import { publicClient } from '@/lib/wallet-core'
 import { callOf, holds } from '@/lib/write-hold'
+import { reviewedSendDeps } from '@/lib/reviewed-send-deps'
 import { wagmiConfig } from '@/providers/Providers'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
-import { chainName } from '@/lib/urn'
 
 export type TxPhase =
   | 'idle'
@@ -89,24 +86,6 @@ export type TxSendOptions = {
 
 /** What a saved multi-step action shows: the steps it continues are the ones the person reviewed. */
 export const SAVED_SEQUENCE_LINE = 'This continues your saved action exactly as you reviewed it. Its remaining steps are below.'
-
-/** Homerun's wallet as core's reviewed sends use it: the connected wagmi wallet, switched to the chain each call is on. */
-const walletAdapter = viemWalletAdapter({
-  walletClient: () => getWalletClient(wagmiConfig),
-  account: () => getAccount(wagmiConfig).address,
-  chainId: () => getAccount(wagmiConfig).chainId,
-  isSafe: () => isSafeConnection(wagmiConfig),
-  switchChain: chainId => switchChain(wagmiConfig, { chainId: chainId as JBChainId }).catch(() => {
-    throw new ReviewLineError(`Switch your wallet to ${chainName(chainId)} to continue.`)
-  }),
-})
-
-/** What every reviewed send goes through: the wallet, each chain's client, and the app's one write hold. */
-const reviewedSendDeps: ReviewedSendDeps = {
-  adapter: walletAdapter,
-  clientFor: chainId => publicClient(chainId as JBChainId),
-  hold: holds,
-}
 
 /**
  * Core's send engine, out of every page's first load: a reviewed run loads it, and the review provider preloads it on intent.
