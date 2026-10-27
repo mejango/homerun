@@ -137,7 +137,9 @@ describe('choosing the chains a published project is deployed on', () => {
     expect(runtime.review).toHaveBeenCalledOnce()
     expect(runtime.review.mock.calls[0][0]).toMatchObject({ account: wallet, scope: `homerun:deploy:${intentId}:1` })
     expect(runtime.review.mock.calls[0][0].calls.map((call: { chainId: number; functionName: string }) => [call.chainId, call.functionName])).toEqual([[1, 'execute']])
-    expect(runtime.send).toHaveBeenCalledWith({}, { to: relayRequest(1).to, data: relayRequest(1).data, value: 0n })
+    // The request Center served, whose deadline is the second it was made.
+    const served = await runtime.requestRelay.mock.results.at(-1)!.value
+    expect(runtime.send).toHaveBeenCalledWith({}, { to: served.to, data: served.data, value: 0n })
     expect(runtime.recordDeployment.mock.calls[0].slice(0, 2)).toEqual([intentId, { chainId: 1, projectId: '9', transactionHash: relayHash }])
     expect(runtime.requestDeploy).toHaveBeenCalledWith(intentId, expect.objectContaining({ chainIds: [8453] }))
   })

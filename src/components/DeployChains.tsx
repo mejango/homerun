@@ -19,7 +19,7 @@ import {
   checkRelayRequest, readLaunchedProjectId, relayCostLabel, relaySetupSafes, watchDeployRefusal, type FundRelayRequest,
 } from '@/lib/fund-intent'
 import { holdDeployment, loadHeldDeployments, releaseDeployment } from '@/lib/relay-held'
-import { HELD_EXIT_LABEL, isDefiniteWalletRejection, ReviewLineError, WriteHeldError, type ReviewedResult } from '@bananapus/nana-sdk-core/review'
+import { isDefiniteWalletRejection, ReviewLineError, type ReviewedResult } from '@bananapus/nana-sdk-core/review'
 import { isSafeConnection } from '@/lib/safe-connector'
 import { VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import { displayChainName } from '@/lib/chainDisplay'
@@ -66,7 +66,7 @@ function fixedSentence(cause: unknown): string {
 /** Core's reviewed send for a paid deploy and the wallet it sends through, out of the intent page's first load. */
 const loadDeployEngine = async () => {
   const [engine, { reviewedSendDeps }] = await Promise.all([
-    import(/* webpackExports: ["sendReviewed", "resumeReviewed", "findReviewedSequence", "discardReviewedSequence", "openStepHold"] */ '@bananapus/nana-sdk-core/review'),
+    import(/* webpackExports: ["sendReviewed", "resumeReviewed", "findReviewedSequence", "discardReviewedSequence", "openStepHold", "WriteHeldError", "HELD_EXIT_LABEL"] */ '@bananapus/nana-sdk-core/review'),
     import('@/lib/reviewed-send-deps'),
   ])
   return { ...engine, reviewedSendDeps }
@@ -130,7 +130,7 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
   const unrecorded = useRef(new Map<number, JBCenterDeploymentInput>())
   const [held, setHeld] = useState<number[]>([])
   /** A chain whose launch the wallet may have sent: the deploy waits on it until the visitor checked their wallet. */
-  const [heldChain, setHeldChain] = useState<number | null>(null)
+  const [heldExit, setHeldExit] = useState<{ chainId: number; label: string } | null>(null)
   const syncHeld = () => setHeld([...unrecorded.current.keys()])
   useEffect(() => () => run.current?.abort(), [])
   // A project this browser created and Center did not record outlives the page
@@ -183,7 +183,7 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
     const saved = engine.findReviewedSequence(scope, account)
     if (saved && (saved.sending || saved.proposed)) return (await finishSaved(request.chainId))!
     if (saved) await engine.discardReviewedSequence(saved)
-    const result = await holding(request.chainId, opened => engine.sendReviewed({
+    const result = await holding(engine, request.chainId, opened => engine.sendReviewed({
       account,
       title: deployTitle(request.chainId),
       description: 'You send these transactions and pay their gas and creation fee. The project keeps the same token and bridge addresses on every network.',
@@ -213,9 +213,9 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
   }
 
   /** The wallet's send, with the wallet check offered once a launch on `chainId` may have been sent or is held. */
-  async function holding(chainId: number, send: (opened: () => void) => Promise<ReviewedResult>): Promise<ReviewedResult> {
+  async function holding(engine: Awaited<ReturnType<typeof loadDeployEngine>>, chainId: number, send: (opened: () => void) => Promise<ReviewedResult>): Promise<ReviewedResult> {
     try { return await fromWallet(send) } catch (cause) {
-      if (cause instanceof WriteHeldError || (cause instanceof Error && cause.message === UNCERTAIN_MESSAGE)) setHeldChain(chainId)
+      if (cause instanceof engine.WriteHeldError || (cause instanceof Error && cause.message === UNCERTAIN_MESSAGE)) setHeldExit({ chainId, label: engine.HELD_EXIT_LABEL })
       throw cause
     }
   }
@@ -229,7 +229,7 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
     if (!saved || (!saved.sending && !saved.proposed)) return null
     const client = getPublicClient(wagmiConfig, { chainId: chainId as JBChainId })
     if (!client) throw new Error(NO_CLIENT_MESSAGE)
-    const result = await holding(chainId, opened => engine.resumeReviewed(saved, { title: deployTitle(chainId), assertWriteState, beforeWallet: opened }, engine.reviewedSendDeps))
+    const result = await holding(engine, chainId, opened => engine.resumeReviewed(saved, { title: deployTitle(chainId), assertWriteState, beforeWallet: opened }, engine.reviewedSendDeps))
     return launched(chainId, result, client)
   }
 
@@ -320,14 +320,14 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
     const client = engine.reviewedSendDeps.clientFor(chainId)
     const saved = engine.findReviewedSequence(deployScope(intent.id, chainId), account)
     const step = saved?.sending ? saved.calls[saved.sending.step] : undefined
-    if (!step) { setHeldChain(null); setError(''); return }
+    if (!step) { setHeldExit(null); setError(''); return }
     const handle = engine.openStepHold(holds, account, false, step)
     try {
       const state = await handle.state(client)
-      if (state.status === 'clear' || !state.exit) { setError(state.status === 'clear' ? '' : state.line); if (state.status === 'clear') setHeldChain(null); return }
+      if (state.status === 'clear' || !state.exit) { setError(state.status === 'clear' ? '' : state.line); if (state.status === 'clear') setHeldExit(null); return }
       const { released, state: after } = await handle.exit(state, { checkedWallet: true }, client)
       if (!released) { setError(after.status === 'clear' ? '' : after.line); return }
-      setHeldChain(null); setError('')
+      setHeldExit(null); setError('')
     } catch { setError(DEPLOY_UNAVAILABLE) }
   }
 
@@ -357,6 +357,6 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
     </ul>
     {remaining.length > 0 && <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={deploying || !selected.length} onClick={() => void deploy()}>{deploying ? 'Deploying…' : heldOnly ? 'Finish deploy' : 'Deploy selected'}</button>}
     {error && <p role="alert" className="mt-4 text-sm leading-relaxed text-smoke-700">{error}</p>}
-    {heldChain !== null && !deploying && <button type="button" className="btn-secondary mt-3 min-h-11 px-5" onClick={() => void checkedWallet(heldChain)}>{HELD_EXIT_LABEL}</button>}
+    {heldExit && !deploying && <button type="button" className="btn-secondary mt-3 min-h-11 px-5" onClick={() => void checkedWallet(heldExit.chainId)}>{heldExit.label}</button>}
   </section>
 }
