@@ -14,10 +14,16 @@ import { wagmiConfig } from '@/providers/Providers'
 export const walletAdapter = viemWalletAdapter({
   // Core rechecks the account, chain and Safe mode around this; view-as and the Center wallet are homerun's own.
   walletClient: async () => {
-    const client = await getWalletClient(wagmiConfig)
-    if (getViewAs()) throw new ReviewLineError(VIEW_AS_WRITE_BLOCKED)
-    if (getAccount(wagmiConfig).connector?.id === 'juicebox-center') throw new ReviewLineError('Wallet connection changed. Review the transaction again.')
-    return client
+    // The client must be the live connector's: one swapped while it was fetched is fetched again.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const connector = getAccount(wagmiConfig).connector
+      const client = await getWalletClient(wagmiConfig, { connector })
+      if (getViewAs()) throw new ReviewLineError(VIEW_AS_WRITE_BLOCKED)
+      const live = getAccount(wagmiConfig).connector
+      if (live?.id === 'juicebox-center') break
+      if (live?.uid === connector?.uid) return client
+    }
+    throw new ReviewLineError('Wallet connection changed. Review the transaction again.')
   },
   account: () => getAccount(wagmiConfig).address,
   chainId: () => getAccount(wagmiConfig).chainId,
