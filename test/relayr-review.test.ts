@@ -25,7 +25,7 @@ const m = vi.hoisted(() => ({
 
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => m.safe }))
-vi.mock('@/lib/reviewed-send-deps', () => ({ reviewedSendDeps: { adapter: { name: 'adapter' } } }))
+vi.mock('@/lib/reviewed-send-deps', () => ({ reviewedSendDeps: { adapter: { name: 'adapter' } }, readableEngine: <E,>(engine: E) => engine }))
 vi.mock('@/lib/wallet-core', () => ({ publicClient: () => ({ readContract: async () => m.nonce }) }))
 vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({
   ...await importOriginal<typeof import('@bananapus/nana-sdk-core/review')>(), signReviewed: m.sign, payRelayrReviewed: m.pay,

@@ -33,7 +33,7 @@ vi.mock('@/lib/transaction-review', async importOriginal => ({
 vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({
   ...await importOriginal<typeof import('@bananapus/nana-sdk-core/review')>(), reviewPlan: m.review,
 }))
-vi.mock('@/lib/reviewed-send-deps', () => ({ reviewedSendDeps: {} }))
+vi.mock('@/lib/reviewed-send-deps', () => ({ reviewedSendDeps: {}, readableEngine: <E,>(engine: E) => engine }))
 vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => m.safe }))
 vi.mock('@/lib/wallet-core', () => ({ publicClient: m.client }))
 vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original<typeof import('@bananapus/nana-sdk-core/v6')>(), getProjectCreationFee: m.fee }))

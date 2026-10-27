@@ -74,30 +74,30 @@
     },
     {
       "file": "src/lib/reviewed-send-deps.ts",
-      "line": 55,
+      "line": 96,
       "api": "sendTransaction",
-      "boundary": "Core's wallet adapter: it fetches the live connector's client, rechecks account, chain, Safe mode, view-as, the Center wallet and the connector uid, and calls the wallet in that same continuation, fetching again up to three times before refusing.",
+      "boundary": "Core's wallet adapter: it fetches the live connector's client, rechecks account, chain, Safe mode, view-as, the Center wallet and the connector uid, and calls the wallet in that same continuation, fetching again up to three times before refusing. A write refused before the wallet is called is tagged as core's 4001, so its held step is released; the wallet's own errors stay as they are.",
       "test": "test/reviewed-send-deps.test.ts"
     },
     {
       "file": "src/lib/reviewed-send-deps.ts",
-      "line": 58,
+      "line": 99,
       "api": "signTypedData",
-      "boundary": "Core's wallet adapter: it fetches the live connector's client, rechecks account, chain, Safe mode, view-as, the Center wallet and the connector uid, and calls the wallet in that same continuation, fetching again up to three times before refusing.",
+      "boundary": "Core's wallet adapter: it fetches the live connector's client, rechecks account, chain, Safe mode, view-as, the Center wallet and the connector uid, and calls the wallet in that same continuation, fetching again up to three times before refusing. A write refused before the wallet is called is tagged as core's 4001, so its held step is released; the wallet's own errors stay as they are.",
       "test": "test/reviewed-send-deps.test.ts"
     },
     {
       "file": "src/lib/reviewed-send-deps.ts",
-      "line": 59,
+      "line": 100,
       "api": "signMessage",
-      "boundary": "Core's wallet adapter: it fetches the live connector's client, rechecks account, chain, Safe mode, view-as, the Center wallet and the connector uid, and calls the wallet in that same continuation, fetching again up to three times before refusing.",
+      "boundary": "Core's wallet adapter: it fetches the live connector's client, rechecks account, chain, Safe mode, view-as, the Center wallet and the connector uid, and calls the wallet in that same continuation, fetching again up to three times before refusing. A write refused before the wallet is called is tagged as core's 4001, so its held step is released; the wallet's own errors stay as they are.",
       "test": "test/reviewed-send-deps.test.ts"
     },
     {
       "file": "src/lib/reviewed-send-deps.ts",
-      "line": 61,
+      "line": 102,
       "api": "sendCalls",
-      "boundary": "Core's wallet adapter: it fetches the live connector's client, rechecks account, chain, Safe mode, view-as, the Center wallet and the connector uid, and calls the wallet in that same continuation, fetching again up to three times before refusing.",
+      "boundary": "Core's wallet adapter: it fetches the live connector's client, rechecks account, chain, Safe mode, view-as, the Center wallet and the connector uid, and calls the wallet in that same continuation, fetching again up to three times before refusing. A write refused before the wallet is called is tagged as core's 4001, so its held step is released; the wallet's own errors stay as they are.",
       "test": "test/reviewed-send-deps.test.ts"
     },
     {

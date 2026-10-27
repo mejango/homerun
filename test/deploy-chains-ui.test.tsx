@@ -36,7 +36,7 @@ vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => {
     return { status: 'done', hashes, receipts }
   } }
 })
-vi.mock('@/lib/reviewed-send-deps', () => ({ reviewedSendDeps: {} }))
+vi.mock('@/lib/reviewed-send-deps', () => ({ reviewedSendDeps: {}, readableEngine: <E,>(engine: E) => engine }))
 vi.mock('@/lib/safe-connector', async importOriginal => ({
   ...await importOriginal<typeof import('@/lib/safe-connector')>(), isSafeConnection: () => runtime.safe,
 }))

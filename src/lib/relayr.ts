@@ -36,7 +36,7 @@ import { fundingChainLabel } from '@/lib/transaction-review'
 import { assertNoViewAs } from '@/lib/viewAs'
 import { isSafeConnection } from '@/lib/safe-connector'
 import { publicClient } from '@/lib/wallet-core'
-import { reviewedSendDeps } from '@/lib/reviewed-send-deps'
+import { readableEngine, reviewedSendDeps } from '@/lib/reviewed-send-deps'
 
 const RELAYR_QUOTE_TIMEOUT_MS = 45_000
 /**
@@ -46,7 +46,7 @@ const RELAYR_QUOTE_TIMEOUT_MS = 45_000
 export const RELAYR_SIGNATURE_REFRESH_SECONDS = 15 * 60 + RELAYR_REQUEST_RUN_MARGIN_SECONDS
 
 /** Core's relayed signing, payment and polling, out of every page's first load. */
-const loadRelayrEngine = () => import(/* webpackExports: ["signReviewed", "payRelayrReviewed", "pollRelayrBundle", "ReviewedCallRevertedError"] */ '@bananapus/nana-sdk-core/review')
+const loadRelayrEngine = async () => readableEngine(await import(/* webpackExports: ["signReviewed", "payRelayrReviewed", "pollRelayrBundle", "ReviewedCallRevertedError"] */ '@bananapus/nana-sdk-core/review'))
 
 export type { RelayrEntry, RelayrTransactionRecord, RelayrTransactionBinding } from '@bananapus/nana-sdk-core/review/relayr'
 

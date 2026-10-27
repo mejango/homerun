@@ -2,14 +2,15 @@
 import { afterEach, expect, it, vi } from 'vitest'
 
 const state = vi.hoisted(() => ({ connector: { id: 'injected', uid: 'a' } as { id: string; uid: string }, onFetch: () => {}, onRead: () => {},
-  fetched: [] as string[], invoked: [] as { connector: string; live: string }[] }))
+  failSend: false, fetched: [] as string[], invoked: [] as { connector: string; live: string }[] }))
 vi.mock('@wagmi/core', () => ({
   getAccount: () => { state.onRead(); return { address: '0x1111111111111111111111111111111111111111', chainId: 1, connector: state.connector } },
   getWalletClient: async (_config: unknown, { connector }: { connector: { uid: string } }) => {
     state.fetched.push(connector.uid); state.onFetch()
     // Each call records, as it is made, which connector's client it is and which connector is live.
     const called = <T,>(result: T) => { state.invoked.push({ connector: connector.uid, live: state.connector.uid }); return Promise.resolve(result) }
-    return { signMessage: () => called(connector.uid), sendTransaction: () => called(`0x${'12'.repeat(32)}`) }
+    return { signMessage: () => called(connector.uid),
+      sendTransaction: () => state.failSend ? Promise.reject(new Error('RPC timeout')) : called(`0x${'12'.repeat(32)}`) }
   },
   switchChain: vi.fn(),
   getPublicClient: vi.fn(),
@@ -17,10 +18,11 @@ vi.mock('@wagmi/core', () => ({
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => false }))
 
-import { walletAdapter } from '@/lib/reviewed-send-deps'
+import { isWalletNotInvoked, readableEngine, walletAdapter } from '@/lib/reviewed-send-deps'
+import { isDefiniteWalletRejection } from '@bananapus/nana-sdk-core/review'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 
-afterEach(() => { clearViewAs(); state.connector = { id: 'injected', uid: 'a' }; state.onFetch = () => {}; state.onRead = () => {}; state.fetched = []; state.invoked = [] })
+afterEach(() => { clearViewAs(); state.connector = { id: 'injected', uid: 'a' }; state.onFetch = () => {}; state.onRead = () => {}; state.fetched = []; state.invoked = []; state.failSend = false })
 
 const send = () => walletAdapter.sendTransaction({ chainId: 1, to: '0x1111111111111111111111111111111111111111', data: '0x', value: 0n, gas: 21_000n })
 
@@ -65,4 +67,24 @@ it('refuses view-as turned on while the wallet was fetched', async () => {
 it('refuses the Center wallet connected while the wallet was fetched', async () => {
   state.onFetch = () => { state.connector = { id: 'juicebox-center', uid: 'c' } }
   await expect(walletAdapter.signMessage('hi')).rejects.toThrow('Wallet connection changed')
+})
+
+it("tags a write refused before the wallet as core's release, and shows it as its own line", async () => {
+  state.connector = { id: 'juicebox-center', uid: 'c' }
+  const refused = await send().catch(error => error)
+  expect(isDefiniteWalletRejection(refused)).toBe(true)
+  expect(isWalletNotInvoked(refused)).toBe(true)
+  const shown = await readableEngine({ sendReviewed: send }).sendReviewed().catch(error => error)
+  expect(isDefiniteWalletRejection(shown)).toBe(false)
+  expect(shown.message).toContain('Wallet connection changed')
+  // A signature refused before the wallet is unsent too, but holds no step to release.
+  expect(isDefiniteWalletRejection(await walletAdapter.signMessage('hi').catch(error => error))).toBe(false)
+})
+
+it('leaves a failure after the wallet was called as it is', async () => {
+  state.failSend = true
+  const failed = await send().catch(error => error)
+  expect(failed.message).toBe('RPC timeout')
+  expect(isDefiniteWalletRejection(failed)).toBe(false)
+  expect(isWalletNotInvoked(failed)).toBe(false)
 })
