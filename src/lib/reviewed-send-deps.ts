@@ -20,6 +20,7 @@ const UNREACHABLE = 'Your wallet could not be reached. Nothing was sent; try aga
 /** The provider requests that sign or send: each one is checked again right as it is forwarded. */
 const WALLET_METHODS = new Set([
   'eth_sendTransaction',
+  'wallet_sendTransaction',
   'wallet_sendCalls',
   'eth_signTypedData_v4',
   'personal_sign',
@@ -115,7 +116,11 @@ async function invoke<T>(chainId: number | undefined, call: (client: Client, acc
   try {
     return await call(guarded, asked)
   } catch (error) {
-    throw refusalIn(error) ?? error
+    const refusal = refusalIn(error)
+    if (refusal) throw refusal
+    // viem failed before any wallet request went out (a chain read, a chain mismatch): nothing was sent.
+    if (!forwarded) throw unsent(error, releaseUnsent)
+    throw error
   }
 }
 const chainOf = (client: Client, chainId: number) => client.chain?.id === chainId ? client.chain : { id: chainId } as Client['chain']

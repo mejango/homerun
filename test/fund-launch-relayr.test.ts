@@ -23,7 +23,9 @@ const m = vi.hoisted(() => ({
   multisigCheck: vi.fn(),
 }))
 vi.mock('@/lib/create-multisig', async original => ({ ...await original<typeof import('@/lib/create-multisig')>(), checkCreateMultisigs: m.multisigCheck }))
-vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: m.account, chainId: m.chainId }) }))
+vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: m.account, chainId: m.chainId }),
+  // A wallet whose chain read fails before anything is sent.
+  getWalletClient: async () => (await import('./support/provider-client')).providerClient({ chain: { id: 8453 }, chainRead: () => new Error('chain read failed') }) }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {},
   SUPPORTED_CHAINS: [1, 10, 8453, 42161, 11155111, 11155420, 84532, 421614].map(id => ({ id, name: `Chain ${id}` })),
 }))
@@ -827,6 +829,23 @@ describe('relayed launch execution and recovery', () => {
     expect(failed.message).toBe('Connect a wallet first.')
     // Shown as its own line, not as a cancellation.
     expect(failed.code).toBeUndefined()
+    expect(loadLaunchSession()?.relayr?.phase).toBe('quoted')
+    await run()
+    expect(m.pay).toHaveBeenCalledTimes(2)
+    expect(loadLaunchSession()?.relayr?.paymentHash).toBe(HASH)
+  })
+
+  it('leaves a launch unpaid when the wallet failed before any request went out, and the next run pays', async () => {
+    m.pay.mockImplementationOnce(async ({ reverify: verify, onSending: sending }) => {
+      await verify(); await sending()
+      const chain = m.chainId
+      m.chainId = 8453
+      const failed = await walletAdapter.sendTransaction({ chainId: 8453, to: TARGET, data: '0x', value: 1n }).catch(error => error)
+      m.chainId = chain
+      throw failed
+    })
+    const failed = await run().catch(error => error)
+    expect(failed.message).toBe('Your wallet could not be reached. Nothing was sent; try again.')
     expect(loadLaunchSession()?.relayr?.phase).toBe('quoted')
     await run()
     expect(m.pay).toHaveBeenCalledTimes(2)

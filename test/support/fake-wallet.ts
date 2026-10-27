@@ -200,12 +200,15 @@ export const walletHooks = {
   }),
 }
 
+/** Failures the fake wallet answers with, until a test clears them. */
+export const walletFaults = { chainRead: null as Error | null }
+
 /** The engine's `@wagmi/core` actions, answered by the fake wallet; a test adds its own `getAccount`. */
 export const walletCore = {
   getPublicClient: () => wallet.client,
   // wagmi's client for the chain asked for, as a wallet on that chain answers it.
   getWalletClient: async (_config: unknown, options?: { chainId?: number }) =>
-    providerClient({ ...wallet.walletClient, chain: { id: options?.chainId ?? wallet.walletClient.chain.id } }),
+    providerClient({ ...wallet.walletClient, chain: { id: options?.chainId ?? wallet.walletClient.chain.id }, chainRead: () => walletFaults.chainRead }),
   switchChain: (_config: unknown, parameters: { chainId: number }) => wallet.switchChain(parameters),
 }
 

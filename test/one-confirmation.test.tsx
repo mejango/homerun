@@ -54,7 +54,7 @@ vi.mock('@/lib/project-pay-quote', () => ({
   readProjectPayTokenOptions: async () => [{ token: USDC, terminal: TERMINAL, decimals: 6, symbol: 'USDC', viaRouter: false }],
 }))
 
-import { sentHash, wallet } from './support/fake-wallet'
+import { sentHash, wallet, walletFaults } from './support/fake-wallet'
 import { TransactionReviewProvider } from '@/components/TransactionReviewProvider'
 import { ProjectPayment } from '@/components/ProjectPayment'
 import { DeployChains } from '@/components/DeployChains'
@@ -89,7 +89,7 @@ beforeEach(() => {
   observer = new MutationObserver(() => { const now = reviewOpen(); if (now && !open) reviews++; open = now })
   observer.observe(document.body, { childList: true, subtree: true })
 })
-afterEach(async () => { connectorDrift.on = false; observer.disconnect(); await act(async () => root.unmount()); host.remove(); cache.clear(); localStorage.clear() })
+afterEach(async () => { connectorDrift.on = false; walletFaults.chainRead = null; observer.disconnect(); await act(async () => root.unmount()); host.remove(); cache.clear(); localStorage.clear() })
 
 it('wallet-action:one-confirmation pay', async () => {
   await act(async () => root.render(<QueryClientProvider client={cache}><TransactionReviewProvider>
@@ -151,6 +151,36 @@ it('a refusal before the wallet is called releases the held step', async () => {
 
   // Nothing was sent, so nothing is held: the same payment is reviewed and sent at once.
   connectorDrift.on = false
+  await payAndConfirm('Try again')
+  await vi.waitFor(async () => { await settle(); expect(wallet.writeContract).toHaveBeenCalledOnce() })
+})
+
+it('a chain read that fails before anything is sent releases the held step', async () => {
+  await act(async () => root.render(<QueryClientProvider client={cache}><TransactionReviewProvider>
+    <ProjectPayment chainId={1} projectId={7n} tokenLabel="FUND" title="Contribute" context={{ token: USDC, terminal: TERMINAL, decimals: 6, symbol: 'USDC' }}
+      paused={false} reservedPercent={0} rulesetId="1" verify={async (_account, minimumBlock) => ({ blockNumber: minimumBlock ?? 100n })} />
+  </TransactionReviewProvider></QueryClientProvider>))
+  const input = host.querySelector('input')!
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '2'); input.dispatchEvent(new Event('input', { bubbles: true })) })
+  await settle()
+  const payAndConfirm = async (label: string) => {
+    await act(async () => buttons().find(button => button.textContent === label)!.click())
+    await vi.waitFor(async () => { await settle(); expect(reviewOpen()).toBe(true) })
+    const review = document.querySelector('button[aria-label="Cancel transaction review"]')!.closest('dialog')!
+    await act(async () => review.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click())
+    const confirm = () => buttons().find(button => button.textContent === 'Submit without estimate')
+    await vi.waitFor(async () => { await settle(); expect(confirm()?.disabled).toBe(false) })
+    await act(async () => confirm()!.click())
+  }
+  // viem reads the wallet's chain before it sends; that read fails, with a provider's own text.
+  walletFaults.chainRead = new Error('chain read failed at https://rpc.example/v1/SECRET_TOKEN')
+  await payAndConfirm('Pay on Ethereum')
+  await vi.waitFor(async () => { await settle(); expect(host.textContent).toContain('Your wallet could not be reached. Nothing was sent; try again.') })
+  expect(host.textContent).not.toContain('SECRET_TOKEN')
+  expect(wallet.writeContract).not.toHaveBeenCalled()
+  expect(buttons().some(button => button.textContent === 'I checked my wallet')).toBe(false)
+
+  walletFaults.chainRead = null
   await payAndConfirm('Try again')
   await vi.waitFor(async () => { await settle(); expect(wallet.writeContract).toHaveBeenCalledOnce() })
 })

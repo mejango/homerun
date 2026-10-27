@@ -5,6 +5,8 @@ type Fake = {
   sendTransaction?: (request: { account: Address; chain: { id: number }; to: Address; data: Hex; value?: bigint; gas?: bigint }) => Promise<Hex>
   signMessage?: (request: { account: Address; message: string }) => Promise<Hex>
   signTypedData?: (request: { domain?: { chainId?: number | bigint } } & Record<string, unknown>) => Promise<Hex>
+  /** A failure the wallet's chain read answers with, before anything is sent. */
+  chainRead?: () => Error | null | undefined
 }
 
 /**
@@ -17,7 +19,11 @@ export function providerClient(fake: Fake) {
     get chain() { return fake.chain },
     account: undefined,
     request: async ({ method, params }: { method: string; params?: unknown[] }) => {
-      if (method === 'eth_chainId') return toHex(chain().id)
+      if (method === 'eth_chainId') {
+        const failure = fake.chainRead?.()
+        if (failure) throw failure
+        return toHex(chain().id)
+      }
       if (method === 'eth_sendTransaction') {
         const [tx] = params as [{ from: Address; to: Address; data: Hex; value?: Hex; gas?: Hex }]
         return fake.sendTransaction!({ account: tx.from, chain: chain(), to: tx.to, data: tx.data,
