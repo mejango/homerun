@@ -3,7 +3,7 @@ import type { Address, Hex } from 'viem'
 import { registerReviewHandler, type ReviewPrompt } from '@bananapus/nana-sdk-core/review'
 import { vi } from 'vitest'
 
-type Receipt = { status: 'success' | 'reverted'; blockNumber: bigint; blockHash: Hex; transactionHash: Hex; transactionIndex: number; from: Address; to: Address; logs: [] }
+type Receipt = { status: 'success' | 'reverted'; blockNumber: bigint; blockHash: Hex; transactionHash: Hex; transactionIndex: number; from: Address; to: Address; logs: readonly unknown[] }
 type WrittenTransaction = { hash: Hex; chainId: number; from: Address; to: Address; nonce: number; input: Hex; value: bigint; blockHash: Hex | null; blockNumber: bigint | null; transactionIndex: number | null }
 
 /** The hash the fake wallet answers its `n`th write (from 1) with. */
@@ -46,9 +46,12 @@ function createFakeWallet() {
       input: request.data, value: request.value ?? 0n, blockHash: null, blockNumber: null, transactionIndex: null })
     return hash
   })
-  /** The wallet client core's adapter sends through. */
+  /** Each typed-data signature the wallet was asked for, on the chain it was on. */
+  const signTypedData = vi.fn(async (_request: { domain?: { chainId?: number | bigint } }): Promise<Hex> => `0x${'dd'.repeat(65)}`)
+  /** The wallet client core's adapter sends and signs through. */
   const walletClient = {
     get chain() { return { id: chainId } },
+    signTypedData,
     sendTransaction: ({ account: from, chain, to, data, value }: { account: Address; chain: { id: number }; to: Address; data: Hex; value?: bigint }) =>
       writeContract({ address: to, account: from, chainId: chain.id, data, value, functionName: reviewed.get(data.toLowerCase()) }),
   }
@@ -57,7 +60,7 @@ function createFakeWallet() {
     for (const call of prompt.model.calls) if (call.functionName) reviewed.set(call.data.toLowerCase(), call.functionName)
     return (await requestReview(prompt)) ? prompt.confirmation : null
   })
-  const switchChain = vi.fn(async (_parameters?: { chainId: number }) => undefined)
+  const switchChain = vi.fn(async (parameters?: { chainId: number }) => { if (parameters) chainId = parameters.chainId })
   /** One RPC for every chain: simulations pass and receipts are what `confirm` set. */
   const client = {
     getChainId: vi.fn(async () => chainId),
@@ -94,24 +97,29 @@ function createFakeWallet() {
     client,
     walletClient,
     writeContract,
+    signTypedData,
     requestReview,
     switchChain,
     get account() {
       return account
+    },
+    /** The chain the wallet is on: the last it switched to or sent on. */
+    get chainId() {
+      return chainId
     },
     /** Connect `next`, as a wallet switching accounts does. */
     connect(next: Address | undefined) {
       account = next
       notify()
     },
-    /** The chain reports `hash` as confirmed (or, with `status`, reverted). */
-    confirm(hash: Hex, blockNumber = 10n, status: Receipt['status'] = 'success') {
+    /** The chain reports `hash` as confirmed (or, with `status`, reverted), with `logs`. */
+    confirm(hash: Hex, blockNumber = 10n, status: Receipt['status'] = 'success', logs: Receipt['logs'] = []) {
       const key = hash.toLowerCase()
       const transaction = transactions.get(key)!
       const blockHash = sentHash(Number(blockNumber))
       Object.assign(transaction, { blockNumber, blockHash, transactionIndex: 0 })
       const receipt: Receipt = { status, blockNumber, blockHash, transactionHash: hash,
-        transactionIndex: 0, from: transaction.from, to: transaction.to, logs: [] }
+        transactionIndex: 0, from: transaction.from, to: transaction.to, logs }
       receipts.set(key, receipt)
       for (const resolve of awaiting.get(key) ?? []) resolve(receipt)
       awaiting.delete(key)
@@ -144,6 +152,7 @@ function createFakeWallet() {
       transactions.clear()
       awaiting.clear()
       writeContract.mockClear()
+      signTypedData.mockClear()
       requestReview.mockClear()
       requestReview.mockImplementation(async () => true)
       switchChain.mockClear()

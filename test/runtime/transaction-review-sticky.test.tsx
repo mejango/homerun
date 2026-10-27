@@ -5,6 +5,7 @@
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { openReview } from '../support/open-review'
 import { encodeFunctionData, type Address } from 'viem'
 import { jbControllerAbi } from '@bananapus/nana-sdk-core'
 import { stickyDistributorAddress, v6Address } from '@bananapus/nana-sdk-core/v6'
@@ -13,7 +14,7 @@ vi.mock('wagmi', () => ({ useAccount: () => ({ address: undefined, chainId: unde
 vi.mock('next/image', () => ({ default: (props: Record<string, unknown>) => createElement('img', { ...props, src: 'asset' }) }))
 
 import { TransactionReviewProvider } from '@/components/TransactionReviewProvider'
-import { requireTransactionReview } from '@/lib/transaction-review'
+import {} from '@/lib/transaction-review'
 import '../dialog-shim'
 
 let container: HTMLDivElement
@@ -31,7 +32,7 @@ it('labels a Sticky split by its holder group and distributor', async () => {
   ] }]] as const
   act(() => root.render(<TransactionReviewProvider>{null}</TransactionReviewProvider>))
   await act(async () => {
-    requireTransactionReview({ calls: [{
+    openReview({ calls: [{
       chainId, to: v6Address('JBController', chainId),
       data: encodeFunctionData({ abi: jbControllerAbi, functionName: 'setSplitGroupsOf', args }),
       abi: jbControllerAbi, functionName: 'setSplitGroupsOf', args,

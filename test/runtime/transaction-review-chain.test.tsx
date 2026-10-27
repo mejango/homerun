@@ -10,6 +10,7 @@
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { openReview } from '../support/open-review'
 import { encodeFunctionData } from 'viem'
 
 vi.mock('wagmi', () => ({
@@ -21,7 +22,7 @@ vi.mock('next/image', () => ({
 }))
 
 import { TransactionReviewProvider } from '@/components/TransactionReviewProvider'
-import { requireTransactionReview } from '@/lib/transaction-review'
+import {} from '@/lib/transaction-review'
 import '../dialog-shim'
 
 let container: HTMLDivElement
@@ -44,7 +45,7 @@ async function openReviewOn(chainId: number) {
   )
   await act(async () => {
     // Swallow the cancellation thrown when the modal unmounts after the test.
-    requireTransactionReview({
+    openReview({
       calls: [
         {
           chainId,
@@ -109,7 +110,7 @@ describe('transaction review chain identity', () => {
     ] as const
     act(() => root.render(<TransactionReviewProvider>{null}</TransactionReviewProvider>))
     await act(async () => {
-      requireTransactionReview({
+      openReview({
         calls: [
           {
             chainId: 8453,

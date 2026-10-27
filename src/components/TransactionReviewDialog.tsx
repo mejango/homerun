@@ -8,7 +8,6 @@ import {
   type V4PlanStep,
 } from '@bananapus/nana-sdk-core/review/decode'
 import {
-  buildReviewModel,
   type ReviewArgument,
   type ReviewCallModel,
   type ReviewSignatureModel,
@@ -512,7 +511,7 @@ function ReviewModal({
   pending: PendingReview
   onFinish: (approved: boolean) => void
 }) {
-  const model = useMemo(() => pending.model ?? buildReviewModel(pending.request!), [pending])
+  const model = pending.model
   const feeCalls = useMemo(() => model.calls.map(call => ({
     chainId: call.chainId,
     to: call.to,

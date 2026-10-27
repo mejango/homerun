@@ -20,7 +20,7 @@ const owners: readonly Owner[] = [
   ...['fund-launch-verification', 'income-reserved', 'income-operator', 'fund-bridge-receipts'].map(name => ({
     file: `lib/${name}.ts`, module: `${core}/safe-service`, calls: ['safeExecutionRunsCalls', 'requireSafeExecutionSuccess'],
   })),
-  { file: 'lib/relayr.ts', module: `${core}/review/relayr`, calls: ['bindRelayrQuote', 'relayrDestinationRecords', 'relayrProgress', 'relayrStateIsSuccess', 'relayrWalletPaymentError', 'requireRelayrRetry', 'requireRelayrPaymentRuntime', 'simulateRelayrPayment', 'verifyRelayrPayment'] },
+  { file: 'lib/relayr.ts', module: `${core}/review/relayr`, calls: ['bindRelayrQuote', 'readRelayrBundle', 'relayrDestinationRecords', 'requireRelayrRetry', 'verifyRelayrPayment'] },
   { file: 'lib/fund-launch-relayr.ts', module: `${core}/review/relayr`, calls: ['relayrSessionOutcome', 'relayrRequestsVerdict', 'relayrRetryOption', 'proveSavedRelayrPayment', 'verifyRelayrDestination'] },
   { file: 'components/ProjectActivity.tsx', module: core, calls: ['mergeCrossChainActivityGroups'] },
 ]

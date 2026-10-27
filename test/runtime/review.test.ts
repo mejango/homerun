@@ -1,49 +1,13 @@
-import { encodeFunctionData, parseAbi, type Address } from 'viem'
-import { afterEach, describe, expect, it } from 'vitest'
+import { type Address } from 'viem'
+import { describe, expect, it } from 'vitest'
 import {
   buildTransactionReviewPrompt,
-  registerTransactionReviewHandler,
-  requireTransactionReview,
   transactionReviewJson,
   type TransactionReviewRequest,
 } from '@/lib/transaction-review'
 
 const TARGET = '0x1111111111111111111111111111111111111111' as Address
 const RECIPIENT = '0x2222222222222222222222222222222222222222' as Address
-const ABI = parseAbi(['function transfer(address recipient, uint256 amount)'])
-
-let unregister: (() => void) | undefined
-
-function handle(
-  handler: Parameters<typeof registerTransactionReviewHandler>[0],
-) {
-  unregister = registerTransactionReviewHandler(handler)
-}
-
-afterEach(() => {
-  unregister?.()
-  unregister = undefined
-})
-
-describe('mandatory transaction review boundary', () => {
-  const call = { chainId: 1, to: TARGET, data: encodeFunctionData({ abi: ABI, functionName: 'transfer', args: [RECIPIENT, 5n] }) }
-
-  it('refuses calls when the review UI is unavailable', async () => {
-    await expect(requireTransactionReview({ calls: [call] })).rejects.toThrow(/review is unavailable/i)
-  })
-
-  it('turns a closed review into a cancellation and sends nothing', async () => {
-    handle(async () => false)
-    await expect(requireTransactionReview({ calls: [call] })).rejects.toThrow('Review closed. Nothing was sent.')
-  })
-
-  it('rejects empty raw review bundles', async () => {
-    handle(async () => true)
-    await expect(requireTransactionReview({ calls: [] })).rejects.toThrow(
-      /no transaction to review/i,
-    )
-  })
-})
 
 describe('review serialization', () => {
   const request: TransactionReviewRequest = {

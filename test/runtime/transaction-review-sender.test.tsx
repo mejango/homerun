@@ -1,15 +1,15 @@
 // @vitest-environment jsdom
 
 /**
- * A reviewed call says who sends it. A transaction is sent by the connected
- * wallet, so the review fills that address in. An authorization is sent by a
- * relayer, a Safe or Juicebox Center's sponsor, so the review shows a sender
- * only when the call itself names one.
+ * A reviewed call says who sends it. An authorization is sent by a relayer, a
+ * Safe or Juicebox Center's sponsor, so the review shows a sender only when the
+ * call itself names one; core's sends name the wallet's account themselves.
  */
 
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { openReview } from '../support/open-review'
 
 const wallet = '0x1111111111111111111111111111111111111111'
 const relayed = '0x2222222222222222222222222222222222222222'
@@ -23,7 +23,7 @@ vi.mock('next/image', () => ({
 }))
 
 import { TransactionReviewProvider } from '@/components/TransactionReviewProvider'
-import { requireTransactionReview, type TransactionReviewRequest } from '@/lib/transaction-review'
+import { type TransactionReviewRequest } from '@/lib/transaction-review'
 import '../dialog-shim'
 
 let container: HTMLDivElement
@@ -44,7 +44,7 @@ async function open(request: TransactionReviewRequest) {
   act(() => root.render(<TransactionReviewProvider>{null}</TransactionReviewProvider>))
   await act(async () => {
     // Swallow the cancellation thrown when the modal unmounts after the test.
-    requireTransactionReview(request).catch(() => {})
+    openReview(request).catch(() => {})
   })
   await act(async () => { await vi.dynamicImportSettled() })
   return document.querySelector('dialog')!
@@ -81,10 +81,5 @@ describe('who a reviewed call names as its sender', () => {
       authorization: { type: 'EIP-712 ForwardRequest' },
     })
     expect(sender(dialog)).toBe(relayed)
-  })
-
-  it('names the connected wallet on a transaction it will send itself', async () => {
-    const dialog = await open({ calls: [call] })
-    expect(sender(dialog)).toBe(wallet)
   })
 })

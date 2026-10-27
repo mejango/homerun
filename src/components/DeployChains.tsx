@@ -2,7 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
-import { getAccount, getPublicClient, switchChain, waitForTransactionReceipt } from '@wagmi/core'
+import { getAccount, getPublicClient } from '@wagmi/core'
 import { decodeFunctionData } from 'viem'
 import { erc2771ForwarderAbi, jbProjectsAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
@@ -19,12 +19,11 @@ import {
   checkRelayRequest, readLaunchedProjectId, relayCostLabel, relaySetupSafes, watchDeployRefusal, type FundRelayRequest,
 } from '@/lib/fund-intent'
 import { holdDeployment, loadHeldDeployments, releaseDeployment } from '@/lib/relay-held'
-import { requireTransactionReview, TransactionReviewCancelledError } from '@/lib/transaction-review'
+import { isDefiniteWalletRejection, ReviewLineError } from '@bananapus/nana-sdk-core/review'
 import { isSafeConnection } from '@/lib/safe-connector'
-import { assertReviewedWallet, withReviewedWallet } from '@/lib/wallet-core'
+import { reviewedSendDeps } from '@/lib/reviewed-send-deps'
 import { VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import { displayChainName } from '@/lib/chainDisplay'
-import { SUPPORTED_CHAINS } from '@/lib/chains'
 import { ChainIcon } from '@/components/ChainIcon'
 import { projectPath } from '@/lib/urn'
 
@@ -43,10 +42,8 @@ const DEPLOY_FAILED = 'This project could not be deployed. Try again in a few mi
 const CONNECT_MESSAGE = 'Connect a wallet to deploy the networks you pay for.'
 const WALLET_MESSAGE = 'The wallet did not send the transaction.'
 const SAFE_MESSAGE = 'Deploying from a Safe isn’t supported here. Connect an ordinary wallet to deploy these networks.'
-const CHANGED_WALLET_MESSAGE = 'Wallet connection changed. Review the transaction again.'
 const OVER_FEE_MESSAGE = 'The deploy asked for more than the creation fee.'
 const NO_CLIENT_MESSAGE = 'No network connection is configured for this chain.'
-const reverted = (chainId: number) => `The transaction reverted on ${displayChainName(chainId)}.`
 const notRecorded = (chainId: number) =>
   `Your ${displayChainName(chainId)} transaction went through, but the project page has not picked it up yet. Try again to finish.`
 /** Center keeps a failed chain as a failed chain: this page cannot send it again. */
@@ -54,22 +51,25 @@ const deployStopped = (chainId: number) =>
   `This project could not be created on ${displayChainName(chainId)}. It cannot be deployed from here; create it again.`
 
 /** Only this app's own sentences are shown; everything else reads as one fixed sentence. */
-function fixedSentence(cause: unknown, chainIds: readonly number[]): string {
+function fixedSentence(cause: unknown): string {
   if (cause instanceof EnsureDeployedError) return DEPLOY_FAILED
-  if (cause instanceof TransactionReviewCancelledError) return cause.message
+  // Core's own lines: a closed review, a hold, a simulation or a revert.
+  if (cause instanceof ReviewLineError) return cause.message
   if (cause instanceof JBCenterRequestError || !(cause instanceof Error)) return DEPLOY_UNAVAILABLE
   const own = new Set<string>([
-    CONNECT_MESSAGE, WALLET_MESSAGE, SAFE_MESSAGE, CHANGED_WALLET_MESSAGE, VIEW_AS_WRITE_BLOCKED, OVER_FEE_MESSAGE, NO_CLIENT_MESSAGE,
+    CONNECT_MESSAGE, WALLET_MESSAGE, SAFE_MESSAGE, VIEW_AS_WRITE_BLOCKED, OVER_FEE_MESSAGE, NO_CLIENT_MESSAGE,
     RELAY_UNREADABLE_MESSAGE, RELAY_EXPIRED_MESSAGE, SAFES_UNREADABLE_MESSAGE, NO_LAUNCH_MESSAGE,
-    ...chainIds.map(reverted),
   ])
   return own.has(cause.message) ? cause.message : DEPLOY_UNAVAILABLE
 }
 
-/** A wallet's own refusal text is never shown, whichever step the wallet refused. A closed review sent nothing and says so. */
+/** Core's reviewed send for a paid deploy, out of the intent page's first load. */
+const loadDeployEngine = () => import(/* webpackExports: ["sendReviewed"] */ '@bananapus/nana-sdk-core/review')
+
+/** A wallet's own refusal text is never shown: only its explicit rejection (4001) says nothing was sent. */
 async function fromWallet<T>(action: () => Promise<T>): Promise<T> {
   try { return await action() } catch (cause) {
-    throw cause instanceof TransactionReviewCancelledError ? cause : new Error(WALLET_MESSAGE)
+    throw !(cause instanceof ReviewLineError) && isDefiniteWalletRejection(cause) ? new Error(WALLET_MESSAGE) : cause
   }
 }
 
@@ -133,24 +133,21 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
     ? current.filter(item => item !== chainId)
     : [...current, chainId])
 
-  /** The visitor pays gas and the creation fee; Center's sponsor stays the forwarded sender. */
+  /**
+   * The visitor pays gas and the creation fee; Center's sponsor stays the forwarded sender. Core reviews the
+   * chain's calls once, simulates each, holds it under this intent's scope and keeps its hash before the receipt.
+   */
   async function relayPaid(request: FundRelayRequest) {
     // A project this wallet already created is recorded, never created twice.
     const created = unrecorded.current.get(request.chainId)
     if (created) return created
     const forwarded = checkRelayRequest(intent, request)
-    const connection = getAccount(wagmiConfig)
-    const account = connection.address
+    const account = getAccount(wagmiConfig).address
     if (!account) throw new Error(CONNECT_MESSAGE)
-    // A Safe proposes rather than sends, and a Safe app cannot switch chains. A
-    // WalletConnect peer read can land mid-flow, so each send checks again.
-    const ordinaryWallet = () => { if (isSafeConnection(wagmiConfig)) throw new Error(SAFE_MESSAGE) }
-    ordinaryWallet()
-    const authority = { account, connectorUid: connection.connector?.uid, safe: false }
-    assertReviewedWallet(authority, CHANGED_WALLET_MESSAGE)
-    const chain = SUPPORTED_CHAINS.find(item => item.id === request.chainId)
+    // A Safe proposes rather than sends, and a Safe app cannot switch chains.
+    if (isSafeConnection(wagmiConfig)) throw new Error(SAFE_MESSAGE)
     const client = getPublicClient(wagmiConfig, { chainId: request.chainId as JBChainId })
-    if (!client || !chain) throw new Error(NO_CLIENT_MESSAGE)
+    if (!client) throw new Error(NO_CLIENT_MESSAGE)
     const fee = await client.readContract({
       address: v6Address('JBProjects', request.chainId as JBChainId), abi: jbProjectsAbi, functionName: 'creationFee',
     })
@@ -160,51 +157,38 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
     const safes = relaySetupSafes(intent, request.chainId)
     const existing = await Promise.all(safes.map(address => client.getCode({ address })))
     const setup = request.setup.filter((entry, index) => !existing[index] || existing[index] === '0x')
-    await fromWallet(() => switchChain(wagmiConfig, { chainId: request.chainId as JBChainId }))
-    await fromWallet(() => requireTransactionReview({
-      kind: 'transaction',
+    const { sendReviewed } = await loadDeployEngine()
+    const result = await fromWallet(() => sendReviewed({
+      account,
       title: `Create this project on ${displayChainName(request.chainId)}`,
       description: 'You send these transactions and pay their gas and creation fee. The project keeps the same token and bridge addresses on every network.',
-      confirmLabel: 'Continue to wallet',
+      scope: `homerun:deploy:${intent.id}:${request.chainId}`,
+      // A WalletConnect peer read can land mid-flow: a Safe would propose, so each send checks again.
+      assertWriteState: () => { if (isSafeConnection(wagmiConfig)) throw new Error(SAFE_MESSAGE) },
       calls: [
         ...setup.map(entry => ({
-          chainId: request.chainId, to: entry.to, data: entry.data, value: entry.value, from: account,
+          chainId: request.chainId, to: entry.to, data: entry.data, value: entry.value,
           abi: SAFE_CREATE_ABI, functionName: 'createProxyWithNonce',
-          // The review shows the arguments these exact bytes carry.
           args: decodeFunctionData({ abi: SAFE_CREATE_ABI, data: entry.data }).args,
           contractName: 'SafeProxyFactory',
           label: `Create this project’s multisig on ${displayChainName(request.chainId)}`,
         })),
         {
-          chainId: request.chainId, to: request.to, data: request.data, value: request.value, from: account,
+          chainId: request.chainId, to: request.to, data: request.data, value: request.value,
           abi: erc2771ForwarderAbi, functionName: 'execute', args: [forwarded],
           contractName: 'ERC2771Forwarder',
           label: `Create the FUND on ${displayChainName(request.chainId)}`,
+          // The forwarded call runs after its multisigs exist.
+          ...(setup.length ? { dependsOnPrior: true } : {}),
         },
       ],
-    }))
-    const sendReviewed = async (call: Pick<FundRelayRequest, 'to' | 'data' | 'value'>) => {
-      ordinaryWallet()
-      assertReviewedWallet({ ...authority, chainId: request.chainId }, CHANGED_WALLET_MESSAGE)
-      return withReviewedWallet({ ...authority, chainId: request.chainId }, wallet => {
-        ordinaryWallet()
-        return fromWallet<`0x${string}`>(() => wallet.sendTransaction({ account, chain, chainId: request.chainId, to: call.to, data: call.data, value: call.value }))
-      }, CHANGED_WALLET_MESSAGE)
-    }
-    for (const entry of setup) {
-      const setupHash = await sendReviewed(entry)
-      const setupReceipt = await waitForTransactionReceipt(wagmiConfig, { chainId: request.chainId as JBChainId, hash: setupHash })
-      if (setupReceipt.status !== 'success') throw new Error(reverted(request.chainId))
-    }
-    // The forwarder's own overhead sits on top of the gas the forwarded call is
-    // capped at, so the wallet estimates what this transaction costs.
-    const transactionHash = await sendReviewed(request)
-    const receipt = await waitForTransactionReceipt(wagmiConfig, { chainId: request.chainId as JBChainId, hash: transactionHash })
-    if (receipt.status !== 'success') throw new Error(reverted(request.chainId))
+    }, reviewedSendDeps))
+    if (result.status !== 'done') throw new Error(SAFE_MESSAGE)
+    const receipt = result.receipts[result.receipts.length - 1]
     const deployment: JBCenterDeploymentInput = {
       chainId: request.chainId,
       projectId: readLaunchedProjectId(intent, request.chainId, receipt),
-      transactionHash,
+      transactionHash: receipt.transactionHash,
     }
     unrecorded.current.set(request.chainId, deployment)
     holdDeployment(intent.id, deployment)
@@ -264,7 +248,7 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
       }
       const [held] = [...unrecorded.current.keys()]
       const refused = describeCenterRefusal(watcher.refusal())
-      setError(refused?.message ?? (held !== undefined ? notRecorded(held) : fixedSentence(cause, chainIds)))
+      setError(refused?.message ?? (held !== undefined ? notRecorded(held) : fixedSentence(cause)))
     } finally {
       if (run.current === controller) run.current = null
       setDeploying(false); onRunningChange?.(false)
