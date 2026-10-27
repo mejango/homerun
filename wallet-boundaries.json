@@ -1,5 +1,6 @@
 {
   "format": "juice-sdk-wallet-boundaries-1",
+  "selfReviewing": ["src/lib/center-payment.ts"],
   "sites": [
     {
       "file": "src/components/FundDeploy.tsx",

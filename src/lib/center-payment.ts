@@ -1,10 +1,12 @@
-import { decodeFunctionData, isAddress, isHex, keccak256, parseAbi, stringToHex, type Address, type Hex } from 'viem'
+import { decodeFunctionData, encodeFunctionData, isAddress, isHex, keccak256, parseAbi, stringToHex, type Address, type Hex } from 'viem'
 import type { CenterWalletConnection, CenterWalletExpectedPayment, CenterWalletPaymentStatus, CenterWalletStorage,
   PreparedUserOperation, SmartWalletPlan, createCenterWalletClient } from '@me.jango/signa/core'
 import type { HomerunCenterConfig } from '@/providers/wallet-config'
 import { centerReturnPath } from '@/providers/center-callback'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { PAY_DEFAULT_SLIPPAGE_BPS, PAY_MAX_SLIPPAGE_BPS } from '@bananapus/nana-sdk-core/v6'
+import { PAY_DEFAULT_SLIPPAGE_BPS, PAY_MAX_SLIPPAGE_BPS, v6Address } from '@bananapus/nana-sdk-core/v6'
+import { USDC_ADDRESSES } from '@bananapus/nana-sdk-core'
+import { selfReviewingAdapter, type SelfReviewedRequest } from '@bananapus/nana-sdk-core/review'
 
 export interface HomerunPaymentIntent {
   projectId: string; token: Address; terminal: Address; amount: string; minimumReturnedTokens: string; returnPath: string
@@ -190,4 +192,45 @@ export function createHomerunPayment(options: { config: HomerunCenterConfig;
     return payments.retirePayment()
   }
   return { prepare, submit, pending, clear, complete, retire, refresh: () => payments.refreshPayment() }
+}
+
+const ONLY_PAY = 'Juicebox wallet pays one USDC payment on Base through the project terminal. Nothing was sent.'
+
+/** The one payment Signa takes: USDC on Base to the project terminal, for the payer, with no memo. */
+export function signaPayCall(payment: { projectId: bigint; amount: bigint; beneficiary: Address; minimumReturnedTokens: bigint; metadata: Hex }) {
+  const args = [payment.projectId, USDC_ADDRESSES[8453]!, payment.amount, payment.beneficiary, payment.minimumReturnedTokens, '', payment.metadata] as const
+  return { chainId: 8453, to: v6Address('JBMultiTerminal', 8453), value: 0n, abi: payAbi, functionName: 'pay', args,
+    data: encodeFunctionData({ abi: payAbi, functionName: 'pay', args }) }
+}
+
+function payIntent(calls: SelfReviewedRequest['calls'], account: Address, quote: Pick<HomerunPaymentIntent, 'returnPath' | 'slippageBps'>): HomerunPaymentIntent {
+  const call = calls.length === 1 ? calls[0]! : fail(ONLY_PAY)
+  if (call.chainId !== 8453 || !same(call.to, v6Address('JBMultiTerminal', 8453)) || call.value !== 0n || call.gas !== undefined) fail(ONLY_PAY)
+  let args
+  try { ({ args } = decodeFunctionData({ abi: payAbi, data: call.data })) } catch { return fail(ONLY_PAY) }
+  const [projectId, token, amount, beneficiary, minimum, memo, metadata] = args
+  if (encodeFunctionData({ abi: payAbi, functionName: 'pay', args }).toLowerCase() !== call.data.toLowerCase() ||
+    !same(token, USDC_ADDRESSES[8453]!) || !same(beneficiary, account) || memo !== '') fail(ONLY_PAY)
+  return checkedIntent({ projectId: String(projectId), token, terminal: call.to, amount: String(amount), minimumReturnedTokens: String(minimum),
+    metadata, returnPath: quote.returnPath, ...(quote.slippageBps === undefined ? {} : { slippageBps: quote.slippageBps }) })
+}
+
+/** Signa as core's self-reviewing wallet: core hands it the raw pay call, and its framed passkey review is the one confirmation.
+ * `approve` resolves false when the review is closed, which reads as a wallet rejection (4001): nothing was sent. */
+export function signaPaymentAdapter(options: {
+  account: () => Address | undefined
+  payment: Pick<ReturnType<typeof createHomerunPayment>, 'prepare' | 'submit'>
+  quote: Pick<HomerunPaymentIntent, 'returnPath' | 'slippageBps'>
+  approve: (approvalUrl: string) => Promise<boolean>
+  beforeSubmit: () => Promise<void>
+}) {
+  return selfReviewingAdapter({ account: options.account, submit: async ({ account, calls }) => {
+    const reviewed = await options.payment.prepare(payIntent(calls, account, options.quote))
+    if (!reviewed.approvalUrl) fail('The payment review is unavailable. Check its saved status.')
+    if (!await options.approve(reviewed.approvalUrl)) throw Object.assign(new Error('The payment review was closed. Nothing was sent.'), { code: 4001 })
+    await options.beforeSubmit()
+    const sent = await options.payment.submit()
+    // A user operation has no transaction hash until it is bundled; the component follows its status from here.
+    return sent.transactionHash ?? fail('Submitted. Waiting for confirmation.')
+  } })
 }
