@@ -28,8 +28,12 @@ vi.mock('@/providers/Providers', () => ({ wagmiConfig: {},
   SUPPORTED_CHAINS: [1, 10, 8453, 42161, 11155111, 11155420, 84532, 421614].map(id => ({ id, name: `Chain ${id}` })),
 }))
 vi.mock('@/lib/transaction-review', async importOriginal => ({
-  ...await importOriginal<typeof import('@/lib/transaction-review')>(), requireFundingChainSelection: m.funding, requireTransactionReview: m.review,
+  ...await importOriginal<typeof import('@/lib/transaction-review')>(), requireFundingChainSelection: m.funding,
 }))
+vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({
+  ...await importOriginal<typeof import('@bananapus/nana-sdk-core/review')>(), reviewPlan: m.review,
+}))
+vi.mock('@/lib/reviewed-send-deps', () => ({ reviewedSendDeps: {} }))
 vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => m.safe }))
 vi.mock('@/lib/wallet-core', () => ({ publicClient: m.client }))
 vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original<typeof import('@bananapus/nana-sdk-core/v6')>(), getProjectCreationFee: m.fee }))
@@ -37,7 +41,7 @@ vi.mock('@/lib/fund-launch-verification', () => ({ verifyFundLaunch: m.projectId
 vi.mock('@/lib/relayr', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/relayr')>()),
   prepareForwardedTx: m.forward, relayrPostBundle: m.quote, relayrPay: m.pay,
-  relayrPoll: m.poll,
+  relayrRecords: m.poll,
   readRelayrPendingSessionsForAuthorization: () => {
     const session = m.pending()
     return session ? [{ scope: 'another-action', session }] : []
@@ -98,7 +102,7 @@ function recordFor(entry: RelayrEntry, index: number, status?: RelayrTransaction
 }
 /** What Relayr's status lists on every poll from now on: the records of the launch, changed. */
 function listing(change: (list: RelayrTransactionRecord[]) => RelayrTransactionRecord[]) {
-  m.poll.mockImplementation(async (_uuid, _count, update) => { const changed = change(records); update(changed); return changed })
+  m.poll.mockImplementation(async () => change(records))
 }
 /** The records of `chain`, reporting `hash` for it. */
 const reporting = (chain: number, hash: unknown) => (list: RelayrTransactionRecord[]) => list.map(record =>
@@ -157,9 +161,10 @@ beforeEach(() => {
   m.fee.mockResolvedValue(17n)
   m.funding.mockResolvedValue(8453)
   m.projectId.mockImplementation((_client, request) => BigInt(request.chainId + 100))
+  m.review.mockResolvedValue({ id: 'plan' })
   m.forward.mockImplementation(async (call, account, nonce) => {
     expect(nonce).toBe(0n)
-    return { review: { calls: [{ chainId: call.chainId, from: account, to: call.target, data: call.data, value: call.value }], authorization: { type: 'test' } }, sign: async () => ({ chain: call.chainId, target: jbV6ContractAddress[JBCoreContracts.ERC2771Forwarder][call.chainId as JBChainId],
+    return { review: { chainId: call.chainId, from: account, to: call.target, data: call.data, value: call.value, gas: call.gas }, sign: async () => ({ chain: call.chainId, target: jbV6ContractAddress[JBCoreContracts.ERC2771Forwarder][call.chainId as JBChainId],
       value: call.value.toString(), data: encodeFunctionData({ abi: erc2771ForwarderAbi, functionName: 'execute',
         args: [{ from: account, to: call.target, value: call.value, gas: call.gas, deadline: Math.floor(Date.now() / 1000) + signedLifetime,
           data: call.data, signature: `0x${'dd'.repeat(65)}` }] }) }) }
@@ -186,7 +191,7 @@ beforeEach(() => {
     onSent(payments)
     return { hash: HASH, payments }
   })
-  m.poll.mockImplementation(async (_uuid, _count, update) => { update(records); return records })
+  m.poll.mockImplementation(async () => records)
   saveLaunchSession(session())
 })
 
@@ -277,7 +282,7 @@ describe('relayed launch execution and recovery', () => {
     expect(loadLaunchSession()?.relayr?.paymentChainId).toBe(11155111)
   })
 
-  it('prefers the chain the wallet started on, not the destination signing left it on', async () => {
+  it('pays on the chain the wallet started on, whose fee the one review showed, with no funding choice', async () => {
     m.chainId = 8453
     const prepare = m.forward.getMockImplementation()!
     m.forward.mockImplementation(async (call, account, nonce) => {
@@ -286,10 +291,21 @@ describe('relayed launch execution and recovery', () => {
     })
     await run()
     expect(m.chainId).toBe(10)
-    expect(m.funding).toHaveBeenCalledExactlyOnceWith([
-      { chainId: 8453, label: relayrPaymentLabel(paymentFor(8453)) },
-      { chainId: 1, label: relayrPaymentLabel(paymentFor(1)) },
-    ], 8453)
+    expect(m.review).toHaveBeenCalledOnce()
+    expect(m.review.mock.calls[0][0]).toMatchObject({ relayrRounds: { [`launch:${session().input.salt}`]: { paymentChainId: 8453 } } })
+    expect(m.review.mock.calls[0][0].calls.map((call: { chainId: number; relayrRound?: string }) => [call.chainId, call.relayrRound]))
+      .toEqual([[1, `launch:${session().input.salt}`], [10, `launch:${session().input.salt}`]])
+    expect(m.funding).not.toHaveBeenCalled()
+    expect(m.pay.mock.calls[0][0]).toMatchObject({ payment: { chain: 8453 }, planned: { plan: { id: 'plan' }, round: `launch:${session().input.salt}` } })
+  })
+
+  it('asks where to pay when the wallet started on a chain this launch cannot pay on', async () => {
+    m.chainId = 11155111
+    offeredPaymentChains = [8453, 1]
+    await run()
+    expect(m.review.mock.calls[0][0].relayrRounds).toBeUndefined()
+    expect(m.funding).toHaveBeenCalledOnce()
+    expect(m.pay.mock.calls[0][0].planned).toBeUndefined()
   })
 
   it('validates quote destination bindings before presenting its funding choices', async () => {
@@ -383,7 +399,7 @@ describe('relayed launch execution and recovery', () => {
 
 
   it('signs one exact call per chain, pays only on the selected chain, and verifies reversed provider records onchain', async () => {
-    m.poll.mockImplementation(async (_uuid, _count, update) => { update([...records].reverse()); return [...records].reverse() })
+    m.poll.mockImplementation(async () => [...records].reverse())
     await run()
     expect(m.forward).toHaveBeenCalledTimes(2)
     expect(m.forward.mock.calls.every(([call]) => call.gas === 4_000_000n && call.value === 17n)).toBe(true)
@@ -480,7 +496,7 @@ describe('relayed launch execution and recovery', () => {
       throw new Error(`Unexpected Relayr request: ${url}`)
     }))
     m.quote.mockImplementation(async (signed: RelayrEntry[]) => { entries = signed; return actual.relayrPostBundle(signed) })
-    m.poll.mockImplementation(actual.relayrPoll)
+    m.poll.mockImplementation(actual.relayrRecords)
     const pay = m.pay.getMockImplementation()!
     m.pay.mockImplementation(async (...args: unknown[]) => { paid = true; return pay(...args) })
     await run()
@@ -720,10 +736,8 @@ describe('relayed launch execution and recovery', () => {
   })
 
   it('never treats provider-only success or failure as a completed launch or permission to pay again', async () => {
-    m.poll.mockImplementation(async (_uuid, _count, update) => {
-      update([recordFor(entries[0], 0, { state: 'Confirmed' }), recordFor(entries[1], 1, { state: 'Failed' })])
-      throw new Error('provider claims failed')
-    })
+    // Relayr claims one failed: its records as last read come back, and prove nothing.
+    m.poll.mockImplementation(async () => [recordFor(entries[0], 0, { state: 'Confirmed' }), recordFor(entries[1], 1, { state: 'Failed' })])
     await expect(run()).rejects.toThrow('unfinished')
     await expect(run()).rejects.toThrow('unresolved')
     expect(m.pay).toHaveBeenCalledTimes(1)
@@ -940,7 +954,7 @@ describe('relayed launch execution and recovery', () => {
     it('signs a paid launch again at its saved nonces once every request expired unused and the recheck passed', async () => {
       await paidUnproven()
       pastDeadlines()
-      m.poll.mockImplementation(async (_uuid, _count, update) => { update(records); return records })
+      m.poll.mockImplementation(async () => records)
       await run()
       expect(m.forward.mock.calls.slice(2).map(([call, _account, nonce]) => [call.chainId, nonce])).toEqual([[1, 0n], [10, 0n]])
       expect(m.pay).toHaveBeenCalledTimes(2)
@@ -1396,7 +1410,7 @@ describe('relayed launch execution and recovery', () => {
     clients.get(10)!.getTransactionReceipt.mockRejectedValueOnce(new Error('receipt unavailable'))
     await expect(run()).rejects.toThrow('unfinished')
     expect(loadLaunchSession()?.statuses[10].hash).toBe(hashFor(10))
-    m.poll.mockImplementation(async (_uuid, _count, update) => { update([]); throw new Error('provider lost records') })
+    m.poll.mockImplementation(async () => [])
     await run()
     expect(loadLaunchSession()?.statuses[10].phase).toBe('confirmed')
     expect(m.pay).toHaveBeenCalledTimes(1)

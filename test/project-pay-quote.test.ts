@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { NATIVE_TOKEN } from '@bananapus/nana-sdk-core'
-import { buildUserPayMetadata, v6Address } from '@bananapus/nana-sdk-core/v6'
+import { buildUserPayMetadata, PAY_SWAP_QUOTE_FAILED_MESSAGE, v6Address } from '@bananapus/nana-sdk-core/v6'
 import { zeroAddress, type Address, type PublicClient } from 'viem'
 import { prepareProjectPayQuote, readProjectPayTokenOptions, type ProjectPayQuoteInput } from '../src/lib/project-pay-quote'
 
@@ -40,7 +40,7 @@ describe('project payment quote parity', () => {
     expect(previews).toHaveLength(1)
     expect(previews[0][0].args?.[4]).toBe(metadata)
   })
-  it('protects a Center payment the buyback hook swaps instead of refusing it', async () => {
+  it('refuses a Center payment the buyback hook swaps when its pool read fails', async () => {
     const f = fixture(); const implementation = f.client.readContract.getMockImplementation()!
     const hook = v6Address('JBBuybackHook', CHAIN)
     // A 1.4 skipSplits spec that swaps: the terminal mints nothing; the payer's mint share (word 5) is 800.
@@ -52,8 +52,8 @@ describe('project payment quote parity', () => {
       if (request.functionName === 'poolKeyOf') throw new Error('No pool quote')
       return implementation(request)
     })
-    // No pool quote: the minimum is the mint entitlement the hook never settles below, floored by 1%, and the quote says so.
-    expect(await prepareProjectPayQuote(f.rpc, { ...input, directTerminalOnly: true })).toMatchObject({ terminal: MULTI, minimumTokenCount: 790n, metadata: buildUserPayMetadata({ chainId: CHAIN }), quoteFailed: true })
+    // A pool read that fails is not a missing pool: the payment waits for a quote instead of a weaker minimum.
+    await expect(prepareProjectPayQuote(f.rpc, { ...input, directTerminalOnly: true })).rejects.toThrow(PAY_SWAP_QUOTE_FAILED_MESSAGE)
   })
   it('prepares both listed terminals with the skipSplits pay metadata at one block and returns that metadata', async () => {
     const f = fixture()

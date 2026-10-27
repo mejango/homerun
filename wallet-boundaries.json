@@ -1,0 +1,83 @@
+{
+  "format": "juice-sdk-wallet-boundaries-1",
+  "selfReviewing": ["src/lib/center-payment.ts"],
+  "sites": [
+    {
+      "file": "src/components/FundDeploy.tsx",
+      "line": 268,
+      "api": "request",
+      "boundary": "Web Locks, not a wallet: one tab at a time reviews and submits a saved FUND launch.",
+      "test": "test/fund-deploy-hold-ui.test.tsx"
+    },
+    {
+      "file": "src/components/FundOperatorActions.tsx",
+      "line": 721,
+      "api": "request",
+      "boundary": "Web Locks, not a wallet: one tab at a time reviews and submits a linked ruleset plan.",
+      "test": "test/fund-operator-recovery-ui.test.tsx"
+    },
+    {
+      "file": "src/components/StickyCreate.tsx",
+      "line": 120,
+      "api": "request",
+      "boundary": "Web Locks, not a wallet: one tab at a time records a Sticky creation's proven result.",
+      "test": "test/sticky-create.test.ts"
+    },
+    {
+      "file": "src/components/TransactionReviewProvider.tsx",
+      "line": 120,
+      "api": "registerReviewHandler",
+      "boundary": "The one review UI core's prompts reach: it returns core's confirmation only when the person confirms the dialog, and null on close or when core withdraws the prompt.",
+      "test": "test/transaction-review-dialog.test.tsx"
+    },
+    {
+      "file": "src/hooks/useProjectAdminTx.ts",
+      "line": 112,
+      "api": "request",
+      "boundary": "Web Locks, not a wallet: one project update at a time across tabs, around its reservation.",
+      "test": "test/project-admin-reservation.test.ts"
+    },
+    {
+      "file": "src/hooks/useProjectAdminTx.ts",
+      "line": 159,
+      "api": "request",
+      "boundary": "Web Locks, not a wallet: prunes the project's settled admin reservations under the same lock.",
+      "test": "test/project-admin-reservation.test.ts"
+    },
+    {
+      "file": "src/lib/forwarder-authorization.ts",
+      "line": 17,
+      "api": "request",
+      "boundary": "Web Locks, not a wallet: one tab at a time signs a wallet's forward requests per chain.",
+      "test": "test/fund-launch-relayr.test.ts"
+    },
+    {
+      "file": "src/lib/fund-launch-session.ts",
+      "line": 335,
+      "api": "request",
+      "boundary": "Web Locks, not a wallet: cancelling a launch waits for its direct submission lock.",
+      "test": "test/fund-launch-session.test.ts"
+    },
+    {
+      "file": "src/lib/income-global-launch-draft.ts",
+      "line": 97,
+      "api": "request",
+      "boundary": "Web Locks, not a wallet: one tab at a time updates the global INCOME launch draft.",
+      "test": "test/income-global-launch-draft.test.ts"
+    },
+    {
+      "file": "src/lib/project-shop-session.ts",
+      "line": 292,
+      "api": "request",
+      "boundary": "Web Locks, not a wallet: one tab at a time reviews and submits a project's shop update.",
+      "test": "test/project-shop-session.test.ts"
+    },
+    {
+      "file": "src/providers/lazy-center-connector.ts",
+      "line": 15,
+      "api": "request",
+      "boundary": "The Signa connector's read callback forwards public reads to the Center RPC transport for Base; Signa's own wallet signs and refuses writes here.",
+      "test": "test/center-runtime.test.ts"
+    }
+  ]
+}

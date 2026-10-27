@@ -1,34 +1,27 @@
 'use client'
 
-import { getAccount } from '@wagmi/core'
 import {
   JBCoreContracts,
   erc2771ForwarderAbi,
   jbV6ContractAddress,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
-import { isDefiniteWalletRejection } from '@bananapus/nana-sdk-core/review'
+import type { ReviewedCall, ReviewedPlan } from '@bananapus/nana-sdk-core/review'
 import {
-  FORWARD_REQUEST_TYPES,
   MAX_RELAYR_SENT_PAYMENTS,
   RELAYR_API,
   RELAYR_REQUEST_RUN_MARGIN_SECONDS,
   relayrForwarderDeadline,
-  RELAYR_PAYMENT_GAS,
   RelayrProofError,
-  RelayrPaymentNotSentError,
   bindRelayrQuote,
+  readRelayrBundle,
   relayrDestinationRecords as boundDestinationRecords,
   relayrBundleRequest,
   relayrPaymentDetails,
-  relayrProgress,
-  relayrStateIsSuccess,
-  relayrWalletPaymentError,
-  requireRelayrPaymentRuntime,
   requireRelayrRetry,
   sentRelayrPayment,
-  simulateRelayrPayment,
   verifyRelayrPayment,
+  type RelayrBundle,
   type RelayrEntry,
   type RelayrQuote as SDKRelayrQuote,
   type RelayrTransactionRecord,
@@ -36,25 +29,14 @@ import {
   type RelayrPayment,
   type RelayrSentPayment,
 } from '@bananapus/nana-sdk-core/review/relayr'
-import {
-  encodeFunctionData,
-  isHash,
-  type Abi,
-  type Address,
-  type Hex,
-  type TransactionReceipt,
-} from 'viem'
+import { encodeFunctionData, type Abi, type Address, type Hex } from 'viem'
 import { wagmiConfig } from '@/providers/Providers'
 import { SUPPORTED_CHAINS } from '@/lib/chains'
-import { fundingChainLabel, requireTransactionReview, type TransactionReviewRequest } from '@/lib/transaction-review'
+import { fundingChainLabel } from '@/lib/transaction-review'
 import { assertNoViewAs } from '@/lib/viewAs'
 import { isSafeConnection } from '@/lib/safe-connector'
-import {
-  assertReviewedWallet,
-  withReviewedWallet,
-  connectedWallet as connectedWalletCore,
-  publicClient,
-} from '@/lib/wallet-core'
+import { publicClient } from '@/lib/wallet-core'
+import { reviewedSendDeps } from '@/lib/reviewed-send-deps'
 
 const RELAYR_QUOTE_TIMEOUT_MS = 45_000
 /**
@@ -62,9 +44,9 @@ const RELAYR_QUOTE_TIMEOUT_MS = 45_000
  * with room to open the wallet) plus the SDK's run margin, so a quote keeps a payable option.
  */
 export const RELAYR_SIGNATURE_REFRESH_SECONDS = 15 * 60 + RELAYR_REQUEST_RUN_MARGIN_SECONDS
-const RELAYR_STATUS_REQUEST_TIMEOUT_MS = 15_000
-/** Consecutive 404s that prove the uuid was never Relayr's, not a blip. */
-const RELAYR_NOT_FOUND_ATTEMPTS = 3
+
+/** Core's relayed signing, payment and polling, out of every page's first load. */
+const loadRelayrEngine = () => import(/* webpackExports: ["signReviewed", "payRelayrReviewed", "pollRelayrBundle", "ReviewedCallRevertedError"] */ '@bananapus/nana-sdk-core/review')
 
 export type { RelayrEntry, RelayrTransactionRecord, RelayrTransactionBinding } from '@bananapus/nana-sdk-core/review/relayr'
 
@@ -81,28 +63,12 @@ export type RelayrCall = {
   contractName?: string
 }
 
+/** A relayed call as one review shows it (core's `reviewPlan`): the request its signer sends through the forwarder. */
+export type RelayrPlanCall = ReviewedCall & { from: Address }
+
 /** Older saved launches may lack quote bindings; recovery must keep them unresolved. */
 export type RelayrQuote = Omit<SDKRelayrQuote, 'transactions' | 'expectedTransactions'> &
   Partial<Pick<SDKRelayrQuote, 'transactions' | 'expectedTransactions'>>
-
-export type RelayrExecutionErrorCode =
-  | 'RELAYR_FAILED'
-  | 'RELAYR_TIMEOUT'
-  | 'RELAYR_NOT_FOUND'
-
-export class RelayrExecutionError extends Error {
-  readonly name = 'RelayrExecutionError'
-
-  constructor(
-    message: string,
-    readonly code: RelayrExecutionErrorCode,
-    readonly bundleUuid: string,
-    readonly records: RelayrTransactionRecord[],
-    readonly retryable: boolean,
-  ) {
-    super(message)
-  }
-}
 
 /**
  * The payment has a real transaction hash, but its receipt could not be
@@ -118,13 +84,6 @@ export class RelayrPaymentSubmittedError extends Error {
     super(
       `Payment ${hash} was submitted on chain ${chainId}, but confirmation is not available yet. Do not pay again; resume the saved bundle instead.`,
     )
-  }
-}
-
-export class RelayrPaymentSendingError extends Error {
-  readonly name = 'RelayrPaymentSendingError'
-  constructor() {
-    super('Your wallet may have sent the payment without returning its hash. Check the saved bundle and wallet activity; do not pay again.')
   }
 }
 
@@ -144,154 +103,63 @@ export function relayrChainClient(chainId: number): ReturnType<typeof publicClie
   }
 }
 
-class RelayrHttpTimeoutError extends Error {
-  readonly name = 'RelayrHttpTimeoutError'
+function forwarderOf(chainId: number): Address {
+  const forwarder = jbV6ContractAddress[JBCoreContracts.ERC2771Forwarder][chainId as JBChainId] as Address | undefined
+  if (!forwarder) throw new Error(`No ERC-2771 forwarder on chain ${chainId}.`)
+  return forwarder
 }
 
-async function relayrFetch(
-  url: string,
-  init: RequestInit | undefined,
-  timeoutMs: number,
-): Promise<Response> {
-  try {
-    return await fetch(url, {
-      ...init,
-      signal: AbortSignal.timeout(Math.max(1, timeoutMs)),
-    })
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'TimeoutError') {
-      throw new RelayrHttpTimeoutError('The transaction service did not respond in time.')
-    }
-    throw error
-  }
-}
-
-function connectedWallet(chainId: JBChainId) {
-  return connectedWalletCore(chainId, {
-    requireUnchanged: true,
-    changedError: 'Connected account changed. Review the cross-chain request again.',
-  })
-}
-
-/** A relayed call must preserve the real sender through the canonical forwarder. */
+/**
+ * A relayed call through the canonical forwarder, keeping its real sender: `review` is the call one
+ * review shows (core's `reviewPlan`), and `sign` has core sign that exact ERC-2771 request under the plan,
+ * with no prompt of its own. The forwarder nonce is read now and must still be it, and the request
+ * still far from its deadline, when the wallet signs.
+ */
 export async function prepareForwardedTx(
   call: RelayrCall,
   expectedAccount: Address,
   expectedNonce?: bigint,
-): Promise<{ review: TransactionReviewRequest; sign: () => Promise<RelayrEntry> }> {
-  const forwarder = jbV6ContractAddress[JBCoreContracts.ERC2771Forwarder][
-    call.chainId
-  ] as Address | undefined
-  if (!forwarder) throw new Error(`No ERC-2771 forwarder on chain ${call.chainId}.`)
-
+): Promise<{ review: RelayrPlanCall; sign: (plan: ReviewedPlan) => Promise<RelayrEntry> }> {
+  const forwarder = forwarderOf(call.chainId)
   const client = publicClient(call.chainId)
-  const preparedWallet = getAccount(wagmiConfig)
-  const activeAccount = preparedWallet.address
-  if (!activeAccount || activeAccount.toLowerCase() !== expectedAccount.toLowerCase()) {
-    throw new Error('Connected account changed. Review the cross-chain request again.')
-  }
-
-  const [domain, nonce] = await Promise.all([
-    client.readContract({
-      address: forwarder,
-      abi: erc2771ForwarderAbi,
-      functionName: 'eip712Domain',
-    }),
-    client.readContract({
-      address: forwarder,
-      abi: erc2771ForwarderAbi,
-      functionName: 'nonces',
-      args: [expectedAccount],
-    }),
-  ])
+  const readNonce = () => client.readContract({ address: forwarder, abi: erc2771ForwarderAbi, functionName: 'nonces', args: [expectedAccount] })
+  const nonce = await readNonce()
   if (expectedNonce !== undefined && nonce !== expectedNonce) {
     throw new Error('The previous relay authorization may have executed. Check its original bundle before signing again.')
   }
-
   const value = call.value ?? 0n
-  const request = {
-    from: expectedAccount,
-    to: call.target,
-    value,
-    gas: call.gas ?? 500_000n,
-    nonce,
-    deadline: relayrForwarderDeadline(),
-    data: call.data,
+  const request = { from: expectedAccount, to: call.target, value, gas: call.gas ?? 500_000n, nonce, deadline: relayrForwarderDeadline(), data: call.data }
+  const requireFresh = () => {
+    if (request.deadline <= Math.floor(Date.now() / 1000) + RELAYR_SIGNATURE_REFRESH_SECONDS) throw new Error('The launch authorization changed or expired. Review it again.')
   }
-  const typedDomain = {
-    name: domain[1],
-    version: domain[2],
-    chainId: BigInt(call.chainId),
-    verifyingContract: forwarder,
-  } as const
-  const review: TransactionReviewRequest = {
-    kind: 'authorization',
-    title: 'Review relayed transaction',
-    description:
-      'Your signature authorizes this exact destination call onchain. The Raw view includes the full ERC-2771 request. The separate payment is reviewed before it is sent.',
-    confirmLabel: 'Agree & sign relay request',
-    authorization: {
-      type: 'EIP-712 ForwardRequest',
-      domain: typedDomain,
-      primaryType: 'ForwardRequest',
-      message: request,
+  return {
+    review: {
+      chainId: call.chainId, from: expectedAccount, to: call.target, data: call.data, value, gas: request.gas,
+      label: call.label ?? 'Relayed Juicebox transaction', abi: call.abi, functionName: call.functionName, args: call.args, contractName: call.contractName,
     },
-    calls: [
-      {
-        chainId: call.chainId,
-        from: expectedAccount,
-        to: call.target,
-        value,
-        gas: request.gas,
-        data: call.data,
-        label: call.label ?? 'Relayed Juicebox transaction',
-        abi: call.abi,
-        functionName: call.functionName,
-        args: call.args,
-        contractName: call.contractName,
-      },
-    ],
+    sign: async plan => {
+      if ((await readNonce()) !== nonce) throw new Error('The launch authorization changed or expired. Review it again.')
+      requireFresh()
+      const { signReviewed } = await loadRelayrEngine()
+      const [signature] = await signReviewed([{ kind: 'forward-request', chainId: call.chainId, request }], {
+        account: expectedAccount, plan, reverify: async () => requireFresh(),
+      }, { adapter: reviewedSendDeps.adapter })
+      return {
+        chain: call.chainId,
+        target: forwarder,
+        data: encodeFunctionData({
+          abi: erc2771ForwarderAbi,
+          functionName: 'execute',
+          args: [{ from: request.from, to: request.to, value: request.value, gas: request.gas, deadline: request.deadline, data: request.data, signature }],
+        }),
+        value: value.toString(),
+      }
+    },
   }
-  return { review, sign: async () => {
-    await connectedWallet(call.chainId)
-    const currentNonce = await client.readContract({ address: forwarder, abi: erc2771ForwarderAbi, functionName: 'nonces', args: [expectedAccount] })
-    if (currentNonce !== nonce || request.deadline <= Math.floor(Date.now() / 1000) + RELAYR_SIGNATURE_REFRESH_SECONDS) throw new Error('The launch authorization changed or expired. Review it again.')
-    assertReviewedWallet({ account: expectedAccount, connectorUid: preparedWallet.connector?.uid, chainId: call.chainId, safe: false }, 'Connected wallet changed. Review the cross-chain request again.')
-    const signature = await withReviewedWallet({ account: expectedAccount, connectorUid: preparedWallet.connector?.uid, chainId: call.chainId, safe: false }, wallet => {
-      if (request.deadline <= Math.floor(Date.now() / 1000) + RELAYR_SIGNATURE_REFRESH_SECONDS) throw new Error('The launch authorization changed or expired. Review it again.')
-      return wallet.signTypedData({
-        account: expectedAccount,
-        domain: typedDomain,
-        types: FORWARD_REQUEST_TYPES,
-        primaryType: 'ForwardRequest',
-        message: request,
-        })
-    })
-  
-    const live = getAccount(wagmiConfig).address
-    if (!live || live.toLowerCase() !== expectedAccount.toLowerCase()) {
-      throw new Error('Connected account changed. Review the cross-chain request again.')
-    }
-  
-    return {
-      chain: call.chainId,
-      target: forwarder,
-      data: encodeFunctionData({
-        abi: erc2771ForwarderAbi,
-        functionName: 'execute',
-        args: [{
-          from: request.from,
-          to: request.to,
-          value: request.value,
-          gas: request.gas,
-          deadline: request.deadline,
-          data: request.data,
-          signature,
-        }],
-      }),
-      value: value.toString(),
-    }
-  } }
+}
+
+class RelayrHttpTimeoutError extends Error {
+  readonly name = 'RelayrHttpTimeoutError'
 }
 
 /**
@@ -306,15 +174,14 @@ export async function relayrPostBundle(
   const request = relayrBundleRequest(transactions)
   let response: Response
   try {
-    response = await relayrFetch(
-      `${RELAYR_API}/v1/bundle/prepaid`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(request),
-      },
-      RELAYR_QUOTE_TIMEOUT_MS,
-    )
+    response = await fetch(`${RELAYR_API}/v1/bundle/prepaid`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(RELAYR_QUOTE_TIMEOUT_MS),
+    }).catch(error => {
+      throw error instanceof DOMException && error.name === 'TimeoutError' ? new RelayrHttpTimeoutError() : error
+    })
   } catch (error) {
     if (error instanceof RelayrHttpTimeoutError) {
       throw new Error(
@@ -332,20 +199,20 @@ export function relayrPaymentLabel(payment: RelayrPayment): string {
 }
 
 /**
- * Review, simulate and send one payment for a quote from the account it was
- * reviewed for, then prove it from the chain with the SDK. The option is read
- * through relayrPaymentDetails before the review, after it and right before
- * sending, and must not change in between. A quote that was paid before is
- * paid again only when the SDK's retry rule (requireRelayrRetry) clears every
- * payment `sent` for it, right before the wallet opens. Resolves with the hash
- * the payment was mined under and every payment sent for the quote.
+ * Pays one option of a quote through core's `payRelayrReviewed`, which reviews it (or spends the
+ * plan's fee bound for `planned`'s round, with no prompt), simulates, holds, sends and proves it.
+ * This adds the launch journal's own rules: `reverify` and the option are rechecked right before the
+ * wallet opens, and a quote paid before (`sent`) is paid again only when the SDK's retry rule clears
+ * every earlier payment. Resolves with the hash the payment mined under and every payment sent for
+ * the quote.
  */
 export async function relayrPay({
   payment,
-  account: expectedAccount,
-  bundleUuid,
+  account,
+  quote,
   destinationChainIds,
   sent = [],
+  planned,
   reverify,
   onSending,
   onSent,
@@ -354,11 +221,13 @@ export async function relayrPay({
   payment: RelayrPayment
   /** The account the payment was reviewed for. */
   account: Address
-  bundleUuid: string
+  quote: SDKRelayrQuote
   destinationChainIds: readonly number[]
   /** Every payment this session already sent for the quote, each under the hash it was mined. */
   sent?: readonly RelayrSentPayment[]
-  /** Re-prove the bundle's calls before the review, after it and right before sending. */
+  /** The plan whose review showed this quote's round and its fee bound: a first payment within it is not asked again. */
+  planned?: { plan: ReviewedPlan; round: string }
+  /** Re-prove the bundle's calls before the payment and right before the wallet opens. */
   reverify?: () => Promise<void>
   /** Save the payment attempt before the wallet opens. */
   onSending?: () => unknown | Promise<unknown>
@@ -373,220 +242,86 @@ export async function relayrPay({
   if (sent.length >= MAX_RELAYR_SENT_PAYMENTS) {
     throw new Error('This quote was paid too many times to pay again. Keep it pending; do not pay again.')
   }
-  const reviewedConnectorUid = getAccount(wagmiConfig).connector?.uid
-  const reviewed = relayrPaymentDetails(payment, { bundleUuid, destinationChainIds })
+  const bundleUuid = quote.bundle_uuid
+  const details = relayrPaymentDetails(payment, { bundleUuid, destinationChainIds })
   const readReviewed = () => {
     const current = relayrPaymentDetails(payment, { bundleUuid, destinationChainIds })
-    if (current.chainId !== reviewed.chainId || current.amount !== reviewed.amount || current.calldata !== reviewed.calldata) {
+    if (current.chainId !== details.chainId || current.amount !== details.amount || current.calldata !== details.calldata) {
       throw new Error('The payment changed. Review the original funding choice again.')
     }
-    return current
   }
   await reverify?.()
-  const chainId = reviewed.chainId as JBChainId
-  const client = publicClient(chainId)
-  await requireRelayrPaymentRuntime(client)
-
-  await requireTransactionReview({
-    title: 'Review payment',
-    description:
-      'This payment covers your transactions. Review its exact chain, destination, native value, and calldata before opening your wallet.',
-    confirmLabel: 'Pay',
-    calls: [
-      {
-        chainId,
-        from: expectedAccount,
-        to: reviewed.target,
-        value: reviewed.amount,
-        gas: RELAYR_PAYMENT_GAS,
-        data: reviewed.calldata,
-        label: 'Pay for relayed transactions',
-        contractName: 'Transaction payment',
+  const { payRelayrReviewed, ReviewedCallRevertedError } = await loadRelayrEngine()
+  let payments = [...sent]
+  let hash: Hex | undefined
+  try {
+    await payRelayrReviewed(quote, details.chainId, {
+      account,
+      ...(planned && !sent.length ? { plan: planned.plan, relayrRound: planned.round } : {}),
+      onSending: async () => {
+        assertNoViewAs()
+        readReviewed()
+        await reverify?.()
+        if (sent.length) await requireRelayrRetry(relayrChainClient, { payments: sent, from: account, bundleUuid })
+        await onSending?.()
       },
-    ],
-  })
-
-  readReviewed()
-  await reverify?.()
-  const { account } = await connectedWallet(chainId)
-  if (account.toLowerCase() !== expectedAccount.toLowerCase()) {
-    throw new Error('Connected account changed. Review the payment again.')
-  }
-  await requireRelayrPaymentRuntime(client)
-  await simulateRelayrPayment(client, { from: account, payment: reviewed })
-  const live = getAccount(wagmiConfig).address
-  if (!live || live.toLowerCase() !== expectedAccount.toLowerCase()) {
-    throw new Error('Connected account changed. Review the payment again.')
-  }
-  // Review and wallet preparation are open-ended. Re-authenticate the exact
-  // quote immediately before the fixed-gas write.
-  const details = readReviewed()
-  await reverify?.()
-  if (sent.length) await requireRelayrRetry(relayrChainClient, { payments: sent, from: account, bundleUuid: details.bundleUuid })
-  // Every asynchronous proof above may outlive the connected wallet. The
-  // captured wallet client cannot authorize a changed live account or chain.
-  const assertReadyToSend = () => {
-    assertReviewedWallet({ account: expectedAccount, connectorUid: reviewedConnectorUid, chainId, safe: false }, 'Connected wallet changed. Review the payment again.')
-    readReviewed()
-  }
-  assertReadyToSend()
-  await onSending?.()
-  try {
-    assertReadyToSend()
+      onSent: async submitted => {
+        hash = submitted
+        // Once the wallet returns a hash, a storage, receipt or proof failure is an
+        // uncertain submitted outcome, never permission to quote and pay again.
+        payments = [...sent, sentRelayrPayment(details, submitted)]
+        try {
+          onSent?.(payments)
+        } catch {
+          throw new RelayrPaymentSubmittedError(submitted, details.chainId)
+        }
+      },
+    }, reviewedSendDeps)
   } catch (error) {
-    // The durable marker may have awaited storage. This refusal is known to
-    // precede wallet invocation, so the SDK can restore its prior unpaid state.
-    throw new RelayrPaymentNotSentError(error)
-  }
-  let hash: Hex
-  let invoked = false
-  try {
-    hash = await withReviewedWallet({ account: expectedAccount, connectorUid: reviewedConnectorUid, chainId, safe: false }, wallet => {
-      assertReadyToSend()
-      invoked = true
-      return wallet.sendTransaction({
-        account,
-        chain: SUPPORTED_CHAINS.find(chain => chain.id === chainId)!,
-        to: details.target,
-        value: details.amount,
-        data: details.calldata,
-        gas: RELAYR_PAYMENT_GAS,
-      })
-    })
-  } catch (error) {
-    if (!invoked) throw new RelayrPaymentNotSentError(error)
-    const walletError = relayrWalletPaymentError(error)
-    if (isDefiniteWalletRejection(walletError)) throw walletError
-    throw new RelayrPaymentSendingError()
-  }
-  // Once the wallet returns a hash, a storage, receipt or proof failure is an
-  // uncertain submitted outcome, never permission to quote and pay again.
-  let payments = [...sent, sentRelayrPayment(details, hash)]
-  try {
-    onSent?.(payments)
-  } catch {
-    throw new RelayrPaymentSubmittedError(hash, chainId)
-  }
-  let receipt: TransactionReceipt
-  try {
-    receipt = await client.waitForTransactionReceipt({ hash })
-  } catch {
-    throw new RelayrPaymentSubmittedError(hash, chainId)
-  }
-  // A wallet that sped the payment up mined it under another hash; that
-  // transaction is the payment to prove and to remember.
-  const mined = receipt.transactionHash
-  if (typeof mined !== 'string' || !isHash(mined)) throw new RelayrPaymentSubmittedError(hash, chainId)
-  if (mined.toLowerCase() !== hash.toLowerCase()) {
-    payments = [...sent, sentRelayrPayment(details, mined)]
-    try {
-      onSent?.(payments)
-    } catch {
-      throw new RelayrPaymentSubmittedError(mined, chainId)
+    if (!hash) throw error
+    if (error instanceof RelayrPaymentSubmittedError || error instanceof RelayrProofError) throw error
+    // A reverted payment is proven as such: the proof decides a reverted quote's retry.
+    if (error instanceof ReviewedCallRevertedError) {
+      await verifyRelayrPayment(publicClient(details.chainId as JBChainId), { hash: error.hash, from: account, payment: details })
+        .catch(proof => { if (proof instanceof RelayrProofError) throw proof })
     }
+    throw new RelayrPaymentSubmittedError(hash, details.chainId)
   }
-  try {
-    await verifyRelayrPayment(client, { hash: mined, from: account, payment: details })
-  } catch (error) {
-    // A proof error is final: the payment reverted, or the mined transaction is another one.
-    if (error instanceof RelayrProofError) throw error
-    throw new RelayrPaymentSubmittedError(mined, chainId)
-  }
-  return { hash: mined, payments }
+  return { hash: payments[payments.length - 1].hash, payments }
 }
 
-type RelayrBundleRead = { paymentReceived: unknown; records: RelayrTransactionRecord[] }
+const recordsOf = (bundle: RelayrBundle | null) =>
+  Array.isArray(bundle?.transactions) ? bundle.transactions as RelayrTransactionRecord[] : null
 
 /**
- * One read of Relayr's bundle for relayrPoll, never from a cache: a cached
- * answer could hide a payment or a destination result. Resolves with what
- * Relayr reports when the answer names exactly this bundle, null when it does
- * not, and 'not-found' on a 404, which relayrPoll counts and the SDK's
- * readRelayrBundle reads as any other failed read. Throws while Relayr is
- * unreachable.
+ * Relayr's records of a bundle once every destination reports success, or, when that stops (Relayr
+ * failed one, the wait ran out, Relayr is unreachable), its records as last read; null when none can be
+ * read. Relayr's word only points at hashes: the caller proves each destination onchain.
  */
-async function readRelayrBundle(
-  uuid: string,
-  timeoutMs = RELAYR_STATUS_REQUEST_TIMEOUT_MS,
-): Promise<RelayrBundleRead | 'not-found' | null> {
-  const response = await relayrFetch(`${RELAYR_API}/v1/bundle/${uuid}`, { cache: 'no-store' }, timeoutMs)
-  if (response.status === 404) return 'not-found'
-  if (!response.ok) return null
-  const { bundle_uuid: echoed, transactions, payment_received: paymentReceived } =
-    ((await response.json()) ?? {}) as { bundle_uuid?: unknown; transactions?: unknown; payment_received?: unknown }
-  return typeof echoed === 'string' && echoed.toLowerCase() === uuid.toLowerCase() && Array.isArray(transactions)
-    ? { paymentReceived, records: transactions as RelayrTransactionRecord[] }
-    : null
-}
-
-export async function relayrPoll(
-  uuid: string,
-  expectedCount: number,
-  onUpdate?: (records: RelayrTransactionRecord[]) => void,
-  intervalMs = 2_500,
-  timeoutMs = 5 * 60_000,
-): Promise<RelayrTransactionRecord[]> {
-  if (!Number.isSafeInteger(expectedCount) || expectedCount < 1) {
-    throw new Error('Relayr polling requires the exact destination count.')
-  }
-  const started = Date.now()
-  let lastRecords: RelayrTransactionRecord[] = []
-  // A bundle Relayr never had 404s forever. Reporting that as the "still
-  // processing, do not submit again" timeout tells the user to wait on
-  // something that does not exist.
-  let consecutiveNotFound = 0
-  for (;;) {
+export async function relayrRecords(uuid: string, expectedCount: number, { timeoutMs, onRecords }: {
+  timeoutMs?: number
+  /** Each read's records as they arrive, so a reload keeps every hash already seen. */
+  onRecords?: (records: RelayrTransactionRecord[]) => void
+} = {}): Promise<RelayrTransactionRecord[] | null> {
+  const { pollRelayrBundle } = await loadRelayrEngine()
+  /** The bundle as the poll last read it: a poll that stops on a failed chain still saw the others' hashes. */
+  let last: RelayrBundle | null = null
+  const watched: typeof fetch = async (...args) => {
+    const response = await fetch(...args)
     try {
-      const elapsed = Date.now() - started
-      const read = await readRelayrBundle(uuid, Math.min(RELAYR_STATUS_REQUEST_TIMEOUT_MS, Math.max(timeoutMs - elapsed, 1)))
-      if (read === 'not-found') {
-        consecutiveNotFound += 1
-        if (consecutiveNotFound >= RELAYR_NOT_FOUND_ATTEMPTS) {
-          throw new RelayrExecutionError(
-            `The original bundle could not be found: ${uuid}. Its payment and destination outcomes remain unresolved. Check the original bundle; do not pay again.`,
-            'RELAYR_NOT_FOUND',
-            uuid,
-            lastRecords,
-            false,
-          )
-        }
-      } else {
-        consecutiveNotFound = 0
+      const bundle = await response.clone().json() as RelayrBundle
+      if (String(bundle?.bundle_uuid).toLowerCase() === uuid.toLowerCase()) {
+        last = bundle
+        const records = recordsOf(bundle)
+        if (records?.length) onRecords?.(records)
       }
-      const records = read && read !== 'not-found' ? read.records : null
-      if (records) {
-        lastRecords = records
-        onUpdate?.(records)
-        if (
-          records.length === expectedCount &&
-          records.every(record => relayrStateIsSuccess(record.status?.state))
-        ) {
-          return records
-        }
-        const progress = relayrProgress(records)
-        if (progress.failed) {
-          throw new RelayrExecutionError(
-            `Could not execute on ${progress.failed} chain${progress.failed === 1 ? '' : 's'}.`,
-            'RELAYR_FAILED',
-            uuid,
-            records,
-            false,
-          )
-        }
-      }
-    } catch (error) {
-      if (error instanceof RelayrExecutionError) throw error
-    }
-    if (Date.now() - started > timeoutMs) {
-      throw new RelayrExecutionError(
-        `Transactions are still processing for paid bundle ${uuid}. Do not submit this action again; check the original bundle later.`,
-        'RELAYR_TIMEOUT',
-        uuid,
-        lastRecords,
-        true,
-      )
-    }
-    await new Promise(resolve => setTimeout(resolve, intervalMs))
+    } catch { /* The poll reports the unreadable answer, and the caller's journal its own failure. */ }
+    return response
+  }
+  try {
+    return recordsOf(await pollRelayrBundle(uuid, expectedCount, { fetch: watched, ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}) }))
+  } catch {
+    return recordsOf(last) ?? recordsOf(await readRelayrBundle(uuid).catch(() => null))
   }
 }
 

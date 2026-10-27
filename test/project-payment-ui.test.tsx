@@ -8,10 +8,11 @@ import { PAY_QUOTE_FAILED_MESSAGE } from '@bananapus/nana-sdk-core/v6'
 import { encodeAbiParameters, encodeFunctionData, decodeFunctionData, type Address, type Hex } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectPayQuote, ProjectPayTokenOption } from '@/lib/project-pay-quote'
-import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
+import type { TxRequest, TxSendOptions } from '@/hooks/useReviewedAction'
 import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import { approvalIntentKey } from '@/lib/transaction-builders'
 import { expectRetryHeldByIntent } from './support/intent-retry'
+import { runSteps } from './support/reviewed-steps'
 
 type Action = 'payment' | 'approval'
 type Handle = { notice: string | null; dismiss: ReturnType<typeof vi.fn>; phase: string; busy: boolean; isSafe: boolean; error: null; hash: Hex | null; safeProposalHash: Hex | null; receipt: null; send: ReturnType<typeof vi.fn>; reset: ReturnType<typeof vi.fn> }
@@ -29,9 +30,9 @@ const runtime = vi.hoisted(() => ({
 vi.mock('wagmi', () => ({ usePublicClient: () => ({ readContract: runtime.readContract, waitForTransactionReceipt: runtime.waitForTransactionReceipt, getTransactionReceipt: runtime.getTransactionReceipt }) }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address, openSignIn: runtime.openSignIn }) }))
 vi.mock('@/lib/project-pay-quote', () => ({ prepareProjectPayQuote: runtime.quote, readProjectPayTokenOptions: runtime.options }))
-vi.mock('@/hooks/useSafeTx', () => ({
+vi.mock('@/hooks/useReviewedAction', () => ({
   txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,
-  useSafeTx: () => {
+  useReviewedAction: () => {
     const [index] = useState(() => runtime.nextHook++)
     useEffect(() => { runtime.mounts++; return () => { runtime.unmounts++ } }, [])
     return runtime.handles[index]
@@ -76,17 +77,17 @@ describe('shared payment execution', () => {
       if (functionName === 'allowance') return runtime.allowance
       throw new Error(`Unexpected contract read: ${functionName}`)
     })
-    runtime.handles = (['payment', 'approval'] as const).map(action => ({
+    const action = (request: TxRequest): Action => request.functionName === 'approve' ? 'approval' : 'payment'
+    const handle: Handle = {
       notice: null, dismiss: vi.fn(), phase: 'idle', busy: false, isSafe: false, error: null, hash: null, safeProposalHash: null, receipt: null, reset: vi.fn(),
-      send: vi.fn(async (request: TxRequest, options: TxSendOptions = {}) => {
-        await runtime.review?.(action, request)
-        // Model the mandatory shared transaction review's last write gate.
-        await options.reverify?.(request)
-        runtime.writes.push({ action, request, options })
-        if (action === 'approval') runtime.allowance = request.args[1] as bigint
+      // The approval and the payment are one reviewed run: each step's write gate, then its write.
+      send: vi.fn(async (requested: TxRequest | TxRequest[], options: TxSendOptions) => runSteps(requested, options, (request, _index, sent) => {
+        runtime.writes.push({ action: action(request), request, options: sent as TxSendOptions })
+        if (action(request) === 'approval') runtime.allowance = request.args[1] as bigint
         return HASH
-      }),
-    }))
+      }, { safe: handle.isSafe, review: request => runtime.review?.(action(request), request), receipt: hash => runtime.waitForTransactionReceipt({ hash }) })),
+    }
+    runtime.handles = [handle]
     props = { chainId: 1, projectId: 7n, tokenLabel: 'FUND', title: 'Contribute', context: { token: NATIVE_TOKEN, terminal: TERMINAL, decimals: 18, symbol: 'ETH' }, paused: false, reservedPercent: 0, rulesetId: '100', verify: runtime.verify }
     cache = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
     host = document.createElement('div'); document.body.append(host); root = createRoot(host)
@@ -103,10 +104,9 @@ describe('shared payment execution', () => {
       element.dispatchEvent(new Event('input', { bubbles: true }))
     })
   }
-  async function render() {
-    await act(async () => commitRender())
-    if (!host.querySelector('dialog')) await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent?.startsWith('Pay on '))?.click())
-  }
+  async function render() { await act(async () => commitRender()) }
+  /** Pay on opens the payment's one review as soon as its quote is in. */
+  async function open() { await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent?.startsWith('Pay on '))?.click()) }
   async function input(value: string) { await act(async () => changeInput(value)) }
   async function waitUntil(assertion: () => void) {
     await vi.waitFor(async () => {
@@ -116,13 +116,16 @@ describe('shared payment execution', () => {
       assertion()
     }, { timeout: 5000, interval: 10 })
   }
-  function button() { return [...host.querySelectorAll('button')].find(element => /^Confirm & (contribute|pay)$/.test(element.textContent ?? ''))! }
+  function again() { return [...host.querySelectorAll('button')].find(element => /^(Try|Review) again$/.test(element.textContent ?? '')) }
   async function ready(value = '1') {
     await render(); await input(value)
-    await waitUntil(() => expect(button().disabled).toBe(false))
+    await waitUntil(() => expect(runtime.quote).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ amount: expect.any(BigInt) })))
   }
+  /** Opens the payment, or starts it again from its error, and waits for its one run. */
   async function submit(waitingForApproval = false) {
-    await act(async () => button().click())
+    const retry = again()
+    if (retry) await act(async () => retry.click())
+    else await open()
     if (waitingForApproval) {
       await waitUntil(() => {
         expect(runtime.waitForTransactionReceipt).toHaveBeenCalledTimes(1)
@@ -130,7 +133,6 @@ describe('shared payment execution', () => {
       })
     } else {
       await waitUntil(() => {
-        expect(button().textContent).not.toContain('Preparing')
         expect(host.textContent).not.toMatch(/Getting the latest|Review and execute|Confirming approval onchain/)
       })
     }
@@ -172,7 +174,9 @@ describe('shared payment execution', () => {
 
   it('says when the market price could not be read, in place of the slippage promise, and offers a retry', async () => {
     runtime.quote.mockResolvedValue(quote(99n * UNIT, { quoteFailed: true }))
-    await ready()
+    // The person closes the payment's review, and sees the market price line with its retry.
+    runtime.handles[0].send.mockResolvedValueOnce(null)
+    await ready(); await submit()
     expect(host.textContent).toContain(PAY_QUOTE_FAILED_MESSAGE)
     expect(host.textContent).not.toContain('maximum slippage')
     const retried = Promise.withResolvers<ProjectPayQuote>()
@@ -259,7 +263,7 @@ describe('shared payment execution', () => {
     await submit()
     expect(runtime.writes).toHaveLength(0)
     expect(host.textContent).toContain('buyback hook could not be read')
-    await waitUntil(() => expect(button().disabled).toBe(false))
+    await waitUntil(() => expect(again()).toBeDefined())
     runtime.quote.mockResolvedValue(quote(77n * UNIT, { metadata: REFRESHED_METADATA }))
     await submit()
     expect(runtime.writes.map(item => item.action)).toEqual(['approval', 'payment'])
@@ -271,7 +275,7 @@ describe('shared payment execution', () => {
     await ready()
     await act(async () => { const select = host.querySelector('select')!; select.value = TOKEN; select.dispatchEvent(new Event('change', { bubbles: true })) })
     await input('2.125')
-    await waitUntil(() => expect(button().disabled).toBe(false))
+    await waitUntil(() => expect(runtime.quote).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ token: TOKEN, amount: 2_125_000n })))
     expect(runtime.quote).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ token: TOKEN, terminal: TERMINAL, amount: 2_125_000n }))
     await submit()
     expect(encoded(runtime.writes.at(-1)!.request).args?.slice(1, 3)).toEqual([TOKEN, 2_125_000n])
@@ -291,7 +295,7 @@ describe('shared payment execution', () => {
     erc20(); runtime.allowance = 0n
     runtime.handles.forEach(handle => { handle.isSafe = true })
     await ready(); await submit()
-    const handle = runtime.handles[1]
+    const handle = runtime.handles[0]
     handle.phase = 'submitted'
     handle.notice = 'The Safe result could not be proven. Check Safe before taking another action.'
     await render()
@@ -342,7 +346,7 @@ describe('shared payment execution', () => {
       await new Promise<void>(resolve => queueMicrotask(resolve))
     })
     expect(runtime.writes.map(item => item.action)).toEqual(['approval'])
-    expect(runtime.unmounts).toBe(2)
+    expect(runtime.unmounts).toBe(1)
   })
 
   it.each([0, 10_000])('rejects an unprotected zero output with reserved percent %s', async reservedPercent => {
@@ -367,53 +371,56 @@ describe('shared payment execution', () => {
     const options: ProjectPayTokenOption[] = [{ token: NATIVE_TOKEN, terminal: TERMINAL, decimals: 18, symbol: 'ETH', viaRouter: false }, { token: TOKEN, terminal: TERMINAL, decimals: 6, symbol: 'USDC', viaRouter: true }]
     runtime.options.mockResolvedValue(options)
     await ready()
-    expect(runtime.mounts).toBe(2)
+    expect(runtime.mounts).toBe(1)
     runtime.quote.mockRejectedValue(new Error('RPC offline'))
     await input('2')
     await act(async () => { const select = host.querySelector('select')!; select.value = TOKEN; select.dispatchEvent(new Event('change', { bubbles: true })) })
     props.rulesetId = '101'; await render()
-    expect(runtime.mounts).toBe(2)
+    expect(runtime.mounts).toBe(1)
     expect(runtime.unmounts).toBe(0)
     expect(runtime.writes).toHaveLength(0)
   })
   it('opens a payment modal and retains its amount and receipt watchers when closed', async () => {
-    await ready('2')
+    await ready('2'); await submit()
     expect(host.querySelector('dialog[open]')).not.toBeNull()
     await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="Close"]')!.click())
     expect(host.querySelector('dialog')).toBeNull()
     expect(runtime.unmounts).toBe(0)
     await render()
     expect(host.querySelector('input')!.value).toBe('2')
-    expect(runtime.mounts).toBe(2)
+    expect(runtime.mounts).toBe(1)
   })
 
   it('lists the wallet steps before the first prompt and advances through them, as jbm\'s pay sequence does', async () => {
     erc20(); runtime.allowance = 0n
     await ready('2.5')
-    await waitUntil(() => expect(host.textContent).toContain('Your wallet will ask for 2 actions'))
     const titles = () => [...host.querySelectorAll('li[data-state]')].map(step => step.textContent)
-    expect(titles()[0]).toContain('Approve USDC')
-    expect(titles()[1]).toContain('Contribute 2.5 USDC')
-    expect([...host.querySelectorAll('li[data-state]')].map(step => step.getAttribute('data-state'))).toEqual(['pending', 'pending'])
+    let listed: { text: string; titles: (string | null)[]; states: (string | null)[] } | undefined
+    runtime.review = async () => { listed ??= { text: host.textContent ?? '', titles: titles(), states: [...host.querySelectorAll('li[data-state]')].map(step => step.getAttribute('data-state')) } }
     await submit()
+    expect(listed!.text).toContain('Your wallet will ask for 2 actions')
+    expect(listed!.titles[0]).toContain('Approve USDC')
+    expect(listed!.titles[1]).toContain('Contribute 2.5 USDC')
+    expect(listed!.states[1]).toBe('pending')
     expect(runtime.writes.map(item => item.action)).toEqual(['approval', 'payment'])
     expect([...host.querySelectorAll('li[data-state]')].map(step => step.getAttribute('data-state'))).toEqual(['complete', 'active'])
   })
 
   it('asks for one action when a native payment needs no approval', async () => {
     await ready()
-    await waitUntil(() => expect(host.textContent).toContain('Your wallet will ask for one action'))
-    expect(host.querySelectorAll('li[data-state]')).toHaveLength(1)
+    let listed = ''
+    runtime.review = async () => { listed = host.textContent ?? ''; expect(host.querySelectorAll('li[data-state]')).toHaveLength(1) }
+    await submit()
+    expect(listed).toContain('Your wallet will ask for one action')
   })
 
   it('does not quote a closed allowlist for a visitor without a wallet, and asks for an allowed one', async () => {
     runtime.address = undefined
     props.quoteNeedsWallet = true
-    await render(); await input('25')
-    await waitUntil(() => expect(host.textContent).toContain('Connect an allowed wallet to see your quote.'))
+    await render(); await input('25'); await open()
+    expect(runtime.openSignIn).toHaveBeenCalledOnce()
+    expect(host.querySelector('dialog')).toBeNull()
     expect(runtime.quote).not.toHaveBeenCalled()
-    expect(host.textContent).not.toContain('quote is unavailable')
-    expect(host.textContent).not.toContain('Enter an amount')
   })
 
   it('submits the selected chain and its own project ID', async () => {
@@ -432,24 +439,24 @@ describe('shared payment execution', () => {
   it('keeps a shortfall and its retry across closing and reopening the same payment', async () => {
     await ready()
     runtime.handles[0].send.mockImplementationOnce(async (_request: TxRequest, options: TxSendOptions & { onFailure?: (error: unknown) => void }) => { options.onFailure?.(UNDER_MIN); return null })
-    await act(async () => button().click())
+    await open()
     await waitUntil(() => expect(host.textContent).toContain(SHORTFALL))
     await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="Close"]')!.click())
-    await render()
+    await open()
     expect(host.textContent).toContain(SHORTFALL)
     expect(allowedDecrease()?.value).toBe('2.5')
-    expect([...host.querySelectorAll('button')].some(element => element.textContent === 'Review again')).toBe(true)
+    expect([...host.querySelectorAll('button')].some(element => element.textContent === 'Try again')).toBe(true)
   })
 
   it('names a shortfall the simulation hit and reviews again with the looser minimum it offers', async () => {
     await ready()
     const pay = runtime.handles[0].send
     pay.mockImplementationOnce(async (_request: TxRequest, options: TxSendOptions & { onFailure?: (error: unknown) => void }) => { options.onFailure?.(UNDER_MIN); return null })
-    await act(async () => button().click())
+    await open()
     await waitUntil(() => expect(host.textContent).toContain(SHORTFALL))
     // 1% plus the ~1.02% shortfall, rounded up to a half percent.
     expect(allowedDecrease()?.value).toBe('2.5')
-    const again = [...host.querySelectorAll('button')].find(element => element.textContent === 'Review again')!
+    const again = [...host.querySelectorAll('button')].find(element => element.textContent === 'Try again')!
     runtime.quote.mockResolvedValue(quote(97n * UNIT))
     await act(async () => again.click())
     await waitUntil(() => expect(runtime.writes.filter(item => item.action === 'payment')).toHaveLength(1))
@@ -468,7 +475,7 @@ describe('shared payment execution', () => {
     await act(async () => commitRender())
     expect(host.textContent).toContain('The payment reverted.')
     expect(allowedDecrease()).toBeNull()
-    const again = [...host.querySelectorAll('button')].find(element => element.textContent === 'Review again')!
+    const again = [...host.querySelectorAll('button')].find(element => element.textContent === 'Try again')!
     runtime.quote.mockResolvedValue(quote(97n * UNIT))
     await act(async () => again.click())
     await waitUntil(() => expect(runtime.writes.filter(item => item.action === 'payment')).toHaveLength(2))
@@ -491,7 +498,7 @@ describe('shared payment execution', () => {
     await input('2')
     expect(host.textContent).not.toContain('The payment reverted.')
     expect(host.textContent).not.toContain('failed onchain')
-    expect([...host.querySelectorAll('button')].some(element => element.textContent === 'Review again')).toBe(false)
+    expect([...host.querySelectorAll('button')].some(element => element.textContent === 'Try again')).toBe(false)
   })
 
   it('keeps the shared line and offers no minimum for an unknown failure', async () => {
@@ -499,17 +506,17 @@ describe('shared payment execution', () => {
     runtime.handles[0].send.mockImplementationOnce(async (_request: TxRequest, options: TxSendOptions & { onFailure?: (error: unknown) => void }) => { options.onFailure?.(new Error('nonce too low')); return null })
     await submit()
     expect(allowedDecrease()).toBeNull()
-    expect([...host.querySelectorAll('button')].some(element => element.textContent === 'Review again')).toBe(false)
+    expect([...host.querySelectorAll('button')].some(element => element.textContent === 'Review again')).toBe(true)
     expect(runtime.quote).not.toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ slippageBps: expect.anything() }))
   })
 
   it('drops a shortfall and its retry once the amount changes', async () => {
     await ready()
     runtime.handles[0].send.mockImplementationOnce(async (_request: TxRequest, options: TxSendOptions & { onFailure?: (error: unknown) => void }) => { options.onFailure?.(UNDER_MIN); return null })
-    await act(async () => button().click())
+    await open()
     await waitUntil(() => expect(host.textContent).toContain(SHORTFALL))
     await input('2')
-    await waitUntil(() => expect(button().disabled).toBe(false))
+    await waitUntil(() => expect(runtime.quote).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ amount: 2n * UNIT })))
     expect(host.textContent).not.toContain(SHORTFALL)
     expect(allowedDecrease()).toBeNull()
   })
@@ -521,7 +528,7 @@ describe('shared payment execution', () => {
     await submit()
     await waitUntil(() => expect(host.textContent).toContain('This payment would return no tokens.'))
     expect(allowedDecrease()).toBeNull()
-    expect([...host.querySelectorAll('button')].some(element => element.textContent === 'Review again')).toBe(false)
+    expect([...host.querySelectorAll('button')].some(element => element.textContent === 'Try again')).toBe(true)
   })
 
 })

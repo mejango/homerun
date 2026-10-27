@@ -10,7 +10,7 @@ import { FUND_LAUNCH_KEY, decodeLaunchSession, launchIntent, multisigSetupIntent
 import { safeExecutionLog } from './support/safe-logs'
 import { installRecoveryLocks } from './runtime/write-recovery-fixture'
 import { checkedItLabel, SAVED_ATTEMPT_CHECK_LINE } from '@bananapus/nana-sdk-core/review'
-import type { TxRequest } from '../src/hooks/useSafeTx'
+import type { TxRequest } from '../src/hooks/useReviewedAction'
 import { multisigDeploymentRequest, predictMultisig, type CreateMultisig } from '../src/lib/create-multisig'
 
 const runtime = vi.hoisted(() => ({ txPhase: 'idle', txReceipt: null as unknown, verifyLaunch: vi.fn(), txError: '' as string, submissionHash: undefined as Hex | undefined, safe: false, send: vi.fn(), track: vi.fn(), adopt: vi.fn(), readContract: vi.fn(), getBlock: vi.fn(), getTransaction: vi.fn(), getTransactionReceipt: vi.fn(), waitReceipt: vi.fn(), waitSafe: vi.fn(), checkMultisigs: vi.fn(), verifyMultisigs: vi.fn(), publish: vi.fn(), checkDeployment: vi.fn(), relayr: vi.fn(), requestsDead: vi.fn() }))
@@ -25,7 +25,7 @@ vi.mock('@/components/WalletButton', () => ({ WalletButton: () => <span>Wallet</
 vi.mock('@/components/CreateFlow', () => ({ default: () => null }))
 vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => runtime.safe, useSafeConnection: () => false, waitForSafeExecutionHash: runtime.waitSafe }))
 vi.mock('@/lib/create-multisig', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/create-multisig')>(), checkCreateMultisigs: runtime.checkMultisigs, verifyCreatedMultisigs: runtime.verifyMultisigs }))
-vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({ phase: runtime.txPhase, receipt: runtime.txReceipt, isSafe: false, busy: false, error: runtime.txError, submissionHash: runtime.submissionHash, send: runtime.send, track: runtime.track, reset: vi.fn() }) }))
+vi.mock('@/hooks/useReviewedAction', () => ({ useReviewedAction: () => ({ phase: runtime.txPhase, receipt: runtime.txReceipt, isSafe: false, busy: false, error: runtime.txError, submissionHash: runtime.submissionHash, send: runtime.send, track: runtime.track, reset: vi.fn() }) }))
 vi.mock('@/lib/publish-fund-project-metadata', () => ({ publishFundProjectMetadata: runtime.publish }))
 vi.mock('@/lib/fund-launch-verification', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/fund-launch-verification')>(), checkLaunchDeployment: runtime.checkDeployment, verifyFundLaunch: (...args: unknown[]) => runtime.verifyLaunch(...args) }))
 vi.mock('@/lib/fund-launch-relayr', () => ({ runRelayrLaunch: runtime.relayr, launchRequestsDead: runtime.requestsDead }))

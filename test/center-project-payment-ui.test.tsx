@@ -58,6 +58,23 @@ describe('Juicebox wallet payment failure', () => {
     await vi.waitFor(() => expect(host.querySelector('iframe')).not.toBeNull())
   })
 
+  it("shows core's model as a preview beside Signa's review, and a closed review is no error", async () => {
+    await render()
+    const amount = host.querySelector<HTMLInputElement>('input')!
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(amount, '5'); amount.dispatchEvent(new Event('input', { bubbles: true })) })
+    await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Review with a passkey')!.click())
+    await vi.waitFor(() => expect(host.querySelector('iframe')).not.toBeNull())
+    const preview = host.querySelector('[aria-label="Payment preview"]')!
+    expect(preview.textContent).toContain('5 USDC')
+    expect(preview.textContent).toContain('0.000000000000000097 FUND')
+    expect(preview.textContent).toContain('Preview only.')
+    expect(runtime.prepare).toHaveBeenCalledWith(expect.objectContaining({ amount: '5000000', minimumReturnedTokens: '97', metadata: '0x' }))
+    await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Close')!.click())
+    await vi.waitFor(() => expect(host.querySelector('iframe')).toBeNull())
+    expect(host.querySelector('[role="alert"]')).toBeNull()
+    expect(runtime.submit).not.toHaveBeenCalled()
+  })
+
   it('says a payment reverted when Signa sends no reason, and prepares it again', async () => {
     runtime.pending = { intent, submitted: true, accountId: OWNER, status: reverted({}) }
     await render()

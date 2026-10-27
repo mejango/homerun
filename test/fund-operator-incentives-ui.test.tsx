@@ -16,7 +16,7 @@ const runtime = vi.hoisted(() => ({
 }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.account }) }))
-vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({ phase: 'idle', busy: false, send: runtime.send, track: async () => null }), txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle }))
+vi.mock('@/hooks/useReviewedAction', () => ({ useReviewedAction: () => ({ phase: 'idle', busy: false, send: runtime.send, track: async () => null }), txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle }))
 vi.mock('@/components/FundAssetWithdrawals', () => ({ FundAssetWithdrawals: ({ onConfigureAllowance }: { onConfigureAllowance: typeof runtime.configure }) => { runtime.configure = onConfigureAllowance; return null } }))
 vi.mock('@/lib/fund-state', async importOriginal => ({ ...await importOriginal<typeof import('../src/lib/fund-state')>(), readFundProjectState: async () => runtime.state }))
 vi.mock('@tanstack/react-query', () => ({
@@ -54,10 +54,10 @@ describe('FUND success allocation belongs to the owner', () => {
   const client = { readContract: runtime.readContract } as unknown as PublicClient
   async function render() { await act(async () => root.render(<FundOperatorActions state={runtime.state!} client={client} contextIndex={0} />)) }
   function mintButton() { return [...host.querySelectorAll('button')].find(button => button.textContent === 'Review FUND allocation')! }
-  /** Review opens jbm's confirm dialog; its action sends the mint. */
+  /** Review opens the mint's progress and its one review; an open progress reviews it again. */
   async function reviewAndConfirm() {
-    await act(async () => mintButton().click())
-    await act(async () => [...host.querySelectorAll<HTMLButtonElement>('[data-tx-confirm] button')].find(button => button.textContent === 'Confirm & mint')!.click())
+    const again = [...host.querySelectorAll<HTMLButtonElement>('[data-tx-confirm] button')].find(button => /^(Review|Try) again$/.test(button.textContent ?? ''))
+    await act(async () => (again ?? mintButton()).click())
   }
   async function selectOwner() {
     const selection = host.querySelector('select')!
@@ -138,14 +138,14 @@ describe('FUND success allocation belongs to the owner', () => {
   it('holds a ruleset change by its chosen action, so a retry after a preserved field changed is held by the first', async () => {
     await render()
     const review = () => [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Review disabling owner minting')!
-    const confirm = () => [...host.querySelectorAll<HTMLButtonElement>('[data-tx-confirm] button')].find(button => button.textContent !== 'Cancel' && !button.getAttribute('aria-label'))!
-    await act(async () => review().click()); await act(async () => confirm().click())
+    const again = () => [...host.querySelectorAll<HTMLButtonElement>('[data-tx-confirm] button')].find(button => button.textContent === 'Review again')!
+    await act(async () => review().click())
     // A field the change preserves (the issuance weight) moved after the lost reply.
     const next = state()
     next.rulesetSnapshot.configuration!.weight = next.rulesetSnapshot.configuration!.weight - 1n
     runtime.state = next
     await render()
-    await act(async () => review().click()); await act(async () => confirm().click())
+    await act(async () => again().click())
     const [first, retry] = sent()
     await expectRetryHeldByIntent(first, retry, writeIntentKey('fund-ruleset', { project: 7n, action: 'finish-success-minting' }))
   })

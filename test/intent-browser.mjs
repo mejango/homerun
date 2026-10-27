@@ -54,17 +54,17 @@ const answerCall = (to, data) => to && getAddress(to) === SAFE_FACTORY && data =
   : uint256(10n ** 18n)
 
 /** The receipt the visitor's own relay transaction produces, with one FundLaunched event. */
-const launchReceipt = chainId => {
+const launchReceipt = (chainId, hash = relayHash) => {
   const calls = stored.envelope.deploymentCalls.filter(call => call.chainId === chainId)
   const launch = calls[calls.length - 1]
   return {
     status: '0x1', blockNumber: uint256(1_000n), blockHash: `0x${'11'.repeat(32)}`,
-    transactionHash: relayHash, transactionIndex: '0x0', from: account.address, to: launch.to,
+    transactionHash: hash, transactionIndex: '0x0', from: account.address, to: launch.to,
     cumulativeGasUsed: uint256(500_000n), gasUsed: uint256(500_000n), effectiveGasPrice: uint256(2_000_000_000n),
     contractAddress: null, logsBloom: `0x${'00'.repeat(256)}`, type: '0x2',
     logs: [{
       address: launch.to, blockHash: `0x${'11'.repeat(32)}`, blockNumber: uint256(1_000n),
-      transactionHash: relayHash, transactionIndex: '0x0', logIndex: '0x0', removed: false,
+      transactionHash: hash, transactionIndex: '0x0', logIndex: '0x0', removed: false,
       topics: encodeEventTopics({
         abi: FUND_LAUNCHED_ABI, eventName: 'FundLaunched',
         args: { projectId: BigInt(projectIds[chainId]), owner: stored.envelope.jb.owner },
@@ -75,6 +75,17 @@ const launchReceipt = chainId => {
 }
 
 let stored = null
+/** What the visitor's wallet sent, each under its own hash, as the chain then reports it. */
+const walletSent = []
+const block = {
+  number: uint256(1_000n), hash: `0x${'11'.repeat(32)}`, parentHash: `0x${'22'.repeat(32)}`,
+  timestamp: uint256(1_800_000_000n), gasLimit: uint256(30_000_000n), gasUsed: '0x0',
+  miner: `0x${'33'.repeat(20)}`, extraData: '0x', baseFeePerGas: uint256(1n),
+  logsBloom: `0x${'00'.repeat(256)}`, transactions: [], uncles: [], sha3Uncles: `0x${'44'.repeat(32)}`,
+  stateRoot: `0x${'55'.repeat(32)}`, transactionsRoot: `0x${'66'.repeat(32)}`, receiptsRoot: `0x${'77'.repeat(32)}`,
+  difficulty: '0x0', totalDifficulty: '0x0', size: '0x0', nonce: '0x0000000000000000', mixHash: `0x${'88'.repeat(32)}`,
+}
+const sentTransaction = hash => walletSent.find(item => item.hash === hash?.toLowerCase())
 let deployRequests = 0
 let relayRequests = 0
 let intentReads = 0
@@ -197,7 +208,24 @@ const center = createServer((request, response) => {
         if (call.method === 'eth_blockNumber') return uint256(1_000n)
         if (call.method === 'eth_gasPrice') return uint256(2_000_000_000n)
         if (call.method === 'eth_getTransactionCount') return uint256(0n)
-        if (call.method === 'eth_getTransactionReceipt') return launchReceipt(chainId)
+        if (call.method === 'eth_estimateGas') return uint256(900_000n)
+        if (call.method === 'eth_getTransactionByHash') {
+          const sent = sentTransaction(call.params?.[0])
+          return sent && {
+            hash: sent.hash, from: account.address, to: sent.to, input: sent.data ?? '0x', value: sent.value ?? '0x0',
+            nonce: `0x${sent.nonce.toString(16)}`, chainId: `0x${chainId.toString(16)}`, gas: uint256(900_000n), gasPrice: uint256(2_000_000_000n),
+            blockHash: block.hash, blockNumber: block.number, transactionIndex: '0x0', type: '0x0', v: '0x1b', r: `0x${'01'.repeat(32)}`, s: `0x${'02'.repeat(32)}`,
+          }
+        }
+        if (call.method === 'eth_getTransactionReceipt') {
+          const sent = sentTransaction(call.params?.[0])
+          if (!sent) return launchReceipt(chainId)
+          if (getAddress(sent.to) !== getAddress(v6Address('ERC2771Forwarder', chainId))) return {
+            ...launchReceipt(chainId, sent.hash), to: sent.to, logs: [],
+          }
+          return launchReceipt(chainId, sent.hash)
+        }
+        if (call.method === 'eth_getBlockByHash') return block
         if (call.method === 'eth_getCode') {
           const address = call.params?.[0]
           if (!address) return '0x60006000'
@@ -215,14 +243,7 @@ const center = createServer((request, response) => {
             result: batched.map(item => ({ success: true, returnData: answerCall(item.target, item.callData) })),
           })
         }
-        if (call.method === 'eth_getBlockByNumber') return {
-          number: uint256(1_000n), hash: `0x${'11'.repeat(32)}`, parentHash: `0x${'22'.repeat(32)}`,
-          timestamp: uint256(1_800_000_000n), gasLimit: uint256(30_000_000n), gasUsed: '0x0',
-          miner: `0x${'33'.repeat(20)}`, extraData: '0x', baseFeePerGas: uint256(1n),
-          logsBloom: `0x${'00'.repeat(256)}`, transactions: [], uncles: [], sha3Uncles: `0x${'44'.repeat(32)}`,
-          stateRoot: `0x${'55'.repeat(32)}`, transactionsRoot: `0x${'66'.repeat(32)}`, receiptsRoot: `0x${'77'.repeat(32)}`,
-          difficulty: '0x0', totalDifficulty: '0x0', size: '0x0', nonce: '0x0000000000000000', mixHash: `0x${'88'.repeat(32)}`,
-        }
+        if (call.method === 'eth_getBlockByNumber') return block
         return null
       }
       const reply = call => ({ jsonrpc: '2.0', id: call.id, result: answer(call) })
@@ -265,8 +286,13 @@ try {
   })
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' })
   const errors = []
+  await context.exposeFunction('__homerunTestSend', transaction => {
+    const hash = `0x${(walletSent.length + 1).toString(16).padStart(64, 'e')}`
+    walletSent.push({ ...transaction, hash, nonce: walletSent.length })
+    return hash
+  })
   await context.exposeFunction('__homerunTestSign', hexMessage => account.signMessage({ message: { raw: hexMessage } }))
-  await context.addInitScript(({ address, chainId, relayHashForWallet }) => {
+  await context.addInitScript(({ address, chainId }) => {
     // The wallet reports the chain it was last switched to, as a real one does:
     // a switch that never lands leaves every chain-scoped request waiting.
     let current = chainId
@@ -284,7 +310,7 @@ try {
         }
         if (method === 'eth_sendTransaction') {
           window.__homerunSends = [...window.__homerunSends ?? [], params[0].to]
-          return relayHashForWallet
+          return window.__homerunTestSend(params[0])
         }
         if (method === 'eth_estimateGas') return '0xdbba0'
         throw Object.assign(new Error(`Unsupported method ${method}`), { code: 4200 })
@@ -296,7 +322,7 @@ try {
     const announce = () => window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail: Object.freeze({ info, provider }) }))
     window.addEventListener('eip6963:requestProvider', announce)
     announce()
-  }, { address: account.address, chainId: '0x2105', relayHashForWallet: relayHash })
+  }, { address: account.address, chainId: '0x2105' })
   await context.addInitScript(saved => {
     try { localStorage.setItem('homerun:create-draft:v1', JSON.stringify(saved)) } catch { /* storage is unavailable on about:blank */ }
   }, {
@@ -354,7 +380,7 @@ try {
   await review.getByText('Create your project', { exact: false }).first().waitFor()
   await review.getByText('2/2 approvals', { exact: false }).first().waitFor()
   await review.getByRole('checkbox').check()
-  await review.getByRole('button', { name: 'Continue to wallet', exact: true }).click()
+  await review.getByRole('button', { name: 'Agree & authorize', exact: true }).click()
 
   await page.waitForURL(`${appOrigin}/intent/${intentId}`)
   await page.getByText('Deploys on first use', { exact: false }).first().waitFor()

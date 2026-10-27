@@ -250,14 +250,6 @@ it('retains legacy exact voting bytes for recovery and refuses their fresh walle
   expect(legacy.votingPolicy).toBeUndefined()
   const request = projectShopWriteRequest(legacy, 0)
   expect((request.args[0] as { flags: { useVotingUnits: boolean } }[])[0]).toMatchObject({ votingUnits: 42, flags: { useVotingUnits: true } })
-  const write = vi.fn()
-  const { submitReviewedContractWrite } = await import('@/lib/contract-write')
-  await expect(submitReviewedContractWrite({
-    request, expectedAccount: OWNER, currentAccount: () => OWNER,
-    review: async () => undefined, switchChain: async () => undefined,
-    simulate: async () => request,
-    reverify: () => reverifyProjectShopWrite(f.client, legacy, OWNER, 0, request),
-    write,
-  })).rejects.toThrow('old voting settings')
-  expect(write).not.toHaveBeenCalled()
+  // The reviewed run's recheck, before the wallet opens, refuses it.
+  await expect(reverifyProjectShopWrite(f.client, legacy, OWNER, 0, request)).rejects.toThrow('old voting settings')
 })

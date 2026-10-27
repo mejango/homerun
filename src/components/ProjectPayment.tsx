@@ -5,12 +5,12 @@ import { buildPayTx, decodePayFailure, PAY_DEFAULT_SLIPPAGE_BPS, PAY_MAX_SLIPPAG
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { WritesChecking } from '@/components/writes-checking'
 import { useContext, useEffect, useRef, useState, type ReactNode } from 'react'
-import { erc20Abi, formatUnits, isAddressEqual, zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
+import { erc20Abi, formatUnits, isAddressEqual, zeroAddress, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
-import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { reviewContext, TxProgress } from '@/components/ui/TxProgress'
 import { displayChainName } from '@/lib/chainDisplay'
 import { DisplayTokenAmount } from '@/components/DisplayTokenAmount'
-import { useSafeTx, type TxRequest } from '@/hooks/useSafeTx'
+import { useReviewedAction, type TxStep } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { parseAmount } from '@/lib/fund-contracts'
@@ -30,7 +30,7 @@ export function ProjectPayment(props: Parameters<typeof ExternalProjectPayment>[
   return isCenterWallet ? <CenterProjectPayment {...props} /> : <ExternalProjectPayment {...props} />
 }
 
-type PaymentTx = ReturnType<typeof useSafeTx>
+type PaymentTx = ReturnType<typeof useReviewedAction>
 type PaymentContext = { token: Address; terminal: Address; decimals: number; symbol: string }
 
 function inputAmount(value: string, decimals: number) {
@@ -44,19 +44,6 @@ function Status({ tx, chainId, stale }: { tx: PaymentTx; chainId: number; stale?
     {tx.phase === 'submitted' ? <HeldNotice tx={tx} /> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? <p>Confirmed onchain.</p> : null}
     {tx.error && !stale && <p className="text-red-800">{tx.error}</p>}{url && <a className="underline" href={url} target="_blank" rel="noreferrer">View transaction</a>}
   </div>
-}
-
-/** Same bounded receipt lookup used by JBM's payment sequence. The useSafeTx
- * watchers remain mounted if this waiter times out or a Safe needs execution. */
-async function paymentReceipt(client: PublicClient, hash: Hex) {
-  try { return await client.waitForTransactionReceipt({ hash, timeout: 120_000 }) }
-  catch (firstError) {
-    for (let attempt = 0; attempt < 90; attempt += 1) {
-      try { return await client.getTransactionReceipt({ hash }) }
-      catch { await new Promise(resolve => window.setTimeout(resolve, 2_000)) }
-    }
-    throw firstError
-  }
 }
 
 /** FUND and INCOME share the reference clients' pay execution pipeline. The parent retains project-specific contract identity checks. */
@@ -103,8 +90,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
   const attempt = useRef(0)
   const mounted = useRef(true)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
-  const tx = useSafeTx(chainId)
-  const approval = useSafeTx(chainId)
+  const tx = useReviewedAction(chainId)
   const cache = useQueryClient()
   const count = inputAmount(input, context.decimals)
   const paymentInputs = `${chainId}:${projectId}:${context.terminal}:${context.token}:${count}:${address ?? ''}`
@@ -127,15 +113,12 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
   const currentIntent = useRef(intent)
   currentIntent.current = intent
   const confirmed = useRef(new Set<string>())
-  const prerequisite = approval.phase === 'success' ? approval.receipt?.blockNumber : undefined
   useEffect(() => {
-    for (const item of [tx, approval]) {
-      if (item.phase !== 'success' || !item.receipt || confirmed.current.has(item.receipt.transactionHash)) continue
-      confirmed.current.add(item.receipt.transactionHash)
-      for (const prefix of ['fund-project', 'income-project', 'project-pay', 'project-pay-tokens', 'income-reserved']) void cache.invalidateQueries({ queryKey: [prefix, chainId, projectId.toString()] })
-      refreshIndexedProject(cache, chainId, projectId)
-    }
-  }, [cache, chainId, projectId, tx, approval])
+    if (tx.phase !== 'success' || !tx.receipt || confirmed.current.has(tx.receipt.transactionHash)) return
+    confirmed.current.add(tx.receipt.transactionHash)
+    for (const prefix of ['fund-project', 'income-project', 'project-pay', 'project-pay-tokens', 'income-reserved']) void cache.invalidateQueries({ queryKey: [prefix, chainId, projectId.toString()] })
+    refreshIndexedProject(cache, chainId, projectId)
+  }, [cache, chainId, projectId, tx])
   const [requoting, setRequoting] = useState(false)
   const quote = useQuery({
     queryKey: ['project-pay', chainId, projectId.toString(), context.terminal, context.token, count.toString(), address ?? zeroAddress, rulesetId, reservedPercent, slippageBps ?? null],
@@ -148,9 +131,9 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
   const quoted = !!quote.data && !quote.isError && !quote.isPlaceholderData && (minimum > 0n || zeroAllocation)
   const quotedNow = useRef(quoted)
   quotedNow.current = quoted
-  const busy = preparing || [tx, approval].some(item => item.busy || item.phase === 'review')
-  const submitted = [tx, approval].find(item => item.phase === 'submitted')
-  const tracking = busy || [tx, approval].some(item => !!item.safeProposalHash && item.phase !== 'success')
+  const busy = preparing || tx.busy || tx.phase === 'review'
+  const submitted = tx.phase === 'submitted' ? tx : undefined
+  const tracking = busy || (!!tx.safeProposalHash && tx.phase !== 'success')
   // The wallet steps ahead, read before the first prompt as Juicebox Money's pay sequence does.
   // Unknown allowances count as needed; the sequence re-reads them before acting.
   const payingNative = isAddressEqual(context.token, NATIVE_TOKEN)
@@ -168,12 +151,12 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
   ]
   const activeIndex = tx.phase === 'success' ? steps.length : stage ? Math.max(0, steps.findIndex(step => step.key === stage)) : -1
   // A wallet prompt or a running sequence keeps the dialog open; a submitted payment can close and keeps tracking.
-  const prompting = preparing || [tx, approval].some(item => item.phase === 'review' || item.phase === 'simulating' || item.phase === 'signing')
+  const prompting = preparing || tx.phase === 'review' || tx.phase === 'simulating' || tx.phase === 'signing'
   useEffect(() => { onBusyChange?.(tracking) }, [onBusyChange, tracking])
   async function submit() {
     if (!address || !client || !quoted || count <= 0n || busy) return
     const guard = () => { if (!mounted.current || currentIntent.current !== intent) throw new Error('The page, account, amount, currency, or project rules changed. Review the payment again.') }
-    let latestBlock = prerequisite
+    let latestBlock: bigint | undefined
     const mine = ++attempt.current
     const payment = paymentInputs, bps = slippageBps
     setSentPayment(payment)
@@ -198,55 +181,50 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       const native = isAddressEqual(context.token, NATIVE_TOKEN)
       // Runs after review, simulation and the hold marker, right before the wallet prompt.
       const assertWriteState = () => { guard(); if (!quotedNow.current) throw new Error('The payment quote is no longer available. Review the payment again.') }
-      const reverify = async () => { guard(); const checked = await verify(address, latestBlock); guard(); latestBlock = checked.blockNumber; return checked }
-      const waitForApproval = async (action: PaymentTx, request: TxRequest, recoveryNamespace?: string) => {
-        guard()
-        const hash = await action.send(request, { reviewedAccount: address, simulationBlockNumber: latestBlock, reverify, assertWriteState: guard, ...(recoveryNamespace ? { recoveryNamespace } : {}) })
-        if (!hash) throw new Error('Approval was cancelled. Nothing further was sent.')
-        if (action.isSafe) { setStatus('Approval proposed to Safe. Execute it there, then continue the payment.'); return false }
-        setStatus('Confirming approval onchain…')
-        const receipt = await paymentReceipt(client, hash)
-        if (receipt.status !== 'success') throw new Error('Approval reverted onchain.')
-        if (latestBlock === undefined || receipt.blockNumber > latestBlock) latestBlock = receipt.blockNumber
-        guard()
-        return true
-      }
-      // One payment intent whichever terminal the quote picks; its approvals are that intent's steps.
+      const reverify = async (minimumBlock = latestBlock) => { guard(); const checked = await verify(address, minimumBlock); guard(); latestBlock = checked.blockNumber; return checked }
+      // One payment intent whichever terminal the quote picks; its approval is that intent's first step.
       // A chosen currency's decimals are fixed, so its units key the amount. A default currency can
       // switch (ETH to USDC, say), and with it the units of the same typed amount: it keys as typed.
       const chosen = currencyChosen || !!selectedToken
       const paymentKey = writeIntentKey('pay', { project: projectId, token: chosenOrAuto('token', keyed.address(context.token), chosen), amount: chosen ? count : canonicalDecimal(input) })
-      if (!native) {
-        const allowance = await client.readContract({ address: context.token, abi: erc20Abi, functionName: 'allowance', args: [address, spender], blockNumber: latestBlock })
-        if (allowance < count) {
-          setStatus(`Review ${context.symbol} access for the payment terminal.`); setStage('approve')
-          if (!await waitForApproval(approval, { ...buildErc20ApproveRequest({ chainId, token: context.token, spender, amount: count }), label: `Approve exactly ${formatUnits(count, context.decimals)} ${context.symbol} for this payment` },
-            approvalIntentKey(paymentKey, { token: context.token, spender, step: 'token' }))) return
-        }
-      }
+      const approving = !native && await client.readContract({ address: context.token, abi: erc20Abi, functionName: 'allowance', args: [address, spender], blockNumber: latestBlock }) < count
       const request = buildPayTx({ chainId, projectId, terminal: latest.terminal, token: context.token, amount: count, beneficiary: address, minReturnedTokens: latest.minimumTokenCount, memo: `Homerun ${tokenLabel} payment`, metadata: latest.metadata })
       const checked = await reverify()
-      setStatus('Review and execute the payment.'); setStage('pay')
-      let failed: unknown
-      await tx.send({ ...request, label: `Pay ${formatUnits(count, context.decimals)} ${context.symbol} through the Juicebox payment terminal; minimum ${formatUnits(latest.minimumTokenCount, 18)} ${tokenLabel}` }, {
-        reviewedAccount: address,
-        assertWriteState,
-        onFailure: reason => { failed = reason },
+      const pay: TxStep = { ...request, label: `Pay ${formatUnits(count, context.decimals)} ${context.symbol} through the Juicebox payment terminal; minimum ${formatUnits(latest.minimumTokenCount, 18)} ${tokenLabel}`,
         // The terminal, minimum and metadata are fresh each attempt: a retry is held by the payment the user chose.
         recoveryNamespace: paymentKey,
-        simulationBlockNumber: latestBlock === undefined ? undefined : checked.blockNumber,
+        // The payment simulates on its approval's receipt block, or at or after the verified state.
+        ...(approving ? { dependsOnPrior: true } : { simulationBlockNumber: latestBlock === undefined ? undefined : checked.blockNumber }) }
+      // The approval and the payment are one review, and resume as one action after a reload.
+      const steps: TxStep[] = approving ? [{ ...buildErc20ApproveRequest({ chainId, token: context.token, spender, amount: count }), label: `Approve exactly ${formatUnits(count, context.decimals)} ${context.symbol} for this payment`,
+        recoveryNamespace: approvalIntentKey(paymentKey, { token: context.token, spender, step: 'token' }), simulationBlockNumber: latestBlock }, pay] : [pay]
+      setStatus(approving ? `Review ${context.symbol} access and the payment.` : 'Review and execute the payment.'); setStage(approving ? 'approve' : 'pay')
+      let failed: unknown, proposedApproval = false
+      await tx.send(steps, {
+        reviewedAccount: address,
+        scope: paymentKey,
+        assertWriteState,
+        onFailure: reason => { failed = reason },
+        // A Safe runs the approval as its own proposal; the payment continues from it once the Safe executes it.
+        onStepSubmitted: (index, _hash, safe) => { if (index < steps.length - 1) { proposedApproval = safe; setStatus(safe ? 'Approval proposed to Safe. Execute it there, then continue the payment.' : 'Confirming approval onchain…'); setStage(safe ? 'approve' : 'pay') } },
+        context: reviewContext([
+          { label: 'Send', value: `${formatUnits(count, context.decimals)} ${context.symbol}`, strong: true },
+          { label: 'On', value: displayChainName(chainId) },
+          noTokens ? { label: 'You get', value: `No ${tokenLabel}` } : { label: 'You get at least', value: `${formatUnits(latest.minimumTokenCount, 18)} ${tokenLabel}`, strong: true },
+          { label: 'Beneficiary', value: address, mono: true },
+        ]),
         // The quote signed here, not the card's: it can fall back to the mint rate after a healthy card.
         reviewNotice: noTokens ? `You receive no ${tokenLabel} for this payment. This project allocates 100% of new tokens to its reserved recipients.` : [
           latest.quoteFailed ? PAY_QUOTE_FAILED_MESSAGE : null,
           latest.minimumTokenCount < minimum ? `The quote decreased. Your protected minimum is now ${formatUnits(latest.minimumTokenCount, 18)} ${tokenLabel}.` : null,
         ].filter(Boolean).join(' ') || undefined,
-        reverify: async () => {
-          const verified = await reverify()
-          if (!native && await client.readContract({ address: context.token, abi: erc20Abi, functionName: 'allowance', args: [address, spender], blockNumber: verified.blockNumber }) < count) throw new Error('Token approval changed. Review a new approval before paying.')
+        reverify: async (step, _index, prior) => {
+          const verified = await reverify(prior?.blockNumber ?? latestBlock)
+          if (step.functionName === 'pay' && !native && await client.readContract({ address: context.token, abi: erc20Abi, functionName: 'allowance', args: [address, spender], blockNumber: verified.blockNumber }) < count) throw new Error('Token approval changed. Review a new approval before paying.')
         },
       })
       if (failed !== undefined) explain(decodePayFailure(failed))
-      setStatus(null)
+      if (!proposedApproval) setStatus(null)
     } catch (reason) { setError(message(reason)); setStatus(null) } finally { setPreparing(false) }
   }
   /** Quote the payment again (with the tolerance the payer chose, if any), then run it from the start. */
@@ -272,10 +250,10 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
         <select className="pay-currency" aria-label="Payment currency" value={context.token} onChange={event => setSelectedToken(event.target.value as Address)}>{(tokenOptions.data?.length ? tokenOptions.data : [accountingContext]).map(option => <option key={option.token} value={option.token}>{option.symbol}</option>)}</select>
       </div>
     </fieldset>
-    <button type="button" className="btn-primary min-h-12 w-full px-5" disabled={paused || !!blocked} onClick={() => setOpen(true)}>{paused ? 'Payments paused' : checking ? 'Checking…' : `Pay on ${displayChainName(chainId)}`}</button>
+    <button type="button" className="btn-primary min-h-12 w-full px-5" disabled={paused || !!blocked} onClick={() => { if (address) setOpen(true); else openSignIn() }}>{paused ? 'Payments paused' : checking ? 'Checking…' : `Pay on ${displayChainName(chainId)}`}</button>
     {blocked && !paused && <p className="mt-2 text-sm text-[var(--muted)]">{blocked}</p>}
-    {!open && <><Status tx={approval} chainId={chainId} /><Status tx={tx} chainId={chainId} stale={staleRevert} /></>}
-    <TxConfirmDialog
+    {!open && <Status tx={tx} chainId={chainId} stale={staleRevert} />}
+    <TxProgress
       open={open}
       eyebrow="Payment"
       title={tx.phase === 'success' ? `${tokenLabel === 'FUND' ? 'Contribution' : 'Payment'} confirmed` : `Confirm ${tokenLabel === 'FUND' ? 'contribution' : 'payment'}`}
@@ -287,17 +265,15 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       ]}
       steps={steps}
       activeIndex={activeIndex}
-      action={!address ? 'Connect wallet' : retrySlippageBps !== null || minedRevert ? 'Review again' : `Confirm & ${payTitle.toLowerCase()}`}
-      actionDisabled={!!address && (paused || count <= 0n || !quoted || retrying)}
-      onConfirm={() => { if (!address) openSignIn(); else if (retrySlippageBps !== null) reviewAgain(retrySlippageBps); else if (minedRevert) reviewAgain(); else void submit() }}
+      start={!address || paused || count <= 0n || !quoted || retrying ? undefined : () => { if (retrySlippageBps !== null) reviewAgain(retrySlippageBps); else if (minedRevert) reviewAgain(); else void submit() }}
       busy={prompting || retrying}
       complete={tx.phase === 'success'}
       settled={!!submitted}
       held={submitted?.held}
       status={submitted?.notice ?? status ?? (tx.phase === 'pending' ? <>Submitted. Waiting for onchain confirmation{tx.hash && explorerTxUrl(chainId, tx.hash) ? <> (<a className="underline" href={explorerTxUrl(chainId, tx.hash)!} target="_blank" rel="noreferrer">view transaction</a>)</> : null}</> : null)}
       // A Safe's failure keeps the registry's own line, with its execution.
-      error={error ?? failure?.message ?? (minedRevert && !tx.isSafe ? 'The payment reverted.' : null) ?? (staleRevert ? null : tx.error) ?? approval.error}
-      onClose={() => { setOpen(false); for (const item of [tx, approval]) if (item.phase === 'submitted') item.dismiss(); setStatus(null); attempt.current++; setRetryWhenQuoted(null); setPayerSlippage(null) }}
+      error={error ?? failure?.message ?? (minedRevert && !tx.isSafe ? 'The payment reverted.' : null) ?? (staleRevert ? null : tx.error)}
+      onClose={() => { setOpen(false); if (tx.phase === 'submitted') tx.dismiss(); setStatus(null); attempt.current++; setRetryWhenQuoted(null); setPayerSlippage(null) }}
     >
       <div className="text-sm text-smoke-600" aria-live="polite">
         {paused ? <p>This project has paused payments.</p> : zeroAllocation ? <p>This payment gives you no {tokenLabel}. All new tokens are allocated to the reserved recipients.</p> : quoted && quote.data?.quoteFailed
@@ -311,6 +287,6 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
         {quote.isError && <p role="alert" className="mt-2">A protected payment quote is unavailable. {message(quote.error)}</p>}
       </div>
       {retrySlippageBps !== null ? <AllowedDecreaseField bps={retrySlippageBps} onChange={retryBps => setOutcome(current => current && { ...current, retryBps })} maxBps={Number(PAY_MAX_SLIPPAGE_BPS)} /> : null}
-    </TxConfirmDialog>
+    </TxProgress>
   </section>
 }

@@ -37,7 +37,6 @@ vi.mock('@/lib/fund-launch-verification', async importOriginal => ({
   ...await importOriginal<typeof import('../src/lib/fund-launch-verification')>(),
   checkLaunchDeployment: runtime.checkDeployment,
 }))
-vi.mock('@/lib/transaction-review', () => ({ requireTransactionReview: runtime.review }))
 vi.mock('@/lib/jbcenter-client', () => ({ jbCenterClient: { prepareIntent: runtime.prepareIntent, publishIntent: runtime.publishIntent } }))
 vi.mock('@bananapus/nana-sdk-core/safe', async original => {
   const sdk = await original<typeof import('@bananapus/nana-sdk-core/safe')>()
@@ -48,7 +47,11 @@ vi.mock('@bananapus/nana-sdk-core/safe', async original => {
   }) }
 })
 
+import { registerReviewHandler } from '@bananapus/nana-sdk-core/review'
 import CreatePreview from '../src/components/CreatePreview'
+
+// Core reviews and signs the publication: the review shows its model here, and confirms.
+registerReviewHandler(async prompt => { runtime.review(prompt.model); return prompt.confirmation })
 
 const signers = [`0x${'1'.repeat(40)}`, `0x${'2'.repeat(40)}`]
 
@@ -246,14 +249,14 @@ describe('the preview of a project that is not created yet', () => {
   it('publishes the intent and opens its page', async () => {
     await render()
     await act(async () => { button('Make it real')!.click() })
+    // One review: the exact message, and the call it lets Center's sponsor run, decoded.
+    await vi.waitFor(() => expect(runtime.review).toHaveBeenCalled())
     const review = runtime.review.mock.calls[0][0]
-    expect(review.kind).toBe('authorization')
-    expect(review.calls[0].functionName).toBe('launchFundFor')
-    expect(review.calls[0].from).toBeUndefined()
-    expect(review.calls[0].label).toContain('Center’s sponsor')
-    expect(review.authorization.kind).toBe('message')
-    expect(review.authorization.format).toBe('homerun.money/fund.v1')
-    expect(review.authorization.chainIds).toEqual([8453])
+    expect(runtime.review).toHaveBeenCalledOnce()
+    expect(review.signatures).toHaveLength(1)
+    expect(review.signatures[0].message).toBe(prepareIntentEnvelope(runtime.prepareIntent.mock.calls[0][0]).message)
+    expect(review.signatures[0].calls.map((call: { chainId: number }) => call.chainId)).toEqual([8453])
+    expect(review.context).toEqual([{ label: 'Center’s sponsor creates', value: 'The FUND on Base', lines: [] }])
     expect(runtime.signMessage).toHaveBeenCalledWith({ account: wallet, message: prepareIntentEnvelope(runtime.prepareIntent.mock.calls[0][0]).message })
     const session = decodeLaunchSession(localStorage.getItem(FUND_LAUNCH_KEY)!)
     expect(session.transport).toBe('intent')
@@ -279,7 +282,9 @@ describe('the preview of a project that is not created yet', () => {
       expect(runtime.signMessage).not.toHaveBeenCalled()
       expect(runtime.publishIntent).not.toHaveBeenCalled()
       expect(navigate.push).not.toHaveBeenCalled()
-      expect(alert()?.textContent).toContain(change === 'view-as' ? VIEW_AS_WRITE_BLOCKED : 'Wallet connection changed')
+      expect(alert()?.textContent).toContain(change === 'view-as' ? VIEW_AS_WRITE_BLOCKED
+        : change === 'account' || (change === 'disconnect' && boundary === 'wallet acquisition') ? 'The connected account changed'
+          : change === 'disconnect' ? 'Connect a wallet' : 'Wallet connection changed')
       expect(localStorage.getItem(FUND_LAUNCH_KEY)).toBeNull()
     })
   }
@@ -291,16 +296,17 @@ describe('the preview of a project that is not created yet', () => {
     })
     await render()
     await act(async () => { button('Make it real')!.click() })
+    // The wallet is fetched at signing, so the connector current then signs.
     expect(runtime.signMessage).toHaveBeenCalledOnce()
-    expect(runtime.getWalletClient).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ connector: expect.objectContaining({ uid: 'replacement' }) }))
   })
 
-  it('allows a chain change while preparing the chainless publication message', async () => {
+  it('refuses a wallet that switched chains while it was fetched, and signs nothing', async () => {
     runtime.getWalletClient.mockImplementationOnce(async () => { runtime.chainId = 8453; return { signMessage: runtime.signMessage } })
     await render()
     await act(async () => { button('Make it real')!.click() })
-    expect(runtime.signMessage).toHaveBeenCalledOnce()
-    expect(runtime.publishIntent).toHaveBeenCalledOnce()
+    expect(runtime.signMessage).not.toHaveBeenCalled()
+    expect(runtime.publishIntent).not.toHaveBeenCalled()
+    expect(alert()?.textContent).toContain('Wallet connection changed')
   })
 
   it('reviews the Safe creation before the launch, and publishes both', async () => {
@@ -310,13 +316,8 @@ describe('the preview of a project that is not created yet', () => {
     await render()
     await act(async () => { button('Make it real')!.click() })
     const review = runtime.review.mock.calls[0][0]
-    expect(review.calls).toHaveLength(2)
-    expect(review.calls[0].functionName).toBe('createProxyWithNonce')
-    expect(review.calls[0].contractName).toBe('SafeProxyFactory')
-    expect(review.calls[0].label).toContain('Owner multisig')
-    expect(review.calls[0].from).toBeUndefined()
-    expect(review.calls[1].functionName).toBe('launchFundFor')
-    expect(review.calls[1].from).toBeUndefined()
+    expect(review.signatures[0].calls.map((call: { functionName?: string }) => call.functionName)[0]).toBe('createProxyWithNonce')
+    expect(review.context).toEqual([{ label: 'Center’s sponsor creates', value: 'The Owner multisig on Base', lines: ['The FUND on Base'] }])
     expect(review.description).toContain('creates your multisigs and the project')
     expect(review.description).toContain('2/2 approvals')
     const envelope = runtime.publishIntent.mock.calls[0][0]

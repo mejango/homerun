@@ -4,6 +4,7 @@ import '../dialog-shim'
 import { act, createElement, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { openReview } from '../support/open-review'
 import type { TransactionReviewDialogProps } from '@/components/TransactionReviewProvider'
 
 vi.mock('wagmi', () => ({ useAccount: () => ({ address: undefined }) }))
@@ -26,7 +27,7 @@ function ControlledDialog({ pending, onFinish }: TransactionReviewDialogProps) {
     return () => { unmounted(pending.id) }
   }, [pending, onFinish])
   return createElement('div', { 'data-loaded-review': pending.id },
-    createElement('p', null, pending.kind === 'review' ? pending.request.title : 'Funding choice'),
+    createElement('p', null, pending.kind === 'review' ? pending.model.title : 'Funding choice'),
     createElement('button', { onClick: () => onFinish(pending.kind === 'review' ? true : 8453) },
       pending.kind === 'review' ? 'Approve review' : 'Choose Base'),
     createElement('button', { onClick: () => onFinish(null) }, 'Cancel loaded review'),
@@ -61,7 +62,7 @@ afterEach(async () => {
 })
 
 function requestReview(title: string) {
-  return api.requireTransactionReview({ title,
+  return openReview({ title,
     calls: [{ chainId: 1, to: '0x1111111111111111111111111111111111111111', data: '0x' }],
   })
 }
@@ -130,7 +131,7 @@ describe('lazy transaction review lifecycle', () => {
     expect(lastApproved).not.toHaveBeenCalled()
     await act(async () => { await vi.dynamicImportSettled() })
     expect(container.textContent).toContain('Funding choice')
-    expect(mounted.mock.calls.every(([pending]) => pending.kind !== 'review' || pending.request.title !== 'Canceled review')).toBe(true)
+    expect(mounted.mock.calls.every(([pending]) => pending.kind !== 'review' || pending.model.title !== 'Canceled review')).toBe(true)
     await act(async () => button('Choose Base').click())
     await expect(funding).resolves.toBe(8453)
     expect(container.textContent).toContain('Last review')

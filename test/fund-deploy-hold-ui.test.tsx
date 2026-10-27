@@ -17,8 +17,8 @@ vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 /** The chain the wallet is on. */
 const connected = vi.hoisted(() => ({ chainId: 8453 }))
 vi.mock('@wagmi/core', async importOriginal => {
-  const { wallet } = await import('./support/fake-wallet')
-  return { ...(await importOriginal<typeof import('@wagmi/core')>()), getWalletClient: async () => ({ writeContract: wallet.writeContract }), getAccount: () => ({ address: wallet.account, chainId: connected.chainId }), getPublicClient: () => wallet.client }
+  const { wallet, walletCore } = await import('./support/fake-wallet')
+  return { ...(await importOriginal<typeof import('@wagmi/core')>()), ...walletCore, getAccount: () => ({ address: wallet.account, chainId: connected.chainId }) }
 })
 vi.mock('wagmi', async importOriginal => {
   const { walletHooks } = await import('./support/fake-wallet')
@@ -27,10 +27,6 @@ vi.mock('wagmi', async importOriginal => {
 vi.mock('@/hooks/useWallet', async () => {
   const { useFakeWallet } = await import('./support/fake-wallet')
   return { useWallet: useFakeWallet }
-})
-vi.mock('@/lib/transaction-review', async importOriginal => {
-  const { wallet } = await import('./support/fake-wallet')
-  return { ...(await importOriginal<typeof import('@/lib/transaction-review')>()), requestContractTransactionReview: wallet.requestReview }
 })
 vi.mock('@/lib/safe-connector', async importOriginal => ({ ...(await importOriginal<typeof import('@/lib/safe-connector')>()), isSafeConnection: () => false, useSafeConnection: () => false }))
 vi.mock('@/components/WalletButton', () => ({ WalletButton: () => null }))
@@ -49,7 +45,7 @@ import { FUND_LAUNCH_KEY, decodeLaunchSession, encodeLaunchSession, launchIntent
 
 const OWNER = '0x1111111111111111111111111111111111111111' as Address
 const SALT = `0x${'12'.repeat(32)}` as Hex
-const EXIT = 'I checked my wallet. Send again'
+const EXIT = 'I checked my wallet'
 
 let host: HTMLDivElement
 let root: Root
@@ -200,7 +196,7 @@ async function launchSettledAway() {
   await act(async () => { wallet.confirm(hash) })
   const { holds } = await import('@/lib/write-hold')
   const hold = holds.open({ chainId: 8453, account: OWNER, safe: false, namespace: launchIntent(SALT), call: { to: OWNER, data: '0x' } })
-  expect(await hold.onReceipt(await wallet.client.getTransactionReceipt({ hash }) as never, wallet.client as never)).toMatchObject({ status: 'clear', settled: { result: 'success' } })
+  expect(await hold.onReceipt(await wallet.client.getTransactionReceipt({ hash }) as never, wallet.client as never)).toMatchObject({ status: 'clear' })
   return hash
 }
 

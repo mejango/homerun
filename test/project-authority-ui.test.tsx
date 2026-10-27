@@ -55,7 +55,6 @@ describe('project permission controls', () => {
     await act(async () => checkbox('I understand ROOT').click())
     expect(button('Review permission changes').disabled).toBe(false)
     await act(async () => button('Review permission changes').click())
-    await act(async () => button('Confirm & save').click())
     expect(mocks.send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ functionName: 'setPermissionsFor', args: [OWNER, { operator: DELEGATE, projectId: 7n, permissionIds: [1] }] }), expect.objectContaining({ reviewedAccount: OWNER, reviewNotice: expect.stringContaining('ROOT authorizes every Juicebox project permission') }))
   })
 
@@ -66,7 +65,6 @@ describe('project permission controls', () => {
     expect(host.textContent).toContain('Unrecognized project permissions 255 are preserved')
     await act(async () => checkbox('Edit payout and reserved token splits').click())
     await act(async () => button('Review permission changes').click())
-    await act(async () => button('Confirm & save').click())
     expect(mocks.send.mock.calls[0][0].args[1]).toEqual({ operator: DELEGATE, projectId: 7n, permissionIds: [19, 255] })
   })
 
@@ -86,7 +84,6 @@ describe('project permission controls', () => {
     await mount('permissions')
     await act(async () => checkbox('Edit project details').click())
     await act(async () => button('Review permission changes').click())
-    await act(async () => button('Confirm & save').click())
     expect(mocks.send).not.toHaveBeenCalled()
     expect(host.textContent).toContain('permissions changed after review')
   })
@@ -107,27 +104,25 @@ describe('project ownership controls', () => {
     expect(button('Review ownership change').disabled).toBe(true)
     await act(async () => checkbox('I understand the new owner').click())
     await act(async () => button('Review ownership change').click())
-    await act(async () => button('Confirm & transfer').click())
     expect(mocks.send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ functionName: 'safeTransferFrom', args: [OWNER, DELEGATE, 7n] }), expect.objectContaining({ reviewedAccount: OWNER, reviewNotice: expect.stringContaining('Other chains require separate ownership transfers') }))
   })
 
   it('blocks a stale owner and presents only control-wallet rotation for a verified revnet', async () => {
     mocks.state = snapshot({ kind: 'revnet', owner: v6Address('REVOwner', 8453), isOwner: false, isRevnetOperator: true })
     await mount('ownership')
-    expect(host.textContent).toContain('Project NFT owner · REVOwner')
+    expect(host.textContent).toContain('Project NFT owner, REVOwner')
     expect(host.textContent).toContain('Connected control wallet')
     await change(host.querySelector('input')!, DELEGATE)
     await act(async () => checkbox('I understand this transfers').click())
     mocks.read.mockResolvedValue({ ...mocks.state as object, identity: 'changed' })
     await act(async () => button('Review ownership change').click())
-    await act(async () => button('Confirm & transfer').click())
     expect(mocks.send).not.toHaveBeenCalled()
     expect(host.textContent).toContain('Project ownership or permissions changed')
   })
 })
 
 describe('confirm dialogs', () => {
-  it('shows what changes for which wallet before any transaction', async () => {
+  it('shows what changes for which wallet, in the progress and its review', async () => {
     await mount('permissions')
     await act(async () => checkbox('Edit project details').click())
     await act(async () => button('Review permission changes').click())
@@ -135,10 +130,11 @@ describe('confirm dialogs', () => {
     expect(dialog.textContent).toContain(DELEGATE)
     expect(dialog.textContent).toContain('GrantEdit project details')
     expect(dialog.textContent).toContain('RevokeNone')
-    expect(mocks.send).not.toHaveBeenCalled()
+    // The same rows head the save's one review.
+    expect(mocks.send.mock.calls[0][1].context).toEqual(expect.arrayContaining([{ label: 'Wallet', value: DELEGATE, mono: true }, { label: 'Grant', value: 'Edit project details', strong: true }, { label: 'Revoke', value: 'None' }]))
   })
 
-  it('shows the transfer from and to before any transaction', async () => {
+  it('shows the transfer from and to, in the progress and its review', async () => {
     await mount('ownership')
     await change(host.querySelector('input')!, DELEGATE)
     await act(async () => checkbox('I understand the new owner').click())
@@ -146,7 +142,7 @@ describe('confirm dialogs', () => {
     const dialog = host.querySelector('[data-tx-confirm]')!
     expect(dialog.textContent).toContain(`From${OWNER}`)
     expect(dialog.textContent).toContain(`To${DELEGATE}`)
-    expect(mocks.send).not.toHaveBeenCalled()
+    expect(mocks.send.mock.calls[0][1].context).toEqual(expect.arrayContaining([{ label: 'From', value: OWNER, mono: true }, { label: 'To', value: DELEGATE, mono: true, strong: true }]))
   })
 })
 

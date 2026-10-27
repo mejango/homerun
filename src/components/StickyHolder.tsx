@@ -16,11 +16,12 @@ import {
 } from "viem";
 import { usePublicClient } from "wagmi";
 import {
-  useSafeTx,
+  useReviewedAction,
   txPhaseLabel,
   type TxRequest,
   type TxSendOptions,
-} from "@/hooks/useSafeTx";
+  type TxStep,
+} from "@/hooks/useReviewedAction";
 import { useWallet } from "@/hooks/useWallet";
 import { displayChainName, explorerTxUrl } from "@/lib/chainDisplay";
 import { parseAmount } from "@/lib/fund-contracts";
@@ -59,7 +60,7 @@ export type StickyHolderProps = {
   stickyProjectId: bigint;
   incomeProjectId?: bigint;
 };
-type StickyTx = ReturnType<typeof useSafeTx>;
+type StickyTx = ReturnType<typeof useReviewedAction>;
 const STAKE_ACTIONS = ["claimTokensFor", "approve", "pay"] as const;
 const UNSTAKE_ACTIONS = ["cashOutTokensOf"] as const;
 const REWARD_ACTIONS = ["beginVesting", "collectVestedRewards"] as const;
@@ -153,7 +154,7 @@ function Status({ tx, chainId, hideError }: { tx: StickyTx; chainId: number; hid
   );
 }
 function useStickyTx(state: StickyProjectState, actions: readonly string[]) {
-  const tx = useSafeTx(state.chainId),
+  const tx = useReviewedAction(state.chainId),
     cache = useQueryClient(),
     previous = useRef<string | null>(null),
     prerequisite = useRef<bigint | undefined>(undefined);
@@ -210,10 +211,11 @@ function useStickyTx(state: StickyProjectState, actions: readonly string[]) {
     tx.receipt,
   ]);
   /** Each action is held under its own intent while unresolved; its amounts and quotes are not part of it. */
-  function send(request: TxRequest, options: TxSendOptions) {
-    return tx.send(request, {
+  function send(request: TxRequest | readonly TxStep[], options: TxSendOptions) {
+    const intent = (step: TxRequest) => stickyIntent(state.stickyProjectId, step.functionName);
+    return tx.send("address" in request ? request : request.map((step) => ({ ...step, recoveryNamespace: step.recoveryNamespace ?? intent(step) })), {
       ...options,
-      recoveryNamespace: stickyIntent(state.stickyProjectId, request.functionName),
+      ...("address" in request ? { recoveryNamespace: intent(request) } : {}),
       beforeWrite: async () => {
         if (!ready) throw new Error("Saved transactions are still being checked. Try again in a moment.");
         await options.beforeWrite?.();
@@ -582,7 +584,7 @@ function StickyStake({
   const explained = tx.phase === "error" && stakeFailure?.stake === stake ? stakeFailure.line : null;
   const staleError = attempted !== null && attempted !== stake;
   const creditStep = shortfall > 0n && shortfall <= state.fundCreditBalance;
-  const approvalStep = !creditStep && state.allowance !== count;
+  const resetStep = !creditStep && state.allowance > 0n && state.allowance !== count;
   const busy = preparing || tx.busy || tx.phase === "review";
   const quote = useQuery({
     queryKey: [
@@ -628,64 +630,48 @@ function StickyStake({
       }
       const latestQuote = await quoteStickyStake(client, current, count);
       const approval = buildStickyApproval(current, current.allowance, count);
-      if (approval) {
-        const reset = approval.args[1] === 0n;
+      // A prior allowance of another amount is reset first, as its own action: the exact approval and the stake share one hold each.
+      if (approval && approval.args[1] === 0n) {
         await tx.send(
-          {
-            ...approval,
-            label: reset
-              ? "Reset the prior FUND allowance before approving this stake"
-              : `Approve exactly ${units(count)} FUND for the Sticky terminal`,
-          },
+          { ...approval, label: "Reset the prior FUND allowance before approving this stake" },
           {
             reviewedAccount: address,
             simulationBlockNumber: current.blockNumber,
             reverify: async () => {
-              const latest = await fresh(
-                client,
-                current,
-                address,
-                prerequisite.current,
-              );
-              if (
-                latest.allowance !== current.allowance ||
-                count > latest.fundBalance
-              )
-                throw new Error(
-                  "Your allowance or available FUND changed. Review the next step again.",
-                );
+              const latest = await fresh(client, current, address, prerequisite.current);
+              if (latest.allowance !== current.allowance || count > latest.fundBalance)
+                throw new Error("Your allowance or available FUND changed. Review the next step again.");
             },
           },
         );
         return;
       }
+      const stakeStep: TxStep = {
+        ...buildStickyStake(current, address, count, latestQuote.minimumShares),
+        label: `Stake ${units(count)} FUND; receive at least ${units(latestQuote.minimumShares)} SHARE`,
+        // After its approval the stake simulates on the approval's receipt block.
+        ...(approval ? { dependsOnPrior: true } : { simulationBlockNumber: current.blockNumber }),
+      };
+      // The exact approval and the stake are one review, and resume as one action after a reload.
       await tx.send(
-        {
-          ...buildStickyStake(
-            current,
-            address,
-            count,
-            latestQuote.minimumShares,
-          ),
-          label: `Stake ${units(count)} FUND; receive at least ${units(latestQuote.minimumShares)} SHARE`,
-        },
+        approval
+          ? [{ ...approval, label: `Approve exactly ${units(count)} FUND for the Sticky terminal`, simulationBlockNumber: current.blockNumber }, stakeStep]
+          : [stakeStep],
         {
           reviewedAccount: address,
-          simulationBlockNumber: current.blockNumber,
+          scope: `homerun:sticky-stake:${state.chainId}:${state.stickyProjectId}`,
           onFailure: (failure) => {
             const decoded = decodePayFailure(failure);
             if (decoded?.reason === "TERMINAL_UNDER_MIN" && decoded.received !== undefined && decoded.minimum !== undefined)
               setStakeFailure({ stake, line: decoded.received === 0n ? "This stake would return no SHARE." : `This stake would return ${units(decoded.received)} SHARE, under its ${units(decoded.minimum)} SHARE minimum. Review again for a fresh quote.` });
           },
           reviewNotice: `Your FUND moves into the Sticky pool. The permanent unstaking tax is ${formatUnits(current.cashOutTaxRate, 2)}%, plus applicable terminal fees. ${quote.data && latestQuote.minimumShares < quote.data.minimumShares ? "The SHARE quote decreased since it was displayed." : ""}`,
-          reverify: async () => {
-            const latest = await fresh(
-              client,
-              current,
-              address,
-              prerequisite.current,
-            );
-            if (
+          reverify: async (step, _index, prior) => {
+            const latest = await fresh(client, current, address, prior?.blockNumber ?? prerequisite.current);
+            if (step.functionName === "approve") {
+              if (latest.allowance !== current.allowance || count > latest.fundBalance)
+                throw new Error("Your allowance or available FUND changed. Review the next step again.");
+            } else if (
               latest.allowance !== count ||
               count > latest.fundBalance ||
               (await quoteStickyStake(client, latest, count)).shares <
@@ -728,9 +714,9 @@ function StickyStake({
         Use available FUND
       </button>
       <p className="mt-4 text-sm">
-        Claim any required FUND credits, approve this exact amount, then review
-        the stake. Each step requires confirmation before the next becomes
-        available. SHARE activates its own snapshot voting power automatically.
+        Claim any required FUND credits first. Approving this exact amount and
+        the stake are then one review. SHARE activates its own snapshot voting
+        power automatically.
       </p>
       {quote.data && (
         <p className="mt-3 break-words text-sm">
@@ -760,10 +746,8 @@ function StickyStake({
           : txPhaseLabel(tx.phase, {
               idle: creditStep
                 ? "Review credit claim"
-                : approvalStep
-                  ? state.allowance > 0n
-                    ? "Review allowance reset"
-                    : "Review FUND approval"
+                : resetStep
+                  ? "Review allowance reset"
                   : "Review stake",
               pending: "Confirming onchain…",
             })}

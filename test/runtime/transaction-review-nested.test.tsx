@@ -9,6 +9,7 @@
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { openReview } from '../support/open-review'
 import { encodeFunctionData, erc20Abi, parseAbi, type Hex } from 'viem'
 
 vi.mock('wagmi', () => ({
@@ -20,7 +21,7 @@ vi.mock('next/image', () => ({
 }))
 
 import { TransactionReviewProvider } from '@/components/TransactionReviewProvider'
-import { requireTransactionReview, type TransactionReviewCall } from '@/lib/transaction-review'
+import { type TransactionReviewCall } from '@/lib/transaction-review'
 import '../dialog-shim'
 
 let container: HTMLDivElement
@@ -61,7 +62,7 @@ async function open(call: TransactionReviewCall) {
   act(() => root.render(<TransactionReviewProvider>{null}</TransactionReviewProvider>))
   await act(async () => {
     // Swallow the cancellation thrown when the modal unmounts after the test.
-    requireTransactionReview({ calls: [call] }).catch(() => {})
+    openReview({ calls: [call] }).catch(() => {})
   })
   await act(async () => { await vi.dynamicImportSettled() })
   return document.querySelector('dialog')!

@@ -24,9 +24,9 @@ vi.mock("@/hooks/useWallet", () => ({
     isConnected: !!runtime.address,
   }),
 }));
-vi.mock("@/hooks/useSafeTx", () => ({
+vi.mock("@/hooks/useReviewedAction", () => ({
   txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,
-  useSafeTx: () => {
+  useReviewedAction: () => {
     useEffect(() => {
       runtime.mounted++;
       return () => {
@@ -161,7 +161,7 @@ it("defers expensive graph discovery and opens the verified INCOME workflow on d
   expect(runtime.mounted).toBe(0);
   await discover();
   expect(runtime.identities.at(-1)).toBe(true);
-  expect(runtime.mounted).toBe(6);
+  expect(runtime.mounted).toBe(5);
   expect(host.textContent).toContain("Incoming INCOME");
   expect(host.textContent).toContain("Outgoing INCOME");
   expect(host.textContent).toContain("local loan accounting");
@@ -174,7 +174,7 @@ it("retains every pending tracker through wallet changes and disables stale-wall
   runtime.identityAvailable = false;
   runtime.routeAvailable = false;
   await render();
-  expect(runtime.mounted).toBe(6);
+  expect(runtime.mounted).toBe(5);
   expect(runtime.unmounted).toBe(0);
   expect(host.querySelector("fieldset")?.disabled).toBe(true);
 });

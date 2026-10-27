@@ -1,7 +1,7 @@
 import { jb721TiersHookProjectDeployerAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { BASE_CURRENCY_USD, buildRulesetMetadata, v6Address, type JBRulesetConfig } from '@bananapus/nana-sdk-core/v6'
 import { isAddressEqual, zeroAddress, zeroHash, type ContractFunctionArgs, type Hex } from 'viem'
-import type { TxRequest } from '../hooks/useSafeTx'
+import type { TxRequest } from '../hooks/useReviewedAction'
 import { FUND_CHAIN_IDS } from './fund-contracts'
 import type { FundProjectState } from './fund-state'
 

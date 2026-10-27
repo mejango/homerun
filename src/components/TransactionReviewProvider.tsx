@@ -8,20 +8,20 @@ import {
   useRef,
   useState,
 } from 'react'
-import type { Address } from 'viem'
-import { useAccount } from 'wagmi'
+import { registerReviewHandler, type ReviewModel, type ReviewSimulation } from '@bananapus/nana-sdk-core/review'
 import { ModalDialog } from '@/components/ui/ModalShell'
 import {
   registerFundingChainSelectionHandler,
-  registerTransactionReviewHandler,
   type FundingChainOption,
-  type TransactionReviewRequest,
 } from '@/lib/transaction-review'
 
 export type PendingReview = {
   kind: 'review'
   id: number
-  request: TransactionReviewRequest
+  /** Core's prompt model, confirmed only by its own confirmation. */
+  model: ReviewModel
+  /** Core's review-time simulation, which runs while the review is open. */
+  simulation?: Promise<ReviewSimulation>
   resolve: (approved: boolean) => void
 }
 
@@ -45,15 +45,22 @@ function cancelPendingDialog(pending: PendingDialog) {
   else pending.resolve(null)
 }
 
+let dialogLoad: Promise<typeof import('./TransactionReviewDialog')> | undefined
+/** The dialog's one download, shared by its preload and the first review; a failed one is tried again next time. */
+export function loadReviewDialog() {
+  dialogLoad ??= import('./TransactionReviewDialog').catch(error => {
+    dialogLoad = undefined
+    throw error
+  })
+  return dialogLoad
+}
+
 /**
  * Global, promise-based modal queue. Every low-level transaction boundary
  * registers with this one provider, so simultaneous multichain flows review
  * sequentially and each approval applies to one immutable call snapshot.
  */
 export function TransactionReviewProvider({ children }: PropsWithChildren) {
-  const { address } = useAccount()
-  const accountRef = useRef<Address | undefined>(address)
-  accountRef.current = address
   const nextId = useRef(1)
   const activeRef = useRef<PendingDialog | null>(null)
   const queueRef = useRef<PendingDialog[]>([])
@@ -69,31 +76,6 @@ export function TransactionReviewProvider({ children }: PropsWithChildren) {
     setActive(pending)
   }, [])
 
-  const enqueue = useCallback(
-    (request: TransactionReviewRequest) =>
-      new Promise<boolean>(resolve => {
-        const snapshot: TransactionReviewRequest = {
-          ...request,
-          calls: request.calls.map(call => ({
-            ...call,
-            // The connected wallet sends a transaction. An authorization is sent
-            // by a relayer, a Safe or a sponsor, so only a call that names its
-            // own sender shows one.
-            from: call.from ?? (request.kind === 'authorization' ? undefined : accountRef.current),
-            args: call.args ? [...call.args] : undefined,
-          })),
-        }
-        const pending: PendingReview = {
-          kind: 'review',
-          id: nextId.current++,
-          request: snapshot,
-          resolve,
-        }
-        enqueueDialog(pending)
-      }),
-    [enqueueDialog],
-  )
-
   const enqueueFundingChainSelection = useCallback(
     (options: readonly FundingChainOption[], initialChainId: number | null) =>
       new Promise<number | null>(resolve => {
@@ -108,7 +90,6 @@ export function TransactionReviewProvider({ children }: PropsWithChildren) {
     [enqueueDialog],
   )
 
-  useEffect(() => registerTransactionReviewHandler(enqueue), [enqueue])
   useEffect(
     () => registerFundingChainSelectionHandler(enqueueFundingChainSelection),
     [enqueueFundingChainSelection],
@@ -134,13 +115,33 @@ export function TransactionReviewProvider({ children }: PropsWithChildren) {
     else current.resolve(typeof result === 'number' ? result : null)
   }, [])
 
+  useEffect(
+    () =>
+      registerReviewHandler(async prompt => {
+        const approved = await new Promise<boolean>(resolve => {
+          const pending: PendingReview = { kind: 'review', id: nextId.current++, model: prompt.model, simulation: prompt.simulation, resolve }
+          // Core withdrew the prompt: its dialog closes, or it leaves the queue.
+          prompt.signal.addEventListener('abort', () => {
+            if (activeRef.current === pending) finish(pending.id, null)
+            else {
+              queueRef.current = queueRef.current.filter(queued => queued !== pending)
+              resolve(false)
+            }
+          }, { once: true })
+          enqueueDialog(pending)
+        })
+        return approved ? prompt.confirmation : null
+      }),
+    [enqueueDialog, finish],
+  )
+
   // Keep the global queue ready immediately, but fetch the full decoder and
   // review UI only when a request arrives. Loading never authorizes a call;
   // cancellation, unmount, or a failed download resolves it as declined.
   useEffect(() => {
     if (!active || Dialog) return
     let cancelled = false
-    void import('./TransactionReviewDialog').then(
+    void loadReviewDialog().then(
       module => {
         if (!cancelled) setDialog(() => module.TransactionReviewDialog)
       },

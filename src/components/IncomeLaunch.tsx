@@ -7,7 +7,7 @@ import { bytesToHex, decodeEventLog, decodeFunctionData, encodeFunctionData, for
 import { useSavedAttempt } from '@bananapus/nana-sdk-core/review/react'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { IncomeProject } from '@/components/IncomeProject'
-import { useSafeTx, txPhaseLabel } from '@/hooks/useSafeTx'
+import { useReviewedAction, txPhaseLabel } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { displayChainName, explorerTxUrl } from '@/lib/chainDisplay'
 import { FUND_CHAIN_IDS, parsePercent } from '@/lib/fund-contracts'
@@ -152,7 +152,7 @@ function GlobalIncomeLaunch({ state, client, name = 'Homerun INCOME', launchUnav
  * that settled while away is verified (`verify`, when the plan's snapshot is loaded) and saved, and
  * one nothing can show asks the user. `completion` is the plan's saved execution, proven again.
  */
-function useIncomeLaunchRecovery(chainId: JBChainId, projectId: bigint, client: PublicClient, tx: ReturnType<typeof useSafeTx>, {
+function useIncomeLaunchRecovery(chainId: JBChainId, projectId: bigint, client: PublicClient, tx: ReturnType<typeof useReviewedAction>, {
   completion, verify, onHeld, onDone,
 }: {
   completion?: { hash: Hex; record: IncomeLaunchPending }
@@ -201,7 +201,7 @@ function useIncomeLaunchRecovery(chainId: JBChainId, projectId: bigint, client: 
 
 /** A network's held launch while its plan's snapshot can't load: shown with its exit. */
 function IncomeChainHold({ chainId, projectId, client }: { chainId: JBChainId; projectId: bigint; client: PublicClient }) {
-  const tx = useSafeTx(chainId)
+  const tx = useReviewedAction(chainId)
   const { recovery, error } = useIncomeLaunchRecovery(chainId, projectId, client, tx, {})
   const notice = <SavedAttemptNotice attempt={recovery} title={displayChainName(chainId)} />
   if (tx.phase !== 'submitted' && tx.phase !== 'pending' && !error) return notice
@@ -215,7 +215,7 @@ function IncomeChainLaunch({ local, draft, manifest, clients, rootState, onVerif
 }
 
 function IncomeChainActions({ local, draft, manifest, clients, client, rootState, onVerified, launchUnavailable, rootIncomeId, embedExistingProject }: { local: IncomeGlobalChainDraft; draft: IncomeGlobalLaunchDraft; manifest: FundGlobalManifest; clients: ReadonlyMap<number, PublicClient>; client: PublicClient; rootState: FundProjectState; onVerified: (chainId: number, hash: string) => void; launchUnavailable: boolean; rootIncomeId: bigint | null; embedExistingProject: boolean }) {
-  const chainId = local.chainId as JBChainId, projectId = BigInt(local.fundProjectId), { address } = useWallet(), tx = useSafeTx(chainId), cache = useQueryClient()
+  const chainId = local.chainId as JBChainId, projectId = BigInt(local.fundProjectId), { address } = useWallet(), tx = useReviewedAction(chainId), cache = useQueryClient()
   const [review, setReview] = useState<Review | null>(null), [attested, setAttested] = useState(false), [working, setWorking] = useState(false), [error, setError] = useState<string | null>(null), [notice, setNotice] = useState<string | null>(null), [verifiedId, setVerifiedId] = useState<bigint | null>(null)
   /** The launch this screen sent or adopted: what its settled execution is verified against. */
   const [sent, setSent] = useState<IncomeLaunchPending | null>(null)

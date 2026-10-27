@@ -4,7 +4,7 @@ import { act, useState, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ModalDialog, ModalShell } from '@/components/ui/ModalShell'
-import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { TxProgress } from '@/components/ui/TxProgress'
 import { topLayerDialogs } from './dialog-shim'
 
 let container: HTMLDivElement
@@ -193,13 +193,11 @@ describe('a confirm hosted in the shell', () => {
   }) {
     return (
       <ModalShell title="Add liquidity" onClose={onClose}>
-        <TxConfirmDialog
+        <TxProgress
           open
           title="Confirm"
           steps={[{ title: 'Approve' }, { title: 'Mint' }]}
           activeIndex={1}
-          action="Adding liquidity…"
-          onConfirm={() => {}}
           onClose={onConfirmClose}
           busy={busy}
         />

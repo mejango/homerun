@@ -10,7 +10,9 @@ import { DisplayTokenAmount } from './DisplayTokenAmount'
 import { CENTER_WALLET_CONFIG } from '@/providers/wallet-config'
 import { centerWalletClient } from '@/providers/center-runtime'
 import { CENTER_FRAME_CALLBACK, CENTER_FRAME_RECEIVED } from '@/providers/center-callback'
-import { createHomerunPayment } from '@/lib/center-payment'
+import { createHomerunPayment, signaPayCall, signaPaymentAdapter } from '@/lib/center-payment'
+import { sendReviewed, type ReviewModel } from '@bananapus/nana-sdk-core/review'
+import { holds } from '@/lib/write-hold'
 import { prepareProjectPayQuote } from '@/lib/project-pay-quote'
 import { AllowedDecreaseField } from '@/components/ui/AllowedDecreaseField'
 import { PAY_DEFAULT_SLIPPAGE_BPS, PAY_MAX_SLIPPAGE_BPS, payRetrySlippageBps } from '@bananapus/nana-sdk-core/v6'
@@ -39,6 +41,8 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
   const [prepareFailure, setPrepareFailure] = useState<PayFailure | null>(null)
   /** The tolerance offered after a shortfall, until the payer reviews again with it. */
   const [retryEdit, setRetryEdit] = useState<number | null>(null)
+  /** Core's model of the payment, shown beside Signa's review; Signa's own page is what the payer approves. */
+  const [preview, setPreview] = useState<ReviewModel | null>(null)
   const generation = useRef(''), working = useRef(false), live = useRef(true)
   // The review page is framed here: Center admits this origin to frame it and the passkey prompt is delegated to the
   // frame. On approval Center sends the frame to Homerun's own callback page, which hands the callback up by message.
@@ -85,10 +89,11 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
    * (an unresolved one says to check its status, with no retry advice until it settles). */
   async function run(action: () => Promise<unknown>, sends = false) {
     if (working.current) return
-    working.current = true; setBusy(true); setError(null); setPrepareFailure(null); setRetryEdit(null)
+    working.current = true; setBusy(true); setError(null); setPrepareFailure(null); setRetryEdit(null); setPreview(null)
     try { await action() }
     catch (cause) {
-      if (!live.current) return
+      // A closed review sent nothing; its saved payment offers the review again.
+      if (!live.current || (cause as { code?: unknown } | null)?.code === 4001) return
       const reason = (cause as RestClientError | null)?.payFailure ?? null
       setPrepareFailure(reason)
       let outcome: string | undefined
@@ -115,11 +120,13 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
       closing.signal.addEventListener('abort', onAbort); window.addEventListener('message', onMessage)
     }).finally(() => { frameClose.current = null; if (live.current) setFrame(null) })
   }
+  /** False when the payer closed the review. */
   async function approve(approvalUrl: string) {
     let url: string
     try { url = await approveInFrame(approvalUrl) }
-    catch (cause) { if (cause instanceof DOMException && cause.name === 'AbortError') return; throw cause }
+    catch (cause) { if (cause instanceof DOMException && cause.name === 'AbortError') return false; throw cause }
     guard(); await controller!.complete(url)
+    return true
   }
   async function review() {
     if (!controller || !address || !client || chainId !== 8453 || paused) return
@@ -132,7 +139,7 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
       if (!/^[0-9]+(?:\.[0-9]{1,6})?$/.test(input.trim())) throw new Error('Enter a USDC amount with at most six decimal places.')
       const amount = parseUnits(input.trim(), 6); if (amount <= 0n) throw new Error('Enter an amount greater than zero.')
       await prepareAndApprove(amount)
-    })
+    }, true)
   }
   async function prepareAndApprove(amount: bigint, slippageBps?: number) {
     if (!controller || !address || !client) return
@@ -141,17 +148,21 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
     const quote = await prepareProjectPayQuote(client, { chainId: 8453, projectId, token, terminal, amount, beneficiary: address, directTerminalOnly: true,
       ...(slippageBps === undefined ? {} : { slippageBps: BigInt(slippageBps) }) })
     guard()
-    const reviewed = await controller.prepare({ projectId: projectId.toString(), token, terminal, amount: amount.toString(),
-      minimumReturnedTokens: quote.minimumTokenCount.toString(), metadata: quote.metadata, returnPath: window.location.pathname,
-      ...(slippageBps === undefined ? {} : { slippageBps }) })
-    guard(); if (!reviewed.approvalUrl) throw new Error('The payment review is unavailable. Check its saved status.')
-    await approve(reviewed.approvalUrl)
+    const payer = address
+    const adapter = signaPaymentAdapter({ account: () => payer, payment: controller, approve,
+      quote: { returnPath: window.location.pathname, ...(slippageBps === undefined ? {} : { slippageBps }) },
+      beforeSubmit: async () => { await verify(payer); guard() } })
+    await sendReviewed({ account: payer, guard, title: 'Pay with Juicebox wallet',
+      context: [{ label: 'Payment', value: `${formatUnits(amount, 6)} USDC` }, { label: 'Minimum returned', value: `${formatUnits(quote.minimumTokenCount, 18)} ${tokenLabel}` }],
+      calls: [signaPayCall({ projectId, amount, beneficiary: payer, minimumReturnedTokens: quote.minimumTokenCount, metadata: quote.metadata })] },
+    // Signa follows the payment itself; core reads no chain and holds nothing for a self-reviewing wallet.
+    { adapter, clientFor: () => client, hold: holds, onPreview: setPreview })
   }
   /** Close the failed payment and prepare the same amount again with the tolerance the payer chose. */
   async function reviewAgain(slippageBps?: number) {
     if (!controller || !pending || !matching || !ownPayment || paused) return
     const amount = BigInt(pending.intent.amount)
-    await run(async () => { controller.clear(); setPending(null); setInput(formatUnits(amount, 6)); await prepareAndApprove(amount, slippageBps) })
+    await run(async () => { controller.clear(); setPending(null); setInput(formatUnits(amount, 6)); await prepareAndApprove(amount, slippageBps) }, true)
   }
   /** An unknown send: Signa retires it if it never went out (refused, so a fresh review follows at once), or returns the
    * submission that claimed it, which is followed. An approval Signa no longer holds is read again. */
@@ -193,6 +204,9 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
           {pending?.status?.expectedPayment ? <><dt className="mt-2">Minimum returned</dt><dd><DisplayTokenAmount value={BigInt(pending.status.expectedPayment.minimumReturnedTokens)} /> {tokenLabel}</dd></> : null}</dl> : null}
         <p role="status" aria-live="polite" className="mt-4 break-words text-sm">{paused ? 'This project has paused payments.' : blocked ?? (frame ? statuses.reviewing : status === 'refused' ? failure?.message ?? statuses.refused : status === 'reverted' && failure ? failure.message : status ? statuses[status] : 'Each payment needs your passkey approval.')}</p>
         {retryBps !== null && !frame ? <AllowedDecreaseField bps={retryBps} onChange={setRetryEdit} maxBps={Number(PAY_MAX_SLIPPAGE_BPS)} /> : null}
+        {frame && preview ? <div aria-label="Payment preview" role="group" className="mt-4 text-sm"><dl>
+          {preview.context.map(row => <div key={row.label}><dt>{row.label}</dt><dd>{row.value}</dd></div>)}</dl>
+          <p className="mt-2">Preview only. You approve the exact payment in Juicebox wallet below.</p></div> : null}
         {frame ? <div className="center-review-frame mt-4">
           <iframe ref={frameRef} src={frame} title="Juicebox wallet payment review" allow="publickey-credentials-get" referrerPolicy="no-referrer" style={frameHeight ? { height: frameHeight } : undefined} />
           <div className="mt-3 flex flex-wrap justify-between gap-3 text-sm">

@@ -1,6 +1,6 @@
 'use client'
 
-import { bundleMultisigLaunch, unbundleMultisigLaunch, checkCreateMultisigs, multisigReview, multisigDeploymentCalls, SAFE_CREATE_ABI, verifyMultisigLaunchSimulation } from './create-multisig'
+import { bundleMultisigLaunch, unbundleMultisigLaunch, checkCreateMultisigs, multisigReview, verifyMultisigLaunchSimulation } from './create-multisig'
 import { isEip7702DelegatedEoaRuntime } from '@bananapus/nana-sdk-core/safe'
 
 
@@ -13,7 +13,6 @@ import {
 import { getProjectCreationFee } from '@bananapus/nana-sdk-core/v6'
 import { getAccount } from '@wagmi/core'
 import {
-  decodeFunctionData,
   encodeFunctionData,
   isAddressEqual,
   type Address,
@@ -60,8 +59,8 @@ import {
   RELAYR_SIGNATURE_REFRESH_SECONDS,
   relayrPay,
   relayrPaymentLabel,
-  relayrPoll,
   relayrPostBundle,
+  relayrRecords,
   type RelayrEntry,
   type RelayrQuote,
   type RelayrTransactionRecord,
@@ -71,7 +70,12 @@ import { assertNoViewAs } from '@/lib/viewAs'
 import { publicClient } from '@/lib/wallet-core'
 import { displayChainName as chainName } from '@/lib/chainDisplay'
 import { withForwarderAuthorizationLock } from '@/lib/forwarder-authorization'
-import { requireFundingChainSelection, requireTransactionReview } from '@/lib/transaction-review'
+import { requireFundingChainSelection } from '@/lib/transaction-review'
+import { reviewedSendDeps } from '@/lib/reviewed-send-deps'
+import type { ReviewedPlan } from '@bananapus/nana-sdk-core/review'
+
+/** Core's one review of the launch, out of every page's first load. */
+const loadPlanEngine = () => import(/* webpackExports: ["reviewPlan"] */ '@bananapus/nana-sdk-core/review')
 
 const activeLaunches = new Set<string>()
 class LaunchSignaturesNeedRefresh extends Error {}
@@ -569,14 +573,13 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         }
       }
       onProgress('Checking the original payment and destination transactions. No new payment will be requested.')
-      try {
-        const records = await relayrPoll(journal.quote!.bundle_uuid, journal.signed.length, records => {
-          journal!.records = records
-          persist()
-        }, 2_500, 15_000)
+      // Provider failure labels and timeouts still require independent onchain reconciliation.
+      const polled = journal
+      const records = await relayrRecords(journal.quote!.bundle_uuid, journal.signed.length, { timeoutMs: 15_000, onRecords: seen => { polled.records = seen; persist() } }).catch(() => null)
+      if (records) {
         journal.records = records
         persist()
-      } catch { /* Provider failure labels and timeouts still require independent onchain reconciliation. */ }
+      }
       if (await reconcile()) return
       if (current.relayr === journal) {
         throw new Error('This launch is still unresolved. Check the original bundle; do not pay or launch again.')
@@ -668,28 +671,31 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         functionName: request.functionName, args: request.args, label: `Launch on ${chainName(chainId)}` }, account, nonce)
       authorizations.push({ chainId, nonce, prepared })
     }
+    /** The one review of every launch still to sign, and the Relayr round whose fee bound it shows. */
+    let planned: { plan: ReviewedPlan; round?: string; chainId?: number } | undefined
     if (authorizations.length) {
-      await requireTransactionReview({
-        kind: 'authorization', title: 'Create your project',
-        description: ['Review the FUND launch across your selected chains. Sign once per chain, then choose one payment to cover creation.', multisigReview(current.input.multisigs)].filter(Boolean).join('\n\n'),
+      // The fee bound is on the wallet's chain, when Relayr takes payment there. A Safe bundled with its launch
+      // reaches Relayr as another call than the request signed, and a launch resumed half signed is quoted with
+      // requests this review never showed: their fee is reviewed apart.
+      const payOn = startChainId !== undefined && relayrPaymentChains(current.input.chainIds).includes(startChainId) ? startChainId : undefined
+      const round = payOn !== undefined && !current.input.multisigs?.length && !journal.signed.length ? `launch:${current.input.salt}` : undefined
+      const { reviewPlan } = await loadPlanEngine()
+      const plan = await reviewPlan({
+        account,
+        title: 'Create your project',
         confirmLabel: 'Continue to wallet',
-        calls: authorizations.flatMap(item => [
-          ...multisigDeploymentCalls(current.input.multisigs ?? []).map(call => ({ chainId: item.chainId, to: call.target, data: call.callData, value: call.value,
-            abi: SAFE_CREATE_ABI, functionName: 'createProxyWithNonce',
-            // The review shows the arguments these exact bytes carry.
-            args: decodeFunctionData({ abi: SAFE_CREATE_ABI, data: call.callData }).args,
-            label: 'Create project multisig', contractName: 'Safe Proxy Factory' })),
-          ...item.prepared.review.calls,
-        ]),
-        authorization: { type: 'EIP-712 launch authorizations', requests: authorizations.map(item => item.prepared.review.authorization) },
-      })
+        description: ['Your signatures authorize these exact launches onchain. Relayr runs them once its fee is paid.', multisigReview(current.input.multisigs)].filter(Boolean).join('\n\n'),
+        calls: authorizations.map(item => ({ ...item.prepared.review, ...(round ? { relayrRound: round } : {}) })),
+        ...(round && payOn !== undefined ? { relayrRounds: { [round]: { paymentChainId: payOn } } } : {}),
+      }, reviewedSendDeps)
+      planned = { plan, ...(round ? { round, chainId: payOn } : {}) }
     }
     for (const { chainId, nonce, prepared } of authorizations) {
       requireAccount()
       assertAuthorizationAvailable(remaining)
       onProgress(`Sign the launch authorization for ${chainName(chainId)}.`)
       status(chainId, { phase: 'signing' })
-      const entry = await prepared.sign()
+      const entry = await prepared.sign(planned!.plan)
       const signedRequest = relayrForwardRequest(entry)
       if (!signedRequest) throw new Error('Invalid launch authorization.')
       journal.signed.push({ chainId, entry: bundleMultisigLaunch(entry, current.input.multisigs), nonce: nonce.toString(), deadline: signedRequest.deadline })
@@ -755,8 +761,10 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         payments = relayrPaymentOptions(journal.quote!, destinations)
       }
       if (!payments.length) throw new Error('The quote has no usable payment options for this launch. Retry to request a new quote; nothing was paid.')
-      onProgress('Choose where to pay for the launch.')
-      const selectedChainId = await requireFundingChainSelection(payments.map(option => ({ chainId: option.chain, label: relayrPaymentLabel(option) })), startChainId)
+      // The review showed the fee on the wallet's chain: it is paid there with no further choice.
+      const plannedChain = planned?.round && payments.some(option => option.chain === planned!.chainId) ? planned.chainId : undefined
+      if (plannedChain === undefined) onProgress('Choose where to pay for the launch.')
+      const selectedChainId = plannedChain ?? await requireFundingChainSelection(payments.map(option => ({ chainId: option.chain, label: relayrPaymentLabel(option) })), startChainId)
       payment = payments.find(option => option.chain === selectedChainId)
       if (!payment) throw new Error('The selected funding chain is not available in this quote. No payment was sent.')
     }
@@ -778,8 +786,9 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     let sending = false
     try {
       ;({ hash: journal.paymentHash } = await relayrPay({
-        payment, account, bundleUuid: journal.quote!.bundle_uuid, destinationChainIds: destinations,
+        payment, account, quote: { ...journal.quote!, transactions: journal.quote!.transactions ?? [], expectedTransactions: requireQuoteBindings() }, destinationChainIds: destinations,
         sent: journal.payments ?? [],
+        ...(planned?.round && payment.chain === planned.chainId ? { planned: { plan: planned.plan, round: planned.round } } : {}),
         reverify: verifySigned,
         onSending: () => {
           journal!.phase = 'payment-signing'
@@ -811,12 +820,10 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     journal.phase = 'executing'
     persist()
     onProgress('Payment confirmed. Checking each destination launch onchain.')
-    try {
-      journal.records = await relayrPoll(journal.quote!.bundle_uuid, journal.signed.length, records => {
-        journal!.records = records
-        persist()
-      })
-    } catch { /* Reconcile exact receipts even when the provider calls the bundle failed. */ }
+    // Reconcile exact receipts even when the provider calls the bundle failed.
+    const polled = journal
+    const records = await relayrRecords(journal.quote!.bundle_uuid, journal.signed.length, { onRecords: seen => { polled.records = seen; persist() } }).catch(() => null)
+    if (records) journal.records = records
     persist()
     if (!(await reconcile())) {
       throw new Error('Some destination launches are unfinished. Resume this launch to check them; confirmed projects are kept.')

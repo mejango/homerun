@@ -1,449 +1,184 @@
-/** The gas a relayed request signs and the gas the payment sends are the gas the review shows, and the payment is proven from the chain. */
+/** Homerun's relayed request and payment go through core: these check what homerun adds around core's signer and payer. */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { decodeFunctionData, type Address, type Hex } from 'viem'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
-import { erc2771ForwarderAbi } from '@bananapus/nana-sdk-core'
+import { erc2771ForwarderAbi, JBCoreContracts, jbV6ContractAddress } from '@bananapus/nana-sdk-core'
 import {
-  MAX_RELAYR_SENT_PAYMENTS,
   RELAYR_NATIVE_TOKEN,
   RELAYR_PAYMENT_ADDRESS,
   RELAYR_PAYMENT_SELECTOR,
-  RELAYR_PAYMENT_EVENT,
-  RelayrPaymentRetryError,
   RelayrPaymentRevertedError,
-  RelayrPaymentNotSentError,
-  RelayrProofError,
-  relayrPaymentAttemptOutcome,
   type RelayrPayment,
   type RelayrSentPayment,
 } from '@bananapus/nana-sdk-core/review/relayr'
+import { ReviewedCallRevertedError, TransactionReviewCancelledError } from '@bananapus/nana-sdk-core/review'
 
 const m = vi.hoisted(() => ({
-  account: '0x1111111111111111111111111111111111111111' as `0x${string}`,
   safe: false,
-  connectorUid: 'reviewed',
-  acquire: vi.fn(),
-  chainId: 8453,
-  review: vi.fn(),
-  send: vi.fn(),
-  signTypedData: vi.fn(),
-  /** Chains this app has no client for. */
-  noClient: [] as number[],
+  nonce: 0n,
+  sign: vi.fn(),
+  pay: vi.fn(),
+  retry: vi.fn(),
+  verify: vi.fn(),
 }))
 
-vi.mock('@wagmi/core', () => ({ getWalletClient: async () => { await m.acquire(); return { sendTransaction: m.send, signTypedData: m.signTypedData } }, getAccount: () => ({ address: m.account, chainId: m.chainId, connector: { uid: m.connectorUid, id: 'injected' } }) }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
-vi.mock('@/lib/transaction-review', async importOriginal => ({
-  ...await importOriginal<typeof import('@/lib/transaction-review')>(), requireTransactionReview: m.review,
-}))
 vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => m.safe }))
-const client = vi.hoisted(() => ({
-  readContract: vi.fn(async ({ functionName }: { functionName: string }) => functionName === 'nonces'
-    ? 0n : ['0x0f', 'ERC2771Forwarder', '1', 1n, '0x0000000000000000000000000000000000000000', `0x${'00'.repeat(32)}`, []]),
-  getCode: vi.fn(),
-  request: vi.fn(async () => '0x'),
-  waitForTransactionReceipt: vi.fn(),
-  getTransaction: vi.fn(),
-  getTransactionReceipt: vi.fn(),
-  getBlock: vi.fn(),
+vi.mock('@/lib/reviewed-send-deps', () => ({ reviewedSendDeps: { adapter: { name: 'adapter' } } }))
+vi.mock('@/lib/wallet-core', () => ({ publicClient: () => ({ readContract: async () => m.nonce }) }))
+vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({
+  ...await importOriginal<typeof import('@bananapus/nana-sdk-core/review')>(), signReviewed: m.sign, payRelayrReviewed: m.pay,
 }))
-vi.mock('@/lib/wallet-core', async importOriginal => ({
-  ...await importOriginal<typeof import('@/lib/wallet-core')>(),
-  publicClient: (chainId: number) => {
-    if (m.noClient.includes(chainId)) throw new Error(`No client for chain ${chainId}`)
-    return client
-  },
-  connectedWallet: async (chainId: number) => { m.chainId = chainId; await m.acquire(); return { wallet: { sendTransaction: m.send, signTypedData: m.signTypedData }, account: m.account } },
+vi.mock('@bananapus/nana-sdk-core/review/relayr', async importOriginal => ({
+  ...await importOriginal<typeof import('@bananapus/nana-sdk-core/review/relayr')>(), requireRelayrRetry: m.retry, verifyRelayrPayment: m.verify,
 }))
 
-import {
-  prepareForwardedTx,
-  relayrPay,
-  RelayrPaymentSubmittedError,
-} from '@/lib/relayr'
+import { prepareForwardedTx, relayrPay, relayrRecords, RelayrPaymentSubmittedError } from '@/lib/relayr'
 
+const ACCOUNT = '0x1111111111111111111111111111111111111111' as Address
 const TARGET = '0x2222222222222222222222222222222222222222' as Address
 const BUNDLE = '00000000-0000-0000-0000-000000000001'
 const FIRST = `0x${'aa'.repeat(32)}` as Hex
 const MINED = `0x${'bb'.repeat(32)}` as Hex
 const EARLIER = `0x${'ee'.repeat(32)}` as Hex
-const BLOCK = `0x${'cc'.repeat(32)}` as Hex
-/** The runtime code Relayr's payment contract has, whose hash the payment's chain must report. */
-const PAYMENT_RUNTIME = '0x608060405260043610156010575f80fd5b5f3560e01c63103903a7146022575f80fd5b604036600319011260ef576004356fffffffffffffffffffffffffffffffff19811680910360ef5760243564ffffffffff811680910360ef5780421160ce575f341560c6575b5f8080809373755ff2f75a0a586ecfa2b9a3c959cb662458a1053491f11560bb5760407fb96b060a9c075a83da0cf1f9405deeb5df21df681a762de16c3d5eaf99531cd8918151903482526020820152a2005b6040513d5f823e3d90fd5b506108fc6068565b90630f01bd8760e21b5f5260045260245264ffffffffff421660445260645ffd5b5f80fdfea26469706673582212206ea0d2ba1e0cb26cc9293b24f1a7aecc1de7e328ca83d6b3bf5382ac44c7390064736f6c634300081a0033' as Hex
+const SIGNATURE = `0x${'dd'.repeat(65)}` as Hex
+const PLAN = { id: 'plan' } as never
 
 beforeEach(() => {
+  vi.resetAllMocks()
   m.safe = false
-  m.connectorUid = 'reviewed'
-  m.acquire.mockReset().mockResolvedValue(undefined)
-  m.chainId = 8453
-  m.account = '0x1111111111111111111111111111111111111111'
-  m.noClient = []
-  m.review.mockResolvedValue(undefined)
-  m.send.mockResolvedValue(FIRST)
-  m.signTypedData.mockResolvedValue(`0x${'dd'.repeat(65)}`)
-  client.getCode.mockResolvedValue(PAYMENT_RUNTIME)
+  m.nonce = 0n
+  m.sign.mockResolvedValue([SIGNATURE])
 })
 
-describe('relayed request review', () => {
-  it.each([[4_000_000n, 4_000_000n], [undefined, 500_000n]])('shows the forwarder gas the wallet signs (%s)', async (gas, signed) => {
-    const prepared = await prepareForwardedTx({ chainId: 1, target: TARGET, data: '0x1234', gas }, m.account)
-    expect(prepared.review.calls[0].gas).toBe(signed)
-    expect((prepared.review.authorization as { message: { gas: bigint } }).message.gas).toBe(signed)
-    const entry = await prepared.sign()
-    const request = decodeFunctionData({ abi: erc2771ForwarderAbi, data: entry.data }).args[0] as { gas: bigint }
-    expect(request.gas).toBe(signed)
-    expect(m.signTypedData.mock.calls[0][0].message.gas).toBe(signed)
+describe('relayed request', () => {
+  it.each([[4_000_000n, 4_000_000n], [undefined, 500_000n]])('reviews and signs the exact forwarder request, gas %s, under the plan', async (gas, signed) => {
+    const prepared = await prepareForwardedTx({ chainId: 1, target: TARGET, data: '0x1234', value: 17n, gas }, ACCOUNT, 0n)
+    expect(prepared.review).toMatchObject({ chainId: 1, from: ACCOUNT, to: TARGET, data: '0x1234', value: 17n, gas: signed })
+    const entry = await prepared.sign(PLAN)
+    const [[[signature], action, deps]] = m.sign.mock.calls
+    expect(signature).toMatchObject({ kind: 'forward-request', chainId: 1, request: { from: ACCOUNT, to: TARGET, value: 17n, gas: signed, nonce: 0n, data: '0x1234' } })
+    expect(action).toMatchObject({ account: ACCOUNT, plan: PLAN })
+    expect(deps).toEqual({ adapter: { name: 'adapter' } })
+    expect(entry.target).toBe(jbV6ContractAddress[JBCoreContracts.ERC2771Forwarder][1])
+    const [request] = decodeFunctionData({ abi: erc2771ForwarderAbi, data: entry.data }).args as [{ gas: bigint; deadline: number; signature: Hex }]
+    expect(request).toMatchObject({ gas: signed, deadline: signature.request.deadline, signature: SIGNATURE })
+    expect(entry.value).toBe('17')
   })
-})
 
-describe('forwarder signature identity', () => {
-  it.each(['account', 'chain', 'safe', 'view-as'] as const)('refuses %s changed during wallet acquisition', async changed => {
-    const prepared = await prepareForwardedTx({ chainId: 1, target: TARGET, data: '0x1234' }, m.account)
-    m.acquire.mockImplementationOnce(async () => {
-      await Promise.resolve()
-      if (changed === 'account') m.account = TARGET
-      if (changed === 'chain') m.chainId = 8453
-      if (changed === 'safe') m.safe = true
-      if (changed === 'view-as') setViewAs(TARGET)
-    })
+  it('refuses a forwarder nonce that moved, before review and before signing', async () => {
+    m.nonce = 1n
+    await expect(prepareForwardedTx({ chainId: 1, target: TARGET, data: '0x1234' }, ACCOUNT, 0n)).rejects.toThrow('may have executed')
+    const prepared = await prepareForwardedTx({ chainId: 1, target: TARGET, data: '0x1234' }, ACCOUNT, 1n)
+    m.nonce = 2n
+    await expect(prepared.sign(PLAN)).rejects.toThrow('changed or expired')
+    expect(m.sign).not.toHaveBeenCalled()
+  })
+
+  it('refuses a request too close to its deadline to be paid', async () => {
+    const prepared = await prepareForwardedTx({ chainId: 1, target: TARGET, data: '0x1234' }, ACCOUNT)
+    const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 24 * 3600_000)
     try {
-      await expect(prepared.sign()).rejects.toThrow()
-      expect(m.signTypedData).not.toHaveBeenCalled()
-    } finally { clearViewAs() }
+      await expect(prepared.sign(PLAN)).rejects.toThrow('changed or expired')
+      expect(m.sign).not.toHaveBeenCalled()
+    } finally { now.mockRestore() }
   })
-})
-
-it('signs through the current connector after the awaited nonce recheck', async () => {
-  const prepared = await prepareForwardedTx({ chainId: 1, target: TARGET, data: '0x1234' }, m.account)
-  client.readContract.mockImplementationOnce(async () => {
-    await Promise.resolve()
-    m.connectorUid = 'replacement'
-    return 0n
-  })
-  await prepared.sign()
-  expect(m.signTypedData).toHaveBeenCalledOnce()
-})
-
-it('refuses a relay signature that expires during final wallet acquisition', async () => {
-  const prepared = await prepareForwardedTx({ chainId: 1, target: TARGET, data: '0x1234' }, m.account)
-  const deadline = Number((prepared.review.authorization as { message: { deadline: number } }).message.deadline)
-  const now = vi.spyOn(Date, 'now')
-  m.acquire.mockResolvedValueOnce(undefined).mockImplementationOnce(async () => {
-    await Promise.resolve()
-    now.mockReturnValue((deadline + 1) * 1000)
-  })
-  try {
-    await expect(prepared.sign()).rejects.toThrow('expired')
-    expect(m.signTypedData).not.toHaveBeenCalled()
-  } finally { now.mockRestore() }
 })
 
 describe('payment', () => {
   const deadline = Math.floor(Date.now() / 1000) + 600
   const calldata = `${RELAYR_PAYMENT_SELECTOR}${BUNDLE.replaceAll('-', '').padEnd(64, '0')}${deadline.toString(16).padStart(64, '0')}` as Hex
-  const payment: RelayrPayment = {
-    chain: 8453, amount: '200', target: RELAYR_PAYMENT_ADDRESS, token: RELAYR_NATIVE_TOKEN, payment_deadline: deadline, calldata,
-  }
-  /** The payment as it was sent, under `hash`. */
-  const sentUnder = (hash: Hex): RelayrSentPayment => ({
-    chainId: 8453, target: RELAYR_PAYMENT_ADDRESS, calldata, amount: '200', deadline: String(deadline), bundleUuid: BUNDLE, hash,
-  })
+  const payment: RelayrPayment = { chain: 8453, amount: '200', target: RELAYR_PAYMENT_ADDRESS, token: RELAYR_NATIVE_TOKEN, payment_deadline: deadline, calldata }
+  const quote = { bundle_uuid: BUNDLE, payment_info: [payment], transactions: [], expectedTransactions: [] }
+  const sentUnder = (hash: Hex): RelayrSentPayment => ({ chainId: 8453, target: RELAYR_PAYMENT_ADDRESS, calldata, amount: '200', deadline: String(deadline), bundleUuid: BUNDLE, hash })
   const pay = (options: Partial<Parameters<typeof relayrPay>[0]> = {}) =>
-    relayrPay({ payment, account: m.account, bundleUuid: BUNDLE, destinationChainIds: [1, 10], ...options })
-  /** The chain holds the reviewed payment under each hash, sent from `from`, mined with `status`. */
-  function chainHolds(statuses: Record<string, 'success' | 'reverted'>, { from = m.account, to = RELAYR_PAYMENT_ADDRESS }: { from?: Address; to?: Address } = {}) {
-    client.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => {
-      if (!statuses[hash]) throw new Error('Transaction not found')
-      return { hash, chainId: 8453, from, to, input: calldata, value: 200n, blockHash: BLOCK, blockNumber: 123n }
+    relayrPay({ payment, account: ACCOUNT, quote, destinationChainIds: [1, 10], ...options })
+  /** Core opens the wallet (after onSending) and reports `hashes` as the payment is known by them, then `ends` as given. */
+  function corePays(hashes: Hex[], ends: () => unknown = () => ({ hash: hashes[hashes.length - 1] })) {
+    m.pay.mockImplementation(async (_quote, _chainId, action) => {
+      await action.onSending()
+      for (const hash of hashes) await action.onSent(hash)
+      return ends()
     })
-    client.getTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => {
-      if (!statuses[hash]) throw new Error('Transaction not found')
-      return { transactionHash: hash, to, blockHash: BLOCK, blockNumber: 123n, status: statuses[hash] }
-    })
-    client.getBlock.mockResolvedValue({ hash: BLOCK })
-  }
-  /** Relayr reports the bundle as `body` says, by default unpaid with its one call pending. */
-  function relayrReports(body: Record<string, unknown> = {}) {
-    vi.mocked(fetch).mockImplementation(async () => new Response(JSON.stringify({ bundle_uuid: BUNDLE, payment_received: false,
-      transactions: [{ tx_uuid: '00000000-0000-4000-8000-000000000001', status: { state: 'Pending' } }], ...body }), { status: 200 }))
   }
 
-  beforeEach(() => {
-    client.waitForTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => ({ status: 'success', transactionHash: hash }))
-    chainHolds({ [FIRST]: 'success', [MINED]: 'success' })
+  it('spends the plan\'s fee bound on a first payment, and resolves with every hash it was known by', async () => {
+    corePays([FIRST, MINED])
+    const onSent = vi.fn()
+    const result = await pay({ planned: { plan: PLAN, round: 'launch:x' }, onSent })
+    expect(m.pay.mock.calls[0][1]).toBe(8453)
+    expect(m.pay.mock.calls[0][2]).toMatchObject({ account: ACCOUNT, plan: PLAN, relayrRound: 'launch:x' })
+    expect(result).toEqual({ hash: MINED, payments: [sentUnder(MINED)] })
+    expect(onSent.mock.calls.map(([payments]) => payments)).toEqual([[sentUnder(FIRST)], [sentUnder(MINED)]])
+    expect(m.retry).not.toHaveBeenCalled()
   })
 
-  it('shows the gas limit it sends', async () => {
-    await pay()
-    const reviewed = m.review.mock.calls[0][0].calls[0]
-    expect(reviewed.gas).toBe(150_000n)
-    expect(reviewed).not.toHaveProperty('safeTxGas')
-    expect(m.send.mock.calls[0][0].gas).toBe(reviewed.gas)
+  it('pays a quote paid before only once the retry rule clears it, and never against the plan', async () => {
+    corePays([FIRST])
+    const order: string[] = []
+    m.retry.mockImplementation(async () => { order.push('retry') })
+    await pay({ sent: [sentUnder(EARLIER)], planned: { plan: PLAN, round: 'launch:x' }, onSending: () => { order.push('saved') } })
+    expect(m.pay.mock.calls[0][2].plan).toBeUndefined()
+    expect(m.retry).toHaveBeenCalledWith(expect.any(Function), { payments: [sentUnder(EARLIER)], from: ACCOUNT, bundleUuid: BUNDLE })
+    expect(order).toEqual(['retry', 'saved'])
   })
 
-  it.each(['account', 'chain', 'safe'] as const)('refuses a changed %s after the final asynchronous recheck', async changed => {
-    const reviewedAccount = m.account
-    let checks = 0
+  it('rechecks the launch right before the wallet, and a refusal there sends nothing', async () => {
+    corePays([FIRST])
+    const reverify = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('A creation fee changed.'))
     const onSending = vi.fn()
-    await expect(pay({ account: reviewedAccount, onSending, reverify: async () => {
-      checks += 1
-      if (checks !== 3) return
-      if (changed === 'account') m.account = TARGET
-      if (changed === 'chain') m.chainId = 1
-      if (changed === 'safe') m.safe = true
-    } })).rejects.toThrow('Connected wallet changed')
+    await expect(pay({ reverify, onSending })).rejects.toThrow('A creation fee changed.')
+    expect(reverify).toHaveBeenCalledTimes(2)
     expect(onSending).not.toHaveBeenCalled()
-    expect(m.send).not.toHaveBeenCalled()
   })
 
-  it('refuses view-as enabled during the final asynchronous recheck', async () => {
-    let checks = 0
-    const onSending = vi.fn()
-    try {
-      await expect(pay({ onSending, reverify: async () => { if (++checks === 3) setViewAs(TARGET) } })).rejects.toThrow(VIEW_AS_WRITE_BLOCKED)
-      expect(onSending).not.toHaveBeenCalled()
-      expect(m.send).not.toHaveBeenCalled()
-    } finally { clearViewAs() }
-  })
-
-  it('refuses a Safe connection before a review opens or anything is sent', async () => {
+  it('refuses a Safe connection and view-as before core is asked', async () => {
     m.safe = true
     await expect(pay()).rejects.toThrow('ordinary wallet')
-    expect(m.review).not.toHaveBeenCalled()
-    expect(m.send).not.toHaveBeenCalled()
-  })
-
-  it.each(['account', 'chain', 'safe', 'view-as', 'quote'] as const)('proves no payment was sent when %s changes during the awaited journal marker', async changed => {
-    const changingPayment = { ...payment }
-    const onSending = vi.fn(async () => {
-      await Promise.resolve()
-      expect(m.send).not.toHaveBeenCalled()
-      if (changed === 'account') m.account = TARGET
-      if (changed === 'chain') m.chainId = 1
-      if (changed === 'safe') m.safe = true
-      if (changed === 'view-as') setViewAs(TARGET)
-      if (changed === 'quote') changingPayment.amount = '201'
-    })
+    m.safe = false
+    setViewAs(TARGET)
     try {
-      const error = await pay({ payment: changingPayment, onSending }).catch((thrown: unknown) => thrown)
-      expect(error).toBeInstanceOf(RelayrPaymentNotSentError)
-      expect(onSending).toHaveBeenCalledOnce()
-      expect(m.send).not.toHaveBeenCalled()
+      await expect(pay()).rejects.toThrow(VIEW_AS_WRITE_BLOCKED)
     } finally { clearViewAs() }
+    expect(m.pay).not.toHaveBeenCalled()
   })
 
-  it('awaits the durable marker before requesting the exact reviewed chain', async () => {
-    const order: string[] = []
-    m.send.mockImplementationOnce(async request => {
-      order.push('wallet')
-      expect(request.chain.id).toBe(8453)
-      return FIRST
-    })
-    await pay({ onSending: async () => { await Promise.resolve(); order.push('saved') } })
-    expect(order).toEqual(['saved', 'wallet'])
+  it('throws a payment that reverted onchain as the SDK\'s reverted error', async () => {
+    corePays([FIRST], () => { throw new ReviewedCallRevertedError(0, FIRST, { status: 'reverted' } as never) })
+    m.verify.mockRejectedValue(new RelayrPaymentRevertedError())
+    await expect(pay()).rejects.toBeInstanceOf(RelayrPaymentRevertedError)
+    expect(m.verify.mock.calls[0][1]).toMatchObject({ hash: FIRST, from: ACCOUNT })
   })
 
-  it('takes its payment details from the SDK, and refuses an option that is not Relayr\'s payment', async () => {
-    await expect(pay({ payment: { ...payment, target: TARGET } })).rejects.toThrow('unrecognized payment contract')
-    await expect(pay({ payment: { ...payment, amount: '-1' } })).rejects.toThrow('invalid payment amount')
-    await expect(pay({ destinationChainIds: [1, 11155111] })).rejects.toThrow('same network family')
-    expect(m.send).not.toHaveBeenCalled()
-  })
-
-  it('stops when the quote changed between the review and the wallet', async () => {
-    m.review.mockImplementation(async () => { payment.amount = '201' })
-    try {
-      await expect(pay()).rejects.toThrow('payment changed')
-    } finally {
-      payment.amount = '200'
-    }
-    expect(m.send).not.toHaveBeenCalled()
-  })
-
-  it('proves the payment from the chain, and resolves with the hash it was sent under and every payment sent', async () => {
-    const onSent = vi.fn()
-    const result = await pay({ onSent })
-    expect(result).toEqual({ hash: FIRST, payments: [sentUnder(FIRST)] })
-    expect(onSent).toHaveBeenCalledExactlyOnceWith([sentUnder(FIRST)])
-    expect(client.getTransaction).toHaveBeenCalledWith({ hash: FIRST })
-  })
-
-  it('proves funding through a wrapped wallet call with the authenticated payment event', async () => {
-    const wrapped = {
-      hash: FIRST, chainId: 8453, from: TARGET, to: TARGET, input: '0x1234', value: 0n,
-      blockHash: BLOCK, blockNumber: 123n,
-    }
-    client.getTransaction.mockResolvedValue(wrapped)
-    client.getTransactionReceipt.mockResolvedValue({
-      transactionHash: FIRST, to: TARGET, blockHash: BLOCK, blockNumber: 123n, status: 'success',
-      logs: [{ address: RELAYR_PAYMENT_ADDRESS, transactionHash: FIRST, blockHash: BLOCK, blockNumber: 123n,
-        topics: [RELAYR_PAYMENT_EVENT, `0x${BUNDLE.replaceAll('-', '').padEnd(64, '0')}`],
-        data: `0x${(200n).toString(16).padStart(64, '0')}${BigInt(deadline).toString(16).padStart(64, '0')}`,
-      }],
-    })
-    await expect(pay()).resolves.toEqual({ hash: FIRST, payments: [sentUnder(FIRST)] })
-    expect(client.getCode).toHaveBeenCalledWith({ address: RELAYR_PAYMENT_ADDRESS, blockNumber: 123n })
-  })
-
-  it('proves a sped-up payment on the hash it was mined under, and remembers that hash', async () => {
-    client.waitForTransactionReceipt.mockResolvedValue({ status: 'success', transactionHash: MINED })
-    const onSent = vi.fn()
-    const result = await pay({ onSent })
-    expect(result).toEqual({ hash: MINED, payments: [sentUnder(MINED)] })
-    // First under the hash the wallet returned, then under the hash the chain mined it with.
-    expect(onSent.mock.calls).toEqual([[[sentUnder(FIRST)]], [[sentUnder(MINED)]]])
-    expect(client.getTransaction).toHaveBeenCalledExactlyOnceWith({ hash: MINED })
-  })
-
-  it('refuses a payment that mined as another transaction, however its receipt reads', async () => {
-    chainHolds({ [FIRST]: 'success' }, { to: TARGET })
-    await expect(pay()).rejects.toThrow(RelayrProofError)
-    await expect(pay()).rejects.toThrow(/does not match the reviewed (?:Relayr )?payment/)
-    chainHolds({ [FIRST]: 'success' }, { from: TARGET })
-    await expect(pay()).rejects.toThrow(/does not match the reviewed (?:Relayr )?payment/)
-  })
-
-  it('throws a payment that reverted onchain as the SDK\'s reverted error, saved under its hash first', async () => {
-    chainHolds({ [FIRST]: 'reverted' })
-    const onSent = vi.fn()
-    const error = await pay({ onSent }).catch((thrown: unknown) => thrown)
-    expect(error).toBeInstanceOf(RelayrPaymentRevertedError)
-    expect(error).toMatchObject({ hash: FIRST, chainId: 8453 })
-    expect(onSent).toHaveBeenCalledWith([sentUnder(FIRST)])
-  })
-
-  it('keeps a payment whose proof cannot be read yet as sent, never as failed', async () => {
-    client.getTransaction.mockRejectedValue(new Error('node unavailable'))
-    const error = await pay().catch((thrown: unknown) => thrown)
-    expect(error).toBeInstanceOf(RelayrPaymentSubmittedError)
-    expect(error).toMatchObject({ hash: FIRST, chainId: 8453 })
-    expect(m.send).toHaveBeenCalledOnce()
-  })
-
-  it('keeps a payment sent when its receipt cannot be read, or its hash cannot be saved', async () => {
-    client.waitForTransactionReceipt.mockRejectedValue(new Error('node unavailable'))
+  it('keeps a payment with a hash as sent whatever fails after it', async () => {
+    corePays([FIRST], () => { throw new Error('receipt unavailable') })
     await expect(pay()).rejects.toBeInstanceOf(RelayrPaymentSubmittedError)
-    await expect(pay({ onSent: () => { throw new Error('storage is full') } })).rejects.toBeInstanceOf(RelayrPaymentSubmittedError)
-    expect(client.getTransaction).not.toHaveBeenCalled()
+    corePays([FIRST])
+    await expect(pay({ onSent: () => { throw new Error('storage full') } })).rejects.toBeInstanceOf(RelayrPaymentSubmittedError)
   })
 
-  it('says a wallet that failed after it may have sent never signed, and a rejection never sent', async () => {
-    m.send.mockRejectedValue(new Error('wallet disconnected'))
-    const ambiguous = await pay().catch((thrown: unknown) => thrown)
-    expect(ambiguous).not.toBeInstanceOf(RelayrPaymentNotSentError)
-    expect(ambiguous).toMatchObject({ message: expect.stringContaining('may have sent the payment') })
-    const rejection = Object.assign(new Error('Rejected'), { code: 4001 })
-    m.send.mockRejectedValue(rejection)
-    await expect(pay()).rejects.toBe(rejection)
+  it('passes core\'s refusal through when no hash came back', async () => {
+    m.pay.mockRejectedValue(new TransactionReviewCancelledError())
+    await expect(pay()).rejects.toBeInstanceOf(TransactionReviewCancelledError)
   })
+})
 
-  it.each([
-    ['ordinary cause', new Error('Wallet response lost')],
-    ['rejection cause', Object.assign(new Error('Rejected'), { code: 4001 })],
-  ])('keeps a wallet-returned unsent brand with %s unresolved', async (_label, cause) => {
-    m.send.mockRejectedValueOnce(new RelayrPaymentNotSentError(cause))
-    const onSending = vi.fn()
-    const error = await pay({ onSending }).catch((thrown: unknown) => thrown)
-    expect(m.send).toHaveBeenCalledOnce()
-    expect(onSending).toHaveBeenCalledOnce()
-    expect(error).not.toBeInstanceOf(RelayrPaymentNotSentError)
-    expect(error).toMatchObject({ message: expect.stringContaining('may have sent the payment') })
-    expect(relayrPaymentAttemptOutcome(error, { sending: true, paid: false })).toBeNull()
-    expect(relayrPaymentAttemptOutcome(error, { sending: true, paid: true })).toBeNull()
-  })
-
-  describe('a quote paid before', () => {
-    beforeEach(() => {
-      chainHolds({ [EARLIER]: 'reverted', [FIRST]: 'success' })
-      relayrReports()
-    })
-
-    it('is paid again when the SDK\'s retry rule clears it: every payment reverted, Relayr reporting it unpaid', async () => {
-      const result = await pay({ sent: [sentUnder(EARLIER)] })
-      expect(result.payments).toEqual([sentUnder(EARLIER), sentUnder(FIRST)])
-      expect(vi.mocked(fetch)).toHaveBeenCalledWith(`https://api.relayr.ba5ed.com/v1/bundle/${BUNDLE}`, expect.objectContaining({ cache: 'no-store' }))
-      expect(m.send).toHaveBeenCalledOnce()
-    })
-
-    it('asks the rule right before the wallet opens, after the review', async () => {
-      const order: string[] = []
-      m.review.mockImplementation(async () => { order.push('review') })
-      vi.mocked(fetch).mockImplementation(async () => {
-        order.push('retry rule')
-        return new Response(JSON.stringify({ bundle_uuid: BUNDLE, payment_received: false, transactions: [{ tx_uuid: '00000000-0000-4000-8000-000000000001', status: { state: 'Pending' } }] }))
-      })
-      m.send.mockImplementation(async () => { order.push('wallet'); return FIRST })
-      await pay({ sent: [sentUnder(EARLIER)] })
-      expect(order).toEqual(['review', 'retry rule', 'wallet'])
-    })
-
-    it('is never paid again, and the wallet never opens, when Relayr reports the bundle paid', async () => {
-      relayrReports({ payment_received: true })
-      const error = await pay({ sent: [sentUnder(EARLIER)] }).catch((thrown: unknown) => thrown)
-      expect(error).toBeInstanceOf(RelayrPaymentRetryError)
-      expect(error).toMatchObject({ reason: 'paid' })
-      expect(m.send).not.toHaveBeenCalled()
-    })
-
-    it('is never paid again when one of its payments succeeded onchain', async () => {
-      chainHolds({ [EARLIER]: 'reverted', [MINED]: 'success' })
-      const error = await pay({ sent: [sentUnder(EARLIER), sentUnder(MINED)] }).catch((thrown: unknown) => thrown)
-      expect(error).toMatchObject({ reason: 'paid' })
-      expect(m.send).not.toHaveBeenCalled()
-    })
-
-    it('is never paid again while a payment cannot be read, or Relayr cannot be', async () => {
-      client.getTransaction.mockRejectedValue(new Error('node unavailable'))
-      await expect(pay({ sent: [sentUnder(EARLIER)] })).rejects.toMatchObject({ reason: 'unknown' })
-      chainHolds({ [EARLIER]: 'reverted' })
-      vi.mocked(fetch).mockRejectedValue(new Error('offline'))
-      await expect(pay({ sent: [sentUnder(EARLIER)] })).rejects.toMatchObject({ reason: 'unknown' })
-      expect(m.send).not.toHaveBeenCalled()
-    })
-
-    it('is never paid again when a saved payment belongs to another bundle', async () => {
-      await expect(pay({ sent: [{ ...sentUnder(EARLIER), bundleUuid: '00000000-0000-0000-0000-000000000002' }] }))
-        .rejects.toThrow('belongs to another bundle')
-      expect(m.send).not.toHaveBeenCalled()
-    })
-
-    it.each([
-      ['earlier', -1],
-      ['later', 1],
-    ])('is never paid again, and nothing is read, when a saved payment\'s deadline is %s than the one its calldata pays until', async (_label, offset) => {
-      const error = await pay({ sent: [{ ...sentUnder(EARLIER), deadline: String(deadline + offset) }] }).catch((thrown: unknown) => thrown)
-      expect(error).toBeInstanceOf(RelayrPaymentRetryError)
-      expect(error).toMatchObject({ reason: 'invalid' })
-      expect(m.send).not.toHaveBeenCalled()
-      expect(vi.mocked(fetch)).not.toHaveBeenCalled()
-    })
-
-    it.each([
-      ['a payment that is null', [null]],
-      ['a payment with no fields', [{}]],
-      ['a payment with only its bundle', [{ bundleUuid: BUNDLE }]],
-      ['payments that are not a list', { length: 1 }],
-    ])('is never paid again, and nothing is read, for %s', async (_label, sent) => {
-      const error = await pay({ sent: sent as never }).catch((thrown: unknown) => thrown)
-      expect(error).toBeInstanceOf(RelayrPaymentRetryError)
-      expect(error).toMatchObject({ reason: 'invalid' })
-      expect(m.send).not.toHaveBeenCalled()
-      expect(vi.mocked(fetch)).not.toHaveBeenCalled()
-    })
-
-    it('is never paid again while a chain a payment was sent on has no client here', async () => {
-      m.noClient = [1]
-      const error = await pay({ sent: [{ ...sentUnder(EARLIER), chainId: 1 }] }).catch((thrown: unknown) => thrown)
-      expect(error).toBeInstanceOf(RelayrPaymentRetryError)
-      expect(error).toMatchObject({ reason: 'unknown' })
-      expect(m.send).not.toHaveBeenCalled()
-    })
-
-    it('is never paid beyond the most payments a quote keeps', async () => {
-      const full = Array.from({ length: MAX_RELAYR_SENT_PAYMENTS }, () => sentUnder(EARLIER))
-      await expect(pay({ sent: full })).rejects.toThrow('paid too many times')
-      expect(m.send).not.toHaveBeenCalled()
-    })
+describe('destination records', () => {
+  it('keeps the hashes a poll saw when it stops on a chain Relayr failed, though Relayr is unreachable after', async () => {
+    const records = [
+      { tx_uuid: '00000000-0000-4000-8000-000000000001', status: { state: 'Success', data: { hash: MINED } } },
+      { tx_uuid: '00000000-0000-4000-8000-000000000002', status: { state: 'Failed' } },
+    ]
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ bundle_uuid: BUNDLE, payment_received: true, transactions: records })))
+      .mockRejectedValue(new TypeError('Failed to fetch'))
+    vi.stubGlobal('fetch', fetch)
+    try {
+      const seen = vi.fn()
+      expect(await relayrRecords(BUNDLE, 2, { onRecords: seen })).toEqual(records)
+      // The journal has every read as it arrives, before the poll ends.
+      expect(seen).toHaveBeenCalledWith(records)
+    } finally { vi.unstubAllGlobals() }
   })
 })

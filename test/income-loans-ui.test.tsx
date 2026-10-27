@@ -7,7 +7,7 @@ import { netLoanProceeds } from '@bananapus/nana-sdk-core/v6/loan-math'
 import { formatUnits, type Address, type Hex } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { IncomeProjectState } from '@/lib/income-state'
-import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
+import type { TxRequest, TxSendOptions, TxStep } from '@/hooks/useReviewedAction'
 import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 
 const WALLET = '0x1111111111111111111111111111111111111111' as Address
@@ -22,11 +22,12 @@ const runtime = vi.hoisted(() => ({
   permitted: false, loans: [] as unknown[], loan: undefined as unknown,
   sends: [] as { request: TxRequest; options: TxSendOptions }[],
   allowance: 0n, reallocation: undefined as unknown, partial: undefined as unknown,
+  borrowable: 1_000_000n,
 }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: WALLET }) }))
-vi.mock('@/hooks/useSafeTx', () => ({
+vi.mock('@/hooks/useReviewedAction', () => ({
   txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,
-  useSafeTx: () => {
+  useReviewedAction: () => {
     const [index] = useState(() => runtime.next++)
     useEffect(() => undefined, [])
     return runtime.handles[index]
@@ -34,7 +35,7 @@ vi.mock('@/hooks/useSafeTx', () => ({
 }))
 vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
   ...await importOriginal<typeof import('@bananapus/nana-sdk-core/v6')>(),
-  getBorrowableAmount: async () => ({ borrowableNow: 1_000_000n, borrowableCapacity: 1_000_000n }),
+  getBorrowableAmount: async () => ({ borrowableNow: runtime.borrowable, borrowableCapacity: runtime.borrowable }),
   hasPermissions: async () => runtime.permitted,
 }))
 vi.mock('@/lib/income-state', async importOriginal => ({
@@ -54,9 +55,10 @@ import { IncomeBorrow, IncomeLoansList } from '@/components/IncomeProject'
 import { IncomeLoanTools } from '@/components/IncomeLoanTools'
 import { buildReallocateCollateralTx, MIN_PREPAID_FEE_PERCENT } from '@bananapus/nana-sdk-core/v6'
 import { expectRetryHeldByIntent } from './support/intent-retry'
+import { runSteps } from './support/reviewed-steps'
 import { loanRepaymentIntent } from '@/lib/income-loan-tools'
 import { approvalIntentKey } from '@/lib/transaction-builders'
-import { v6Address } from '@/lib/income-contracts'
+import { protectedIncomeMinimum, v6Address } from '@/lib/income-contracts'
 
 const context = { token: USDC, terminal: TERMINAL, decimals: 6, currency: 1, symbol: 'USDC', isPrimary: true, balance: 0n }
 const state = {
@@ -77,12 +79,16 @@ async function type(label: string, value: string) {
 
 beforeEach(() => {
   runtime.next = 0; runtime.permitted = false; runtime.loans = []; runtime.loan = undefined; runtime.sends = []
-  runtime.allowance = 0n; runtime.reallocation = undefined; runtime.partial = undefined
+  runtime.allowance = 0n; runtime.reallocation = undefined; runtime.partial = undefined; runtime.borrowable = 1_000_000n
   client.readContract.mockReset().mockImplementation(async ({ functionName }: { functionName: string }) => functionName === 'hasPermission' ? true : runtime.allowance)
-  runtime.handles = Array.from({ length: 4 }, () => ({
-    notice: null, dismiss: vi.fn(), phase: 'idle', busy: false, isSafe: false, error: null, hash: null, safeProposalHash: null, receipt: null, reset: vi.fn(),
-    send: vi.fn(async (request: TxRequest, options: TxSendOptions = {}) => { await options.reverify?.(request); runtime.sends.push({ request, options }); return HASH }),
-  }))
+  runtime.handles = Array.from({ length: 4 }, () => {
+    const handle: Handle = {
+      notice: null, dismiss: vi.fn(), phase: 'idle', busy: false, isSafe: false, error: null, hash: null, safeProposalHash: null, receipt: null, reset: vi.fn(),
+      // A permission or approval and its loan step are one reviewed run.
+      send: vi.fn(async (requested: TxRequest | TxRequest[], options: TxSendOptions) => runSteps(requested, options, (request, _index, sent) => { runtime.sends.push({ request, options: sent as TxSendOptions }); return HASH }, { safe: handle.isSafe, receipt: () => client.waitForTransactionReceipt() })),
+    }
+    return handle
+  })
   cache = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
@@ -95,8 +101,7 @@ describe('INCOME loans like Juicebox Money', () => {
     await render()
     await type('INCOME collateral', '10'); await settle()
     await act(async () => button('Review loan').click()); await settle()
-    await act(async () => button('Confirm & borrow').click()); await settle()
-    const permission = runtime.handles[1]
+    const permission = runtime.handles[0]
     permission.phase = 'submitted'
     permission.notice = 'Proposed to your Safe. Its other signers can approve it there.'
     await render()
@@ -120,15 +125,26 @@ describe('INCOME loans like Juicebox Money', () => {
     expect([...dialog.querySelectorAll('li[data-state]')].map(step => step.textContent)).toEqual([
       expect.stringContaining('Allow REVLoans to use your INCOME as collateral'), expect.stringContaining('Borrow against 10 INCOME'),
     ])
-    await act(async () => button('Confirm & borrow').click()); await settle()
     expect(runtime.sends.map(sent => sent.request.functionName)).toEqual(['setPermissionsFor', 'borrowFrom'])
     expect(runtime.sends.map(sent => sent.options.reviewedAccount)).toEqual([WALLET, WALLET])
     const borrow = runtime.sends[1]
     expect(borrow.request.args).toContain(50n)
-    expect(borrow.options.simulationBlockNumber).toBe(200n)
+    // It simulates on the block its permission confirmed in.
+    expect((borrow.request as TxStep).dependsOnPrior).toBe(true)
     expect(borrow.options.reviewNotice).toContain('The prepaid source fee is 5%')
     // Its borrow amount and minimum come from a fresh quote: a retry is held by the collateral the user chose.
     expect(borrow.options.recoveryNamespace).toBe(writeIntentKey('borrow', { project: state.projectId, token: 'auto:token', collateral: 10n * UNIT, fee: 50n }))
+  })
+
+  it('names the fresh quote the borrow is built from in its review, not the card\'s', async () => {
+    runtime.permitted = true
+    await act(async () => root.render(<QueryClientProvider client={cache}><IncomeBorrow state={state} client={client as never} context={context} /></QueryClientProvider>))
+    await type('INCOME collateral', '10'); await settle()
+    // Borrowing capacity fell after the card's quote.
+    runtime.borrowable = 500_000n
+    await act(async () => button('Review loan').click()); await settle()
+    const [, options] = runtime.handles[0].send.mock.calls[0] as [TxRequest[], TxSendOptions]
+    expect(options.context).toContainEqual({ label: 'Borrow at least', value: `${formatUnits(protectedIncomeMinimum(500_000n), 6)} USDC` })
   })
 
   it('keys a borrow with the default prepaid fee as that default, not its value', async () => {
@@ -136,7 +152,6 @@ describe('INCOME loans like Juicebox Money', () => {
     await act(async () => root.render(<QueryClientProvider client={cache}><IncomeBorrow state={state} client={client as never} context={context} /></QueryClientProvider>))
     await type('INCOME collateral', '10'); await settle()
     await act(async () => button('Review loan').click()); await settle()
-    await act(async () => button('Confirm & borrow').click()); await settle()
     const borrow = runtime.sends.find(sent => sent.request.functionName === 'borrowFrom')!
     expect(borrow.options.recoveryNamespace).toBe(writeIntentKey('borrow', { project: state.projectId, token: 'auto:token', collateral: 10n * UNIT, fee: 'auto:fee' }))
   })
@@ -158,7 +173,6 @@ describe('INCOME loans like Juicebox Money', () => {
     await act(async () => button('Repay').click()); await settle()
     const dialog = host.querySelector('[data-tx-confirm]')!
     expect(dialog.textContent).toContain('You get back5 INCOME')
-    await act(async () => button('Confirm & repay').click()); await settle()
     expect(runtime.sends).toHaveLength(1)
     expect(runtime.sends[0].request.functionName).toBe('repayLoan')
     // Its ceiling accrues with time: a retry is held by the loan the user chose to repay.
@@ -170,7 +184,7 @@ describe('INCOME loans like Juicebox Money', () => {
   const usdcLoan = (ceiling: bigint) => ({ blockNumber: 200n, chainId: 8453, projectId: 9n, loanId: 41n, owner: WALLET, loan: { amount: 400_000n, collateral: 5n * UNIT, sourceToken: USDC },
     sourceContext: context, accruedFee: ceiling - 400_400n, repayCeiling: ceiling })
   /** Every send stops after it is handed over, as a Safe proposal or a lost reply does: nothing follows it. */
-  const stopAfterEachSend = () => { for (const handle of runtime.handles) handle.send.mockImplementation(async (request: TxRequest, options: TxSendOptions = {}) => { await options.reverify?.(request); runtime.sends.push({ request, options }); return null }) }
+  const stopAfterEachSend = () => { for (const handle of runtime.handles) handle.send.mockImplementation(async (requested: TxRequest | TxRequest[], options: TxSendOptions) => runSteps(requested, options, (request, _index, sent) => { runtime.sends.push({ request, options: sent as TxSendOptions }); return null })) }
 
   it('approves a full repayment under its loan, and a retry with a ceiling that accrued is held by the first', async () => {
     runtime.loans = [{ id: '41', owner: WALLET, collateral: String(5n * UNIT), borrowAmount: '400000', token: USDC, createdAt: 1_800_000_000, chainId: 8453 }]
@@ -179,9 +193,8 @@ describe('INCOME loans like Juicebox Money', () => {
     await act(async () => root.render(<QueryClientProvider client={cache}><IncomeLoansList state={state} client={client as never} /></QueryClientProvider>))
     await settle()
     await act(async () => button('Repay').click()); await settle()
-    await act(async () => button('Confirm & repay').click()); await settle()
     runtime.loan = usdcLoan(400_500n)
-    await act(async () => button('Confirm & repay').click()); await settle()
+    await act(async () => button('Review again').click()); await settle()
     expect(runtime.sends.map(sent => sent.request.functionName)).toEqual(['approve', 'approve'])
     await expectRetryHeldByIntent(runtime.sends[0], runtime.sends[1], approvalIntentKey(loanRepaymentIntent(state.projectId, 41n), { token: USDC, spender: v6Address('REVLoans', 8453), step: 'repay' }))
   })
@@ -250,7 +263,6 @@ describe('INCOME loans like Juicebox Money', () => {
     await act(async () => root.render(<QueryClientProvider client={cache}><IncomeLoansList state={state} client={client as never} /></QueryClientProvider>))
     await settle()
     await act(async () => button('Repay').click()); await settle()
-    await act(async () => button('Confirm & repay').click()); await settle()
     // The loan tools close the loan: the contract returns all of its collateral, whatever was entered.
     runtime.loan = usdcLoan(400_600n)
     runtime.partial = { loan: runtime.loan, principal: 400_000n, fee: 500n, owed: 400_500n, ceiling: 400_600n, collateralToReturn: 5n * UNIT, remainingPrincipal: 0n, remainingCollateral: 0n }

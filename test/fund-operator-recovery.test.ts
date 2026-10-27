@@ -7,7 +7,7 @@ import { buildFundAssetAllowanceChange, buildFundRulesetChange, initialFundRules
 // Recovery helpers use the real ABI and builders, without booting wallet providers.
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: vi.fn() }))
-vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: vi.fn(), txPhaseLabel: vi.fn() }))
+vi.mock('@/hooks/useReviewedAction', () => ({ useReviewedAction: vi.fn(), txPhaseLabel: vi.fn() }))
 
 import {
   deserializeRulesetRecovery,

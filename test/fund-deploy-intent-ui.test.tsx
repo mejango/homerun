@@ -31,7 +31,7 @@ vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.walle
 vi.mock('@/components/WalletButton', () => ({ WalletButton: () => <span>Wallet</span> }))
 vi.mock('@/components/CreateFlow', () => ({ default: () => null }))
 vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => runtime.safe, useSafeConnection: () => runtime.safe, waitForSafeExecutionHash: vi.fn() }))
-vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({ phase: 'idle', busy: false, error: '', send: vi.fn(), reset: vi.fn() }) }))
+vi.mock('@/hooks/useReviewedAction', () => ({ useReviewedAction: () => ({ phase: 'idle', busy: false, error: '', send: vi.fn(), reset: vi.fn() }) }))
 vi.mock('@/lib/publish-fund-project-metadata', () => ({ publishFundProjectMetadata: runtime.publish }))
 vi.mock('@/lib/fund-launch-verification', async importOriginal => ({
   ...await importOriginal<typeof import('../src/lib/fund-launch-verification')>(),

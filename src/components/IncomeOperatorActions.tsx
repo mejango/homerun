@@ -3,7 +3,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { isAddress, isAddressEqual, type Address, type PublicClient } from 'viem'
-import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
+import { txPhaseLabel, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { displayChainName, explorerTxUrl } from '@/lib/chainDisplay'
 import { assertSameIncomeOperatorSnapshot, buildIncomeOperatorTx, readIncomeOperatorSnapshot, verifyIncomeOperatorReceipt, type IncomeOperatorSnapshot } from '@/lib/income-operator'
@@ -19,7 +19,7 @@ function message(error: unknown) { return readableError(error, 'The INCOME Opera
 export function IncomeOperatorActions({ state, client }: { state: IncomeProjectState; client: PublicClient }) {
   const { address } = useWallet()
   const cache = useQueryClient()
-  const tx = useSafeTx(state.chainId)
+  const tx = useReviewedAction(state.chainId)
   const [recipient, setRecipient] = useState('')
   const [preparing, setPreparing] = useState(false)
   const [error, setError] = useState<string | null>(null)

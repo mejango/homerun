@@ -39,9 +39,9 @@ vi.mock('wagmi', () => ({ usePublicClient: () => ({}) }))
 vi.mock('@/components/WalletButton', () => ({ WalletButton: () => <span>Wallet</span> }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.address, isConnected: true }) }))
 vi.mock('@/components/InitialIncomeMint', () => ({ InitialIncomeMint: ({ fundProjectId, incomeProjectId, manifestUri }: { fundProjectId: bigint; incomeProjectId: bigint; manifestUri: string | null }) => <div>Initial INCOME FUND {fundProjectId.toString()} INCOME {incomeProjectId.toString()} manifest {manifestUri ?? 'none'}</div> }))
-vi.mock('@/hooks/useSafeTx', () => ({
+vi.mock('@/hooks/useReviewedAction', () => ({
   txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,
-  useSafeTx: () => {
+  useReviewedAction: () => {
     useEffect(() => { runtime.mounted += 1; return () => { runtime.unmounted += 1 } }, [])
     return { phase: runtime.phase, notice: runtime.notice, busy: runtime.busy, error: null, hash: runtime.busy ? `0x${'a'.repeat(64)}` : null, safeProposalHash: runtime.safeProposalHash, receipt: runtime.receipt, send: runtime.send, reset: vi.fn(), dismiss: vi.fn() }
   },
@@ -467,11 +467,9 @@ describe('INCOME transaction surfaces', () => {
     const pay = panel.querySelector('dialog')!
     await setInput(panel.querySelector('input')!, '1')
     expect(pay.textContent).toContain('gives you no INCOME')
-    const button = [...pay.querySelectorAll('button')].find(button => button.textContent === 'Confirm & pay')!
-    expect(button.disabled).toBe(false)
-    await act(async () => button.click())
-    expect(runtime.send).toHaveBeenCalledTimes(1)
-    const [request, options] = runtime.send.mock.calls[0]
+    // The quote in, the payment opens its one review.
+    await vi.waitFor(() => expect(runtime.send).toHaveBeenCalledTimes(1))
+    const [[request], options] = runtime.send.mock.calls[0]
     expect(request.functionName).toBe('pay')
     expect(request.args[4]).toBe(0n)
     expect(options.reviewNotice).toContain('You receive no INCOME')
@@ -484,7 +482,8 @@ describe('INCOME transaction surfaces', () => {
     await act(async () => panel.querySelector('button')!.click())
     const pay = panel.querySelector('dialog')!
     await setInput(panel.querySelector('input')!, '1')
-    expect([...pay.querySelectorAll('button')].find(button => button.textContent === 'Confirm & pay')?.disabled).toBe(true)
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)) })
+    expect(pay.textContent).not.toContain('Try again')
     expect(runtime.send).not.toHaveBeenCalled()
   })
 
@@ -502,7 +501,6 @@ describe('INCOME transaction surfaces', () => {
     expect(options.reviewNotice).toContain(state().owner)
     expect(options.reviewNotice).toContain('A smaller amount or another ruleset can’t be confirmed here.')
     expect(options.reviewNotice).toContain('does not immediately make holder rewards collectible')
-    expect(options.reviewedInParent).toBeUndefined()
     expect(options.reviewedAccount).toBe(runtime.address)
     expect(runtime.readReserved).toHaveBeenCalledOnce()
     await options.reverify()

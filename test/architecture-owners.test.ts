@@ -9,19 +9,18 @@ const core = '@bananapus/nana-sdk-core'
 type Owner = { file: string; module: string; calls?: readonly string[]; exports?: readonly string[] }
 const owners: readonly Owner[] = [
   { file: 'lib/jbcenter-rpc.ts', module: `${core}/jbcenter`, calls: ['createJBCenterRpcProvider', 'createPacedJBCenterLimiter'] },
-  { file: 'lib/contract-write.ts', module: `${core}/review`, calls: ['submitReviewedContractWrite'] },
   { file: 'lib/transaction-review.ts', module: `${core}/review`, calls: ['buildTransactionDebugPrompt', 'buildTransactionReviewPrompt'],
-    exports: ['requireTransactionReview', 'requestContractTransactionReview', 'registerTransactionReviewHandler', 'requireFundingChainSelection'] },
+    exports: ['requireFundingChainSelection', 'TransactionReviewCancelledError'] },
   { file: 'lib/readable-error.ts', module: `${core}/review`, calls: ['transactionMessage'] },
-  { file: 'hooks/useSafeTx.ts', module: `${core}/review`, calls: ['transactionMessage', 'waitForTrackedReceipt', 'gasWithHeadroom'] },
+  { file: 'hooks/useReviewedAction.ts', module: `${core}/review/react`, calls: ['useReviewedRun', 'useHeldWrite'] },
   { file: 'lib/safe-connector.ts', module: `${core}/safe-service`, calls: ['isSafeWalletPeer', 'waitForSafeExecutionHash'],
-    exports: ['heldCall', 'readSafeAppExecution', 'findPendingSafeAppProposal', 'watchSafeProposal', 'atOnceExecution', 'reportedSafeExecution'] },
+    exports: ['heldCall', 'readSafeAppExecution'] },
   { file: 'lib/sticky-session.ts', module: `${core}/safe-service`, calls: ['heldCall', 'safeExecutionRunsCalls', 'safeExecutionResult'] },
   { file: 'lib/project-payers.ts', module: `${core}/safe-service`, calls: ['safeExecutionRunsCalls', 'safeExecutionResult'] },
   ...['fund-launch-verification', 'income-reserved', 'income-operator', 'fund-bridge-receipts'].map(name => ({
     file: `lib/${name}.ts`, module: `${core}/safe-service`, calls: ['safeExecutionRunsCalls', 'requireSafeExecutionSuccess'],
   })),
-  { file: 'lib/relayr.ts', module: `${core}/review/relayr`, calls: ['bindRelayrQuote', 'relayrDestinationRecords', 'relayrProgress', 'relayrStateIsSuccess', 'relayrWalletPaymentError', 'requireRelayrRetry', 'requireRelayrPaymentRuntime', 'simulateRelayrPayment', 'verifyRelayrPayment'] },
+  { file: 'lib/relayr.ts', module: `${core}/review/relayr`, calls: ['bindRelayrQuote', 'readRelayrBundle', 'relayrDestinationRecords', 'requireRelayrRetry', 'verifyRelayrPayment'] },
   { file: 'lib/fund-launch-relayr.ts', module: `${core}/review/relayr`, calls: ['relayrSessionOutcome', 'relayrRequestsVerdict', 'relayrRetryOption', 'proveSavedRelayrPayment', 'verifyRelayrDestination'] },
   { file: 'components/ProjectActivity.tsx', module: core, calls: ['mergeCrossChainActivityGroups'] },
 ]
@@ -52,7 +51,7 @@ function ownershipFailures(owner: Owner, text: string): string[] {
 }
 
 // These already have shared SDK owners. Thin adapters with their own identity
-// (such as submitReviewedContractWrite and relayrDestinationRecords) are checked
+// (such as relayrDestinationRecords) are checked
 // above by their SDK calls, rather than forbidden merely for sharing a name.
 const sharedRules = [
   'createPacedJBCenterLimiter', 'createJBCenterLimiter', 'createJBCenterRpcProvider',

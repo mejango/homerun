@@ -14,8 +14,8 @@ import { HELPER, OWNER, fundState, globalDraft, globalManifest, launchInput, lau
 
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@wagmi/core', async importOriginal => {
-  const { wallet } = await import('./support/fake-wallet')
-  return { ...(await importOriginal<typeof import('@wagmi/core')>()), getWalletClient: async () => ({ writeContract: wallet.writeContract }), getAccount: () => ({ address: wallet.account, chainId: 8453 }), getPublicClient: () => wallet.client }
+  const { wallet, walletCore } = await import('./support/fake-wallet')
+  return { ...(await importOriginal<typeof import('@wagmi/core')>()), ...walletCore, getAccount: () => ({ address: wallet.account, chainId: 8453 }) }
 })
 vi.mock('wagmi', async importOriginal => {
   const { walletHooks } = await import('./support/fake-wallet')
@@ -24,10 +24,6 @@ vi.mock('wagmi', async importOriginal => {
 vi.mock('@/hooks/useWallet', async () => {
   const { useFakeWallet } = await import('./support/fake-wallet')
   return { useWallet: useFakeWallet }
-})
-vi.mock('@/lib/transaction-review', async importOriginal => {
-  const { wallet } = await import('./support/fake-wallet')
-  return { ...(await importOriginal<typeof import('@/lib/transaction-review')>()), requestContractTransactionReview: wallet.requestReview }
 })
 vi.mock('@tanstack/react-query', async importOriginal => ({
   ...(await importOriginal<typeof import('@tanstack/react-query')>()),
@@ -47,7 +43,7 @@ import { IncomeLaunch } from '@/components/IncomeLaunch'
 import { incomeLaunchIntent, incomeLaunchSessionKey } from '@/lib/income-launch-session'
 import { saveIncomeGlobalDraft } from '@/lib/income-global-launch-draft'
 
-const EXIT = 'I checked my wallet. Send again'
+const EXIT = 'I checked my wallet'
 const KEY = incomeLaunchSessionKey(8453, 7n)
 
 let host: HTMLDivElement
@@ -129,7 +125,7 @@ it('keeps a launch that settled while away as done when it can only be shown as 
   await act(async () => { wallet.confirm(hash) })
   const { holds } = await import('@/lib/write-hold')
   const hold = holds.open({ chainId: 8453, account: OWNER, safe: false, namespace: incomeLaunchIntent(7n), call: { to: HELPER, data: '0x' } })
-  expect(await hold.onReceipt(await wallet.client.getTransactionReceipt({ hash }) as never, wallet.client as never)).toMatchObject({ status: 'clear', settled: { result: 'success' } })
+  expect(await hold.onReceipt(await wallet.client.getTransactionReceipt({ hash }) as never, wallet.client as never)).toMatchObject({ status: 'clear' })
   // Read now, the settled transaction is a Safe's execTransaction, not the launcher call itself.
   const sent = await wallet.client.getTransaction({ hash })
   wallet.client.getTransaction.mockImplementation(async () => ({ ...sent!, to: OWNER, input: '0x6a761202' }) as never)

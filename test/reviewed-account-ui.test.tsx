@@ -2,10 +2,10 @@
  * A FUND cash out, burn or transfer, an INCOME loan, and a project permissions
  * update are built for the account that reviewed them: its tokens, its
  * proceeds, its collateral, the authority read for it. When the wallet
- * switches to another account before the confirm, or between a loan's
+ * switches to another account while the review is open, or between a loan's
  * permission and its borrow, nothing more reaches the wallet: the real
- * useSafeTx and the SDK's reviewed write refuse the send before its review
- * opens, and the dialog says why.
+ * useReviewedAction and the SDK's reviewed write refuse the send, and the
+ * dialog says why.
  */
 import './dialog-shim'
 import { act, type ReactNode } from 'react'
@@ -34,10 +34,10 @@ const m = vi.hoisted(() => ({ quote: vi.fn(), prepare: vi.fn(), permitted: false
 
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@wagmi/core', async importOriginal => {
-  const { wallet } = await import('./support/fake-wallet')
+  const { wallet, walletCore } = await import('./support/fake-wallet')
   return {
-    ...(await importOriginal<typeof import('@wagmi/core')>()),
-    getWalletClient: async () => ({ writeContract: wallet.writeContract }), getAccount: () => ({ address: wallet.account, chainId: 1 }),
+    ...(await importOriginal<typeof import('@wagmi/core')>()), ...walletCore,
+    getAccount: () => ({ address: wallet.account, chainId: 1 }),
   }
 })
 vi.mock('wagmi', async importOriginal => {
@@ -47,13 +47,6 @@ vi.mock('wagmi', async importOriginal => {
 vi.mock('@/hooks/useWallet', async () => {
   const { useFakeWallet } = await import('./support/fake-wallet')
   return { useWallet: useFakeWallet }
-})
-vi.mock('@/lib/transaction-review', async importOriginal => {
-  const { wallet } = await import('./support/fake-wallet')
-  return {
-    ...(await importOriginal<typeof import('@/lib/transaction-review')>()),
-    requestContractTransactionReview: wallet.requestReview,
-  }
 })
 vi.mock('@/lib/safe-connector', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/safe-connector')>()),
@@ -131,6 +124,8 @@ async function type(label: string, value: string) {
 const dialogText = () => document.querySelector('[data-tx-confirm]')?.textContent ?? ''
 /** The wallet switches to `account`; every hook reading it renders again. */
 const switchTo = (account: Address) => act(async () => wallet.connect(account))
+/** The wallet switches to `account` while the action's one review is open, and the person confirms it. */
+const switchDuringReview = (account: Address) => wallet.requestReview.mockImplementationOnce(async () => { wallet.connect(account); return true })
 
 beforeEach(() => {
   localStorage.clear()
@@ -149,17 +144,14 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); cache.clear(); localStorage.clear() })
 
 describe('a FUND cash out reviewed for one account', () => {
-  it('never sends from an account switched to before confirming', async () => {
+  it('never sends from an account switched to while its review is open', async () => {
     await render(<CashOutPanel state={fund} client={{} as never} contextIndex={0} />)
     await type('FUND to cash out', '10')
+    switchDuringReview(BOB)
     await click('Review cash-out')
+
     expect(dialogText()).toContain('Confirm cash out')
-
-    await switchTo(BOB)
-    await click('Confirm & cash out')
-
     expect(wallet.writeContract).not.toHaveBeenCalled()
-    expect(wallet.requestReview).not.toHaveBeenCalled()
     expect(dialogText()).toContain(CHANGED)
   })
 
@@ -167,16 +159,15 @@ describe('a FUND cash out reviewed for one account', () => {
     await render(<CashOutPanel state={fund} client={{} as never} contextIndex={0} />)
     await type('FUND to cash out', '10')
     await click('Review cash-out')
-    await click('Confirm & cash out')
 
     expect(wallet.writes()).toEqual([{ functionName: 'cashOutTokensOf', account: ALICE }])
   })
 })
 
 describe.each([
-  ['burn', 'Review burn', 'Confirm & burn', 'burnTokensOf'],
-  ['transferTokens', 'Review transfer', 'Confirm & transfer', 'transfer'],
-] as const)('a FUND %s reviewed for one account', (action, review, confirm, functionName) => {
+  ['burn', 'Review burn', 'burnTokensOf'],
+  ['transferTokens', 'Review transfer', 'transfer'],
+] as const)('a FUND %s reviewed for one account', (action, review, functionName) => {
   async function reviewAction() {
     await render(<HolderActions state={fund} client={{} as never} />)
     await act(async () => {
@@ -189,19 +180,16 @@ describe.each([
     await click(review)
   }
 
-  it('never sends from an account switched to before confirming', async () => {
+  it('never sends from an account switched to while its review is open', async () => {
+    switchDuringReview(BOB)
     await reviewAction()
-    await switchTo(BOB)
-    await click(confirm)
 
     expect(wallet.writeContract).not.toHaveBeenCalled()
-    expect(wallet.requestReview).not.toHaveBeenCalled()
     expect(dialogText()).toContain(CHANGED)
   })
 
   it('sends from the account that reviewed it', async () => {
     await reviewAction()
-    await click(confirm)
 
     expect(wallet.writes()).toEqual([{ functionName, account: ALICE }])
   })
@@ -212,7 +200,6 @@ describe('an INCOME loan reviewed for one account', () => {
     await render(<IncomeBorrow state={income} client={wallet.client as never} context={incomeContext} />)
     await type('INCOME collateral', '10')
     await click('Review loan')
-    await click('Confirm & borrow')
     // The permission for REVLoans to burn Alice's collateral reached her wallet.
     expect(wallet.writes()).toEqual([{ functionName: 'setPermissionsFor', account: ALICE }])
   }
@@ -265,19 +252,16 @@ describe('a project permissions update reviewed for one account', () => {
     expect(dialogText()).toContain('Save permissions')
   }
 
-  it('never reviews or sends from an account switched to before confirming', async () => {
+  it('never sends from an account switched to while its review is open', async () => {
+    switchDuringReview(BOB)
     await reviewGrant()
-    await switchTo(BOB)
-    await click('Confirm & save')
 
     expect(wallet.writeContract).not.toHaveBeenCalled()
-    expect(wallet.requestReview).not.toHaveBeenCalled()
     expect(dialogText()).toContain(CHANGED)
   })
 
   it('sends from the account that reviewed it', async () => {
     await reviewGrant()
-    await click('Confirm & save')
 
     expect(wallet.writes()).toEqual([{ functionName: 'setPermissionsFor', account: ALICE }])
   })

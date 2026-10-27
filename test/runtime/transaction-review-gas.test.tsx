@@ -10,6 +10,7 @@
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { openReview } from '../support/open-review'
 
 vi.mock('wagmi', () => ({
   useAccount: () => ({ address: undefined, chainId: undefined }),
@@ -21,7 +22,6 @@ vi.mock('next/image', () => ({
 
 import { TransactionReviewProvider } from '@/components/TransactionReviewProvider'
 import {
-  requireTransactionReview,
   type TransactionReviewCall,
   type TransactionReviewRequest,
 } from '@/lib/transaction-review'
@@ -55,7 +55,7 @@ async function open(
   act(() => root.render(<TransactionReviewProvider>{null}</TransactionReviewProvider>))
   await act(async () => {
     // Swallow the cancellation thrown when the modal unmounts after the test.
-    requireTransactionReview({ ...request, calls }).catch(() => {})
+    openReview({ ...request, calls }).catch(() => {})
   })
   await act(async () => { await vi.dynamicImportSettled() })
   return document.querySelector('dialog')!

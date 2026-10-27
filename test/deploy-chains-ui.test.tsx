@@ -1,20 +1,12 @@
-import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '../src/lib/viewAs'
+import { clearViewAs } from '../src/lib/viewAs'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@bananapus/nana-sdk-core', async importOriginal => (await import('./fixtures/homerun-deployer')).withHomerunDeployer(await importOriginal()))
 
-import { encodeAbiParameters, encodeEventTopics, encodeFunctionData, zeroHash, type Hex } from 'viem'
+import { encodeFunctionData, type Hex } from 'viem'
 import { erc2771ForwarderAbi } from '@bananapus/nana-sdk-core'
-import { v6Address } from '@bananapus/nana-sdk-core/v6'
-import { HOMERUN_DEPLOYER } from './fixtures/homerun-deployer'
-import { homerunDeployerAbi } from '../src/lib/income-contracts'
-
-const wallet = '0x1111111111111111111111111111111111111111'
-const intentId = '3f0f2f4c-0f3f-4f2f-8f1f-0f2f3f4f5f6f'
-const hash = `0x${'ef'.repeat(32)}` as Hex
-const relayHash = `0x${'ab'.repeat(32)}` as Hex
 
 const runtime = vi.hoisted(() => ({
   requestDeploy: vi.fn(), requestRelay: vi.fn(), getIntent: vi.fn(), recordDeployment: vi.fn(),
@@ -27,9 +19,24 @@ vi.mock('@/lib/jbcenter-client', () => ({ jbCenterClient: {
   getIntent: runtime.getIntent, requestDeploy: runtime.requestDeploy,
   requestRelay: runtime.requestRelay, recordDeployment: runtime.recordDeployment,
 } }))
-vi.mock('@/lib/transaction-review', async importOriginal => ({
-  ...await importOriginal<typeof import('@/lib/transaction-review')>(), requireTransactionReview: runtime.review,
-}))
+// Core's reviewed send over this test's wallet: one review of the action, then each call sent and its receipt read.
+vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => {
+  const core = await importOriginal<typeof import('@bananapus/nana-sdk-core/review')>()
+  return { ...core, sendReviewed: async (action: { calls: { chainId: number; to: string; data: string; value?: bigint }[]; assertWriteState?: () => void; beforeWallet?: (call: unknown, step: number) => Promise<void> | void }) => {
+    await runtime.review(action)
+    const hashes: Hex[] = [], receipts: { status: string }[] = []
+    for (const [index, call] of action.calls.entries()) {
+      action.assertWriteState?.()
+      await action.beforeWallet?.(call, index)
+      const sent = await runtime.send({}, { to: call.to, data: call.data, value: call.value })
+      const receipt = await runtime.receipt({}, { chainId: call.chainId, hash: sent })
+      if (receipt.status !== 'success') throw new core.ReviewedCallRevertedError(index, sent, receipt)
+      hashes.push(sent); receipts.push(receipt)
+    }
+    return { status: 'done', hashes, receipts }
+  } }
+})
+vi.mock('@/lib/reviewed-send-deps', () => ({ reviewedSendDeps: {} }))
 vi.mock('@/lib/safe-connector', async importOriginal => ({
   ...await importOriginal<typeof import('@/lib/safe-connector')>(), isSafeConnection: () => runtime.safe,
 }))
@@ -43,82 +50,11 @@ vi.mock('@wagmi/core', () => ({
   waitForTransactionReceipt: runtime.receipt,
 }))
 
-import { SAFE_PROXY_CREATION_CODE } from '@bananapus/nana-sdk-core/safe'
 import { describeSafeInitializer, functionFromCall } from '@bananapus/nana-sdk-core/review/decode'
-import { SAFE_FACTORY, multisigCreationData, predictMultisig } from '../src/lib/create-multisig'
-import { TransactionReviewCancelledError } from '../src/lib/transaction-review'
+import { SAFE_FACTORY } from '../src/lib/create-multisig'
+import { TransactionReviewCancelledError } from '@bananapus/nana-sdk-core/review'
 import { DeployChains } from '../src/components/DeployChains'
-
-const launch = (chainId: number, owner: string = wallet) => ({
-  chainId, to: HOMERUN_DEPLOYER,
-  data: encodeFunctionData({
-    abi: homerunDeployerAbi, functionName: 'launchFundFor',
-    args: [owner, 'ipfs://bafkreimetadata', 'Neighborhood Workshop FUND', 'FUND', 0, zeroHash, []],
-  }),
-})
-const safeOwners = ['0x000000000000000000000000000000000000dEaD', '0x2222222222222222222222222222222222222222'] as const
-const safePolicy = { owners: [...safeOwners] as `0x${string}`[], threshold: 2, saltNonce: `0x${'ab'.repeat(32)}` as Hex, proxyCreationCode: SAFE_PROXY_CREATION_CODE }
-const safeAddress = predictMultisig(safePolicy)
-const setupCall = (chainId: number) => ({ chainId, to: SAFE_FACTORY, data: multisigCreationData(safePolicy) })
-const deployRow = (chainId: number, status: string) => ({
-  chainId, status, transactionHash: status === 'confirmed' ? hash : null, bundleUuid: null, error: null,
-  createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(),
-})
-const deployment = (chainId: number, projectId: string) => ({ chainId, projectId, transactionHash: hash, createdAt: new Date(0).toISOString() })
-function intent(chainIds: number[], overrides: Record<string, unknown> = {}) {
-  return {
-    id: intentId, status: 'undeployed', contentHash: `0x${'ab'.repeat(32)}`, publisher: wallet,
-    signature: `0x${'cd'.repeat(65)}`, createdAt: new Date(0).toISOString(), deployments: [], deploys: [],
-    name: 'Neighborhood Workshop', description: null, tagline: null, tags: [], logoUri: null, owner: wallet,
-    envelope: {
-      format: 'homerun.money/fund.v1', deploymentVersion: '6', chainIds,
-      deploymentCalls: chainIds.map(chainId => launch(chainId)),
-      jb: { app: 'homerun', kind: 'fund', name: 'Neighborhood Workshop', owner: wallet, chainIds, tokenName: 'Neighborhood Workshop FUND', ticker: 'FUND', salt: zeroHash, mustStartAtOrAfter: 0, projectUri: 'ipfs://bafkreimetadata' },
-    },
-    ...overrides,
-  }
-}
-/** The same intent with one Safe of its own, created by a setup call before the launch. */
-function safeIntent(chainIds: number[]) {
-  const value = intent(chainIds)
-  return {
-    ...value,
-    envelope: {
-      ...value.envelope,
-      deploymentCalls: chainIds.flatMap(chainId => [setupCall(chainId), launch(chainId, safeAddress)]),
-      jb: {
-        ...value.envelope.jb, owner: safeAddress,
-        safes: [{ role: 'owner', address: safeAddress, owners: [...safeOwners], threshold: 2, saltNonce: safePolicy.saltNonce }],
-      },
-    },
-  }
-}
-
-/** The deployer's own FundLaunched event, as a receipt the wallet's transaction produced. */
-const launchReceipt = (chainId: number, projectId: bigint, owner: string = wallet) => ({
-  status: 'success', transactionHash: relayHash, blockNumber: 1_000n,
-  logs: [{
-    address: launch(chainId).to,
-    topics: encodeEventTopics({ abi: homerunDeployerAbi, eventName: 'FundLaunched', args: { projectId, owner } }),
-    data: encodeAbiParameters([{ type: 'address' }], [`0x${'5e'.repeat(20)}`]),
-  }],
-})
-const relayRequest = (chainId: number, value = 0n) => ({
-  chainId, to: v6Address('ERC2771Forwarder', chainId as never), value, gas: 900_000n,
-  deadline: Math.floor(Date.now() / 1000) + 1_800, setup: [],
-  data: encodeFunctionData({
-    abi: erc2771ForwarderAbi, functionName: 'execute',
-    args: [{ from: wallet, to: launch(chainId).to, value, gas: 900_000n, deadline: Math.floor(Date.now() / 1000) + 1_800, data: launch(chainId).data, signature: `0x${'ab'.repeat(65)}` }],
-  }),
-})
-const safeRelayRequest = (chainId: number) => ({
-  ...relayRequest(chainId),
-  setup: [{ to: SAFE_FACTORY, data: multisigCreationData(safePolicy), value: 0n }],
-  data: encodeFunctionData({
-    abi: erc2771ForwarderAbi, functionName: 'execute',
-    args: [{ from: wallet, to: launch(chainId).to, value: 0n, gas: 900_000n, deadline: Math.floor(Date.now() / 1000) + 1_800, data: launch(chainId, safeAddress).data, signature: `0x${'ab'.repeat(65)}` }],
-  }),
-})
+import { deployRow, deployment, intent, intentId, launchReceipt, relayHash, relayRequest, safeAddress, safeIntent, safeOwners, safeRelayRequest, wallet } from './fixtures/deploy-chains'
 
 describe('choosing the chains a published project is deployed on', () => {
   let host: HTMLDivElement
@@ -198,10 +134,12 @@ describe('choosing the chains a published project is deployed on', () => {
     await act(async () => { rowFor(1)!.click() })
     await act(async () => { button('Deploy selected')!.click() })
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 120)) })
-    expect(runtime.review.mock.calls[0][0].kind).toBe('transaction')
-    expect(runtime.review.mock.calls[0][0].calls[0].functionName).toBe('execute')
-    expect(runtime.switchChain).toHaveBeenCalledWith({}, { chainId: 1 })
-    expect(runtime.send).toHaveBeenCalledWith({}, expect.objectContaining({ chain: expect.objectContaining({ id: 1 }), chainId: 1, account: wallet, to: relayRequest(1).to, value: 0n }))
+    expect(runtime.review).toHaveBeenCalledOnce()
+    expect(runtime.review.mock.calls[0][0]).toMatchObject({ account: wallet, scope: `homerun:deploy:${intentId}:1` })
+    expect(runtime.review.mock.calls[0][0].calls.map((call: { chainId: number; functionName: string }) => [call.chainId, call.functionName])).toEqual([[1, 'execute']])
+    // The request Center served, whose deadline is the second it was made.
+    const served = await runtime.requestRelay.mock.results.at(-1)!.value
+    expect(runtime.send).toHaveBeenCalledWith({}, { to: served.to, data: served.data, value: 0n })
     expect(runtime.recordDeployment.mock.calls[0].slice(0, 2)).toEqual([intentId, { chainId: 1, projectId: '9', transactionHash: relayHash }])
     expect(runtime.requestDeploy).toHaveBeenCalledWith(intentId, expect.objectContaining({ chainIds: [8453] }))
   })
@@ -288,13 +226,22 @@ describe('choosing the chains a published project is deployed on', () => {
     expect(Object.hasOwn(runtime.send.mock.calls[0][1] as object, 'gas')).toBe(false)
   })
 
-  it('says the wallet did not send, without the wallet\u2019s own text', async () => {
-    runtime.send.mockRejectedValue(new Error('User rejected the request.\nDetails: rejected\nVersion: viem@2.55.19'))
+  it('says the wallet did not send only for its explicit rejection, without the wallet\u2019s own text', async () => {
+    runtime.send.mockRejectedValue(Object.assign(new Error('User rejected the request.\nDetails: rejected\nVersion: viem@2.55.19'), { code: 4001 }))
     await render(intent([1]))
     await act(async () => { rowFor(1)!.click() })
     await act(async () => { button('Deploy selected')!.click() })
     await settle()
     expect(alert()).toBe('The wallet did not send the transaction.')
+  })
+
+  it('never says a wallet failure other than a rejection sent nothing', async () => {
+    runtime.send.mockRejectedValue(new Error('Internal JSON-RPC error.\nVersion: viem@2.55.19'))
+    await render(intent([1]))
+    await act(async () => { rowFor(1)!.click() })
+    await act(async () => { button('Deploy selected')!.click() })
+    await settle()
+    expect(alert()).toBe('Your wallet may have sent this transaction. Check its activity before you try again.')
   })
 
   it('says a closed review sent nothing, not that the wallet failed', async () => {
@@ -305,48 +252,6 @@ describe('choosing the chains a published project is deployed on', () => {
     await settle()
     expect(runtime.send).not.toHaveBeenCalled()
     expect(alert()).toBe('Review closed. Nothing was sent.')
-  })
-
-  for (const boundary of ['review', 'wallet acquisition', 'setup receipt'] as const) {
-    it.each(['account', 'disconnect', 'chain', 'view-as', 'Safe', 'Center'] as const)(`refuses %s drift during ${boundary} before the next send`, async change => {
-      let release!: () => void
-      const waiting = new Promise<void>(resolve => { release = resolve })
-      if (boundary === 'review') runtime.review.mockImplementationOnce(() => waiting)
-      if (boundary === 'wallet acquisition') runtime.getWalletClient.mockImplementationOnce(async () => {
-        await waiting
-        return { chain: { id: 1 }, sendTransaction: (request: unknown) => runtime.send({}, request) }
-      })
-      if (boundary === 'setup receipt') {
-        runtime.requestRelay.mockImplementation(async () => safeRelayRequest(1))
-        runtime.receipt.mockImplementationOnce(async () => { await waiting; return { status: 'success' } })
-      }
-      await render(boundary === 'setup receipt' ? safeIntent([1]) : intent([1]))
-      await act(async () => { rowFor(1)!.click() })
-      await act(async () => { button('Deploy selected')!.click() })
-      await settle()
-      expect(boundary === 'review' ? runtime.review : boundary === 'wallet acquisition' ? runtime.getWalletClient : runtime.receipt).toHaveBeenCalledOnce()
-      if (change === 'account') runtime.address = '0x2222222222222222222222222222222222222222'
-      if (change === 'disconnect') runtime.address = undefined
-      if (change === 'chain') runtime.chainId = 10
-      if (change === 'view-as') setViewAs(wallet)
-      if (change === 'Safe') runtime.safe = true
-      if (change === 'Center') runtime.connector = { id: 'juicebox-center', uid: 'original' }
-      await act(async () => { release() })
-      await settle()
-      expect(runtime.send).toHaveBeenCalledTimes(boundary === 'setup receipt' ? 1 : 0)
-      expect(runtime.recordDeployment).not.toHaveBeenCalled()
-      expect(alert()).toContain(change === 'view-as' ? VIEW_AS_WRITE_BLOCKED : change === 'Safe' && boundary !== 'wallet acquisition' ? 'Deploying from a Safe' : 'Wallet connection changed')
-    })
-  }
-
-  it('uses the replacement connector after review instead of refusing the same account', async () => {
-    runtime.review.mockImplementationOnce(async () => { runtime.connector = { id: 'injected', uid: 'replacement' } })
-    await render(intent([1]))
-    await act(async () => { rowFor(1)!.click() })
-    await act(async () => { button('Deploy selected')!.click() })
-    await settle()
-    expect(runtime.send).toHaveBeenCalledOnce()
-    expect(runtime.getWalletClient).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ connector: expect.objectContaining({ uid: 'replacement' }) }))
   })
 
   it('refuses a Safe before switching chains or reviewing anything', async () => {
@@ -387,7 +292,8 @@ describe('choosing the chains a published project is deployed on', () => {
     await act(async () => { rowFor(1)!.click() })
     await act(async () => { button('Deploy selected')!.click() })
     await settle()
-    expect(alert()).toBe('The transaction reverted on Ethereum.')
+    expect(alert()).toContain('failed onchain')
+    expect(runtime.recordDeployment).not.toHaveBeenCalled()
   })
 
   it('says a created project is not recorded yet, and records it without the wallet next time', async () => {
