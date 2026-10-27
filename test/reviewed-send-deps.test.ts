@@ -1,12 +1,15 @@
 /** The shared wallet adapter refuses a view-as session or the Center wallet that appeared while the wallet was fetched. */
 import { afterEach, expect, it, vi } from 'vitest'
 
-const state = vi.hoisted(() => ({ connector: { id: 'injected', uid: 'a' } as { id: string; uid: string }, onFetch: () => {}, fetched: [] as string[] }))
+const state = vi.hoisted(() => ({ connector: { id: 'injected', uid: 'a' } as { id: string; uid: string }, onFetch: () => {}, onRead: () => {},
+  fetched: [] as string[], invoked: [] as { connector: string; live: string }[] }))
 vi.mock('@wagmi/core', () => ({
-  getAccount: () => ({ address: '0x1111111111111111111111111111111111111111', chainId: 1, connector: state.connector }),
+  getAccount: () => { state.onRead(); return { address: '0x1111111111111111111111111111111111111111', chainId: 1, connector: state.connector } },
   getWalletClient: async (_config: unknown, { connector }: { connector: { uid: string } }) => {
     state.fetched.push(connector.uid); state.onFetch()
-    return { signMessage: vi.fn(async () => connector.uid) }
+    // Each call records, as it is made, which connector's client it is and which connector is live.
+    const called = <T,>(result: T) => { state.invoked.push({ connector: connector.uid, live: state.connector.uid }); return Promise.resolve(result) }
+    return { signMessage: () => called(connector.uid), sendTransaction: () => called(`0x${'12'.repeat(32)}`) }
   },
   switchChain: vi.fn(),
   getPublicClient: vi.fn(),
@@ -17,7 +20,25 @@ vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => false }))
 import { walletAdapter } from '@/lib/reviewed-send-deps'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 
-afterEach(() => { clearViewAs(); state.connector = { id: 'injected', uid: 'a' }; state.onFetch = () => {}; state.fetched = [] })
+afterEach(() => { clearViewAs(); state.connector = { id: 'injected', uid: 'a' }; state.onFetch = () => {}; state.onRead = () => {}; state.fetched = []; state.invoked = [] })
+
+const send = () => walletAdapter.sendTransaction({ chainId: 1, to: '0x1111111111111111111111111111111111111111', data: '0x', value: 0n, gas: 21_000n })
+
+it('never calls a connector that was switched away after the wallet was fetched', async () => {
+  // A same-account switch queued at the first connector read after the fetch, landing before any later continuation.
+  state.onFetch = () => {
+    state.onRead = () => { state.onRead = () => {}; queueMicrotask(() => { state.connector = { id: 'injected', uid: 'b' } }) }
+  }
+  await send().catch(() => {})
+  expect(state.invoked.length).toBeLessThanOrEqual(1)
+  expect(state.invoked.filter(call => call.connector !== call.live)).toEqual([])
+})
+
+it('calls only the new connector when it is switched in while the wallet is fetched', async () => {
+  state.onFetch = () => { state.connector = { id: 'injected', uid: 'b' }; state.onFetch = () => {} }
+  await expect(send()).resolves.toBe(`0x${'12'.repeat(32)}`)
+  expect(state.invoked).toEqual([{ connector: 'b', live: 'b' }])
+})
 
 it('signs for the wallet that stayed as it was', async () => {
   await expect(walletAdapter.signMessage('hi')).resolves.toBe('a')
