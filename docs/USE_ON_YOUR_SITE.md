@@ -11,19 +11,6 @@ Demo: https://homerun.money/founderhaus
 
 Start with `web/network-model.mjs` (projections), `web/create-model.mjs` (draft schema), `web/pay-panel.mjs` (payment previews), `web/project-journey.mjs` (stages), and `docs/NETWORK_DESIGN.md` (mechanics and limits). Inspect licensing and image source notes before reuse.
 
-## Embed the existing demo
-
-```html
-<iframe
-  src="https://homerun.money/founderhaus"
-  title="Homerun asset funding simulator"
-  loading="lazy"
-  style="width:100%;height:900px;border:0"
-></iframe>
-```
-
-This embeds the full simulator and retains Homerun branding. There is no supported theme, project-config query parameter, automatic iframe height message, or cross-origin data API. Adjust the height to fit your page. Build natively for custom branding and your own project data.
-
 ## Current integration boundary
 
 This repository is a frontend prototype. It does not deploy the described contract system or execute wallet transactions. Its setup JSON is a draft, not a list of deployed contracts. `/project?id=...` previews are saved in localStorage and are specific to the browser and origin that created them. Copy the settings into your own data store rather than sharing that local URL.

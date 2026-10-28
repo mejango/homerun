@@ -1,5 +1,11 @@
 import type { NextConfig } from 'next'
 import { PHASE_DEVELOPMENT_SERVER } from 'next/constants'
+
+const commonSecurityHeaders = [
+  { key: 'X-Content-Type-Options', value: 'nosniff' },
+  { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+]
+
 const config: NextConfig = {
   // Let Next reload open tabs when navigation reaches a different deployment.
   deploymentId: process.env.NEXT_PUBLIC_VERSION,
@@ -16,8 +22,19 @@ const config: NextConfig = {
     { source: '/founderhause/index.html', destination: '/founderhaus', permanent: true },
   ] },
   async headers() { return [
-    { source: '/center/callback', headers: [{ key: 'Cache-Control', value: 'no-store' }, { key: 'Referrer-Policy', value: 'strict-origin' }] },
-    { source: '/:path*', headers: [{ key: 'X-Content-Type-Options', value: 'nosniff' }] },
+    // Signa returns inside a same-origin frame. Exclude only its exact callback,
+    // with or without a trailing slash, so it receives one framing policy.
+    { source: '/((?!center/callback/?$).*)', headers: [
+      ...commonSecurityHeaders,
+      { key: 'Content-Security-Policy', value: 'frame-ancestors https://app.safe.global https://app.5afe.dev' },
+      { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+    ] },
+    { source: '/center/callback', headers: [
+      ...commonSecurityHeaders,
+      { key: 'Cache-Control', value: 'no-store' },
+      { key: 'Referrer-Policy', value: 'strict-origin' },
+      { key: 'Content-Security-Policy', value: "frame-ancestors 'self'" },
+    ] },
     // Safe reads this public manifest before opening a custom app in its frame.
     { source: '/manifest.json', headers: [{ key: 'Access-Control-Allow-Origin', value: '*' }] },
   ] },
