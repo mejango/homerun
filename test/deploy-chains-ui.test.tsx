@@ -11,7 +11,7 @@ import { erc2771ForwarderAbi } from '@bananapus/nana-sdk-core'
 const runtime = vi.hoisted(() => ({
   requestDeploy: vi.fn(), requestRelay: vi.fn(), getIntent: vi.fn(), recordDeployment: vi.fn(),
   review: vi.fn(), send: vi.fn(), switchChain: vi.fn(), receipt: vi.fn(), gasPrice: vi.fn(),
-  readContract: vi.fn(), getCode: vi.fn(), follow: vi.fn(), unverified: null as Error | null,
+  readContract: vi.fn(), getCode: vi.fn(), lagging: null as Promise<unknown> | null,
   address: '0x1111111111111111111111111111111111111111' as string | undefined, openSignIn: vi.fn(),
   safe: false, connector: { id: 'injected', uid: 'original' }, chainId: 1, getWalletClient: vi.fn(),
 }))
@@ -22,20 +22,21 @@ vi.mock('@/lib/jbcenter-client', () => ({ jbCenterClient: {
 // Core's reviewed send over this test's wallet: one review of the action, then each call sent and its receipt read.
 vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => {
   const core = await importOriginal<typeof import('@bananapus/nana-sdk-core/review')>()
-  return { ...core, sendReviewed: async (action: { calls: { chainId: number; to: string; data: string; value?: bigint }[]; assertWriteState?: () => void; beforeWallet?: (call: unknown, step: number) => Promise<void> | void }) => {
+  return { ...core, sendReviewed: async (action: { calls: { chainId: number; to: string; data: string; value?: bigint }[]; follow?: { onConfirming?: (step: number) => void }; assertWriteState?: () => void; beforeWallet?: (call: unknown, step: number) => Promise<void> | void }) => {
     await runtime.review(action)
     const hashes: Hex[] = [], receipts: { status: string }[] = []
     for (const [index, call] of action.calls.entries()) {
       action.assertWriteState?.()
       await action.beforeWallet?.(call, index)
       const sent = await runtime.send({}, { to: call.to, data: call.data, value: call.value })
-      if (runtime.unverified) throw (runtime.unverified = new core.ReviewedReceiptUnverifiedError(index, sent, undefined, { call: call as never, reservation: 'r' }))
+      // A receipt its hold verifies late: core follows it in the run, showing it as confirming.
+      if (runtime.lagging) { action.follow?.onConfirming?.(index); await runtime.lagging }
       const receipt = await runtime.receipt({}, { chainId: call.chainId, hash: sent })
       if (receipt.status !== 'success') throw new core.ReviewedCallRevertedError(index, sent, receipt)
       hashes.push(sent); receipts.push(receipt)
     }
     return { status: 'done', hashes, receipts }
-  }, followReviewedStep: runtime.follow }
+  } }
 })
 vi.mock('@/lib/reviewed-send-deps', () => ({ reviewedSendDeps: {}, readableEngine: <E,>(engine: E) => engine }))
 vi.mock('@/lib/safe-connector', async importOriginal => ({
@@ -79,8 +80,7 @@ describe('choosing the chains a published project is deployed on', () => {
     runtime.gasPrice.mockReset().mockResolvedValue(2_000_000_000n)
     runtime.readContract.mockReset().mockResolvedValue(0n)
     runtime.getCode.mockReset().mockResolvedValue('0x')
-    runtime.follow.mockReset()
-    runtime.unverified = null
+    runtime.lagging = null
     client = new QueryClient({ defaultOptions: { queries: { retry: false, retryDelay: 0, gcTime: Infinity } } })
     host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   })
@@ -300,9 +300,8 @@ describe('choosing the chains a published project is deployed on', () => {
   })
 
   it('shows a launch whose receipt is still confirming as pending, and records it once its hold settles, with no second press', async () => {
-    runtime.unverified = new Error('armed')
-    let release!: (settled: unknown) => void
-    runtime.follow.mockImplementation(() => new Promise(resolve => { release = resolve }))
+    let release!: () => void
+    runtime.lagging = new Promise<void>(resolve => { release = resolve })
     await render(intent([1]))
     await act(async () => { rowFor(1)!.click() })
     await act(async () => { button('Deploy selected')!.click() })
@@ -310,8 +309,8 @@ describe('choosing the chains a published project is deployed on', () => {
     expect(alert()).toBeUndefined()
     expect(host.querySelector('[role="status"]')?.textContent).toContain('Confirming your transaction.')
     expect(button('Deploying')!.disabled).toBe(true)
-    expect(runtime.follow).toHaveBeenCalledWith(runtime.unverified, { account: wallet, scope: `homerun:deploy:${intentId}:1` }, {}, expect.objectContaining({ signal: expect.any(AbortSignal) }))
-    await act(async () => { release({ result: 'success', hash: relayHash }) })
+    expect(runtime.review.mock.calls[0][0].follow).toMatchObject({ signal: expect.any(AbortSignal) })
+    await act(async () => { release() })
     await settle()
     expect(runtime.recordDeployment.mock.calls[0].slice(0, 2)).toEqual([intentId, { chainId: 1, projectId: '9', transactionHash: relayHash }])
     expect(runtime.review).toHaveBeenCalledOnce()

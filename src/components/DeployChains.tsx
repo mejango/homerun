@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { getAccount, getPublicClient } from '@wagmi/core'
-import { decodeFunctionData, type Address } from 'viem'
+import { decodeFunctionData } from 'viem'
 import { erc2771ForwarderAbi, jbProjectsAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import {
@@ -19,7 +19,7 @@ import {
   checkRelayRequest, readLaunchedProjectId, relayCostLabel, relaySetupSafes, watchDeployRefusal, type FundRelayRequest,
 } from '@/lib/fund-intent'
 import { holdDeployment, loadHeldDeployments, releaseDeployment } from '@/lib/relay-held'
-import { isDefiniteWalletRejection, ReviewLineError, type ReviewedResult } from '@bananapus/nana-sdk-core/review'
+import { isDefiniteWalletRejection, ReviewLineError, type ReviewedAction, type ReviewedResult } from '@bananapus/nana-sdk-core/review'
 import { isSafeConnection } from '@/lib/safe-connector'
 import { VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import { displayChainName } from '@/lib/chainDisplay'
@@ -66,14 +66,13 @@ function fixedSentence(cause: unknown): string {
 /** Core's reviewed send for a paid deploy and the wallet it sends through, out of the intent page's first load. */
 const loadDeployEngine = async () => {
   const [engine, { reviewedSendDeps }] = await Promise.all([
-    import(/* webpackExports: ["sendReviewed", "resumeReviewed", "findReviewedSequence", "discardReviewedSequence", "openStepHold", "WriteHeldError", "HELD_EXIT_LABEL", "ReviewedReceiptUnverifiedError", "followReviewedStep", "settledLine"] */ '@bananapus/nana-sdk-core/review'),
+    import(/* webpackExports: ["sendReviewed", "resumeReviewed", "findReviewedSequence", "discardReviewedSequence", "openStepHold", "WriteHeldError", "HELD_EXIT_LABEL", "ReviewedReceiptUnverifiedError", "HELD_CONFIRMING_LINE"] */ '@bananapus/nana-sdk-core/review'),
     import('@/lib/reviewed-send-deps'),
   ])
   return { ...engine, reviewedSendDeps }
 }
 type DeployEngine = Awaited<ReturnType<typeof loadDeployEngine>>
-/** How long a sent launch is followed as confirming before the deploy offers the wallet check instead. */
-const CONFIRM_FOLLOW_MS = 120_000
+type Follow = NonNullable<ReviewedAction['follow']>
 const deployScope = (intentId: string, chainId: number) => `homerun:deploy:${intentId}:${chainId}`
 const deployTitle = (chainId: number) => `Create this project on ${displayChainName(chainId)}`
 /** A WalletConnect peer read can land mid-flow: a Safe would propose, so each send checks again. */
@@ -188,8 +187,9 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
     const saved = engine.findReviewedSequence(scope, account)
     if (saved && (saved.sending || saved.proposed)) return (await finishSaved(request.chainId))!
     if (saved) await engine.discardReviewedSequence(saved)
-    const result = await holding(engine, request.chainId, account, opened => engine.sendReviewed({
+    const result = await holding(engine, request.chainId, (opened, follow) => engine.sendReviewed({
       account,
+      follow,
       title: deployTitle(request.chainId),
       description: 'You send these transactions and pay their gas and creation fee. The project keeps the same token and bridge addresses on every network.',
       confirmLabel: 'Continue to wallet',
@@ -219,30 +219,14 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
 
   /**
    * The wallet's send, with the wallet check offered once a launch on `chainId` may have been sent or is held. A
-   * step still confirming is followed to its end, and the rest of the run then finishes as saved.
+   * step still confirming shows as pending while core follows it, and the run goes on.
    */
-  async function holding(engine: DeployEngine, chainId: number, account: Address, send: (opened: () => void) => Promise<ReviewedResult>): Promise<ReviewedResult> {
-    try { return await fromWallet(send) } catch (cause) {
-      if (cause instanceof engine.ReviewedReceiptUnverifiedError) return confirmed(engine, chainId, account, cause)
-      if (cause instanceof engine.WriteHeldError || (cause instanceof Error && cause.message === UNCERTAIN_MESSAGE)) setHeldExit({ chainId, label: engine.HELD_EXIT_LABEL })
+  async function holding(engine: DeployEngine, chainId: number, send: (opened: () => void, follow: Follow) => Promise<ReviewedResult>): Promise<ReviewedResult> {
+    const follow: Follow = { onConfirming: () => setConfirming(engine.HELD_CONFIRMING_LINE), signal: run.current!.signal }
+    try { return await fromWallet(opened => send(() => { setConfirming(''); opened() }, follow)) } catch (cause) {
+      if (cause instanceof engine.WriteHeldError || cause instanceof engine.ReviewedReceiptUnverifiedError || (cause instanceof Error && cause.message === UNCERTAIN_MESSAGE)) setHeldExit({ chainId, label: engine.HELD_EXIT_LABEL })
       throw cause
-    }
-  }
-
-  /** Follows a launch step whose receipt is still confirming, then the run's remaining steps, if any. */
-  async function confirmed(engine: DeployEngine, chainId: number, account: Address, unverified: InstanceType<DeployEngine['ReviewedReceiptUnverifiedError']>): Promise<ReviewedResult> {
-    const scope = deployScope(intent.id, chainId)
-    setConfirming(unverified.message)
-    let settled
-    try {
-      const signal = AbortSignal.any([run.current!.signal, AbortSignal.timeout(CONFIRM_FOLLOW_MS)])
-      settled = await engine.followReviewedStep(unverified, { account, scope }, engine.reviewedSendDeps, { signal })
     } finally { setConfirming('') }
-    if (!settled) { setHeldExit({ chainId, label: engine.HELD_EXIT_LABEL }); throw unverified }
-    if (settled.result !== 'success') throw new ReviewLineError(engine.settledLine(settled))
-    const saved = engine.findReviewedSequence(scope, account)
-    if (!saved) return { status: 'done', hashes: [settled.hash], receipts: [] }
-    return holding(engine, chainId, account, opened => engine.resumeReviewed(saved, { title: deployTitle(chainId), assertWriteState, beforeWallet: opened }, engine.reviewedSendDeps))
   }
 
   /** Finishes this chain's saved run that has a step in flight, as reviewed: null when there is none. */
@@ -254,7 +238,7 @@ export function DeployChains({ intent, heading, chainIds, onDeployed, onRunningC
     if (!saved || (!saved.sending && !saved.proposed)) return null
     const client = getPublicClient(wagmiConfig, { chainId: chainId as JBChainId })
     if (!client) throw new Error(NO_CLIENT_MESSAGE)
-    const result = await holding(engine, chainId, account, opened => engine.resumeReviewed(saved, { title: deployTitle(chainId), assertWriteState, beforeWallet: opened }, engine.reviewedSendDeps))
+    const result = await holding(engine, chainId, (opened, follow) => engine.resumeReviewed(saved, { title: deployTitle(chainId), assertWriteState, beforeWallet: opened, follow }, engine.reviewedSendDeps))
     return launched(chainId, result, client)
   }
 
