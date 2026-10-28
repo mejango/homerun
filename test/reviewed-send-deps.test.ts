@@ -2,12 +2,13 @@
 import { afterEach, expect, it, vi } from 'vitest'
 
 const state = vi.hoisted(() => ({ connector: { id: 'injected', uid: 'a' } as { id: string; uid: string }, onFetch: () => {}, onRead: () => {},
-  failSend: false, fetchError: undefined as Error | undefined, fetched: [] as string[], invoked: [] as { connector: string; live: string }[] }))
+  failSend: false, retryingClient: undefined as unknown, fetchError: undefined as Error | undefined, fetched: [] as string[], invoked: [] as { connector: string; live: string }[] }))
 vi.mock('@wagmi/core', () => ({
   getAccount: () => { state.onRead(); return { address: '0x1111111111111111111111111111111111111111', chainId: 1, connector: state.connector } },
   getWalletClient: async (_config: unknown, { connector }: { connector: { uid: string } }) => {
     state.fetched.push(connector.uid); state.onFetch()
     if (state.fetchError) throw state.fetchError
+    if (state.retryingClient) return state.retryingClient
     // The provider records each signing or sending request as it is dispatched: which connector's it is, and which is live.
     const dispatched = <T,>(result: T) => { state.invoked.push({ connector: connector.uid, live: state.connector.uid }); return result }
     return { account: { address: '0x1111111111111111111111111111111111111111', type: 'json-rpc' }, chain: undefined, transport: { type: 'custom' },
@@ -28,10 +29,10 @@ vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => false }))
 
 import { walletAdapter } from '@/lib/reviewed-send-deps'
-import { WalletNotInvokedError } from '@bananapus/nana-sdk-core/review'
+import { WalletNotInvokedError, isDefiniteWalletRejection } from '@bananapus/nana-sdk-core/review'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 
-afterEach(() => { clearViewAs(); state.connector = { id: 'injected', uid: 'a' }; state.onFetch = () => {}; state.onRead = () => {}; state.fetched = []; state.invoked = []; state.failSend = false; state.fetchError = undefined })
+afterEach(() => { clearViewAs(); state.connector = { id: 'injected', uid: 'a' }; state.onFetch = () => {}; state.onRead = () => {}; state.fetched = []; state.invoked = []; state.failSend = false; state.fetchError = undefined; state.retryingClient = undefined })
 
 const send = () => walletAdapter.sendTransaction({ chainId: 1, to: '0x1111111111111111111111111111111111111111', data: '0x', value: 0n, gas: 21_000n })
 
@@ -100,4 +101,19 @@ it("shows a provider's own failure before the wallet as a fixed line, never its 
   expect(refused.message).not.toContain('SECRET_TOKEN')
   expect(refused).toBeInstanceOf(WalletNotInvokedError)
   expect(refused.cause).toBe(state.fetchError)
+})
+
+it("never lets the fetched client retry a send by itself: a retry would skip the check and could reach a changed wallet", async () => {
+  const { createWalletClient, custom } = await import('viem')
+  const dispatched: string[] = []
+  // A client whose transport retries an internal error after a wait, as viem's default does.
+  state.retryingClient = createWalletClient({ transport: custom({ request: async ({ method }: { method: string }) => {
+    if (method === 'eth_chainId') return '0x1'
+    dispatched.push(method)
+    throw Object.assign(new Error('internal'), { code: -32603 })
+  } }, { retryDelay: 1 }) })
+  const failed = await send().catch(error => error)
+  expect(dispatched).toEqual(['eth_sendTransaction'])
+  expect(isDefiniteWalletRejection(failed)).toBe(false)
+  expect(failed).not.toBeInstanceOf(WalletNotInvokedError)
 })

@@ -3,7 +3,7 @@
  * the adapter's checks, while viem awaits its own reads before it sends, never reaches a wallet.
  */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { WalletNotInvokedError } from '@bananapus/nana-sdk-core/review'
+import { WalletNotInvokedError, isDefiniteWalletRejection } from '@bananapus/nana-sdk-core/review'
 
 const account = '0x1111111111111111111111111111111111111111'
 const s = vi.hoisted(() => ({
@@ -12,6 +12,8 @@ const s = vi.hoisted(() => ({
   walletNamespace: false, onRefuse: (() => {}) as () => void,
   /** A wallet error that may have broadcast, answered to the first send. */
   ambiguous: false,
+  /** Answers for each eth_sendTransaction the wallet receives, in order; each runs as it is received and may throw. */
+  answers: [] as (() => void)[], dispatches: [] as string[],
   /** The change under test, run in a microtask after the adapter's first read once the client is fetched. */
   change: (() => {}) as () => void,
   config: undefined as unknown as { state: { current: string; connections: Map<string, { accounts: string[]; chainId: number; connector: unknown }> } },
@@ -19,6 +21,8 @@ const s = vi.hoisted(() => ({
 const connector = (id: string, uid = id) => ({ id, uid, getAccounts: async () => [account], getChainId: async () => 1,
   getProvider: async () => ({ request: async ({ method }: { method: string }) => {
     if (method === 'eth_chainId') return '0x1'
+    if (method === 'eth_sendTransaction') s.dispatches.push(uid)
+    if (method === 'eth_sendTransaction' && s.answers.length) s.answers.shift()!()
     if (method === 'eth_sendTransaction' && s.walletNamespace) { s.onRefuse(); throw Object.assign(new Error('unsupported'), { code: -32601 }) }
     if (method === 'eth_sendTransaction' || method === 'wallet_sendTransaction' || method === 'personal_sign') {
       s.sends.push(`${method}:${uid}`)
@@ -52,7 +56,7 @@ import { walletAdapter } from '@/lib/reviewed-send-deps'
 import { clearViewAs, setViewAs } from '@/lib/viewAs'
 
 beforeEach(() => {
-  Object.assign(s, { sends: [], armed: false, scheduled: false, safe: false, change: () => {}, walletNamespace: false, onRefuse: () => {}, ambiguous: false })
+  Object.assign(s, { sends: [], armed: false, scheduled: false, safe: false, change: () => {}, walletNamespace: false, onRefuse: () => {}, ambiguous: false, answers: [], dispatches: [] })
   s.config.state.current = 'old'
   s.config.state.connections = new Map([
     ['old', { accounts: [account], chainId: 1, connector: connector('old') }],
@@ -97,5 +101,25 @@ it('sends once, never retrying a wallet error that may have broadcast', async ()
   s.ambiguous = true
   const failed = await send().catch(error => error)
   expect(s.sends).toEqual(['eth_sendTransaction:old'])
+  expect(failed).not.toBeInstanceOf(WalletNotInvokedError)
+})
+
+const rpcError = (code: number) => Object.assign(new Error(`rpc ${code}`), { code })
+
+it("never retries a send on the old connector after it changed: wagmi's client retries an internal error after a wait", async () => {
+  s.answers = [() => { s.config.state.current = 'current'; throw rpcError(-32603) }]
+  const failed = await send().catch(error => error)
+  expect(s.dispatches).toEqual(['old'])
+  expect(s.sends).toEqual([])
+  // The first request may have reached the wallet: never unsent.
+  expect(failed).not.toBeInstanceOf(WalletNotInvokedError)
+  expect(isDefiniteWalletRejection(failed)).toBe(false)
+})
+
+it('never releases a send whose first request failed ambiguously, whatever a retry would answer', async () => {
+  s.answers = [() => { throw rpcError(-32603) }, () => { throw rpcError(4001) }]
+  const failed = await send().catch(error => error)
+  expect(s.dispatches).toEqual(['old'])
+  expect(isDefiniteWalletRejection(failed)).toBe(false)
   expect(failed).not.toBeInstanceOf(WalletNotInvokedError)
 })
