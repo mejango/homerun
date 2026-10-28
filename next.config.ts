@@ -1,6 +1,8 @@
 import type { NextConfig } from 'next'
 import { PHASE_DEVELOPMENT_SERVER } from 'next/constants'
 const config: NextConfig = {
+  // Let Next reload open tabs when navigation reaches a different deployment.
+  deploymentId: process.env.NEXT_PUBLIC_VERSION,
   // Next 16 blocks a numeric-loopback Origin on the development HMR socket by
   // default. Local browser tests use both aliases; keep the allowlist narrow.
   allowedDevOrigins: ['127.0.0.1'],
