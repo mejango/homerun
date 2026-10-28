@@ -18,6 +18,8 @@ export function providerClient(fake: Fake) {
   return {
     get chain() { return fake.chain },
     account: undefined,
+    // One provider, as a wallet connector's client is: core refuses a composite transport.
+    transport: { type: 'custom' },
     request: async ({ method, params }: { method: string; params?: unknown[] }) => {
       if (method === 'eth_chainId') {
         const failure = fake.chainRead?.()

@@ -223,7 +223,8 @@ const center = createServer((request, response) => {
           if (getAddress(sent.to) !== getAddress(v6Address('ERC2771Forwarder', chainId))) return {
             ...launchReceipt(chainId, sent.hash), to: sent.to, logs: [],
           }
-          return launchReceipt(chainId, sent.hash)
+          // A receipt names the transaction's own recipient, as a node's does.
+          return { ...launchReceipt(chainId, sent.hash), to: sent.to }
         }
         if (call.method === 'eth_getBlockByHash') return block
         if (call.method === 'eth_getCode') {

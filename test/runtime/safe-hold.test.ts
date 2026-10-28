@@ -133,4 +133,45 @@ describe('a Safe proposal held by the SDK', () => {
     expect(ref.current).toMatchObject({ phase: 'error', error: HELD_FAILED_LINE, reverted: true })
     expect(mocks.sendTransaction).toHaveBeenCalledOnce()
   })
+
+  it('closing and reopening a success whose receipt cannot be read sends nothing twice', async () => {
+    const ref = await propose()
+    let reads = 0
+    mocks.client.getTransactionReceipt.mockImplementation(async () => {
+      if (++reads > 2) throw new Error('RPC receipt unreadable')
+      return receiptWith(SUCCESS)
+    })
+    const { holds } = await import('@/lib/write-hold')
+    await act(async () => { await holds.open({ chainId: 10, account: SAFE, safe: true, call }).onExecuted(mocks.client as never, EXECUTION) })
+    await settle()
+    // Settled by the hold, but not complete until its receipt reads: never shown done.
+    expect(ref.current).toMatchObject({ phase: 'submitted', receipt: null })
+    await act(async () => ref.current!.reset())
+    // The Safe ran the proposal: its nonce moved on.
+    mocks.client.request.mockImplementation(async ({ method, params }: { method: string; params: [{ to: Address }] }) => {
+      if (method !== 'eth_call') throw new Error(`Unexpected RPC ${method}`)
+      return params[0].to.toLowerCase() === SAFE ? `0x${'4'.padStart(64, '0')}` : '0x'
+    })
+    await act(async () => { await ref.current!.send(request, { reviewedAccount: SAFE }) })
+    await settle()
+    expect(mocks.sendTransaction).toHaveBeenCalledOnce()
+  })
+
+  it('a failed execution first unreadable shows reverted once its receipt reads', async () => {
+    const ref = await propose()
+    let reads = 0
+    mocks.client.getTransactionReceipt.mockImplementation(async () => {
+      if (++reads > 2) throw new Error('RPC receipt unreadable')
+      return receiptWith(FAILURE)
+    })
+    const { holds } = await import('@/lib/write-hold')
+    await act(async () => { await holds.open({ chainId: 10, account: SAFE, safe: true, call }).onExecuted(mocks.client as never, EXECUTION) })
+    await settle()
+    expect(ref.current!.phase).toBe('submitted')
+    mocks.client.getTransactionReceipt.mockResolvedValue(receiptWith(FAILURE))
+    await vi.waitFor(async () => { await settle(); expect(ref.current!.phase).toBe('error') }, { timeout: 6_000 })
+    expect(ref.current).toMatchObject({ error: HELD_FAILED_LINE, reverted: true })
+    expect(ref.current!.receipt?.transactionHash).toBe(EXECUTION)
+    expect(mocks.sendTransaction).toHaveBeenCalledOnce()
+  })
 })
