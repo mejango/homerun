@@ -3,7 +3,6 @@
 import { useMemo, useRef, useState } from 'react';
 
 const source = 'https://github.com/mejango/homerun';
-const embed = '<iframe src="https://homerun.money/founderhaus" title="Homerun asset funding simulator" loading="lazy" style="width:100%;height:900px;border:0"></iframe>';
 
 export function siteIntegrationPrompt(configuration: unknown) {
   const settings = JSON.stringify(configuration, (key, value) => key === 'photo' && typeof value === 'string' && value.startsWith('data:') ? '[Supply a hosted cover image from your own site]' : value, 2);
@@ -68,9 +67,5 @@ export function SiteIntegration({ configuration }: { configuration: unknown }) {
     </div>
     <p className="site-integration-status" role="status">{prompt ? status : 'Check your inputs before copying the instructions.'}</p>
     <label>AI instructions<textarea ref={field} data-prompt readOnly rows={10} spellCheck={false} value={prompt} /></label>
-    <details className="site-iframe"><summary>Or embed the Homerun demo</summary>
-      <p>This embeds the full Homerun simulator with its existing branding and example settings.</p>
-      <label>Embed code<textarea readOnly rows={3} spellCheck={false} value={embed} /></label>
-    </details>
   </details>;
 }

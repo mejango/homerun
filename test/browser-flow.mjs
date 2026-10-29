@@ -701,6 +701,7 @@ try {
       await field("monthlyRent", 12345);
       await tab('Extras');
       await page.locator(".site-integration > summary").click();
+      assert.equal(await page.locator('.site-iframe').count(), 0, 'the demo does not offer iframe embedding');
       await expect(
         page.locator(".site-integration textarea").first(),
       ).toContainText("Initial claims require no activation, staking or vesting");

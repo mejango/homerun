@@ -6,6 +6,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { chromium } from 'playwright'
 import { expect } from '@playwright/test'
 import { centerPort } from './support/browser-suites.mjs'
+import { checkFramingPolicy } from './support/framing-policy.mjs'
 const base = process.env.BASE_URL || `http://127.0.0.1:${centerPort}`
 const issuer = 'https://signa.center', audience = 'https://api.signa.center'
 const wallet = '0x1111111111111111111111111111111111111111'
@@ -81,6 +82,7 @@ await context.route(issuer + '/**', async route => {
   return route.fulfill({ status: 404 })
 })
 try {
+  await checkFramingPolicy(browser, base)
   const callback = await context.request.get(base + '/center/callback')
   assert.equal(callback.headers()['cache-control'], 'no-store')
   assert.equal(callback.headers()['referrer-policy'], 'strict-origin')
