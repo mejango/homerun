@@ -305,11 +305,23 @@ test("approval targets INCOME ERC20 with an exact amount and prepare retains the
     990n,
     USDC_ADDRESSES[8453],
   ]);
+  const noBacking = buildIncomeBridgePrepare(route, {
+    amount: 20n,
+    beneficiary: account,
+    minTokensReclaimed: 0n,
+  });
+  assert.equal(
+    decodeFunctionData({
+      abi: noBacking.abi,
+      data: encodeFunctionData(noBacking),
+    }).args?.[2],
+    0n,
+  );
   assert.throws(() =>
     buildIncomeBridgePrepare(route, {
       amount: 20n,
       beneficiary: account,
-      minTokensReclaimed: 0n,
+      minTokensReclaimed: -1n,
     }),
   );
   assert.throws(() => buildIncomeBridgeApproval(route, 21n));

@@ -501,7 +501,10 @@ function BridgePreparation<State extends BridgeProjectState>({
       ? [
           {
             label: "Backing at least",
-            value: `${formatUnits(quote.data.minTokensReclaimed, route.sourceContext.decimals)} ${route.sourceContext.symbol}`,
+            value:
+              quote.data.minTokensReclaimed === 0n
+                ? "None"
+                : `${formatUnits(quote.data.minTokensReclaimed, route.sourceContext.decimals)} ${route.sourceContext.symbol}`,
             strong: true,
           },
         ]
@@ -692,13 +695,19 @@ function BridgePreparation<State extends BridgeProjectState>({
       </div>
       {quote.data && (
         <p className="mt-4 text-xs text-[var(--muted)]">
-          At least{" "}
-          {formatUnits(
-            quote.data.minTokensReclaimed,
-            route.sourceContext.decimals,
+          {quote.data.minTokensReclaimed === 0n ? (
+            <>The same tokens arrive, with no backing.</>
+          ) : (
+            <>
+              At least{" "}
+              {formatUnits(
+                quote.data.minTokensReclaimed,
+                route.sourceContext.decimals,
+              )}{" "}
+              {route.sourceContext.symbol} in backing at 1% maximum slippage.
+            </>
           )}{" "}
-          {route.sourceContext.symbol} in backing at 1% maximum slippage. Relay
-          also requires a separate network fee.
+          Relay also requires a separate network fee.
         </p>
       )}
       {quote.isError && (
