@@ -119,16 +119,14 @@ test('prepare and approval require a usable route, an existing ERC20 and suffici
   }
 })
 
-test('prepare rejects zero or overflowing token amounts, zero protection and malformed recipients', () => {
+test('prepare rejects zero or overflowing token amounts, negative protection and malformed recipients', () => {
   for (const value of [0n, -1n, 1n << 128n]) {
     const current = route()
     current.source.erc20Balance = 1n << 129n
     assert.throws(() => buildFundBridgePrepare(current, { amount: value, beneficiary, minTokensReclaimed: minimum }))
     assert.throws(() => buildFundBridgeApproval(current, value))
   }
-  for (const value of [0n, -1n]) {
-    assert.throws(() => buildFundBridgePrepare(route(), { amount, beneficiary, minTokensReclaimed: value }))
-  }
+  assert.throws(() => buildFundBridgePrepare(route(), { amount, beneficiary, minTokensReclaimed: -1n }))
   for (const recipient of [zeroAddress, '0x1234' as Address]) {
     assert.throws(() => buildFundBridgePrepare(route(), { amount, beneficiary: recipient, minTokensReclaimed: minimum }))
   }
@@ -252,9 +250,20 @@ test('bridge quote applies zero fees for feeless suckers and full terminal fees 
   assert.equal(taxed.minTokensReclaimed, 92_625_000n)
 })
 
-test('bridge quote fails closed on missing RPC evidence, chain mismatches, reorgs and unusable backing floors', async () => {
+test('a chain with no backing still moves tokens: the quote and prepare accept a zero minimum', async () => {
+  const quote = await readFundBridgePrepareQuote(quoteClient({ gross: 0n }).client, route(), amount)
+  assert.equal(quote.minTokensReclaimed, 0n)
+  assert.doesNotThrow(() => buildFundBridgePrepare(route(), { amount, beneficiary, minTokensReclaimed: 0n }))
+})
+
+test('a real quote that floors to zero keeps a one unit minimum', async () => {
+  const quote = await readFundBridgePrepareQuote(quoteClient({ gross: 1n, feeless: true }).client, route(), amount)
+  assert.equal(quote.minTokensReclaimed, 1n)
+})
+
+test('bridge quote fails closed on missing RPC evidence, chain mismatches and reorgs', async () => {
   for (const options of [
-    { chainId: 10 }, { hash: zeroHash }, { gross: 0n }, { gross: 1n, feeFreeSurplus: 0n },
+    { chainId: 10 }, { hash: zeroHash },
     { fail: 'previewCashOutFrom' }, { fail: 'allowance' }, { fail: 'isFeelessFor' },
   ]) await assert.rejects(() => readFundBridgePrepareQuote(quoteClient(options).client, route(), amount))
   for (const slippage of [-1, 501, 0.5, Number.NaN]) {

@@ -115,6 +115,14 @@ function recipient(value: Address): Address {
     throw new Error("Enter a valid nonzero bridge beneficiary.");
   return getAddress(value);
 }
+/** A move's backing can be zero: `JBSucker.prepare` still mints the same token count on the peer. */
+function backingAmount(value: bigint, label: string): void {
+  if (typeof value !== "bigint" || value < 0n || value > UINT128_MAX)
+    throw new Error(
+      `${label} must be within the sucker’s uint128 leaf limit.`,
+    );
+}
+
 function amount(value: bigint, label: string): void {
   if (typeof value !== "bigint" || value <= 0n || value > UINT128_MAX)
     throw new Error(
@@ -445,10 +453,11 @@ export async function readProjectBridgePrepareQuote(
     feeFreeSurplus,
   });
   const netReclaimAmount = grossReclaimAmount - fee;
-  const minTokensReclaimed =
-    (netReclaimAmount * BigInt(10_000 - slippageBps)) / 10_000n;
-  amount(netReclaimAmount, "Quoted bridge backing");
-  amount(minTokensReclaimed, "Protected bridge minimum");
+  const floor = (netReclaimAmount * BigInt(10_000 - slippageBps)) / 10_000n;
+  // Any real quote keeps a nonzero minimum, so it is never sent unprotected.
+  const minTokensReclaimed = netReclaimAmount > 0n && floor === 0n ? 1n : floor;
+  backingAmount(netReclaimAmount, "Quoted bridge backing");
+  backingAmount(minTokensReclaimed, "Protected bridge minimum");
   const block = await client.getBlock({
     blockNumber: route.source.blockNumber,
   });
@@ -498,7 +507,7 @@ export function buildProjectBridgePrepare(
   input: { amount: bigint; beneficiary: Address; minTokensReclaimed: bigint },
 ): FundTransaction {
   routeForPrepare(route, input.amount);
-  amount(input.minTokensReclaimed, "Protected bridge minimum");
+  backingAmount(input.minTokensReclaimed, "Protected bridge minimum");
   return buildBridgePrepareTx({
     chainId: route.source.chainId,
     sucker: route.sourceSucker,
