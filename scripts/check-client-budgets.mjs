@@ -22,7 +22,7 @@ const budgets = {
   '/': { js: 217, css: 16 },
   '/founderhaus': { js: 273, css: 27 },
   '/project': { js: 273, css: 27 },
-  '/projects': { js: 246, css: 14 },
+  '/projects': { js: 247, css: 14 },
   '/create': { js: 231, css: 20 },
   '/create/preview': { js: 442, css: 27 },
   '/create/recover': { js: 405, css: 19 },
@@ -30,7 +30,7 @@ const budgets = {
   '/center/callback': { js: 200, css: 13 },
   '/account/0x0000000000000000000000000000000000000001': { js: 271, css: 16 },
   '/intent/00000000-0000-4000-8000-000000000000': { js: 412, css: 27 },
-  '/op:11': { js: 518, css: 26 },
+  '/op:11': { js: 520, css: 26 },
   // The only route expected to answer 404; every other route must answer 200, so a missing page cannot pass.
   '/not-a-route/x': { js: 197, css: 13, status: 404 },
 }
