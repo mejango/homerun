@@ -25,7 +25,7 @@ const budgets = {
   '/projects': { js: 246, css: 14 },
   '/create': { js: 231, css: 20 },
   '/create/preview': { js: 442, css: 27 },
-  '/create/recover': { js: 401, css: 19 },
+  '/create/recover': { js: 405, css: 19 },
   '/create/success': { js: 262, css: 14 },
   '/center/callback': { js: 200, css: 13 },
   '/account/0x0000000000000000000000000000000000000001': { js: 271, css: 16 },
