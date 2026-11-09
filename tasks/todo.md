@@ -8,7 +8,7 @@ Brief: scratchpad sm/BRIEF3.md; SDK signatures and settled differences: sm/sdk.m
 - [x] homerun-5: useSavedAttempt `clear` / `completion` replaces the hand-written gates.
 - [x] homerun-7: the Relayr launch journal on RelayrLaunchJournal, its phase groups and advanceRelayrLaunch.
 - [x] Review dialog queue on createReviewQueue; FeeBuybackNotice on useFeeBuybackReview; useMobileWallet from the SDK.
-- [x] Signa isSettledPayment / isFollowedPayment (0.5.0, unpublished): switch written, bump after publish.
+- [x] Signa isSettledPayment / isFollowedPayment: switch written, then pinned core 6.1.0 and Signa 0.5.0 once published (lockfile integrity matches the registry).
 - [x] Re-evaluate homerun-6, 8, 14 to 17, 19, 24, 26 against the SDK owners.
 - [x] Gates against the tarball, draft PR on main (#75 merged).
 
