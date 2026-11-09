@@ -413,7 +413,7 @@ function usePlanChainHold(plan: RulesetPlan, index: number, { submission, done =
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [outcome])
   /** This chain can be sent only once its recovery says nothing ran. */
-  const recovered = !attempt || (!!outcome && (outcome.status === 'none' || (outcome.status === 'done' && outcome.result === 'failed')))
+  const recovered = recovery.clear
 
   // The SDK's hold settled this chain's write: its exact call and ruleset event are verified before it counts.
   const settled = tx.phase === 'success' ? tx.receipt : null, sentHash = tx.submissionHash ?? tx.hash ?? settled?.transactionHash

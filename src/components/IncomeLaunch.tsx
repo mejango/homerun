@@ -175,7 +175,7 @@ function useIncomeLaunchRecovery(chainId: JBChainId, projectId: bigint, client: 
     const draft = readIncomeGlobalDraft(localStorage, chainId, projectId)
     return !draft?.chains.some(row => row.chainId === chainId && BigInt(row.fundProjectId) === projectId && row.execution)
   }) : null, [account, chainId, client, completion, journal, projectId, tx.isSafe, verify])
-  const recovery = useSavedAttempt({ recovery: attempts, attempt, client, checkNext: 'Launch again' })
+  const recovery = useSavedAttempt({ recovery: attempts, attempt, client, checkNext: 'Launch again', completion: !!completion })
   const { outcome } = recovery
   const { track } = tx
   const held = useEffectEvent((record: IncomeLaunchPending) => onHeld?.(record))
@@ -196,7 +196,7 @@ function useIncomeLaunchRecovery(chainId: JBChainId, projectId: bigint, client: 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [outcome])
   /** Nothing is prepared or sent until the launch has recovered, and then only when nothing ran. */
-  const recovered = !journal.error && (!attempt || !!outcome && (outcome.status === 'none' || (outcome.status === 'done' && outcome.result === 'failed' && !completion)))
+  const recovered = !journal.error && recovery.clear
   return { recovery, recovered, error: journal.error ?? null }
 }
 

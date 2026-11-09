@@ -128,7 +128,7 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [outcome])
   /** The next step can be reviewed only once its recovery says nothing ran. */
-  const recovered = !attempt || (!!outcome && (outcome.status === 'none' || (outcome.status === 'done' && outcome.result === 'failed')))
+  const recovered = recovery.clear
 
   // The SDK's hold settled the step: its exact execution is verified and recorded before the next one.
   const settledReceipt = tx.phase === 'success' ? tx.receipt : null

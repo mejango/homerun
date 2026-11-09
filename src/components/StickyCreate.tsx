@@ -186,7 +186,7 @@ export function StickyCreate({
   const attempt = useMemo(() => loadedScope === walletScope && !storageError && !legacy.error && address
     ? stickyCreationAttempt(client, localStorage, state.chainId, state.projectId, address, tx.isSafe, { completed, pending: legacy.record }, verifyStickyCreationExecution) : null,
   [address, client, completed, legacy, loadedScope, state.chainId, state.projectId, storageError, tx.isSafe, walletScope]);
-  const recovery = useSavedAttempt({ recovery: attempts, attempt, client, checkNext: "Create again" });
+  const recovery = useSavedAttempt({ recovery: attempts, attempt, client, checkNext: "Create again", completion: !!completed });
   const { outcome, retire } = recovery;
   const dropLegacy = (record: StickyPending) => { try { clearStickyCreationPending(localStorage, record); changed(); } catch { /* Read again on the next load. */ } setPendingVersion((value) => value + 1); };
   useEffect(() => {
@@ -210,7 +210,7 @@ export function StickyCreate({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [outcome]);
   /** Nothing is prepared or sent until this FUND's creation has recovered, and then only when nothing was done. */
-  const recovered = !attempt || !!outcome && (outcome.status === "none" || (outcome.status === "done" && outcome.result === "failed" && !completed));
+  const recovered = recovery.clear;
 
   // The SDK's hold settled the creation: its exact execution and the live project are verified and saved.
   const settled = tx.phase === "success" ? tx.receipt : null,

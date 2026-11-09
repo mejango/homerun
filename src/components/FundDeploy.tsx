@@ -164,7 +164,7 @@ function LaunchChain({ session, chainId, request, status, update, refreshFee, ru
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setup.outcome])
   /** Sends wait until both recoveries say nothing is in flight or unexplained: none ran, or it ran and is recorded. */
-  const launchClear = ready && (!launchAttempt || !!launch.outcome && (launch.outcome.status === 'none' || (launch.outcome.status === 'done' && launch.outcome.result === 'failed')))
+  const launchClear = ready && launch.clear
   const setupClear = ready && (!setupAttempt || !!setup.outcome && (setup.outcome.status === 'none' || (setup.outcome.status === 'done' && (setup.outcome.result === 'failed' || setup.outcome.authenticated))))
   const clearRef = useRef(false)
   clearRef.current = launchClear && setupClear
