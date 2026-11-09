@@ -195,7 +195,7 @@ export default function CreateFlow({ renderDeploy, lockedChains, onImportRecord 
         Object.assign(next, restoreDraft(saved.raw, saved.incomeDefaultsVersion ?? 0));
         const savedStep = Number.isInteger(saved.step) ? Math.min(LAST_STEP, Math.max(0, saved.step)) : 0;
         setStep(savedStep);
-        setFurthest(savedStep);
+        setFurthest(Number.isInteger(saved.furthest) ? Math.min(LAST_STEP, Math.max(savedStep, saved.furthest)) : savedStep);
       }
     } catch { setStorageNotice('Draft saving is unavailable. Keep this tab open while you work.'); }
     // Text typed before this form attached lives in the field, not in state.
@@ -213,10 +213,10 @@ export default function CreateFlow({ renderDeploy, lockedChains, onImportRecord 
   useEffect(() => {
     if (!hydrated) return;
     try {
-      localStorage.setItem(CREATE_DRAFT_KEY, JSON.stringify({ raw, step, incomeDefaultsVersion: 3 }));
+      localStorage.setItem(CREATE_DRAFT_KEY, JSON.stringify({ raw, step, furthest, incomeDefaultsVersion: 3 }));
       setStorageNotice('Draft saved in this browser');
     } catch { setStorageNotice('Unable to save this draft. Keep this tab open while you work.'); }
-  }, [raw, step, hydrated]);
+  }, [raw, step, furthest, hydrated]);
 
   const locked = !!lockedChains;
   useEffect(() => {
