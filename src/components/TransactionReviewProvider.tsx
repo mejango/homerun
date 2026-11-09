@@ -3,12 +3,13 @@
 import {
   type ComponentType,
   type PropsWithChildren,
-  useCallback,
   useEffect,
-  useRef,
+  useMemo,
   useState,
+  useSyncExternalStore,
 } from 'react'
 import { registerReviewHandler, type ReviewModel, type ReviewSimulation } from '@bananapus/nana-sdk-core/review'
+import { createReviewQueue } from '@bananapus/nana-sdk-core/review/machines'
 import { ModalDialog } from '@/components/ui/ModalShell'
 import {
   registerFundingChainSelectionHandler,
@@ -22,7 +23,6 @@ export type PendingReview = {
   model: ReviewModel
   /** Core's review-time simulation, which runs while the review is open. */
   simulation?: Promise<ReviewSimulation>
-  resolve: (approved: boolean) => void
 }
 
 export type PendingFundingChainSelection = {
@@ -30,19 +30,16 @@ export type PendingFundingChainSelection = {
   id: number
   options: readonly FundingChainOption[]
   initialChainId: number | null
-  resolve: (chainId: number | null) => void
 }
 
 export type PendingDialog = PendingReview | PendingFundingChainSelection
+type Payload = Omit<PendingReview, 'id'> | Omit<PendingFundingChainSelection, 'id'>
+/** True approves a review, a chain ID picks a funding chain, anything else declines. */
+type DialogResult = boolean | number | null
 
 export type TransactionReviewDialogProps = {
   pending: PendingDialog
-  onFinish: (result: boolean | number | null) => void
-}
-
-function cancelPendingDialog(pending: PendingDialog) {
-  if (pending.kind === 'review') pending.resolve(false)
-  else pending.resolve(null)
+  onFinish: (result: DialogResult) => void
 }
 
 let dialogLoad: Promise<typeof import('./TransactionReviewDialog')> | undefined
@@ -61,79 +58,38 @@ export function loadReviewDialog() {
  * sequentially and each approval applies to one immutable call snapshot.
  */
 export function TransactionReviewProvider({ children }: PropsWithChildren) {
-  const nextId = useRef(1)
-  const activeRef = useRef<PendingDialog | null>(null)
-  const queueRef = useRef<PendingDialog[]>([])
-  const [active, setActive] = useState<PendingDialog | null>(null)
+  const [queue] = useState(() => createReviewQueue<Payload, DialogResult>())
+  const state = useSyncExternalStore(queue.subscribe, queue.getState, queue.getState)
+  const active = useMemo<PendingDialog | null>(
+    () => state.active && ({ id: state.active.id, ...state.active.payload } as PendingDialog),
+    [state.active],
+  )
   const [Dialog, setDialog] = useState<ComponentType<TransactionReviewDialogProps> | null>(null)
-
-  const enqueueDialog = useCallback((pending: PendingDialog) => {
-    if (activeRef.current) {
-      queueRef.current.push(pending)
-      return
-    }
-    activeRef.current = pending
-    setActive(pending)
-  }, [])
-
-  const enqueueFundingChainSelection = useCallback(
-    (options: readonly FundingChainOption[], initialChainId: number | null) =>
-      new Promise<number | null>(resolve => {
-        enqueueDialog({
-          kind: 'funding',
-          id: nextId.current++,
-          options: options.map(option => ({ ...option })),
-          initialChainId,
-          resolve,
-        })
-      }),
-    [enqueueDialog],
-  )
-
-  useEffect(
-    () => registerFundingChainSelectionHandler(enqueueFundingChainSelection),
-    [enqueueFundingChainSelection],
-  )
-
-  useEffect(
-    () => () => {
-      if (activeRef.current) cancelPendingDialog(activeRef.current)
-      queueRef.current.forEach(cancelPendingDialog)
-      activeRef.current = null
-      queueRef.current = []
-    },
-    [],
-  )
-
-  const finish = useCallback((id: number, result: boolean | number | null) => {
-    const current = activeRef.current
-    if (!current || current.id !== id) return
-    const next = queueRef.current.shift() ?? null
-    activeRef.current = next
-    setActive(next)
-    if (current.kind === 'review') current.resolve(result === true)
-    else current.resolve(typeof result === 'number' ? result : null)
-  }, [])
 
   useEffect(
     () =>
       registerReviewHandler(async prompt => {
-        const approved = await new Promise<boolean>(resolve => {
-          const pending: PendingReview = { kind: 'review', id: nextId.current++, model: prompt.model, simulation: prompt.simulation, resolve }
-          // Core withdrew the prompt: its dialog closes, or it leaves the queue.
-          prompt.signal.addEventListener('abort', () => {
-            if (activeRef.current === pending) finish(pending.id, null)
-            else {
-              queueRef.current = queueRef.current.filter(queued => queued !== pending)
-              resolve(false)
-            }
-          }, { once: true })
-          enqueueDialog(pending)
-        })
-        return approved ? prompt.confirmation : null
+        const approved = await queue.request(
+          { kind: 'review', model: prompt.model, simulation: prompt.simulation },
+          { declined: false, approves: result => result === true, signal: prompt.signal },
+        )
+        return approved === true ? prompt.confirmation : null
       }),
-    [enqueueDialog, finish],
+    [queue],
   )
+  useEffect(
+    () => registerFundingChainSelectionHandler(async (options, initialChainId) => {
+      const chosen = await queue.request(
+        { kind: 'funding', options: options.map(option => ({ ...option })), initialChainId },
+        { declined: null, approves: result => typeof result === 'number' },
+      )
+      return typeof chosen === 'number' ? chosen : null
+    }),
+    [queue],
+  )
+  useEffect(() => () => queue.cancelAll(), [queue])
+
+  const finish = (id: number, result: DialogResult) => { void queue.finish(id, result) }
 
   // Keep the global queue ready immediately, but fetch the full decoder and
   // review UI only when a request arrives. Loading never authorizes a call;
@@ -146,11 +102,11 @@ export function TransactionReviewProvider({ children }: PropsWithChildren) {
         if (!cancelled) setDialog(() => module.TransactionReviewDialog)
       },
       () => {
-        if (!cancelled) finish(active.id, null)
+        if (!cancelled) void queue.finish(active.id, null)
       },
     )
     return () => { cancelled = true }
-  }, [active, Dialog, finish])
+  }, [active, Dialog, queue])
 
   return (
     <>
