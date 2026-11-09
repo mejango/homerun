@@ -1,7 +1,7 @@
 import { isAddress, isHex, type Address, type Hex } from 'viem'
 import { writeIntentKey, type SavedAttemptScope } from '@bananapus/nana-sdk-core/review'
 import { attempts, callOf } from './write-hold'
-import type { LaunchRelayrJournal } from './fund-launch-relayr'
+import { isRelayrLaunchPhase, type RelayrLaunchJournal } from '@bananapus/nana-sdk-core/review/machines'
 import type { FundLaunchInput, FundTransaction } from './fund-contracts'
 
 export const FUND_LAUNCH_KEY = 'homerun:fund-launch:v1'
@@ -32,16 +32,12 @@ const UUID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i
 const ADDRESS = /^0x[\da-f]{40}$/i
 const DECIMAL = /^\d+$/
 
-/** The phases a saved Relayr journal may be in. */
-export const LAUNCH_JOURNAL_PHASES: readonly LaunchRelayrJournal['phase'][] =
-  ['signing', 'quoting', 'quoted', 'payment-signing', 'submitted', 'executing', 'payment-reverted']
-
 export type FundLaunchSession = {
   version: 1
   transport?: 'direct' | 'relayr' | 'intent'
   /** Juicebox Center's identifier for the published project. */
   intentId?: string
-  relayr?: LaunchRelayrJournal
+  relayr?: RelayrLaunchJournal
   paymentChainId?: number
   name: string
   input: FundLaunchInput
@@ -71,7 +67,7 @@ function validJournal(journal: unknown, chainIds: readonly number[]): boolean {
   if (!isRecord(journal)) return false
   const { account, phase, signed, superseded, records, published, abandonable, retryNonces } = journal
   return typeof account === 'string' && ADDRESS.test(account)
-    && LAUNCH_JOURNAL_PHASES.includes(phase as LaunchRelayrJournal['phase'])
+    && isRelayrLaunchPhase(phase)
     && Array.isArray(signed) && Array.isArray(records) && (superseded === undefined || Array.isArray(superseded))
     && (phase === 'signing' || published === true)
     && (published === undefined || published === true) && (abandonable === undefined || abandonable === true)
