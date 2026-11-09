@@ -21,6 +21,7 @@ import { transactionMessage, type SavedAttempt, type WriteHoldClient } from '@ba
 import { adoptSavedNonce, attempts, callOf } from '@/lib/write-hold'
 import { HeldNotice, retiringExit } from '@/components/ui/HeldWriteExit'
 import { SavedAttemptNotice } from '@/components/ui/SavedAttemptNotice'
+import { TX_STATUS_LINES } from '@/components/ui/TxStatus'
 import { launchRequestsDead, runRelayrLaunch } from '@/lib/fund-launch-relayr'
 import { displayChainName } from '@/lib/chainDisplay'
 import { SUPPORTED_CHAINS } from '@/lib/chains'
@@ -372,7 +373,7 @@ export function FundDeploy({ values, onLockChange, importedRecord, onRecordUsed 
   }
   const directFeedback = useCallback((phase: string, detail: string) => {
     if (detail) setError(detail)
-    const text: Record<string, string> = { review: 'Review the transaction to continue.', simulating: 'Checking the transaction before opening your wallet…', signing: 'Open MetaMask or your connected wallet to confirm the transaction.', pending: 'Transaction submitted. Waiting for confirmation…' }
+    const text: Record<string, string> = { review: 'Review the transaction to continue.', simulating: 'Checking the transaction before opening your wallet…', signing: 'Open MetaMask or your connected wallet to confirm the transaction.', pending: TX_STATUS_LINES.pending }
     if (detail) setProgress('')
     else if (text[phase]) setProgress(text[phase])
   }, [])
