@@ -163,6 +163,39 @@ describe('Juicebox wallet payment failure', () => {
     await vi.waitFor(() => expect(runtime.prepare).toHaveBeenCalled())
     expect(runtime.clear).toHaveBeenCalledOnce()
   })
+  describe('following a submitted payment', () => {
+    const UNAVAILABLE = 'Confirmation is temporarily unavailable'
+    const STOPPED = 'Still waiting for confirmation. Check payment status to look again.'
+    const following = { intent, submitted: true, accountId: OWNER, status: { status: 'pending', expectedPayment: { minimumReturnedTokens: '99' } } }
+    beforeEach(() => { vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] }) })
+    afterEach(() => { vi.useRealTimers() })
+    async function tick() { await act(async () => { vi.advanceTimersByTime(2000); await Promise.resolve(); await Promise.resolve() }) }
+
+    it('drops a failed check once a later check answers', async () => {
+      runtime.pending = following
+      runtime.refresh.mockRejectedValueOnce(new Error('offline')).mockResolvedValue(undefined)
+      await render()
+      await tick()
+      expect(host.textContent).toContain(UNAVAILABLE)
+      await tick()
+      expect(runtime.refresh).toHaveBeenCalledTimes(2)
+      expect(host.textContent).not.toContain(UNAVAILABLE)
+      expect(host.textContent).toContain('Submitted. Waiting for confirmation…')
+    })
+
+    it('says when automatic checking stopped, and Check payment status follows it again', async () => {
+      runtime.pending = following
+      runtime.refresh.mockResolvedValue(undefined)
+      await render()
+      for (let i = 0; i < 31; i++) await tick()
+      expect(runtime.refresh).toHaveBeenCalledTimes(30)
+      expect(host.textContent).toContain(STOPPED)
+      await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Check payment status')!.click())
+      expect(host.textContent).not.toContain(STOPPED)
+      await tick()
+      expect(runtime.refresh).toHaveBeenCalledTimes(32)
+    })
+  })
   it('retires an unknown send, then offers the fresh review when Signa never sent it', async () => {
     runtime.pending = { intent, submitted: true, accountId: OWNER, status: { status: 'unknown', expectedPayment: { minimumReturnedTokens: '99' } } }
     runtime.retire.mockImplementationOnce(async () => {
