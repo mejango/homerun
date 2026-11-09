@@ -1,7 +1,7 @@
 'use client'
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { isAddress, isAddressEqual, type Address, type PublicClient } from 'viem'
 import { txPhaseLabel, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
@@ -13,6 +13,7 @@ import { readableError } from '@/lib/readable-error'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
 // `intent` names this screen's saved Operator change here.
 import { intent as keyed, writeIntentKey } from '@bananapus/nana-sdk-core/review'
+import { useOnConfirmed } from '@/hooks/useOnConfirmed'
 
 function message(error: unknown) { return readableError(error, 'The INCOME Operator could not be verified.') }
 
@@ -24,7 +25,6 @@ export function IncomeOperatorActions({ state, client }: { state: IncomeProjectS
   const [preparing, setPreparing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [intent, setIntent] = useState<{ snapshot: IncomeOperatorSnapshot; rulesetId: bigint; recipient: Address; account: Address } | null>(null)
-  const refreshed = useRef<string | null>(null)
   const query = useQuery({
     queryKey: ['income-operator', state.chainId, state.projectId.toString(), address ?? null],
     queryFn: () => readIncomeOperatorSnapshot(client, { chainId: state.chainId, projectId: state.projectId, account: address }),
@@ -36,14 +36,12 @@ export function IncomeOperatorActions({ state, client }: { state: IncomeProjectS
     queryFn: () => verifyIncomeOperatorReceipt(client, intent!.snapshot, intent!.rulesetId, intent!.recipient, intent!.account, tx.receipt!),
     retry: 1, staleTime: Infinity,
   })
-  useEffect(() => {
-    if (tx.phase !== 'success' || !tx.receipt || tx.safeProposalHash || !verified.data || refreshed.current === tx.receipt.transactionHash) return
-    refreshed.current = tx.receipt.transactionHash
-    const confirmedBlock = tx.receipt.blockNumber
+  useOnConfirmed(tx, receipt => {
+    const confirmedBlock = receipt.blockNumber
     cache.setQueryData<bigint>(['project-admin-confirmed-block', state.chainId, state.projectId.toString()], previous => previous !== undefined && previous > confirmedBlock ? previous : confirmedBlock)
     for (const prefix of [PROJECT_OPERATOR_PROFILE_QUERY, 'income-operator', 'income-project', 'income-reserved', 'income-sticky-binding', 'income-pay', 'income-cash-out', 'income-borrow']) void cache.invalidateQueries({ queryKey: [prefix, state.chainId, state.projectId.toString()] })
     for (const prefix of ['sticky-project', 'sticky-rewards']) void cache.invalidateQueries({ queryKey: [prefix, state.chainId] })
-  }, [cache, state.chainId, state.projectId, tx.phase, tx.receipt, tx.safeProposalHash, verified.data])
+  }, !tx.safeProposalHash && !!verified.data)
 
   const snapshot = query.data
   const validRecipient = isAddress(recipient.trim()) && isOperatorWallet(recipient.trim() as Address)

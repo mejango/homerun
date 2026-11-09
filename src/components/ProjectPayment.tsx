@@ -23,6 +23,7 @@ import { readableError } from '@/lib/readable-error'
 import { refreshIndexedProject } from '@/lib/refresh-indexed'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
 import { AllowedDecreaseField } from '@/components/ui/AllowedDecreaseField'
+import { useOnConfirmed } from '@/hooks/useOnConfirmed'
 
 const CenterProjectPayment = lazyComponent(() => import('./CenterProjectPayment').then(m => m.default))
 export function ProjectPayment(props: Parameters<typeof ExternalProjectPayment>[0]) {
@@ -112,13 +113,10 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
   const intent = `${chainId}:${projectId}:${context.token}:${context.terminal}:${count}:${address ?? ''}:${rulesetId}:${paused}:${reservedPercent}:${tx.isSafe}`
   const currentIntent = useRef(intent)
   currentIntent.current = intent
-  const confirmed = useRef(new Set<string>())
-  useEffect(() => {
-    if (tx.phase !== 'success' || !tx.receipt || confirmed.current.has(tx.receipt.transactionHash)) return
-    confirmed.current.add(tx.receipt.transactionHash)
+  useOnConfirmed(tx, () => {
     for (const prefix of ['fund-project', 'income-project', 'project-pay', 'project-pay-tokens', 'income-reserved']) void cache.invalidateQueries({ queryKey: [prefix, chainId, projectId.toString()] })
     refreshIndexedProject(cache, chainId, projectId)
-  }, [cache, chainId, projectId, tx])
+  })
   const [requoting, setRequoting] = useState(false)
   const quote = useQuery({
     queryKey: ['project-pay', chainId, projectId.toString(), context.terminal, context.token, count.toString(), address ?? zeroAddress, rulesetId, reservedPercent, slippageBps ?? null],

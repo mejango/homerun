@@ -1,7 +1,7 @@
 'use client'
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { formatUnits, isAddressEqual, zeroAddress, type Address, type PublicClient } from 'viem'
 import { useReviewedAction, txPhaseLabel } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
@@ -10,6 +10,7 @@ import { assertIncomeReservedProject, assertSameIncomeReservedTokens, buildSendI
 import type { IncomeProjectState } from '@/lib/income-state'
 import { readableError } from '@/lib/readable-error'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
+import { useOnConfirmed } from '@/hooks/useOnConfirmed'
 
 function message(error: unknown) { return readableError(error, 'Reserved INCOME could not be verified.') }
 function recipient(split: IncomeReservedSnapshot['splits'][number]) {
@@ -29,7 +30,6 @@ export function IncomeReservedTokens({ state, client }: { state: IncomeProjectSt
   const [preparing, setPreparing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [intent, setIntent] = useState<{ snapshot: IncomeReservedSnapshot; account: Address } | null>(null)
-  const refreshed = useRef<string | null>(null)
   const query = useQuery({
     queryKey: ['income-reserved', state.chainId, state.projectId.toString()],
     queryFn: () => readIncomeReservedTokens(client, { chainId: state.chainId, projectId: state.projectId }),
@@ -41,15 +41,13 @@ export function IncomeReservedTokens({ state, client }: { state: IncomeProjectSt
     queryFn: () => verifyIncomeReservedReceipt(client, intent!.snapshot, intent!.account, tx.receipt!),
     retry: 1, staleTime: Infinity,
   })
-  useEffect(() => {
-    if (tx.phase !== 'success' || !tx.receipt || refreshed.current === tx.receipt.transactionHash) return
-    // Even a receipt whose event proof is unavailable should refresh current
-    // reserves, so a retry cannot misleadingly offer an already-flushed amount.
-    refreshed.current = tx.receipt.transactionHash
+  // Even a receipt whose event proof is unavailable should refresh current
+  // reserves, so a retry cannot misleadingly offer an already-flushed amount.
+  useOnConfirmed(tx, () => {
     for (const prefix of ['income-project', 'income-reserved', 'income-pay', 'income-cash-out', 'income-borrow']) void cache.invalidateQueries({ queryKey: [prefix, state.chainId, state.projectId.toString()] })
     for (const prefix of ['sticky-project', 'sticky-rewards']) void cache.invalidateQueries({ queryKey: [prefix, state.chainId] })
     void cache.invalidateQueries({ queryKey: ['income-sticky-binding', state.chainId, state.projectId.toString()] })
-  }, [cache, state.chainId, state.projectId, tx.phase, tx.receipt])
+  })
 
   async function submit() {
     if (!address || preparing || tx.busy || (tx.phase === 'review' || tx.phase === 'submitted')) return

@@ -4,7 +4,7 @@ import { jbMultiTerminalAbi, jbTerminalStoreAbi, type JBChainId } from '@bananap
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
 import { getPublicClient } from '@wagmi/core'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { decodeEventLog, formatUnits, getAddress, isAddress, isAddressEqual, zeroAddress, type Address, type PublicClient, type TransactionReceipt } from 'viem'
 import { txPhaseLabel, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
@@ -16,6 +16,7 @@ import { readableError } from '@/lib/readable-error'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
 // `intent` names this flow's own reviewed intent here.
 import { allowanceIntent, intent as keyed, writeIntentKey } from '@bananapus/nana-sdk-core/review'
+import { useOnConfirmed } from '@/hooks/useOnConfirmed'
 
 export type FundAssetAllowanceConfiguration = { amount: bigint; currency: number; contextIndex: number }
 
@@ -135,7 +136,6 @@ export function FundAssetWithdrawals({ state, client, contextIndex, onConfigureA
   const [error, setError] = useState<string | null>(null)
   const [intent, setIntent] = useState<WithdrawalIntent | null>(null)
   const [confirmedNet, setConfirmedNet] = useState<bigint | null>(null)
-  const refreshedReceipt = useRef<string | null>(null)
   const context = state.accountingContexts[contextIndex]
   const ownsAction = preparing || tx.busy || (tx.phase === 'review' || tx.phase === 'submitted') || (tx.phase === 'success' && !!intent && confirmedNet === null)
   const locked = disabled || ownsAction
@@ -157,16 +157,15 @@ export function FundAssetWithdrawals({ state, client, contextIndex, onConfigureA
 
   useEffect(() => { onBusyChange?.(ownsAction) }, [onBusyChange, ownsAction])
 
-  useEffect(() => {
-    if (tx.phase !== 'success' || !tx.receipt || !intent || refreshedReceipt.current === tx.receipt.transactionHash) return
-    refreshedReceipt.current = tx.receipt.transactionHash
+  useOnConfirmed(tx, receipt => {
+    if (!intent) return
     try {
-      const net = confirmedAssetWithdrawal(tx.receipt, intent)
+      const net = confirmedAssetWithdrawal(receipt, intent)
       setConfirmedNet(net)
       void cache.invalidateQueries({ queryKey: ['fund-project', intent.chainId, intent.projectId.toString()] })
       void cache.invalidateQueries({ queryKey: ['fund-asset-allowance', intent.chainId, intent.projectId.toString()] })
     } catch (reason) { setError(message(reason)) }
-  }, [cache, intent, state.chainId, state.projectId, tx.phase, tx.receipt])
+  }, !!intent)
 
   async function configure(clear = false) {
     if (locked || !onConfigureAllowance || !context) return

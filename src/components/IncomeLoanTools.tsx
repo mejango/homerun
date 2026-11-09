@@ -3,7 +3,7 @@
 import { NATIVE_TOKEN, jbPermissionsAbi } from '@bananapus/nana-sdk-core'
 import { buildSetPermissionsTx, REVLOANS_BURN_PERMISSION_ID } from '@bananapus/nana-sdk-core/v6'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { erc20Abi, formatUnits, isAddressEqual, type PublicClient } from 'viem'
 import { useReviewedAction, txPhaseLabel, type TxRequest, type TxStep } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
@@ -16,6 +16,7 @@ import { assertSameIncomeLoan, buildIncomePartialRepayment, incomeLoanRecipient,
 import { readableError } from '@/lib/readable-error'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
 import { writeIntentKey, type ReviewedPriorBlock } from '@bananapus/nana-sdk-core/review'
+import { useOnConfirmed } from '@/hooks/useOnConfirmed'
 
 type Props = { state: IncomeProjectState; client: PublicClient }
 type LoanAction = 'transfer' | 'reallocate' | 'partialRepay'
@@ -38,7 +39,6 @@ export function IncomeLoanTools({ state, client }: Props) {
   const { address } = useWallet()
   const cache = useQueryClient()
   const tx = useReviewedAction(state.chainId)
-  const seenReceipts = useRef(new Set<string>())
   const [loanInput, setLoanInput] = useState('')
   const [action, setAction] = useState<LoanAction>('partialRepay')
   const [recipient, setRecipient] = useState('')
@@ -59,11 +59,9 @@ export function IncomeLoanTools({ state, client }: Props) {
     retry: false,
   })
 
-  useEffect(() => {
-    if (tx.phase !== 'success' || !tx.receipt || seenReceipts.current.has(tx.receipt.transactionHash)) return
-    seenReceipts.current.add(tx.receipt.transactionHash)
+  useOnConfirmed(tx, () => {
     for (const prefix of ['income-project', 'income-loan', 'income-loan-tools', 'income-borrow', 'income-pay', 'income-cash-out']) void cache.invalidateQueries({ queryKey: [prefix, state.chainId, state.projectId.toString()] })
-  }, [cache, state.chainId, state.projectId, tx.phase, tx.receipt])
+  })
 
   async function submit() {
     if (!address || loanId <= 0n || (action !== 'transfer' && parsedCollateral === null) || (action === 'reallocate' && parsedAdditional === null)) return

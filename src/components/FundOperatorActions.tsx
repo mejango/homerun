@@ -29,6 +29,7 @@ import { HeldNotice, retiringExit } from '@/components/ui/HeldWriteExit'
 import { SavedAttemptNotice } from '@/components/ui/SavedAttemptNotice'
 import { attempts, callOf, holds } from '@/lib/write-hold'
 import type { WriteHoldClient } from '@bananapus/nana-sdk-core/review'
+import { useOnConfirmed } from '@/hooks/useOnConfirmed'
 
 type Props = { state: FundProjectState; client: PublicClient; contextIndex: number }
 type Tx = ReturnType<typeof useReviewedAction>
@@ -543,14 +544,11 @@ function Field({ label, value, onChange, disabled, decimal = true }: {
 
 function useConfirmedRefresh(tx: Tx, state: Pick<FundProjectState, 'chainId' | 'projectId'>) {
   const queryClient = useQueryClient()
-  const last = useRef<string | null>(null)
-  useEffect(() => {
-    if (tx.phase !== 'success' || !tx.receipt || tx.receipt.status !== 'success' || tx.receipt.transactionHash === last.current) return
-    last.current = tx.receipt.transactionHash
+  useOnConfirmed(tx, () => {
     for (const key of ['fund-project', 'fund-allowance', 'fund-pay-quote', 'fund-cash-out-quote']) {
       void queryClient.invalidateQueries({ queryKey: [key, state.chainId, state.projectId.toString()] })
     }
-  }, [queryClient, state.chainId, state.projectId, tx.phase, tx.receipt])
+  }, tx.receipt?.status === 'success')
 }
 
 /** No campaign outcome is inferred from browser storage or a submitted hash. */
@@ -588,13 +586,10 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
   const [scheduleHours, setScheduleHours] = useState('1')
   // The owner action open in Juicebox Money's confirm dialog; linked multi-chain changes use the plan below instead.
   const [review, setReview] = useState<FundRulesetAction | 'mint' | 'return' | null>(null)
-  const clearedReceipt = useRef<string | null>(null)
-  useEffect(() => {
-    if (tx.phase !== 'success' || !tx.receipt || tx.receipt.status !== 'success' || tx.receipt.transactionHash === clearedReceipt.current) return
-    clearedReceipt.current = tx.receipt.transactionHash
+  useOnConfirmed(tx, () => {
     setOffchainUsd(''); setContributionReference(''); setLinkedOperatorCount(''); setReturnAmount('')
     setPurchased(false); setRefundAttestation(false)
-  }, [tx.phase, tx.receipt])
+  }, tx.receipt?.status === 'success')
   const baseBusy = !storageChecked || recoveryLoadError || preparing || tx.busy || tx.phase === 'review' || !!plan
   const busy = baseBusy || assetBusy
   const linked = state.linkedChainIds.length > 1

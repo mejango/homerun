@@ -9,7 +9,7 @@ import {
 } from '@bananapus/nana-sdk-core/v6'
 import { netLoanProceeds } from '@bananapus/nana-sdk-core/v6/loan-math'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { erc20Abi, formatUnits, getAddress, isAddress, isAddressEqual, zeroAddress, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import Image from 'next/image'
@@ -43,6 +43,7 @@ import { readableError } from '@/lib/readable-error'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
 import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import { loanRepaymentIntent } from '@/lib/income-loan-tools'
+import { useOnConfirmed } from '@/hooks/useOnConfirmed'
 
 function message(reason: unknown) { return readableError(reason, 'The transaction could not be prepared. Refresh and try again.') }
 function amount(value: string, decimals = 18) { try { return parseAmount(value.trim(), decimals) } catch { return 0n } }
@@ -66,14 +67,11 @@ function Status({ tx, chainId }: { tx: IncomeTx; chainId: number }) {
 function useIncomeTx(state: IncomeProjectState) {
   const tx = useReviewedAction(state.chainId)
   const cache = useQueryClient()
-  const confirmed = useRef<string | null>(null)
-  useEffect(() => {
-    if (tx.phase !== 'success' || !tx.receipt || confirmed.current === tx.receipt.transactionHash) return
-    confirmed.current = tx.receipt.transactionHash
+  useOnConfirmed(tx, () => {
     for (const prefix of ['income-project', 'income-reserved', 'income-pay', 'income-cash-out', 'income-borrow', 'income-loan', 'income-allowance', 'income-permission']) void cache.invalidateQueries({ queryKey: [prefix, state.chainId, state.projectId.toString()] })
     if (state.rewards) void cache.invalidateQueries({ queryKey: ['fund-project', state.chainId, state.rewards.fundProjectId.toString()] })
     void cache.invalidateQueries({ queryKey: ['loans', state.chainId, Number(state.projectId)] })
-  }, [cache, state.chainId, state.projectId, state.rewards, tx.phase, tx.receipt])
+  })
   return tx
 }
 

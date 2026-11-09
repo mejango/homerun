@@ -4,7 +4,7 @@ import { FundOperatorActions } from '@/components/project-panels'
 import { buildBurnTokensTx, getHookAwareCashOutQuote, prepareHookAwareCashOut } from '@bananapus/nana-sdk-core/v6'
 import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { erc20Abi, formatUnits, getAddress, isAddress, isAddressEqual, zeroAddress, type Address, type PublicClient } from 'viem'
 import { ProjectPayment } from '@/components/ProjectPayment'
 import { chosenOrAuto } from '@/lib/transaction-builders'
@@ -17,6 +17,7 @@ import { buildFundAllowlistChange, buildFundAllowlistOpen, parseAmount } from '@
 import { readableError } from '@/lib/readable-error'
 import { refreshIndexedProject } from '@/lib/refresh-indexed'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
+import { useOnConfirmed } from '@/hooks/useOnConfirmed'
 
 /** Reject rounded, negative, exponent and over-precise financial inputs. */
 function positiveAmount(value: string, decimals: number): bigint {
@@ -111,16 +112,13 @@ function Input({ label, value, onChange, placeholder, inputMode = 'decimal' }: {
 /** Invalidate only after successful execution, including Safe execution. */
 function useConfirmedRefresh(tx: Tx, state: FundProjectState) {
   const cache = useQueryClient()
-  const lastReceipt = useRef<string | null>(null)
-  useEffect(() => {
-    if (tx.phase !== 'success' || !tx.receipt || tx.receipt.transactionHash === lastReceipt.current) return
-    lastReceipt.current = tx.receipt.transactionHash
+  useOnConfirmed(tx, () => {
     void cache.invalidateQueries({ queryKey: ['fund-project', state.chainId, state.projectId.toString()] })
     void cache.invalidateQueries({ queryKey: ['fund-allowance', state.chainId, state.projectId.toString()] })
     void cache.invalidateQueries({ queryKey: ['fund-pay-quote', state.chainId, state.projectId.toString()] })
     void cache.invalidateQueries({ queryKey: ['fund-cash-out-quote', state.chainId, state.projectId.toString()] })
     refreshIndexedProject(cache, state.chainId, state.projectId)
-  }, [cache, state.chainId, state.projectId, tx.phase, tx.receipt])
+  })
 }
 
 function useProjectTransaction(state: FundProjectState) {

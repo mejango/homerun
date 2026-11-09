@@ -11,7 +11,7 @@
     },
     {
       "file": "src/components/FundOperatorActions.tsx",
-      "line": 721,
+      "line": 716,
       "api": "request",
       "boundary": "Web Locks, not a wallet: one tab at a time reviews and submits a linked ruleset plan.",
       "test": "test/fund-operator-recovery-ui.test.tsx"
