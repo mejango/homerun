@@ -51,3 +51,9 @@ it('is the status line of every card that shows one', async () => {
     expect(source.includes(TX_STATUS_LINES.success), `${name} writes no success line of its own`).toBe(false)
   }
 })
+
+it('owns the pending line: no flow writes its own', async () => {
+  const { readdirSync, readFileSync } = await import('node:fs')
+  const files = readdirSync('src', { recursive: true, encoding: 'utf8' }).filter(file => /\.tsx?$/.test(file) && !file.endsWith('TxStatus.tsx'))
+  for (const file of files) expect(readFileSync(`src/${file}`, 'utf8').includes('Waiting for onchain confirmation'), file).toBe(false)
+})

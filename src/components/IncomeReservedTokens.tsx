@@ -11,6 +11,7 @@ import type { IncomeProjectState } from '@/lib/income-state'
 import { readableError } from '@/lib/readable-error'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
 import { useOnConfirmed } from '@/hooks/useOnConfirmed'
+import { TX_STATUS_LINES } from '@/components/ui/TxStatus'
 
 function message(error: unknown) { return readableError(error, 'Reserved INCOME could not be verified.') }
 function recipient(split: IncomeReservedSnapshot['splits'][number]) {
@@ -87,7 +88,7 @@ export function IncomeReservedTokens({ state, client }: { state: IncomeProjectSt
     <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={!address || busy || query.isError || !snapshot || snapshot.pending <= 0n} onClick={() => void submit()}>{preparing ? 'Preparing…' : txPhaseLabel(tx.phase, { idle: 'Review distribution', pending: 'Confirming onchain…' })}</button>
     {error && <p className="mt-4 text-sm text-red-800" role="alert">{error}</p>}
     <div className="mt-4 break-words text-sm" role="status" aria-live="polite">
-      {tx.phase === 'held' ? <HeldNotice tx={tx} /> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? verified.data ? <p>Distribution confirmed: {formatUnits(verified.data.tokenCount, 18)} INCOME processed.</p> : verified.isError ? <p role="alert">The transaction was mined, but its distribution could not be verified. {message(verified.error)} <button type="button" className="underline" onClick={() => void verified.refetch()}>Retry verification</button></p> : <p>Transaction mined. Verifying the distribution…</p> : null}
+      {tx.phase === 'held' ? <HeldNotice tx={tx} /> : tx.phase === 'pending' ? <p>{TX_STATUS_LINES.pending}</p> : tx.phase === 'success' ? verified.data ? <p>Distribution confirmed: {formatUnits(verified.data.tokenCount, 18)} INCOME processed.</p> : verified.isError ? <p role="alert">The transaction was mined, but its distribution could not be verified. {message(verified.error)} <button type="button" className="underline" onClick={() => void verified.refetch()}>Retry verification</button></p> : <p>Transaction mined. Verifying the distribution…</p> : null}
       {tx.error && <p className="text-red-800">{tx.error}</p>}
       {tx.hash && !tx.safeProposalHash && <a className="underline" href={explorerTxUrl(state.chainId, tx.hash) ?? undefined} target="_blank" rel="noreferrer">View transaction</a>}
     </div>

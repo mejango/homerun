@@ -33,6 +33,7 @@ import {
   type StickyCreatedRecord,
 } from "@/lib/sticky-create";
 import { projectPath } from '@/lib/urn'
+import { TX_STATUS_LINES } from '@/components/ui/TxStatus'
 
 export type StickyCreateProps = {
   state: FundProjectState;
@@ -405,7 +406,7 @@ export function StickyCreate({
         <SavedAttemptNotice attempt={recovery} />
       ) : tx.phase === "pending" || tx.phase === "success" ? (
         <p role="status" className="mt-4 text-sm">
-          Submitted. Waiting for onchain confirmation…
+          {TX_STATUS_LINES.pending}
         </p>
       ) : (
         <>

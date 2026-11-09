@@ -29,7 +29,7 @@ import { SavedAttemptNotice } from '@/components/ui/SavedAttemptNotice'
 import { attempts, callOf, holds } from '@/lib/write-hold'
 import type { WriteHoldClient } from '@bananapus/nana-sdk-core/review'
 import { useOnConfirmed } from '@/hooks/useOnConfirmed'
-import { TxStatus } from '@/components/ui/TxStatus'
+import { TX_STATUS_LINES, TxStatus } from '@/components/ui/TxStatus'
 
 type Props = { state: FundProjectState; client: PublicClient; contextIndex: number }
 type Tx = ReturnType<typeof useReviewedAction>
@@ -1102,7 +1102,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
         complete={tx.phase === 'success'}
         settled={tx.phase === 'held'}
         held={tx.held}
-        status={tx.notice ?? (tx.phase === 'pending' ? 'Submitted. Waiting for onchain confirmation…' : null)}
+        status={tx.notice ?? (tx.phase === 'pending' ? TX_STATUS_LINES.pending : null)}
         error={error ?? tx.error}
         onClose={() => { setReview(null); if (tx.phase === 'held') tx.dismiss() }}
       >

@@ -23,7 +23,7 @@ import { readableError } from '@/lib/readable-error'
 import { refreshIndexedProject } from '@/lib/refresh-indexed'
 import { AllowedDecreaseField } from '@/components/ui/AllowedDecreaseField'
 import { useOnConfirmed } from '@/hooks/useOnConfirmed'
-import { TxStatus } from '@/components/ui/TxStatus'
+import { TX_STATUS_LINES, TxStatus } from '@/components/ui/TxStatus'
 
 const CenterProjectPayment = lazyComponent(() => import('./CenterProjectPayment').then(m => m.default))
 export function ProjectPayment(props: Parameters<typeof ExternalProjectPayment>[0]) {
@@ -265,7 +265,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       complete={tx.phase === 'success'}
       settled={!!submitted}
       held={submitted?.held}
-      status={submitted?.notice ?? status ?? (tx.phase === 'pending' ? <>Submitted. Waiting for onchain confirmation{tx.hash && explorerTxUrl(chainId, tx.hash) ? <> (<a className="underline" href={explorerTxUrl(chainId, tx.hash)!} target="_blank" rel="noreferrer">view transaction</a>)</> : null}</> : null)}
+      status={submitted?.notice ?? status ?? (tx.phase === 'pending' ? <>{TX_STATUS_LINES.pending}{tx.hash && explorerTxUrl(chainId, tx.hash) ? <> (<a className="underline" href={explorerTxUrl(chainId, tx.hash)!} target="_blank" rel="noreferrer">view transaction</a>)</> : null}</> : null)}
       // A Safe's failure keeps the registry's own line, with its execution.
       error={error ?? failure?.message ?? (minedRevert && !tx.isSafe ? 'The payment reverted.' : null) ?? (staleRevert ? null : tx.error)}
       onClose={() => { setOpen(false); if (tx.phase === 'held') tx.dismiss(); setStatus(null); attempt.current++; setRetryWhenQuoted(null); setPayerSlippage(null) }}

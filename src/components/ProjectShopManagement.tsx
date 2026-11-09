@@ -25,6 +25,7 @@ import { HeldNotice, retiringExit } from '@/components/ui/HeldWriteExit'
 import { SavedAttemptNotice } from '@/components/ui/SavedAttemptNotice'
 import { ShopItemEditor, type ShopItemEditorState } from '@/components/ShopItemEditor'
 import { ModalShell } from '@/components/ui/ModalShell'
+import { TX_STATUS_LINES } from '@/components/ui/TxStatus'
 
 const SESSION_EVENT = 'homerun-shop-session'
 const message = (error: unknown) => error instanceof Error ? error.message : 'The shop update could not be completed. Try again.'
@@ -270,7 +271,7 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
           <ol className="list-decimal space-y-3 pl-5">{indices.map((requestIndex, index) => <li key={requestIndex}>{session.plan.requests[requestIndex].label}<span className="ml-2">{index < session.completed.length ? checkedProgress === progressKey ? 'Confirmed' : 'Verifying…' : index === session.completed.length ? stepActive ? 'Waiting for confirmation' : 'Ready' : 'Next'}</span></li>)}</ol>
           {!accountMatches && !complete && <p>Connect {session.plan.snapshot.account} to continue this update.</p>}
           {tx.phase === 'held' && <HeldNotice tx={{ notice: tx.notice, held: retiringExit(tx.held, recovery.retire) }} />}
-          {tx.phase === 'pending' && <p>Submitted. Waiting for onchain confirmation…</p>}
+          {tx.phase === 'pending' && <p>{TX_STATUS_LINES.pending}</p>}
           {complete && <p>{session.restoring ? 'The previous permissions have been restored. Shop creation was cancelled.' : session.plan.snapshot.mode === 'create' ? 'The shop and first items are created. They become available when the attached ruleset is active.' : 'Your inventory changes are confirmed onchain.'}</p>}
         </>}
         {progress && !complete && <p role="status">{progress}</p>}

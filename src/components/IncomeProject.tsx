@@ -43,7 +43,7 @@ import { readableError } from '@/lib/readable-error'
 import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import { loanRepaymentIntent } from '@/lib/income-loan-tools'
 import { useOnConfirmed } from '@/hooks/useOnConfirmed'
-import { TxStatus } from '@/components/ui/TxStatus'
+import { TX_STATUS_LINES, TxStatus } from '@/components/ui/TxStatus'
 
 function message(reason: unknown) { return readableError(reason, 'The transaction could not be prepared. Refresh and try again.') }
 function amount(value: string, decimals = 18) { try { return parseAmount(value.trim(), decimals) } catch { return 0n } }
@@ -434,7 +434,7 @@ export function IncomeBorrow({ state, client, context, currencyChosen = false }:
       complete={tx.phase === 'success'}
       settled={tx.phase === 'held'}
       held={tx.held}
-      status={tx.notice ?? (tx.phase === 'pending' ? 'Submitted. Waiting for onchain confirmation…' : null)}
+      status={tx.notice ?? (tx.phase === 'pending' ? TX_STATUS_LINES.pending : null)}
       error={error ?? tx.error}
       onClose={() => { setReviewing(false); if (tx.phase === 'held') tx.dismiss() }}
     >
@@ -516,7 +516,7 @@ function IncomeRepayDialog({ state, client, loanId, tx, onClose }: { state: Inco
     complete={tx.phase === 'success'}
     settled={tx.phase === 'held'}
     held={tx.held}
-    status={loan.isPending ? 'Reading the loan…' : tx.notice ?? (tx.phase === 'pending' ? 'Submitted. Waiting for onchain confirmation…' : null)}
+    status={loan.isPending ? 'Reading the loan…' : tx.notice ?? (tx.phase === 'pending' ? TX_STATUS_LINES.pending : null)}
     error={error ?? (loan.isError ? message(loan.error) : null) ?? tx.error}
     onClose={() => { if (tx.phase === 'held') tx.dismiss(); onClose() }}
   >

@@ -29,6 +29,7 @@ import { isSafeConnection } from '@/lib/safe-connector'
 import { wagmiConfig } from '@/providers/Providers'
 import { readableError } from '@/lib/readable-error'
 import { projectPath } from '@/lib/urn'
+import { TX_STATUS_LINES } from '@/components/ui/TxStatus'
 
 const JOURNAL_EVENT = 'homerun-income-launch-recovery'
 const inputClass = 'min-h-11 w-full rounded border border-[#bfc9b5] bg-white px-3 text-base'
@@ -205,7 +206,7 @@ function IncomeChainHold({ chainId, projectId, client }: { chainId: JBChainId; p
   const { recovery, error } = useIncomeLaunchRecovery(chainId, projectId, client, tx, {})
   const notice = <SavedAttemptNotice attempt={recovery} title={displayChainName(chainId)} />
   if (tx.phase !== 'held' && tx.phase !== 'pending' && !error) return notice
-  return <div role="status" className="grid gap-2 text-sm"><p>{displayChainName(chainId)}</p>{tx.phase === 'held' ? <HeldNotice tx={{ notice: tx.notice, held: retiringExit(tx.held, recovery.retire) }} /> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : null}{error && <p role="alert">{error}</p>}</div>
+  return <div role="status" className="grid gap-2 text-sm"><p>{displayChainName(chainId)}</p>{tx.phase === 'held' ? <HeldNotice tx={{ notice: tx.notice, held: retiringExit(tx.held, recovery.retire) }} /> : tx.phase === 'pending' ? <p>{TX_STATUS_LINES.pending}</p> : null}{error && <p role="alert">{error}</p>}</div>
 }
 
 function IncomeChainLaunch({ local, draft, manifest, clients, rootState, onVerified, launchUnavailable, rootIncomeId, embedExistingProject }: { local: IncomeGlobalChainDraft; draft: IncomeGlobalLaunchDraft; manifest: FundGlobalManifest; clients: ReadonlyMap<number, PublicClient>; rootState: FundProjectState; onVerified: (chainId: number, hash: string) => void; launchUnavailable: boolean; rootIncomeId: bigint | null; embedExistingProject: boolean }) {
@@ -296,7 +297,7 @@ function IncomeChainActions({ local, draft, manifest, clients, client, rootState
     {fund.isError && <p role="alert" className="text-sm">Live FUND state could not be refreshed. Pending confirmations remain saved.</p>}
     <SavedAttemptNotice attempt={recovery} />
     {tx.phase === 'held' ? <div className="grid gap-3 text-sm"><HeldNotice tx={{ notice: tx.notice, held: retiringExit(tx.held, recovery.retire) }} /></div>
-      : tx.phase === 'pending' || tx.phase === 'success' && !verifiedId ? <p role="status" className="text-sm">Submitted. Waiting for onchain confirmation…</p>
+      : tx.phase === 'pending' || tx.phase === 'success' && !verifiedId ? <p role="status" className="text-sm">{TX_STATUS_LINES.pending}</p>
       : !binding.data && !local.execution && recovered && <fieldset disabled={working || tx.busy || tx.phase === 'review' || unavailable} className="grid min-w-0 gap-4">
       {blockers.length > 0 && <ul className="list-disc space-y-1 pl-5 text-sm">{blockers.map(blocker => <li key={blocker}>{blocker}</li>)}</ul>}
       <button type="button" className="btn-secondary min-h-10 justify-self-start px-4" onClick={() => void prepare()}>Prepare {displayChainName(chainId)} INCOME</button>
