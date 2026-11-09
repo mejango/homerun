@@ -19,7 +19,7 @@ import { reviewContext, TxProgress } from '@/components/ui/TxProgress'
 import { getLoans } from '@/lib/loans-queries'
 import { useReviewedAction, txPhaseLabel, type TxRequest, type TxStep } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
-import { displayChainName, explorerTxUrl } from '@/lib/chainDisplay'
+import { displayChainName } from '@/lib/chainDisplay'
 import { HomerunProjectLayout, OwnersTabs } from '@/components/HomerunProjectLayout'
 import { ProjectPageShell } from '@/components/ProjectPageParts'
 import { LiveProjectActions } from '@/components/LiveProjectActions'
@@ -40,10 +40,10 @@ import {
   type IncomeAccountingContext, type IncomeProjectState,
 } from '@/lib/income-state'
 import { readableError } from '@/lib/readable-error'
-import { HeldNotice } from '@/components/ui/HeldWriteExit'
 import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import { loanRepaymentIntent } from '@/lib/income-loan-tools'
 import { useOnConfirmed } from '@/hooks/useOnConfirmed'
+import { TxStatus } from '@/components/ui/TxStatus'
 
 function message(reason: unknown) { return readableError(reason, 'The transaction could not be prepared. Refresh and try again.') }
 function amount(value: string, decimals = 18) { try { return parseAmount(value.trim(), decimals) } catch { return 0n } }
@@ -55,13 +55,6 @@ function Panel({ title, children }: { title: string; children: ReactNode }) {
 }
 function Field({ label, value, onChange, text = false }: { label: string; value: string; onChange: (value: string) => void; text?: boolean }) {
   return <label className="grid gap-2 text-sm">{label}<input className="min-h-12 w-full rounded border border-[#bfc9b5] bg-white px-3 text-base" value={value} onChange={event => onChange(event.target.value)} inputMode={text ? 'text' : 'decimal'} autoComplete="off" /></label>
-}
-function Status({ tx, chainId }: { tx: IncomeTx; chainId: number }) {
-  const link = tx.hash && !tx.safeProposalHash ? explorerTxUrl(chainId, tx.hash) : null
-  return <div className="mt-4 break-words text-sm" role="status" aria-live="polite">
-    {tx.phase === 'submitted' ? <HeldNotice tx={tx} /> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? <p>Confirmed onchain.</p> : null}
-    {tx.error && <p className="text-red-800">{tx.error}</p>}{link && <a className="underline" href={link} target="_blank" rel="noreferrer">View transaction</a>}
-  </div>
 }
 
 function useIncomeTx(state: IncomeProjectState) {
@@ -303,7 +296,7 @@ function IncomeCashOut({ state, client, context, currencyChosen = false }: { sta
     {quote.data && <p className="mt-4 text-xs text-[var(--muted)]">At least {units(quote.data.minimumReturn, context.decimals)} {context.symbol} with 1% maximum slippage.</p>}
     {quote.isError && <p role="alert" className="mt-3 text-sm">{message(quote.error)}</p>}
     <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={!address || preparing || tx.busy || tx.phase === 'review' || !state.cashOutsAvailable || count <= 0n || count > state.totalBalance || !quote.data || quote.data.minimumReturn <= 0n} onClick={() => void submit()}>{preparing ? 'Preparing…' : txPhaseLabel(tx.phase, { idle: 'Review cash-out', pending: 'Confirming onchain…' })}</button>
-    {error && <p role="alert" className="mt-3 text-sm text-red-800">{error}</p>}<Status tx={tx} chainId={state.chainId} />
+    {error && <p role="alert" className="mt-3 text-sm text-red-800">{error}</p>}<TxStatus tx={tx} chainId={state.chainId} />
   </Panel>
 }
 
@@ -341,7 +334,7 @@ function IncomeTokenActions({ state, client }: { state: IncomeProjectState; clie
     <p className="mt-3 text-xs text-[var(--muted)]">Available: {units(balance)} INCOME</p>
     {action === 'burn' && <p className="mt-3 text-xs text-[var(--muted)]">Burning is permanent and pays nothing. Cash out to receive treasury funds.</p>}
     <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={!address || !destination || count <= 0n || count > balance || preparing || tx.busy || tx.phase === 'review'} onClick={() => void submit()}>{preparing ? 'Preparing…' : txPhaseLabel(tx.phase, { idle: 'Review transaction', pending: 'Confirming onchain…' })}</button>
-    {error && <p role="alert" className="mt-3 text-sm text-red-800">{error}</p>}<Status tx={tx} chainId={state.chainId} />
+    {error && <p role="alert" className="mt-3 text-sm text-red-800">{error}</p>}<TxStatus tx={tx} chainId={state.chainId} />
   </Panel>
 }
 
@@ -428,7 +421,7 @@ export function IncomeBorrow({ state, client, context, currencyChosen = false }:
     {quote.isError && <p role="alert" className="mt-3 text-sm">{message(quote.error)}</p>}
     <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={!address || running || count <= 0n || count > state.totalBalance || !state.cashOutsAvailable || !borrowable} onClick={() => { setError(null); setStage(null); if (tx.phase === 'success' || tx.phase === 'error') tx.reset(); setReviewing(true) }}>Review loan</button>
     {!reviewing && error && <p role="alert" className="mt-3 text-sm text-red-800">{error}</p>}
-    {!reviewing && <Status tx={tx} chainId={state.chainId} />}
+    {!reviewing && <TxStatus tx={tx} chainId={state.chainId} />}
     <TxProgress
       open={reviewing}
       eyebrow="Loan"
@@ -561,7 +554,7 @@ export function IncomeLoansList({ state, client }: { state: IncomeProjectState; 
         </li>
       })}</ul>}
     <details className="mt-4"><summary className="cursor-pointer text-sm">Repay another loan by ID</summary><div className="mt-3 flex flex-wrap items-end gap-3"><Field label="Loan NFT ID" value={byId} onChange={setById} /><button type="button" className="btn-secondary min-h-11 px-4" disabled={!address || typedId <= 0n || inFlight} onClick={() => openRepay(typedId)}>Review repayment</button></div></details>
-    {!repaying && <Status tx={repayTx} chainId={state.chainId} />}
+    {!repaying && <TxStatus tx={repayTx} chainId={state.chainId} />}
     <IncomeRepayDialog key={repaying?.toString() ?? 'none'} state={state} client={client} loanId={repaying} tx={repayTx} onClose={() => setRepaying(null)} />
   </Panel>
 }
@@ -587,7 +580,7 @@ function IncomeAutoIssue({ state, client }: { state: IncomeProjectState; client:
     <p className="mb-5">Anyone can trigger an unlocked stage allocation. Tokens always go to its recorded beneficiary.</p>
     <div className="grid gap-4 sm:grid-cols-2"><Field label="Stage ruleset ID" value={stage} onChange={setStage} /><Field label="Beneficiary address (defaults to your wallet)" value={beneficiary} onChange={setBeneficiary} text /></div>
     <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={!address || !target || stageId <= 0n || preparing || tx.busy || tx.phase === 'review'} onClick={() => void submit()}>{preparing ? 'Preparing…' : txPhaseLabel(tx.phase, { idle: 'Review allocation', pending: 'Confirming onchain…' })}</button>
-    {error && <p role="alert" className="mt-3 text-sm text-red-800">{error}</p>}<Status tx={tx} chainId={state.chainId} />
+    {error && <p role="alert" className="mt-3 text-sm text-red-800">{error}</p>}<TxStatus tx={tx} chainId={state.chainId} />
   </Panel>
 }
 
@@ -624,6 +617,6 @@ function IncomeRewards({ state, client }: { state: IncomeProjectState; client: P
     <p className="mt-4 text-xs text-[var(--muted)]">Current funding becomes claimable after {new Date(Number(rewards.nextRoundStart) * 1_000).toLocaleString()}.{rewards.claimDuration > 0n ? ` Unclaimed rounds expire after ${units(rewards.claimDuration / 86_400n, 0)} days.` : ' Unclaimed rounds do not expire.'}</p>
     {rewards.fundCreditBalance > 0n && <p className="mt-3 text-sm">{units(rewards.fundCreditBalance)} FUND credits must be claimed as ERC-20 tokens before they can earn future rewards.</p>}
     <div className="mt-5 flex flex-wrap gap-3"><button type="button" className="btn-primary min-h-11 px-5" disabled={!address || busy || (activated && rewards.fundCreditBalance === 0n)} onClick={() => void submit('activate')}>{rewards.fundCreditBalance > 0n ? 'Claim FUND credits' : 'Activate rewards'}</button><button type="button" className="btn-secondary min-h-10 px-4" disabled={!address || busy} onClick={() => void submit('vest')}>Begin vesting</button><button type="button" className="btn-secondary min-h-10 px-4" disabled={!address || busy || rewards.collectable <= 0n} onClick={() => void submit('collect')}>Collect vested INCOME</button></div>
-    {error && <p role="alert" className="mt-3 text-sm text-red-800">{error}</p>}<Status tx={tx} chainId={state.chainId} />
+    {error && <p role="alert" className="mt-3 text-sm text-red-800">{error}</p>}<TxStatus tx={tx} chainId={state.chainId} />
   </Panel>
 }

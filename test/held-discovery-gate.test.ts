@@ -58,7 +58,8 @@ it('recovers every saved journal through the SDK, shows its check, and retires a
     expect(/\buseSavedAttempt\(/.test(source), `${name} recovers through useSavedAttempt`).toBe(true)
     expect(/<SavedAttemptNotice\b/.test(source), `${name} shows the SDK's check action`).toBe(true)
     // A held write's exit retires its saved attempt, so recovery never asks for it again (StickyHolder's record goes once held).
-    if (name !== 'StickyHolder') expect(/\bretiringExit\(/.test(source), `${name} retires its exit`).toBe(true)
+    // TxStatus retires through retiringExit when it is given the attempt's `retire`.
+    if (name !== 'StickyHolder') expect(/\bretiringExit\(|<TxStatus\b[^>]*\bretire=\{/.test(source), `${name} retires its exit`).toBe(true)
   }
 })
 

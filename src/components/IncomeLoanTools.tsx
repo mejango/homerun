@@ -7,16 +7,15 @@ import { useState } from 'react'
 import { erc20Abi, formatUnits, isAddressEqual, type PublicClient } from 'viem'
 import { useReviewedAction, txPhaseLabel, type TxRequest, type TxStep } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
-import { explorerTxUrl } from '@/lib/chainDisplay'
 import { parseAmount } from '@/lib/fund-contracts'
 import { approvalIntentKey, buildErc20ApproveRequest } from '@/lib/transaction-builders'
 import { v6Address } from '@/lib/income-contracts'
 import { readIncomeLoan, type IncomeProjectState } from '@/lib/income-state'
 import { assertSameIncomeLoan, buildIncomePartialRepayment, incomeLoanRecipient, loanRepaymentIntent, prepareIncomeLoanReallocation, prepareIncomeLoanTransfer, prepareIncomePartialRepayment } from '@/lib/income-loan-tools'
 import { readableError } from '@/lib/readable-error'
-import { HeldNotice } from '@/components/ui/HeldWriteExit'
 import { writeIntentKey, type ReviewedPriorBlock } from '@bananapus/nana-sdk-core/review'
 import { useOnConfirmed } from '@/hooks/useOnConfirmed'
+import { TxStatus } from '@/components/ui/TxStatus'
 
 type Props = { state: IncomeProjectState; client: PublicClient }
 type LoanAction = 'transfer' | 'reallocate' | 'partialRepay'
@@ -25,13 +24,6 @@ function errorMessage(error: unknown) { return readableError(error, 'This loan t
 function loanIdInput(value: string) { return /^\d{1,78}$/.test(value.trim()) ? BigInt(value.trim()) : 0n }
 function Field({ label, value, onChange, address = false }: { label: string; value: string; onChange: (value: string) => void; address?: boolean }) {
   return <label className="grid gap-2 text-sm">{label}<input className="min-h-12 w-full rounded border border-[#bfc9b5] bg-white px-3 text-base" value={value} onChange={event => onChange(event.target.value)} inputMode={address ? 'text' : 'decimal'} autoComplete="off" /></label>
-}
-function TransactionStatus({ tx, chainId }: { tx: ReturnType<typeof useReviewedAction>; chainId: number }) {
-  return <div className="mt-4 break-words text-sm" role="status" aria-live="polite">
-    {tx.phase === 'submitted' ? <HeldNotice tx={tx} /> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? <p>Confirmed onchain. Loan balances are refreshing.</p> : null}
-    {tx.error && <p className="text-red-800">{tx.error}</p>}
-    {tx.hash && !tx.safeProposalHash && <a className="underline" href={explorerTxUrl(chainId, tx.hash) ?? undefined} target="_blank" rel="noreferrer">View transaction</a>}
-  </div>
 }
 
 /** Ordinary loan NFTs only; distributor-held vesting loans have a separate owner and are rejected. */
@@ -147,6 +139,6 @@ export function IncomeLoanTools({ state, client }: Props) {
     {action === 'partialRepay' && <p className="mt-4 text-xs text-[var(--muted)]">The contracts set the debt owed for this return, including fees. If the rest has no borrowing value, the loan closes and returns all collateral.</p>}
     <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={!address || busy || !loan.data || loan.isError || !validInput} onClick={() => void submit()}>{preparing ? 'Preparing…' : txPhaseLabel(tx.phase, { idle: 'Review loan change', pending: 'Confirming onchain…' })}</button>
     {error && <p className="mt-4 text-sm text-red-800" role="alert">{error}</p>}
-    <TransactionStatus tx={tx} chainId={state.chainId} />
+    <TxStatus tx={tx} chainId={state.chainId} />
   </section>
 }

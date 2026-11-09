@@ -16,8 +16,8 @@ import { readFundWriteState, type FundProjectState } from '@/lib/fund-state'
 import { buildFundAllowlistChange, buildFundAllowlistOpen, parseAmount } from '@/lib/fund-contracts'
 import { readableError } from '@/lib/readable-error'
 import { refreshIndexedProject } from '@/lib/refresh-indexed'
-import { HeldNotice } from '@/components/ui/HeldWriteExit'
 import { useOnConfirmed } from '@/hooks/useOnConfirmed'
+import { TxStatus } from '@/components/ui/TxStatus'
 
 /** Reject rounded, negative, exponent and over-precise financial inputs. */
 function positiveAmount(value: string, decimals: number): bigint {
@@ -36,17 +36,6 @@ function units(value: bigint, decimals = 18): string {
 
 type Tx = ReturnType<typeof useReviewedAction>
 
-function TransactionStatus({ tx, chainId }: { tx: Tx; chainId: number }) {
-  const explorer = tx.hash && !tx.safeProposalHash ? explorerTxUrl(chainId, tx.hash) : null
-  return <div role="status" aria-live="polite" className="mt-4 text-sm break-words">
-    {tx.phase === 'submitted' ? <HeldNotice tx={tx} />
-      : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p>
-        : tx.phase === 'success' ? <p>Confirmed onchain.</p>
-          : tx.phase === 'review' ? <p>Review the exact transaction before continuing.</p> : null}
-    {tx.error && <p className="text-red-800">{tx.error}</p>}
-    {explorer && <a href={explorer} target="_blank" rel="noreferrer" className="underline">View transaction</a>}
-  </div>
-}
 
 /** What the confirm dialog says while a submitted transaction settles, as in Juicebox Money's flows. */
 function confirmStatus(tx: Tx, chainId: number): ReactNode {
@@ -209,7 +198,7 @@ export function CashOutPanel({ state, client, contextIndex, currencyChosen = fal
     {quote.isError && <p className="mt-3 text-sm" role="alert">A protected cash-out quote is unavailable. {errorMessage(quote.error)}</p>}
     <button type="button" className="btn-primary mt-5 min-h-11 px-5" disabled={!address || confirm.preparing || tx.busy || tx.phase === 'review' || count <= 0n || count > total || state.metadata.cashOutTaxRate >= 10_000 || !quote.data || quote.data.minimumReturn <= 0n} onClick={() => void review()}>Review cash-out</button>
     {!plan && !confirm.preparing && confirm.error && <p role="alert" className="mt-4 text-sm text-red-800">{confirm.error}</p>}
-    {!plan && <TransactionStatus tx={tx} chainId={state.chainId} />}
+    {!plan && <TxStatus tx={tx} chainId={state.chainId} />}
     <TxProgress
       open={!!plan || confirm.preparing}
       preparing={confirm.preparing}
@@ -268,7 +257,7 @@ export function HolderActions({ state, client }: { state: FundProjectState; clie
     {unavailable && <p className="text-sm">This project has no FUND ERC-20.</p>}
     <button type="button" className="btn-primary min-h-11 w-fit px-5" disabled={confirm.preparing || tx.busy || tx.phase === 'review' || unavailable || (count <= 0n || count > available) || !destination} onClick={() => void review()}>{action === 'burn' ? 'Review burn' : 'Review transfer'}</button>
     {!plan && confirm.error && <p role="alert" className="text-sm text-red-800">{confirm.error}</p>}
-    {!plan && <TransactionStatus tx={tx} chainId={state.chainId} />}
+    {!plan && <TxStatus tx={tx} chainId={state.chainId} />}
     <TxProgress
       open={!!plan}
       title={tx.phase === 'success' ? (burning ? 'Burned' : 'Transferred') : burning ? 'Confirm burn' : 'Confirm transfer'}
@@ -319,7 +308,7 @@ function FundAllowlist({ state, client }: { state: FundProjectState; client: Pub
       </div>
     </fieldset>
     {!canManage && <p className="text-sm">Only the FUND owner, or a wallet the owner granted allowlist permission, can change the allowlist.</p>}
-    {error && <p role="alert" className="text-sm text-red-800">{error}</p>}<TransactionStatus tx={tx} chainId={state.chainId} />
+    {error && <p role="alert" className="text-sm text-red-800">{error}</p>}<TxStatus tx={tx} chainId={state.chainId} />
   </div>
 }
 
