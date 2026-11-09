@@ -1087,7 +1087,7 @@ describe("creation recovery and duplicate protection", () => {
         await new Promise((resolve) => setTimeout(resolve, 20));
       });
       expect(onCreated, container.textContent ?? "").toHaveBeenCalledExactlyOnceWith(9n);
-      expect(navigator.locks.request).toHaveBeenCalledWith("homerun-sticky-create:1:7", expect.any(Function));
+      expect(navigator.locks.request).toHaveBeenCalledWith("homerun-sticky-create:1:7", { mode: "exclusive" }, expect.any(Function));
       expect(readStickyProjectState).toHaveBeenCalledTimes(1);
       expect(container.textContent).toContain(
         "Sticky project 9 is confirmed and verified",

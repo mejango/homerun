@@ -203,3 +203,16 @@ it('gap 7: a saved completion that can’t be proven again offers "Check again",
   expect(host.textContent, host.textContent ?? '').toContain('Sticky project 9 is confirmed and verified')
   expect(wallet.writeContract).toHaveBeenCalledOnce()
 })
+
+it('saves a verified creation through the SDK lock fallback when the browser has no Web Locks', async () => {
+  Object.defineProperty(navigator, 'locks', { configurable: true, value: undefined })
+  m.verify = async () => ({ status: 'confirmed', projectId: 9n })
+  const onCreated = vi.fn()
+  await act(async () => root.render(createElement(StickyCreate, { state, client: wallet.client as unknown as PublicClient, manifest: {}, onCreated })))
+  await settle(); await settle()
+  await review()
+  await act(async () => { wallet.confirm(`0x${'1'.padStart(64, '0')}` as `0x${string}`) })
+  await settle(); await settle(); await settle()
+  expect(readStickyCreated(localStorage, 1, 7n), host.textContent ?? '').toMatchObject({ projectId: '9' })
+  expect(onCreated).toHaveBeenCalledWith(9n)
+})

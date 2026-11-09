@@ -118,7 +118,7 @@ export function StickyCreate({
     async (record: StickyPending, hash: Hex, expectedProjectId?: string, proven?: { status: "confirmed"; projectId: bigint }) => {
       // A creation its saved-attempt recovery already proved is saved as proved, never verified twice.
       const result = proven ?? await verifyStickyCreationExecution(client, record, hash);
-      await browserLocks().request(`homerun-sticky-create:${record.chainId}:${record.projectId}`, () => {
+      await browserLocks().request(`homerun-sticky-create:${record.chainId}:${record.projectId}`, { mode: "exclusive" }, () => {
         if (result.status === "confirmed") {
           if (
             expectedProjectId &&
