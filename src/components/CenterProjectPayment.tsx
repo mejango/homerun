@@ -10,7 +10,7 @@ import { DisplayTokenAmount } from './DisplayTokenAmount'
 import { CENTER_WALLET_CONFIG } from '@/providers/wallet-config'
 import { centerWalletClient } from '@/providers/center-runtime'
 import { CENTER_FRAME_CALLBACK, CENTER_FRAME_RECEIVED } from '@/providers/center-callback'
-import { createHomerunPayment, signaPayCall, signaPaymentAdapter } from '@/lib/center-payment'
+import { createHomerunPayment, settledPayment, signaPayCall, signaPaymentAdapter } from '@/lib/center-payment'
 import { sendReviewed, type ReviewModel } from '@bananapus/nana-sdk-core/review'
 import { holds } from '@/lib/write-hold'
 import { prepareProjectPayQuote } from '@/lib/project-pay-quote'
@@ -73,7 +73,7 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
   }, [])
   const matching = pending?.intent.projectId === projectId.toString() && chainId === 8453
   const status = pending?.status?.status
-  const terminal = !!status && ['paid', 'cancelled', 'reverted', 'expired', 'refused'].includes(status)
+  const terminal = !!status && settledPayment(status)
   // Signa's client attaches the SDK's own PayFailure: to a reverted status, and to the error a refused send or preparation throws.
   const failure = status === 'reverted' ? pending?.status?.payFailure ?? null : status === 'refused' || (pending && !status) ? prepareFailure : null
   const currentBps = BigInt(pending?.intent.slippageBps ?? PAY_DEFAULT_SLIPPAGE_BPS)
