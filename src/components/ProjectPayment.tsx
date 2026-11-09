@@ -232,6 +232,11 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
     if (bps !== undefined) setPayerSlippage({ bps, payment: paymentInputs })
     tx.reset(); setOutcome(null); setError(null); setRetryWhenQuoted(paymentInputs)
   }
+  /** A new payment starts from nothing: a confirmed one never shows as its result. */
+  function openPayment() {
+    if (tx.phase === 'success') { tx.reset(); setStage(null) }
+    setOpen(true)
+  }
   const submitNow = useRef(submit)
   submitNow.current = submit
   // The retry runs once the quote with the chosen tolerance is in.
@@ -250,7 +255,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
         <select className="pay-currency" aria-label="Payment currency" value={context.token} onChange={event => setSelectedToken(event.target.value as Address)}>{(tokenOptions.data?.length ? tokenOptions.data : [accountingContext]).map(option => <option key={option.token} value={option.token}>{option.symbol}</option>)}</select>
       </div>
     </fieldset>
-    <button type="button" className="btn-primary min-h-12 w-full px-5" disabled={paused || !!blocked} onClick={() => { if (address) setOpen(true); else openSignIn() }}>{paused ? 'Payments paused' : checking ? 'Checking…' : `Pay on ${displayChainName(chainId)}`}</button>
+    <button type="button" className="btn-primary min-h-12 w-full px-5" disabled={paused || !!blocked} onClick={() => { if (address) openPayment(); else openSignIn() }}>{paused ? 'Payments paused' : checking ? 'Checking…' : `Pay on ${displayChainName(chainId)}`}</button>
     {blocked && !paused && <p className="mt-2 text-sm text-[var(--muted)]">{blocked}</p>}
     {!open && <Status tx={tx} chainId={chainId} stale={staleRevert} />}
     <TxProgress
