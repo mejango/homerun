@@ -1,6 +1,7 @@
 import { decodeFunctionData, encodeFunctionData, isAddress, isHex, keccak256, parseAbi, stringToHex, type Address, type Hex } from 'viem'
 import type { CenterWalletConnection, CenterWalletExpectedPayment, CenterWalletPaymentStatus, CenterWalletStorage,
   PreparedUserOperation, SmartWalletPlan, createCenterWalletClient } from '@me.jango/signa/core'
+import { isSettledPayment } from '@me.jango/signa/core'
 import type { HomerunCenterConfig } from '@/providers/wallet-config'
 import { centerReturnPath } from '@/providers/center-callback'
 import { assertNoViewAs } from '@/lib/viewAs'
@@ -24,8 +25,6 @@ interface Journal extends Principal {
 const key = 'homerun:center:payment:v1', historyKey = key + ':history', returnKey = 'homerun:center:return:v1'
 const payAbi = parseAbi(['function pay(uint256 projectId,address token,uint256 amount,address beneficiary,uint256 minReturnedTokens,string memo,bytes metadata)'])
 const same = (left: string, right: string) => left.toLowerCase() === right.toLowerCase()
-/** A payment Signa will do nothing more with. ponytail: Signa 0.4.0 bundles isSettledPayment without exporting it; switch once it does. */
-export const settledPayment = (status: string) => ['paid', 'cancelled', 'reverted', 'expired', 'refused'].includes(status)
 function fail(message = 'The original payment changed. Keep its record and retry its status.'): never { throw new Error(message) }
 const encode = (value: unknown) => JSON.stringify(value, (_key, item) => typeof item === 'bigint' ? item.toString() : item)
 const digest = (value: unknown) => keccak256(stringToHex(encode(value)))
@@ -158,7 +157,7 @@ export function createHomerunPayment(options: { config: HomerunCenterConfig;
   function clear() {
     const saved = read(); if (!saved.value) return
     const current = payments.pendingPayment()
-    if (current && !settledPayment(current.status)) fail('Keep this payment until its outcome is known.')
+    if (current && !isSettledPayment(current.status)) fail('Keep this payment until its outcome is known.')
     // With no SDK payment, no review was ever requested (the SDK records one before asking), so
     // nothing can be approved or sent: a preparation that keeps failing, such as a moved price
     // under the quote's minimum, closes without a history entry.

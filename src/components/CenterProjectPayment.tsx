@@ -10,13 +10,13 @@ import { DisplayTokenAmount } from './DisplayTokenAmount'
 import { CENTER_WALLET_CONFIG } from '@/providers/wallet-config'
 import { centerWalletClient } from '@/providers/center-runtime'
 import { CENTER_FRAME_CALLBACK, CENTER_FRAME_RECEIVED } from '@/providers/center-callback'
-import { createHomerunPayment, settledPayment, signaPayCall, signaPaymentAdapter } from '@/lib/center-payment'
+import { createHomerunPayment, signaPayCall, signaPaymentAdapter } from '@/lib/center-payment'
 import { sendReviewed, type ReviewModel } from '@bananapus/nana-sdk-core/review'
 import { holds } from '@/lib/write-hold'
 import { prepareProjectPayQuote } from '@/lib/project-pay-quote'
 import { AllowedDecreaseField } from '@/components/ui/AllowedDecreaseField'
 import { PAY_DEFAULT_SLIPPAGE_BPS, PAY_MAX_SLIPPAGE_BPS, payRetrySlippageBps } from '@bananapus/nana-sdk-core/v6'
-import type { PayFailure, RestClientError } from '@me.jango/signa/core'
+import { isFollowedPayment, isSettledPayment, type PayFailure, type RestClientError } from '@me.jango/signa/core'
 
 type Controller = ReturnType<typeof createHomerunPayment>
 type Pending = ReturnType<Controller['pending']>
@@ -73,7 +73,7 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
   }, [])
   const matching = pending?.intent.projectId === projectId.toString() && chainId === 8453
   const status = pending?.status?.status
-  const terminal = !!status && settledPayment(status)
+  const terminal = !!status && isSettledPayment(status)
   // Signa's client attaches the SDK's own PayFailure: to a reverted status, and to the error a refused send or preparation throws.
   const failure = status === 'reverted' ? pending?.status?.payFailure ?? null : status === 'refused' || (pending && !status) ? prepareFailure : null
   const currentBps = BigInt(pending?.intent.slippageBps ?? PAY_DEFAULT_SLIPPAGE_BPS)
@@ -180,7 +180,7 @@ export default function CenterProjectPayment({ chainId, projectId, tokenLabel, t
   const [followed, setFollowed] = useState<{ key: string; state: 'failed' | 'stopped' } | null>(null)
   const following = followed?.key === `${status}:${watch}` ? followed.state : null
   useEffect(() => {
-    if (!controller || !matching || !status || !['pending', 'confirming', 'submitting'].includes(status)) return
+    if (!controller || !matching || !status || !isFollowedPayment(status)) return
     const key = `${status}:${watch}`
     let cancelled = false, attempts = 0, checking = false
     const timer = window.setInterval(() => {
