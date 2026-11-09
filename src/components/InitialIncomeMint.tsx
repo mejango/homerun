@@ -2,7 +2,7 @@
 
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { formatUnits, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { useReviewedAction, txPhaseLabel } from '@/hooks/useReviewedAction'
@@ -11,6 +11,7 @@ import { displayChainName, explorerTxUrl } from '@/lib/chainDisplay'
 import { fundIpfsUrl } from '@/lib/fund-project-metadata'
 import { buildInitialIncomeMint, readInitialIncomeAllocation } from '@/lib/income-initial-allocation'
 import { HeldNotice } from '@/components/ui/HeldWriteExit'
+import { useOnConfirmed } from '@/hooks/useOnConfirmed'
 
 const message = (error: unknown) => error instanceof Error ? error.message : 'The initial allocation could not be verified.'
 
@@ -20,19 +21,16 @@ export function InitialIncomeMint({ chainId, fundProjectId, incomeProjectId, man
   const client = usePublicClient({ chainId }) as PublicClient | undefined
   const cache = useQueryClient(), tx = useReviewedAction(chainId)
   const [error, setError] = useState<string | null>(null), [preparing, setPreparing] = useState(false)
-  const confirmed = useRef<string | null>(null)
   const query = useQuery({
     queryKey: ['initial-income-allocation', chainId, fundProjectId.toString(), incomeProjectId.toString()], enabled: !!client,
     queryFn: () => readInitialIncomeAllocation(client!, { chainId, incomeProjectId, fundProjectId }),
     retry: 1, placeholderData: keepPreviousData,
   })
   const state = query.data?.chainId === chainId && query.data.incomeProjectId === incomeProjectId && query.data.fundProjectId === fundProjectId ? query.data : undefined
-  useEffect(() => {
-    if (tx.phase !== 'success' || !tx.receipt || confirmed.current === tx.receipt.transactionHash) return
-    confirmed.current = tx.receipt.transactionHash
+  useOnConfirmed(tx, () => {
     void cache.invalidateQueries({ queryKey: ['initial-income-allocation', chainId, fundProjectId.toString(), incomeProjectId.toString()] })
     void cache.invalidateQueries({ queryKey: ['income-project', chainId, incomeProjectId.toString()] })
-  }, [cache, chainId, fundProjectId, incomeProjectId, tx.phase, tx.receipt])
+  })
   const blocked = !client || !address || !state || query.isError || query.isPlaceholderData || state.pending === 0n || !state.started || preparing || tx.busy || (tx.phase === 'review' || tx.phase === 'submitted')
   async function mint() {
     if (blocked || !client || !state || !address) return

@@ -25,10 +25,11 @@ import { isSafeConnection, waitForSafeExecutionHash } from '@/lib/safe-connector
 import { intent, verifyReviewedWriteReceipt, writeIntentKey, type SavedAttempt, type SavedAttemptScope } from '@bananapus/nana-sdk-core/review'
 import { wagmiConfig } from '@/providers/Providers'
 import { readableError } from '@/lib/readable-error'
-import { HeldNotice, retiringExit } from '@/components/ui/HeldWriteExit'
 import { SavedAttemptNotice } from '@/components/ui/SavedAttemptNotice'
 import { attempts, callOf, holds } from '@/lib/write-hold'
 import type { WriteHoldClient } from '@bananapus/nana-sdk-core/review'
+import { useOnConfirmed } from '@/hooks/useOnConfirmed'
+import { TxStatus } from '@/components/ui/TxStatus'
 
 type Props = { state: FundProjectState; client: PublicClient; contextIndex: number }
 type Tx = ReturnType<typeof useReviewedAction>
@@ -449,7 +450,7 @@ function PlanChainHold({ plan, index, submission, done, onAdopted, onConfirmed, 
     <p className="text-sm">{displayChainName(state.chainId)}, project {state.projectId.toString()}:</p>
     {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
     <SavedAttemptNotice attempt={recovery} />
-    <Status tx={tx.phase === 'success' ? { ...tx, phase: 'pending' } : tx} chainId={state.chainId} retire={recovery.retire} />
+    <TxStatus tx={tx.phase === 'success' ? { ...tx, phase: 'pending' } : tx} chainId={state.chainId} retire={recovery.retire} className="" />
   </div>
 }
 
@@ -518,22 +519,10 @@ function LinkedRulesetStep({ plan, index, completed, onConfirmed, onCancel, onAd
     {completed.size === 0 && !busy && !sending && !tx.hash && <button type="button" className="btn-secondary min-h-10 px-4" onClick={onCancel}>Cancel plan</button>}
     {checked && !busy && !sending && <button type="button" className="btn-secondary min-h-10 px-4" onClick={onCloseChecked}>Close this plan</button>}</div>
     {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
-    <Status tx={tx.phase === 'success' ? { ...tx, phase: 'pending' } : tx} chainId={state.chainId} retire={recovery.retire} />
+    <TxStatus tx={tx.phase === 'success' ? { ...tx, phase: 'pending' } : tx} chainId={state.chainId} retire={recovery.retire} className="" />
   </div>
 }
 
-function Status({ tx, chainId, retire }: { tx: Tx; chainId: number; retire?: (reason: { by: 'exit' }) => Promise<unknown> }) {
-  const explorer = tx.hash && !tx.safeProposalHash ? explorerTxUrl(chainId, tx.hash) : null
-  return <div role="status" aria-live="polite" className="break-words text-sm">
-    {tx.phase === 'submitted' ? <HeldNotice tx={{ notice: tx.notice, held: retire ? retiringExit(tx.held, retire) : tx.held }} />
-      : tx.phase === 'success' ? <p>Transaction confirmed onchain. Refreshing the project’s contract state.</p>
-        : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p>
-          : tx.phase === 'review' ? <p>Review the exact transaction before continuing.</p> : null}
-    {tx.error && <p className="text-red-800">{tx.error}</p>}
-    {tx.submissionHash && !tx.hash && <p className="break-all">Safe proposal: <code>{tx.submissionHash}</code></p>}
-    {explorer && <a className="underline" href={explorer} target="_blank" rel="noreferrer">View transaction</a>}
-  </div>
-}
 
 function Field({ label, value, onChange, disabled, decimal = true }: {
   label: string; value: string; onChange: (value: string) => void; disabled: boolean; decimal?: boolean
@@ -543,14 +532,11 @@ function Field({ label, value, onChange, disabled, decimal = true }: {
 
 function useConfirmedRefresh(tx: Tx, state: Pick<FundProjectState, 'chainId' | 'projectId'>) {
   const queryClient = useQueryClient()
-  const last = useRef<string | null>(null)
-  useEffect(() => {
-    if (tx.phase !== 'success' || !tx.receipt || tx.receipt.status !== 'success' || tx.receipt.transactionHash === last.current) return
-    last.current = tx.receipt.transactionHash
+  useOnConfirmed(tx, () => {
     for (const key of ['fund-project', 'fund-allowance', 'fund-pay-quote', 'fund-cash-out-quote']) {
       void queryClient.invalidateQueries({ queryKey: [key, state.chainId, state.projectId.toString()] })
     }
-  }, [queryClient, state.chainId, state.projectId, tx.phase, tx.receipt])
+  }, tx.receipt?.status === 'success')
 }
 
 /** No campaign outcome is inferred from browser storage or a submitted hash. */
@@ -588,13 +574,10 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
   const [scheduleHours, setScheduleHours] = useState('1')
   // The owner action open in Juicebox Money's confirm dialog; linked multi-chain changes use the plan below instead.
   const [review, setReview] = useState<FundRulesetAction | 'mint' | 'return' | null>(null)
-  const clearedReceipt = useRef<string | null>(null)
-  useEffect(() => {
-    if (tx.phase !== 'success' || !tx.receipt || tx.receipt.status !== 'success' || tx.receipt.transactionHash === clearedReceipt.current) return
-    clearedReceipt.current = tx.receipt.transactionHash
+  useOnConfirmed(tx, () => {
     setOffchainUsd(''); setContributionReference(''); setLinkedOperatorCount(''); setReturnAmount('')
     setPurchased(false); setRefundAttestation(false)
-  }, [tx.phase, tx.receipt])
+  }, tx.receipt?.status === 'success')
   const baseBusy = !storageChecked || recoveryLoadError || preparing || tx.busy || tx.phase === 'review' || !!plan
   const busy = baseBusy || assetBusy
   const linked = state.linkedChainIds.length > 1
@@ -1075,7 +1058,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
 
     {!review && <div className="grid gap-3">
       {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
-      <Status tx={tx} chainId={state.chainId} />
+      <TxStatus tx={tx} chainId={state.chainId} className="" />
     </div>}
     {review && (() => {
       const chain = displayChainName(state.chainId)

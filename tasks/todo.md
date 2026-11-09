@@ -1,3 +1,30 @@
+# State machines wave 1: reset on reopen, passkey polling, explicit unions (2026-11-09)
+
+Discovery: scratchpad sm/homerun.md (36 machines). Brief: scratchpad sm/BRIEF.md.
+
+- [x] homerun-1 FIX: opening the pay card resets a confirmed payment (test: pays, closes with Done, and pays again).
+- [x] homerun-2 FIX: Review move resets a settled earlier move and its verification.
+- [x] homerun-3 FIX: a successful poll clears the poll failure; a stopped poll says so and Check payment status restarts it; one local settled-status rule until Signa exports one.
+- [x] DERIVE/UNION items where behavior-preserving and worth it; others named with reasons in the PR.
+- [x] SDK requests (homerun-4, 5, 7, 20, 21, 22) and Signa predicates written up in the report.
+- [x] Gates: lint, wallet:check, check:indexer, node tests, vitest, build, budget, tsc; browser suites on a fresh port.
+
+## Plan refinement
+
+- **Objective:** A payer can pay or move again after a confirmed one without reloading; the passkey card never shows a stale poll failure next to a confirmed payment; implicit state named with the SDK vocabulary where cheap.
+- **System fit:** The SDK runner (useReviewedRun via useReviewedAction) owns the tx phase; components own when a dialog opens. Opening resets a settled tx, as FundOperatorActions.openReview and jbm PayPanel do. Signa owns payment statuses; Homerun only reads them.
+- **Reuse and simplicity:** Reuse tx.reset and the existing openReview rule; no new hook for two call sites. One local settled-status helper in center-payment.ts replaces four inline lists until Signa exports isSettledPayment.
+- **Evidence and unknowns:** Bugs read from origin/main eaa0102; each fix lands with a test that fails first. Signa 0.4.0 bundles isSettledPayment but does not export it.
+- **Verification:** New vitest regressions per fix, full `npm run check` parts one at a time on Node 26.12 + npm 12, browser suites on a fresh port.
+- **Resource budget:** One worktree with CoW node_modules; refactors only where tests cover them; replan if a refactor needs user-visible changes.
+
+## Review
+
+- Fixes with failing-first tests: homerun-1 (pay again), homerun-2 (move again), homerun-3 (poll failure cleared, stopped check shown), homerun-25 (reached steps survive reload).
+- Refactors: settledPayment one home; useOnConfirmed replaces ten receipt-once effects (bridge verify and StickyHolder keep theirs).
+- Not done, with reasons in the PR: homerun-6, 8, 10, 11, 12, 14 to 17, 19, 24, 26. SDK requests: homerun-4, 5, 7, 20, 21, 22, Signa isSettledPayment/isFollowedPayment.
+- Gates on Node 26.12.1, npm 12: lint, wallet:check, check:indexer, node tests, vitest 2946/2946, build, budget, typecheck, test:contracts, browser suites 7/7 (test:create timed out once on first compile, passed on rerun).
+
 # Signa 0.4.0: one client package, refused payments review again (2026-10-20)
 
 - [x] Replace `@bananapus/nana-sdk-connect` with `@me.jango/signa@^0.4.0` (lockfile hand-edited, npm ci unchanged); imports to `/core`, `/react`, `/wagmi`; docs.

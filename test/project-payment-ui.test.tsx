@@ -290,6 +290,28 @@ describe('shared payment execution', () => {
     expect(host.textContent).toContain('Execute it there')
   })
 
+  it('pays, closes with Done, and pays again: a confirmed payment never shows as the next one', async () => {
+    await ready()
+    const pay = runtime.handles[0]
+    pay.reset.mockImplementation(() => { pay.phase = 'idle' })
+    await submit()
+    pay.phase = 'success'
+    await act(async () => commitRender())
+    let dialog = host.querySelector('[data-tx-confirm]')!
+    expect(dialog.textContent).toContain('Contribution confirmed')
+    await act(async () => [...dialog.querySelectorAll<HTMLButtonElement>('button')].find(item => item.textContent === 'Done')!.click())
+    expect(host.querySelector('[data-tx-confirm]')).toBeNull()
+    expect(host.textContent).toContain('Confirmed onchain.')
+    await input('2')
+    await waitUntil(() => expect(runtime.quote).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ amount: 2n * UNIT })))
+    await submit()
+    expect(pay.reset).toHaveBeenCalledOnce()
+    dialog = host.querySelector('[data-tx-confirm]')!
+    expect(dialog.textContent).toContain('Confirm contribution')
+    expect(dialog.textContent).not.toContain('Contribution confirmed')
+    expect(runtime.writes.filter(item => item.action === 'payment').map(item => encoded(item.request).args?.[2])).toEqual([UNIT, 2n * UNIT])
+  })
+
   it('shows the approval proposal notice and Done without completing or paying', async () => {
     const action = 'approval'
     erc20(); runtime.allowance = 0n

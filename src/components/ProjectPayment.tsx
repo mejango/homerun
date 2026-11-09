@@ -21,8 +21,9 @@ import { intent as keyed, writeIntentKey } from '@bananapus/nana-sdk-core/review
 import { lazyComponent } from '@/components/lazy-component'
 import { readableError } from '@/lib/readable-error'
 import { refreshIndexedProject } from '@/lib/refresh-indexed'
-import { HeldNotice } from '@/components/ui/HeldWriteExit'
 import { AllowedDecreaseField } from '@/components/ui/AllowedDecreaseField'
+import { useOnConfirmed } from '@/hooks/useOnConfirmed'
+import { TxStatus } from '@/components/ui/TxStatus'
 
 const CenterProjectPayment = lazyComponent(() => import('./CenterProjectPayment').then(m => m.default))
 export function ProjectPayment(props: Parameters<typeof ExternalProjectPayment>[0]) {
@@ -30,7 +31,6 @@ export function ProjectPayment(props: Parameters<typeof ExternalProjectPayment>[
   return isCenterWallet ? <CenterProjectPayment {...props} /> : <ExternalProjectPayment {...props} />
 }
 
-type PaymentTx = ReturnType<typeof useReviewedAction>
 type PaymentContext = { token: Address; terminal: Address; decimals: number; symbol: string }
 
 function inputAmount(value: string, decimals: number) {
@@ -38,13 +38,6 @@ function inputAmount(value: string, decimals: number) {
   try { return parseAmount(value.trim(), decimals) } catch { return 0n }
 }
 function message(error: unknown) { return readableError(error, 'The payment could not be prepared. Refresh and try again.') }
-function Status({ tx, chainId, stale }: { tx: PaymentTx; chainId: number; stale?: boolean }) {
-  const url = tx.hash && !tx.safeProposalHash ? explorerTxUrl(chainId, tx.hash) : null
-  return <div role="status" aria-live="polite" className="mt-3 break-words text-sm">
-    {tx.phase === 'submitted' ? <HeldNotice tx={tx} /> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : tx.phase === 'success' ? <p>Confirmed onchain.</p> : null}
-    {tx.error && !stale && <p className="text-red-800">{tx.error}</p>}{url && <a className="underline" href={url} target="_blank" rel="noreferrer">View transaction</a>}
-  </div>
-}
 
 /** FUND and INCOME share the reference clients' pay execution pipeline. The parent retains project-specific contract identity checks. */
 function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context: accountingContext, currencyChosen = false, paused, blocked, quoteNeedsWallet, reservedPercent, rulesetId, verify, chainSelector, onBusyChange }: {
@@ -112,13 +105,10 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
   const intent = `${chainId}:${projectId}:${context.token}:${context.terminal}:${count}:${address ?? ''}:${rulesetId}:${paused}:${reservedPercent}:${tx.isSafe}`
   const currentIntent = useRef(intent)
   currentIntent.current = intent
-  const confirmed = useRef(new Set<string>())
-  useEffect(() => {
-    if (tx.phase !== 'success' || !tx.receipt || confirmed.current.has(tx.receipt.transactionHash)) return
-    confirmed.current.add(tx.receipt.transactionHash)
+  useOnConfirmed(tx, () => {
     for (const prefix of ['fund-project', 'income-project', 'project-pay', 'project-pay-tokens', 'income-reserved']) void cache.invalidateQueries({ queryKey: [prefix, chainId, projectId.toString()] })
     refreshIndexedProject(cache, chainId, projectId)
-  }, [cache, chainId, projectId, tx])
+  })
   const [requoting, setRequoting] = useState(false)
   const quote = useQuery({
     queryKey: ['project-pay', chainId, projectId.toString(), context.terminal, context.token, count.toString(), address ?? zeroAddress, rulesetId, reservedPercent, slippageBps ?? null],
@@ -232,6 +222,11 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
     if (bps !== undefined) setPayerSlippage({ bps, payment: paymentInputs })
     tx.reset(); setOutcome(null); setError(null); setRetryWhenQuoted(paymentInputs)
   }
+  /** A new payment starts from nothing: a confirmed one never shows as its result. */
+  function openPayment() {
+    if (tx.phase === 'success') { tx.reset(); setStage(null) }
+    setOpen(true)
+  }
   const submitNow = useRef(submit)
   submitNow.current = submit
   // The retry runs once the quote with the chosen tolerance is in.
@@ -250,9 +245,9 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
         <select className="pay-currency" aria-label="Payment currency" value={context.token} onChange={event => setSelectedToken(event.target.value as Address)}>{(tokenOptions.data?.length ? tokenOptions.data : [accountingContext]).map(option => <option key={option.token} value={option.token}>{option.symbol}</option>)}</select>
       </div>
     </fieldset>
-    <button type="button" className="btn-primary min-h-12 w-full px-5" disabled={paused || !!blocked} onClick={() => { if (address) setOpen(true); else openSignIn() }}>{paused ? 'Payments paused' : checking ? 'Checking…' : `Pay on ${displayChainName(chainId)}`}</button>
+    <button type="button" className="btn-primary min-h-12 w-full px-5" disabled={paused || !!blocked} onClick={() => { if (address) openPayment(); else openSignIn() }}>{paused ? 'Payments paused' : checking ? 'Checking…' : `Pay on ${displayChainName(chainId)}`}</button>
     {blocked && !paused && <p className="mt-2 text-sm text-[var(--muted)]">{blocked}</p>}
-    {!open && <Status tx={tx} chainId={chainId} stale={staleRevert} />}
+    {!open && <TxStatus tx={tx} chainId={chainId} hideError={staleRevert} className="mt-3" />}
     <TxProgress
       open={open}
       eyebrow="Payment"

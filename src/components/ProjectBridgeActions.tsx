@@ -172,6 +172,15 @@ function useBridgeTransaction(chainId: JBChainId) {
       },
     });
   }
+  /** A new review starts from nothing: a settled earlier move never shows as its result. */
+  function resetSettled() {
+    if (tx.phase !== "success" && tx.phase !== "error") return;
+    tx.reset();
+    checked.current = null;
+    setActive(null);
+    setVerified(null);
+    setVerificationError(null);
+  }
   const safeOuterRevert = !!active?.safe && tx.receipt?.status === "reverted";
   return {
     ...tx,
@@ -180,6 +189,7 @@ function useBridgeTransaction(chainId: JBChainId) {
     error: safeOuterRevert ? null : tx.error,
     settled: safeOuterRevert || tx.settled,
     send,
+    resetSettled,
     verified,
     checking,
     verificationError,
@@ -730,6 +740,7 @@ function BridgePreparation<State extends BridgeProjectState>({
         }
         onClick={() => {
           setError(null);
+          tx.resetSettled();
           setReview({
             needsApproval: !!quote.data && quote.data.allowance < count,
           });

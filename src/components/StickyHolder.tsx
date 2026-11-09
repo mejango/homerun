@@ -23,7 +23,7 @@ import {
   type TxStep,
 } from "@/hooks/useReviewedAction";
 import { useWallet } from "@/hooks/useWallet";
-import { displayChainName, explorerTxUrl } from "@/lib/chainDisplay";
+import { displayChainName } from "@/lib/chainDisplay";
 import { parseAmount } from "@/lib/fund-contracts";
 import {
   buildStickyApproval,
@@ -51,8 +51,8 @@ import {
 import { HeldWritesNotice, useHeldIntents, useSavedAttempt } from '@bananapus/nana-sdk-core/review/react';
 import type { WriteHoldClient } from "@bananapus/nana-sdk-core/review";
 import { attempts, holds } from "@/lib/write-hold";
-import { HeldNotice } from "@/components/ui/HeldWriteExit";
 import { SavedAttemptNotice } from "@/components/ui/SavedAttemptNotice";
+import { TxStatus } from "@/components/ui/TxStatus";
 
 export type StickyHolderProps = {
   chainId: JBChainId;
@@ -60,7 +60,6 @@ export type StickyHolderProps = {
   stickyProjectId: bigint;
   incomeProjectId?: bigint;
 };
-type StickyTx = ReturnType<typeof useReviewedAction>;
 const STAKE_ACTIONS = ["claimTokensFor", "approve", "pay"] as const;
 const UNSTAKE_ACTIONS = ["cashOutTokensOf"] as const;
 const REWARD_ACTIONS = ["beginVesting", "collectVestedRewards"] as const;
@@ -130,28 +129,6 @@ function useStickyRecovery(
   }, [outcome]);
   const ready = !journal.error && (!journal.record || (!!outcome && outcome.status !== "check"));
   return { adopted, error: journal.error ?? null, ready, recovery };
-}
-function Status({ tx, chainId, hideError }: { tx: StickyTx; chainId: number; hideError?: boolean }) {
-  const link =
-    tx.hash && !tx.safeProposalHash ? explorerTxUrl(chainId, tx.hash) : null;
-  return (
-    <div role="status" aria-live="polite" className="mt-4 break-words text-sm">
-      {tx.phase === "submitted" ? (
-        <HeldNotice tx={tx} />
-      ) : tx.phase === "pending" ? (
-        <p>Submitted. Waiting for onchain confirmation…</p>
-      ) : tx.phase === "success" ? (
-        <p>Confirmed onchain. Balances and available actions are refreshing.</p>
-      ) : null}
-      {tx.error && !hideError && <p className="text-red-800">{tx.error}</p>}
-      {tx.submissionHash && !tx.hash && <p className="break-all">Safe proposal: <code>{tx.submissionHash}</code></p>}
-      {link && (
-        <a className="underline" href={link} target="_blank" rel="noreferrer">
-          View transaction
-        </a>
-      )}
-    </div>
-  );
 }
 function useStickyTx(state: StickyProjectState, actions: readonly string[]) {
   const tx = useReviewedAction(state.chainId),
@@ -757,7 +734,7 @@ function StickyStake({
           {error ?? explained}
         </p>
       )}
-      <Status tx={tx} chainId={state.chainId} hideError={!!explained || staleError} />
+      <TxStatus tx={tx} chainId={state.chainId} hideError={!!explained || staleError} />
     </section>
   );
 }
@@ -898,7 +875,7 @@ function StickyUnstake({
           {error}
         </p>
       )}
-      <Status tx={tx} chainId={state.chainId} />
+      <TxStatus tx={tx} chainId={state.chainId} />
     </section>
   );
 }
@@ -1064,7 +1041,7 @@ export function StickyRewards({
           {error}
         </p>
       )}
-      <Status tx={tx} chainId={state.chainId} />
+      <TxStatus tx={tx} chainId={state.chainId} />
     </section>
   );
 }

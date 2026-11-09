@@ -26,11 +26,14 @@ const runtime = vi.hoisted(() => ({
   destinationClient: { chain: { id: 10 } },
   movements: [] as unknown[], relayValue: 0n, claimProof: [] as `0x${string}`[],
   engine: null as null | { phase: string; notice?: string; receipt: { status: string; transactionHash: string; blockNumber: bigint } | null },
+  engineReset: vi.fn(),
+  verifyReceipt: vi.fn(),
 }))
 vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
   ...await importOriginal<typeof import('@bananapus/nana-sdk-core/v6')>(),
   verifySuckerDestinationMint: runtime.verifyDestinationMint,
 }))
+vi.mock('@/lib/fund-bridge-receipts', () => ({ verifyFundBridgeReceipt: runtime.verifyReceipt }))
 vi.mock('@/lib/jbcenter-public-client', () => ({
   jbCenterPublicClient: (chainId: number) => chainId === 10 ? runtime.destinationClient : runtime.sourceClient,
 }))
@@ -39,7 +42,7 @@ vi.mock('@/hooks/useReviewedAction', () => ({
   txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,
   useReviewedAction: () => {
     useEffect(() => { runtime.mounted++; return () => { runtime.unmounted++ } }, [])
-    if (runtime.engine) return { held: null, ...runtime.engine, busy: ['pending', 'simulating', 'signing'].includes(runtime.engine.phase), error: null, hash: runtime.engine.receipt?.transactionHash ?? null, safeProposalHash: null, isSafe: runtime.safe, send: runtime.send, reset: vi.fn() }
+    if (runtime.engine) return { held: null, ...runtime.engine, busy: ['pending', 'simulating', 'signing'].includes(runtime.engine.phase), error: null, hash: runtime.engine.receipt?.transactionHash ?? null, safeProposalHash: null, isSafe: runtime.safe, send: runtime.send, reset: runtime.engineReset }
     return runtime.idle
       ? { phase: 'idle', busy: false, error: null, hash: null, safeProposalHash: null, receipt: null, isSafe: runtime.safe, send: runtime.send, reset: vi.fn() }
       : { phase: 'pending', busy: true, error: null, hash: null, safeProposalHash: null, receipt: null, isSafe: false, send: vi.fn(), reset: vi.fn() }
@@ -97,6 +100,7 @@ beforeEach(() => {
   runtime.route = makeRoute(); runtime.routeAvailable = true; runtime.routeError = false; runtime.historyError = false
   runtime.mounted = 0; runtime.unmounted = 0; runtime.enabled = []
   runtime.idle = false; runtime.safe = false; runtime.quote = undefined; runtime.engine = null; runtime.send.mockReset()
+  runtime.engineReset.mockReset().mockImplementation(() => { runtime.engine = null }); runtime.verifyReceipt.mockReset().mockResolvedValue('prepared')
   runtime.movements = []; runtime.relayValue = 0n
   runtime.verifyDestinationMint.mockReset().mockResolvedValue(undefined)
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
@@ -236,6 +240,21 @@ it("prepares a move under its own projects, so another project's move with the s
   const prepared = sends.filter(sent => !sent.request.functionName.startsWith('approve'))
   expect(prepared).toHaveLength(2)
   await expectNotHeldBy(prepared[0], prepared[1])
+})
+
+it('prepares a move, closes with Done, and reviews another: the prepared move never shows as the next one', async () => {
+  runtime.send.mockImplementation(async () => `0x${'ab'.repeat(32)}`)
+  await reviewApproval()
+  runtime.engine = { phase: 'success', receipt: { status: 'success', transactionHash: `0x${'cd'.repeat(32)}`, blockNumber: 11n } }
+  await render()
+  await vi.waitFor(() => expect(host.querySelector('[data-tx-confirm]')?.textContent).toContain('Move prepared'))
+  await act(async () => [...host.querySelectorAll<HTMLButtonElement>('[data-tx-confirm] button')].find(button => button.textContent === 'Done')!.click())
+  await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Review move')!.click())
+  expect(runtime.engineReset).toHaveBeenCalledOnce()
+  const dialog = host.querySelector('[data-tx-confirm]')!
+  expect(dialog.textContent).toContain('Move FUND to Optimism')
+  expect(dialog.textContent).not.toContain('Move prepared')
+  expect(runtime.send).toHaveBeenCalledTimes(2)
 })
 
 it('closes an unproven Safe outer revert without counting its approval or releasing the bridge lock', async () => {
