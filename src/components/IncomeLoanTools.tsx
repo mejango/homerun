@@ -43,7 +43,7 @@ export function IncomeLoanTools({ state, client }: Props) {
   const parsedAdditional = numberInput(additionalInput)
   const collateral = parsedCollateral ?? 0n
   const additional = parsedAdditional ?? 0n
-  const busy = preparing || tx.busy || tx.phase === 'review' || tx.phase === 'submitted'
+  const busy = preparing || tx.busy || tx.phase === 'review' || tx.phase === 'held'
   const loan = useQuery({
     queryKey: ['income-loan-tools', state.chainId, state.projectId.toString(), loanId.toString(), address],
     enabled: !!address && loanId > 0n,

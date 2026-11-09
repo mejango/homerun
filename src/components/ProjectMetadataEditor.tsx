@@ -147,7 +147,7 @@ function ProjectMetadataEditorContent({ chainId, projectId, client, unavailable 
           start={!tx.ready || unavailable || tx.pending ? undefined : () => void publish()}
           busy={preparing || (tx.busy && !tx.pending) || tx.phase === 'review'}
           complete={tx.phase === 'success'}
-          settled={tx.phase === 'submitted'}
+          settled={tx.phase === 'held'}
           error={error}
           onClose={closeReview}
         >

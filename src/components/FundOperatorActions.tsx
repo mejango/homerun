@@ -509,7 +509,7 @@ function LinkedRulesetStep({ plan, index, completed, onConfirmed, onCancel, onAd
   }
 
   /** The write is with the wallet, the chain or a Safe: no other is sent meanwhile. */
-  const sending = tx.phase === 'submitted' || tx.phase === 'pending' || tx.phase === 'success'
+  const sending = tx.phase === 'held' || tx.phase === 'pending' || tx.phase === 'success'
   return <div className="grid gap-3">
     <p className="text-sm">Next: {displayChainName(state.chainId)}, project {state.projectId.toString()}.</p>
     <SavedAttemptNotice attempt={recovery} />
@@ -1100,11 +1100,11 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
         start={() => void spec.run()}
         busy={running && !tx.safeProposalHash}
         complete={tx.phase === 'success'}
-        settled={tx.phase === 'submitted'}
+        settled={tx.phase === 'held'}
         held={tx.held}
         status={tx.notice ?? (tx.phase === 'pending' ? 'Submitted. Waiting for onchain confirmation…' : null)}
         error={error ?? tx.error}
-        onClose={() => { setReview(null); if (tx.phase === 'submitted') tx.dismiss() }}
+        onClose={() => { setReview(null); if (tx.phase === 'held') tx.dismiss() }}
       >
         {spec.notice && <p className="text-sm text-smoke-600">{spec.notice}</p>}
       </TxProgress>

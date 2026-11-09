@@ -284,7 +284,7 @@ function LaunchChain({ session, chainId, request, status, update, refreshFee, ru
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runId])
   /** The launch or its setup is with the wallet, the chain or a Safe: no other is sent meanwhile. */
-  const sending = [tx.phase, setupTx.phase].some(phase => phase === 'submitted' || phase === 'pending')
+  const sending = [tx.phase, setupTx.phase].some(phase => phase === 'held' || phase === 'pending')
   return <section className="contract-panel">
     <h3>{chain.name}</h3>
     <p role="status">{status.phase === 'confirmed' ? 'FUND deployment verified onchain.' : status.phase === 'pending' ? status.safe ? 'Safe proposal awaiting execution.' : 'Transaction submitted; confirmation pending.' : status.phase === 'reverted' ? 'The deployment reverted. No project was created by this transaction.' : 'Ready for transaction review.'}</p>
@@ -294,8 +294,8 @@ function LaunchChain({ session, chainId, request, status, update, refreshFee, ru
     {status.phase === 'pending' && status.hash && <button type="button" disabled={verifying || launch.recovering} onClick={() => void launch.recover()}>{verifying || launch.recovering ? 'Checking execution…' : 'Check confirmation'}</button>}
     <SavedAttemptNotice attempt={launch} />
     <SavedAttemptNotice attempt={setup} title="Create project multisigs" />
-    {setupTx.phase === 'submitted' && <div role="status"><HeldNotice tx={setupHeld} /></div>}
-    {tx.phase === 'submitted' && <div role="status"><HeldNotice tx={launchHeld} /></div>}
+    {setupTx.phase === 'held' && <div role="status"><HeldNotice tx={setupHeld} /></div>}
+    {tx.phase === 'held' && <div role="status"><HeldNotice tx={launchHeld} /></div>}
     {request && ['ready', 'reverted'].includes(status.phase) && <button type="button" disabled={tx.busy || tx.phase === 'review'} onClick={() => void publicClient(chainId).readContract({ address: v6Address('JBProjects', chainId as JBChainId), abi: jbProjectsAbi, functionName: 'creationFee' }).then(refreshFee).catch(cause => setError(message(cause)))}>Refresh deployment fee</button>}
     {(error || tx.error || setupTx.error) && <p role="alert">{transactionMessage(error || tx.error || setupTx.error || '')}</p>}
   </section>

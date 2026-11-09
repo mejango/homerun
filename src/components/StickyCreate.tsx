@@ -239,7 +239,7 @@ export function StickyCreate({
   const blockers = stickyCreateBlockers(state);
   const busy = preparing || verifying || tx.busy || tx.phase === "review" || !recovered;
   /** The creation is with the wallet, the chain or a Safe: no other is prepared meanwhile. */
-  const creating = tx.busy || tx.phase === "submitted" || tx.phase === "success";
+  const creating = tx.busy || tx.phase === "held" || tx.phase === "success";
   const recoveryLocked =
     loadedScope !== walletScope || !!storageError || !!legacy.error || !!completed || creating;
   const verified = verifiedId?.scope === scope ? verifiedId.id : null;
@@ -387,7 +387,7 @@ export function StickyCreate({
         whether to stake afterward.
       </p>
       {/* A held creation shows with its exit whatever else is saved. */}
-      {tx.phase === "submitted" && (
+      {tx.phase === "held" && (
         <div className="mt-4 rounded border border-[#bfc9b5] p-4 text-sm">
           <HeldNotice tx={{ notice: tx.notice, held: retiringExit(tx.held, retire) }} />
         </div>
@@ -401,7 +401,7 @@ export function StickyCreate({
           <p>Rechecking the saved Sticky creation.</p>
           <SavedAttemptNotice attempt={recovery} />
         </div>
-      ) : tx.phase === "submitted" ? null : outcome && outcome.status !== "none" && !recovered && outcome.status !== "held" ? (
+      ) : tx.phase === "held" ? null : outcome && outcome.status !== "none" && !recovered && outcome.status !== "held" ? (
         <SavedAttemptNotice attempt={recovery} />
       ) : tx.phase === "pending" || tx.phase === "success" ? (
         <p role="status" className="mt-4 text-sm">

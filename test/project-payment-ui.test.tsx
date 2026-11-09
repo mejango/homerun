@@ -318,7 +318,7 @@ describe('shared payment execution', () => {
     runtime.handles.forEach(handle => { handle.isSafe = true })
     await ready(); await submit()
     const handle = runtime.handles[0]
-    handle.phase = 'submitted'
+    handle.phase = 'held'
     handle.notice = 'The Safe result could not be proven. Check Safe before taking another action.'
     await render()
     const dialog = host.querySelector('[data-tx-confirm]')!

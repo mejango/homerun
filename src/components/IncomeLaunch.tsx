@@ -204,8 +204,8 @@ function IncomeChainHold({ chainId, projectId, client }: { chainId: JBChainId; p
   const tx = useReviewedAction(chainId)
   const { recovery, error } = useIncomeLaunchRecovery(chainId, projectId, client, tx, {})
   const notice = <SavedAttemptNotice attempt={recovery} title={displayChainName(chainId)} />
-  if (tx.phase !== 'submitted' && tx.phase !== 'pending' && !error) return notice
-  return <div role="status" className="grid gap-2 text-sm"><p>{displayChainName(chainId)}</p>{tx.phase === 'submitted' ? <HeldNotice tx={{ notice: tx.notice, held: retiringExit(tx.held, recovery.retire) }} /> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : null}{error && <p role="alert">{error}</p>}</div>
+  if (tx.phase !== 'held' && tx.phase !== 'pending' && !error) return notice
+  return <div role="status" className="grid gap-2 text-sm"><p>{displayChainName(chainId)}</p>{tx.phase === 'held' ? <HeldNotice tx={{ notice: tx.notice, held: retiringExit(tx.held, recovery.retire) }} /> : tx.phase === 'pending' ? <p>Submitted. Waiting for onchain confirmation…</p> : null}{error && <p role="alert">{error}</p>}</div>
 }
 
 function IncomeChainLaunch({ local, draft, manifest, clients, rootState, onVerified, launchUnavailable, rootIncomeId, embedExistingProject }: { local: IncomeGlobalChainDraft; draft: IncomeGlobalLaunchDraft; manifest: FundGlobalManifest; clients: ReadonlyMap<number, PublicClient>; rootState: FundProjectState; onVerified: (chainId: number, hash: string) => void; launchUnavailable: boolean; rootIncomeId: bigint | null; embedExistingProject: boolean }) {
@@ -273,7 +273,7 @@ function IncomeChainActions({ local, draft, manifest, clients, client, rootState
   }, [local.execution, saveLaunch, sent, settled, submissionHash, verifiedId, verifyLaunch])
   const state = fund.data, owner = !!state && !!address && isAddressEqual(address, state.owner), blockers = state ? incomeLaunchBlockers(state) : []
   /** The launch is with the wallet, the chain or a Safe: no other is prepared meanwhile. */
-  const launching = tx.busy || tx.phase === 'submitted' || tx.phase === 'success' || !recovered
+  const launching = tx.busy || tx.phase === 'held' || tx.phase === 'success' || !recovered
   const unavailable = launchUnavailable || !owner || !state || fund.isError || binding.isError || binding.isPending || !!binding.data || !!journalError || !!local.execution || launching || blockers.length > 0
   async function run(task: () => Promise<void>) { if (action.current) return; action.current = true; setWorking(true); setError(null); try { await task() } catch (reason) { setError(message(reason)) } finally { action.current = false; setWorking(false) } }
   async function prepare() { await run(async () => { if (unavailable || !address) throw new Error('Connect this network’s FUND owner first.'); sameFrozenPlan(draft); setReview(null); setAttested(false); const input: LaunchInput = { chainId, fundProjectId: projectId, account: address, manifest, manifestUri: draft.manifestUri, name: draft.name, ticker: draft.ticker, projectUri: draft.metadataUri, salt: draft.launchSalt, reservedBps: draft.reservedBps, startsAtOrAfter: draft.startsAtOrAfter, clients }; setReview({ input, plan: await prepareIncomeLaunch(client, input) }) }) }
@@ -295,7 +295,7 @@ function IncomeChainActions({ local, draft, manifest, clients, client, rootState
     {BigInt(local.initialIncomeAmount) === 0n && <p className="text-xs text-[var(--muted)]">This network still needs INCOME even though its initial allocation is zero.</p>}
     {fund.isError && <p role="alert" className="text-sm">Live FUND state could not be refreshed. Pending confirmations remain saved.</p>}
     <SavedAttemptNotice attempt={recovery} />
-    {tx.phase === 'submitted' ? <div className="grid gap-3 text-sm"><HeldNotice tx={{ notice: tx.notice, held: retiringExit(tx.held, recovery.retire) }} /></div>
+    {tx.phase === 'held' ? <div className="grid gap-3 text-sm"><HeldNotice tx={{ notice: tx.notice, held: retiringExit(tx.held, recovery.retire) }} /></div>
       : tx.phase === 'pending' || tx.phase === 'success' && !verifiedId ? <p role="status" className="text-sm">Submitted. Waiting for onchain confirmation…</p>
       : !binding.data && !local.execution && recovered && <fieldset disabled={working || tx.busy || tx.phase === 'review' || unavailable} className="grid min-w-0 gap-4">
       {blockers.length > 0 && <ul className="list-disc space-y-1 pl-5 text-sm">{blockers.map(blocker => <li key={blocker}>{blocker}</li>)}</ul>}

@@ -87,7 +87,7 @@ export function ProjectOwnershipEditor({ chainId, projectId, client, unavailable
       start={tx.pending ? undefined : () => void submit()}
       busy={preparing || (tx.busy && !tx.pending)}
       complete={tx.phase === 'success'}
-      settled={tx.phase === 'submitted'}
+      settled={tx.phase === 'held'}
       error={error}
       onClose={() => { if (tx.phase === 'success') { setRecipient(''); setConfirmed(false) } setReviewing(false); tx.dismiss() }}
     >

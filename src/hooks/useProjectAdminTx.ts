@@ -179,7 +179,7 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
     if (otherState.status === 'clear') void rescan(shown)
     else setOtherHold(current => current?.hold === shown.hold ? { hold: shown.hold, state: otherState } : current)
   }, [otherState, rescan])
-  const phase = otherHold ? 'submitted' as const : tx.phase
+  const phase = otherHold ? 'held' as const : tx.phase
   const exitOther = useCallback(async (): Promise<boolean> => {
     if (!otherHold || !client) return false
     try {
@@ -196,7 +196,7 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
     kind: 'exit' as const, line: otherHold.state.line, warning: 'warning' in otherHold.state && otherHold.state.warning ? otherHold.state.warning : writeExitMessage(otherHold.state.record.call),
     label: WRITE_EXIT_LABEL, release: exitOther,
   } : null)
-  const pending = phase === 'pending' || phase === 'submitted'
+  const pending = phase === 'pending' || phase === 'held'
   /** Clears a settled result before the next review. A write still being followed is never cleared. */
   const reset = useCallback(() => {
     if (inFlight.current || phase === 'pending') return
@@ -205,13 +205,13 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
   // Closing a review only hides it: a write in flight keeps being followed so its
   // confirmation still refreshes the editors. A line the user cannot wait out is released.
   const dismiss = useCallback(() => {
-    if (phase === 'pending' || (phase === 'submitted' && !tx.confirmationUncertain)) return
+    if (phase === 'pending' || (phase === 'held' && !tx.confirmationUncertain)) return
     tx.dismiss(); setError(null)
   }, [phase, tx])
   return {
     send, reset, dismiss, ready: adopted,
     busy: working || tx.busy || phase === 'review', pending,
-    phase, settled: tx.settled || !!otherHold, notice: otherHold ? [otherHold.state.line, otherHold.state.notice].filter(Boolean).join(' ') : phase === 'submitted' ? tx.notice : null,
+    phase, settled: tx.settled || !!otherHold, notice: otherHold ? [otherHold.state.line, otherHold.state.notice].filter(Boolean).join(' ') : phase === 'held' ? tx.notice : null,
     error: error ?? tx.error, status: phase === 'success' ? `${label} confirmed.` : null,
     hash: tx.hash, submissionHash: tx.submissionHash,
     safe: tx.isSafe, chainId, pendingLabel: pending ? label : null,

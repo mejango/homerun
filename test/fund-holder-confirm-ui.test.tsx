@@ -146,7 +146,7 @@ describe('FUND holder actions confirm like Juicebox Money', () => {
     await render(<CashOutPanel state={state} client={{} as never} contextIndex={0} />)
     await type('FUND to cash out', '10'); await settle()
     await click('Review cash-out'); await settle()
-    Object.assign(runtime.tx, { phase: 'submitted', notice: 'Proposed to Safe. Other owners still need to sign.', busy: false, safeProposalHash: `0x${'b'.repeat(64)}` })
+    Object.assign(runtime.tx, { phase: 'held', notice: 'Proposed to Safe. Other owners still need to sign.', busy: false, safeProposalHash: `0x${'b'.repeat(64)}` })
     await render(<CashOutPanel state={state} client={{} as never} contextIndex={0} />)
     expect(dialogText()).toContain('Proposed to Safe')
     expect(button('Done')).toBeDefined()

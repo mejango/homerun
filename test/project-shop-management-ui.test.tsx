@@ -25,7 +25,7 @@ vi.mock('wagmi', () => ({ usePublicClient: () => runtime.client }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: runtime.account }) }))
 vi.mock('@/hooks/useReviewedAction', () => ({
   useReviewedAction: () => ({ phase: runtime.phase, receipt: runtime.txReceipt, hash: runtime.txReceipt?.transactionHash ?? null, submissionHash: runtime.txReceipt ? HASH : null,
-    busy: false, error: null, notice: runtime.phase === 'submitted' ? 'Your earlier transaction hasn’t confirmed yet. Check your wallet.' : null, held: null,
+    busy: false, error: null, notice: runtime.phase === 'held' ? 'Your earlier transaction hasn’t confirmed yet. Check your wallet.' : null, held: null,
     isSafe: runtime.safe, send: runtime.send, reset: runtime.reset, track: runtime.track }),
   txPhaseLabel: (_phase: string, labels: { idle: string }) => labels.idle,
 }))
@@ -318,7 +318,7 @@ describe('live project shop management', () => {
 
   it('shows a held step with the shared line, and records it only once the hold settles its execution', async () => {
     existing()
-    runtime.send.mockImplementation(async (request: TxRequest, options: TxSendOptions) => { await options.reverify?.(request); runtime.phase = 'submitted'; return null })
+    runtime.send.mockImplementation(async (request: TxRequest, options: TxSendOptions) => { await options.reverify?.(request); runtime.phase = 'held'; return null })
     await draft(); await reviewNext()
     await render()
     await settled(() => expect(host.textContent).toContain('hasn’t confirmed yet. Check your wallet.'))

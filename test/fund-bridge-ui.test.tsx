@@ -303,7 +303,7 @@ it('leaves a held approval to the engine: its one line and its exit, never a loc
   const release = vi.fn()
   runtime.send.mockImplementation(async () => null)
   await reviewApproval()
-  runtime.engine = { phase: 'submitted', notice: writeHeldMessage(), receipt: null,
+  runtime.engine = { phase: 'held', notice: writeHeldMessage(), receipt: null,
     held: { line: writeHeldMessage(), warning: writeExitMessage({ to: '0x', data: '0x', value: 0n }), label: WRITE_EXIT_LABEL, release } } as never
   await render()
   const dialog = host.querySelector('[data-tx-confirm]')!

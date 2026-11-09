@@ -168,9 +168,9 @@ function ProjectPayerAddressContext({ chainId, projectId, tokenLabel = 'Project 
     <SavedAttemptNotice attempt={saved} title={`Create ${tokenLabel} payer address`} />
     {recovered && tx.phase === 'idle' && <p role="status" className="border-t border-[var(--line)] pt-6 text-sm">{recovered}</p>}
     {/* A deployment held for this project shows with its exit, whatever is entered or the factory allows now. */}
-    {(tx.phase === 'submitted' || tx.phase === 'pending' || tx.phase === 'success' || storageError) && <div className="border-t border-[var(--line)] pt-6 text-sm" role="status">
+    {(tx.phase === 'held' || tx.phase === 'pending' || tx.phase === 'success' || storageError) && <div className="border-t border-[var(--line)] pt-6 text-sm" role="status">
       {storageError ? <p role="alert">{storageError}</p>
-        : tx.phase === 'submitted' ? <HeldNotice tx={{ notice: tx.notice, held: retiringExit(tx.held, retire) }} />
+        : tx.phase === 'held' ? <HeldNotice tx={{ notice: tx.notice, held: retiringExit(tx.held, retire) }} />
         : tx.phase === 'pending' ? <p>Submitted. Verifying the payer deployment onchain…</p>
         : deployed.data?.status === 'confirmed' ? <><p>Payer deployment confirmed.</p><p className="mt-2 text-xs text-[var(--muted)]">This confirms the original deployment. Use the list above for current routing; an admin may have changed it. New addresses appear once indexed.</p></>
         : deployed.data?.status === 'reverted' ? <p>The payer deployment reverted. No payer was created by this call. Review the settings before trying again.</p>

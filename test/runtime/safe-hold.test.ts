@@ -112,7 +112,7 @@ async function propose() {
   await settle()
   expect(returned).toBe(PROPOSAL)
   // With the Safe's signers, held: it can end on Done, and nothing shows it as done or failed.
-  expect(ref.current).toMatchObject({ phase: 'submitted', submissionHash: PROPOSAL, safeProposalHash: PROPOSAL, error: null, receipt: null })
+  expect(ref.current).toMatchObject({ phase: 'held', submissionHash: PROPOSAL, safeProposalHash: PROPOSAL, error: null, receipt: null })
   expect(recoveryRecords()).toHaveLength(1)
   return ref
 }
@@ -145,7 +145,7 @@ describe('a Safe proposal held by the SDK', () => {
     await act(async () => { await holds.open({ chainId: 10, account: SAFE, safe: true, call }).onExecuted(mocks.client as never, EXECUTION) })
     await settle()
     // Settled by the hold, but not complete until its receipt reads: never shown done.
-    expect(ref.current).toMatchObject({ phase: 'submitted', receipt: null })
+    expect(ref.current).toMatchObject({ phase: 'held', receipt: null })
     await act(async () => ref.current!.reset())
     // The Safe ran the proposal: its nonce moved on.
     mocks.client.request.mockImplementation(async ({ method, params }: { method: string; params: [{ to: Address }] }) => {
@@ -167,7 +167,7 @@ describe('a Safe proposal held by the SDK', () => {
     const { holds } = await import('@/lib/write-hold')
     await act(async () => { await holds.open({ chainId: 10, account: SAFE, safe: true, call }).onExecuted(mocks.client as never, EXECUTION) })
     await settle()
-    expect(ref.current!.phase).toBe('submitted')
+    expect(ref.current!.phase).toBe('held')
     mocks.client.getTransactionReceipt.mockResolvedValue(receiptWith(FAILURE))
     await vi.waitFor(async () => { await settle(); expect(ref.current!.phase).toBe('error') }, { timeout: 6_000 })
     expect(ref.current).toMatchObject({ error: HELD_FAILED_LINE, reverted: true })

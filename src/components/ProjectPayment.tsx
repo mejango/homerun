@@ -122,7 +122,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
   const quotedNow = useRef(quoted)
   quotedNow.current = quoted
   const busy = preparing || tx.busy || tx.phase === 'review'
-  const submitted = tx.phase === 'submitted' ? tx : undefined
+  const submitted = tx.phase === 'held' ? tx : undefined
   const tracking = busy || (!!tx.safeProposalHash && tx.phase !== 'success')
   // The wallet steps ahead, read before the first prompt as Juicebox Money's pay sequence does.
   // Unknown allowances count as needed; the sequence re-reads them before acting.
@@ -268,7 +268,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       status={submitted?.notice ?? status ?? (tx.phase === 'pending' ? <>Submitted. Waiting for onchain confirmation{tx.hash && explorerTxUrl(chainId, tx.hash) ? <> (<a className="underline" href={explorerTxUrl(chainId, tx.hash)!} target="_blank" rel="noreferrer">view transaction</a>)</> : null}</> : null)}
       // A Safe's failure keeps the registry's own line, with its execution.
       error={error ?? failure?.message ?? (minedRevert && !tx.isSafe ? 'The payment reverted.' : null) ?? (staleRevert ? null : tx.error)}
-      onClose={() => { setOpen(false); if (tx.phase === 'submitted') tx.dismiss(); setStatus(null); attempt.current++; setRetryWhenQuoted(null); setPayerSlippage(null) }}
+      onClose={() => { setOpen(false); if (tx.phase === 'held') tx.dismiss(); setStatus(null); attempt.current++; setRetryWhenQuoted(null); setPayerSlippage(null) }}
     >
       <div className="text-sm text-smoke-600" aria-live="polite">
         {paused ? <p>This project has paused payments.</p> : zeroAllocation ? <p>This payment gives you no {tokenLabel}. All new tokens are allocated to the reserved recipients.</p> : quoted && quote.data?.quoteFailed

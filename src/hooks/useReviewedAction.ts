@@ -5,6 +5,7 @@ import { zeroAddress, type Abi, type Address, type Hex, type TransactionReceipt 
 import {
   ReviewedCallRevertedError,
   ReviewLineError,
+  reviewedRunStatus,
   settledLine,
   transactionMessage,
   writeExitMessage,
@@ -12,6 +13,7 @@ import {
   type ReviewedCall,
   type ReviewedPriorBlock,
   type ReviewedResult,
+  type ReviewedRunStatus,
   type WriteHoldClient,
 } from '@bananapus/nana-sdk-core/review'
 import { useHeldWrite, useReviewedRun } from '@bananapus/nana-sdk-core/review/react'
@@ -32,11 +34,24 @@ export type TxPhase =
   | 'review'
   | 'simulating'
   | 'signing'
+  /** Sent, its receipt being confirmed (a Safe's execution too): the SDK's `receipt`. */
   | 'pending'
-  /** With a Safe, or held: the hold's own line says where it is. */
-  | 'submitted'
+  /** A Safe proposal, or a held step: the hold's own line says where it is. The SDK's `proposed` and `held`. */
+  | 'held'
   | 'success'
   | 'error'
+
+/** The phase a flow shows for the SDK's run status. Not yet run, cancelled, or between an action's steps reads idle. */
+export function txPhaseOf(status: ReviewedRunStatus): TxPhase {
+  switch (status) {
+    case 'review': case 'simulating': case 'signing': return status
+    case 'receipt': return 'pending'
+    case 'proposed': case 'held': return 'held'
+    case 'done': return 'success'
+    case 'failed': return 'error'
+    default: return 'idle'
+  }
+}
 
 export type TxRequest = {
   chainId: number
@@ -274,17 +289,13 @@ export function useReviewedAction(chainId: number) {
   const heldSafe = tracking ? tracking.safe : !!record?.safe
   const trackSettled = tracking && trackView.phase === 'settled' ? trackView.settled ?? null : null
 
-  const phase: TxPhase = tracking
-    ? trackSettled ? (trackSettled.result === 'success' ? 'success' : 'error')
-      : !shown || (trackView.phase === 'released' && trackView.releasedBy !== 'other-tab') ? 'idle'
-        : trackView.phase === 'confirming' && !heldSafe ? 'pending' : 'submitted'
-    : runner.phase === 'done' ? 'success'
-      : runner.phase === 'proposed' ? 'submitted'
-        : runner.phase === 'receipt' ? 'pending'
-          : runner.phase !== 'idle' ? runner.phase
-            : shown ? (shown.phase === 'confirming' && !heldSafe ? 'pending' : 'submitted')
-              : runner.error || localError ? 'error'
-                : 'idle'
+  const shownPhase = txPhaseOf(tracking
+    ? (!shown || (trackView.phase === 'released' && trackView.releasedBy !== 'other-tab') ? 'idle'
+      : reviewedRunStatus({ phase: 'idle', error: null, settled: null, held: { phase: trackView.phase } }).status)
+    : runner.status)
+  const phase: TxPhase = trackSettled ? (trackSettled.result === 'success' ? 'success' : 'error')
+    : shownPhase === 'idle' && localError ? 'error'
+      : shownPhase
 
   const afterExit = () => { if (mounted.current) clear() }
   const held: HeldWrite | null = shown && actions.exitAction
@@ -320,8 +331,8 @@ export function useReviewedAction(chainId: number) {
     ? trackReceipt?.transactionHash ?? (heldSafe ? null : record?.hash ?? null)
     : result?.status === 'done' ? result.hashes.at(-1) ?? null
       : runner.receipt?.transactionHash ?? (submission && !submission.safe ? submission.hash : null)
-  const safeProposalHash = phase === 'submitted' && heldSafe ? (tracking ? record?.hash ?? null : runner.safeTxHash ?? submission?.hash ?? null) : null
-  const notice = [phase === 'submitted' ? shown?.line : null, shown?.notice].filter(Boolean).join(' ') || null
+  const safeProposalHash = phase === 'held' && heldSafe ? (tracking ? record?.hash ?? null : runner.safeTxHash ?? submission?.hash ?? null) : null
+  const notice = [phase === 'held' ? shown?.line : null, shown?.notice].filter(Boolean).join(' ') || null
   const error = localError ?? (phase === 'error' ? (trackSettled ? settledLine(trackSettled) : runner.error) : null)
 
   const reset = useCallback(() => {
@@ -334,7 +345,7 @@ export function useReviewedAction(chainId: number) {
     /** True while the transaction is in flight: simulating/signing/pending. */
     busy: phase === 'simulating' || phase === 'signing' || phase === 'pending',
     /** The confirm can end on Done: the transaction succeeded, or a Safe or the hold has it. */
-    settled: phase === 'success' || phase === 'submitted',
+    settled: phase === 'success' || phase === 'held',
     /** The one line a `submitted` confirm shows: the hold's. */
     notice,
     /** Whether the connected writer is a Safe connector. */

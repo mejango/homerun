@@ -184,7 +184,7 @@ function useBridgeTransaction(chainId: JBChainId) {
   const safeOuterRevert = !!active?.safe && tx.receipt?.status === "reverted";
   return {
     ...tx,
-    phase: safeOuterRevert ? ("submitted" as const) : tx.phase,
+    phase: safeOuterRevert ? ("held" as const) : tx.phase,
     notice: safeOuterRevert ? SAFE_PROPOSAL_UNCONFIRMED : tx.notice,
     error: safeOuterRevert ? null : tx.error,
     settled: safeOuterRevert || tx.settled,
@@ -212,7 +212,7 @@ function BridgeStatus({ tx, chainId }: { tx: BridgeTx; chainId: number }) {
         <p>{notices[tx.verified]}</p>
       ) : tx.checking ? (
         <p>Verifying the exact confirmed bridge action…</p>
-      ) : tx.phase === "submitted" ? (
+      ) : tx.phase === "held" ? (
         <HeldNotice tx={tx} />
       ) : tx.phase === "pending" ? (
         <p>
@@ -783,9 +783,9 @@ function BridgePreparation<State extends BridgeProjectState>({
         ]}
         activeIndex={review?.needsApproval && tx.total > 1 ? tx.step : 0}
         start={!quote.data || count <= 0n ? undefined : () => void submit()}
-        busy={busy && tx.phase !== "submitted"}
+        busy={busy && tx.phase !== "held"}
         complete={tx.verified === "prepared"}
-        settled={tx.phase === "submitted"}
+        settled={tx.phase === "held"}
         error={error}
         onClose={() => setReview(null)}
       >

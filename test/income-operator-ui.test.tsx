@@ -129,7 +129,7 @@ describe('Owner changes the INCOME Operator', () => {
   })
   it('keeps a Safe proposal pending without announcing an executed Operator change', async () => {
     await render(); await recipient(NEXT); await submit()
-    runtime.phase = 'submitted'; runtime.notice = 'Proposed to your Safe. Its other signers can approve it there.'; runtime.busy = false; runtime.safeProposalHash = `0x${'cc'.repeat(32)}`
+    runtime.phase = 'held'; runtime.notice = 'Proposed to your Safe. Its other signers can approve it there.'; runtime.busy = false; runtime.safeProposalHash = `0x${'cc'.repeat(32)}`
     await render()
     expect(host.textContent).toContain(runtime.notice)
     expect(host.textContent).not.toContain('Operator change confirmed')

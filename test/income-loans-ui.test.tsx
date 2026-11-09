@@ -102,7 +102,7 @@ describe('INCOME loans like Juicebox Money', () => {
     await type('INCOME collateral', '10'); await settle()
     await act(async () => button('Review loan').click()); await settle()
     const permission = runtime.handles[0]
-    permission.phase = 'submitted'
+    permission.phase = 'held'
     permission.notice = 'Proposed to your Safe. Its other signers can approve it there.'
     await render()
     expect(host.querySelector('[data-tx-confirm]')!.textContent).toContain(permission.notice)

@@ -128,7 +128,7 @@ export function ProjectSplitsEditor({ chainId, projectId, phase, client, unavail
         start={validation || tx.pending ? undefined : () => void submit()}
         busy={preparing || (tx.busy && !tx.pending)}
         complete={tx.phase === 'success'}
-        settled={tx.phase === 'submitted'}
+        settled={tx.phase === 'held'}
         error={error ?? validation}
         onClose={closeReview}
       >

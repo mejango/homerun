@@ -117,7 +117,7 @@ describe('project administrative writes', () => {
   it('show a held write with its one line and its exit', async () => {
     const release = vi.fn()
     runtime.engine = {
-      phase: 'submitted', notice: writeHeldMessage(), confirmationUncertain: true,
+      phase: 'held', notice: writeHeldMessage(), confirmationUncertain: true,
       held: { line: writeHeldMessage(), warning: writeExitMessage({ to: TARGET, data: '0x', value: 0n }), label: WRITE_EXIT_LABEL, release },
     }
     await render()
@@ -131,7 +131,7 @@ describe('project administrative writes', () => {
     await render()
     await act(async () => handle.dismiss())
     expect(runtime.dismiss).not.toHaveBeenCalled()
-    runtime.engine = { phase: 'submitted', confirmationUncertain: true }
+    runtime.engine = { phase: 'held', confirmationUncertain: true }
     await render()
     await act(async () => handle.dismiss())
     expect(runtime.dismiss).toHaveBeenCalledOnce()
@@ -167,7 +167,7 @@ describe('project administrative writes', () => {
     await vi.waitFor(() => expect(handle.ready).toBe(true))
     await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })
     expect(runtime.send).not.toHaveBeenCalled()
-    expect(handle.phase).toBe('submitted')
+    expect(handle.phase).toBe('held')
     expect(handle.held).toMatchObject({ label: expect.stringContaining('I checked my wallet') })
     await act(async () => handle.held!.release())
     expect(handle.held).toBeNull()
@@ -277,7 +277,7 @@ describe('project administrative writes', () => {
       await render()
       await act(async () => { await vi.advanceTimersByTimeAsync(0) })
       await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })
-      expect(handle.phase).toBe('submitted')
+      expect(handle.phase).toBe('held')
       // The watch's own next look is not contended: the exit appears.
       await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
       expect(looks).toBeGreaterThan(1)

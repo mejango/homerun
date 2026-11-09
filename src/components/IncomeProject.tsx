@@ -432,11 +432,11 @@ export function IncomeBorrow({ state, client, context, currencyChosen = false }:
       start={borrowable && permission.isFetched ? () => void run() : undefined}
       busy={running && !tx.safeProposalHash}
       complete={tx.phase === 'success'}
-      settled={tx.phase === 'submitted'}
+      settled={tx.phase === 'held'}
       held={tx.held}
       status={tx.notice ?? (tx.phase === 'pending' ? 'Submitted. Waiting for onchain confirmation…' : null)}
       error={error ?? tx.error}
-      onClose={() => { setReviewing(false); if (tx.phase === 'submitted') tx.dismiss() }}
+      onClose={() => { setReviewing(false); if (tx.phase === 'held') tx.dismiss() }}
     >
       <p className="text-sm text-smoke-600">Your INCOME stays in a loan NFT until repaid. Unpaid loans can be liquidated after ten years.</p>
     </TxProgress>
@@ -514,11 +514,11 @@ function IncomeRepayDialog({ state, client, loanId, tx, onClose }: { state: Inco
     start={!loan.data || loan.isError || (!native && allowance.isPending) ? undefined : () => void run()}
     busy={running && !tx.safeProposalHash}
     complete={tx.phase === 'success'}
-    settled={tx.phase === 'submitted'}
+    settled={tx.phase === 'held'}
     held={tx.held}
     status={loan.isPending ? 'Reading the loan…' : tx.notice ?? (tx.phase === 'pending' ? 'Submitted. Waiting for onchain confirmation…' : null)}
     error={error ?? (loan.isError ? message(loan.error) : null) ?? tx.error}
-    onClose={() => { if (tx.phase === 'submitted') tx.dismiss(); onClose() }}
+    onClose={() => { if (tx.phase === 'held') tx.dismiss(); onClose() }}
   >
     <p className="text-sm text-smoke-600">The maximum includes principal, accrued fees and a small refundable buffer.</p>
   </TxProgress>
