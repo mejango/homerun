@@ -79,6 +79,7 @@ import { withForwarderAuthorizationLock } from '@/lib/forwarder-authorization'
 import { requireFundingChainSelection } from '@/lib/transaction-review'
 import { reviewedSendDeps } from '@/lib/reviewed-send-deps'
 import type { ReviewedPlan } from '@bananapus/nana-sdk-core/review'
+import { browserLocks } from '@bananapus/nana-sdk-core/review/locks'
 
 /** Core's one review of the launch, out of every page's first load. */
 const loadPlanEngine = () => import(/* webpackExports: ["reviewPlan"] */ '@bananapus/nana-sdk-core/review')
@@ -203,10 +204,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
   if (activeLaunches.has(session.input.salt)) throw new Error('This launch is already running.')
   activeLaunches.add(session.input.salt)
   try {
-    if (typeof navigator === 'undefined' || !navigator.locks) {
-      throw new Error('This browser cannot coordinate launch recovery across tabs. Use a browser with Web Locks support.')
-    }
-    await navigator.locks.request('homerun:fund-launch', { ifAvailable: true }, async lock => {
+    await browserLocks().request('homerun:fund-launch', { ifAvailable: true }, async lock => {
       if (!lock) throw new Error('This launch is already running in another tab.')
       await withForwarderAuthorizationLock({ account, chainIds: [...session.input.chainIds], owner: `launch:${session.input.salt}`,
         execute: run })

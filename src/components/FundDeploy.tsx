@@ -30,6 +30,7 @@ import { isSafeConnection, useSafeConnection, waitForSafeExecutionHash } from '@
 import { readSafeAppExecution } from '@bananapus/nana-sdk-core/safe-service'
 import { intentPath } from '@bananapus/nana-sdk-core/jbcenter'
 import { projectPath } from '@/lib/urn'
+import { browserLocks } from '@bananapus/nana-sdk-core/review/locks'
 
 const message = (error: unknown) => readableError(error, 'The request could not be completed.')
 function publicClient(chainId: number): PublicClient {
@@ -265,8 +266,7 @@ function LaunchChain({ session, chainId, request, status, update, refreshFee, ru
     } catch (cause) { setError(message(cause)) }
   }
   async function launchNow() {
-    if (!navigator.locks) { setError('This browser cannot coordinate a resumable deployment. Open this launch in a browser with Web Locks support.'); return }
-    await navigator.locks.request(`homerun:fund-launch:${session.input.salt}`, { ifAvailable: true }, async lock => {
+    await browserLocks().request(`homerun:fund-launch:${session.input.salt}`, { ifAvailable: true }, async lock => {
       if (!lock) { setError('Another tab is reviewing this launch. Finish that review first.'); return }
       await submitLaunch()
     })

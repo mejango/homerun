@@ -3,6 +3,7 @@ import { writeIntentKey, type SavedAttemptScope } from '@bananapus/nana-sdk-core
 import { attempts, callOf } from './write-hold'
 import { isRelayrLaunchPhase, type RelayrLaunchJournal } from '@bananapus/nana-sdk-core/review/machines'
 import type { FundLaunchInput, FundTransaction } from './fund-contracts'
+import { browserLocks } from '@bananapus/nana-sdk-core/review/locks'
 
 export const FUND_LAUNCH_KEY = 'homerun:fund-launch:v1'
 export type LaunchStatus = {
@@ -325,10 +326,9 @@ export function canCancelLaunch(session: FundLaunchSession): boolean {
  * while excluding writers in every browser tab. A published launch with no proof is never cancelled.
  */
 export async function cancelUnsubmittedLaunch(salt: Hex, requestsDead?: (session: FundLaunchSession) => Promise<boolean>): Promise<void> {
-  if (!navigator.locks) throw new Error('This browser cannot coordinate cancellation across tabs.')
-  await navigator.locks.request('homerun:fund-launch', { ifAvailable: true }, async relayLock => {
+  await browserLocks().request('homerun:fund-launch', { ifAvailable: true }, async relayLock => {
     if (!relayLock) throw new Error('Finish or close the active wallet request before cancelling.')
-    await navigator.locks.request(`homerun:fund-launch:${salt}`, { ifAvailable: true }, async directLock => {
+    await browserLocks().request(`homerun:fund-launch:${salt}`, { ifAvailable: true }, async directLock => {
       if (!directLock) throw new Error('Finish or close the active wallet request before cancelling.')
       const session = requireLaunch(salt)
       // A held deployment or setup keeps its launch, and its exit, until it settles or the user takes that exit.

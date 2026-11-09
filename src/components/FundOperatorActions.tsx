@@ -30,6 +30,7 @@ import { attempts, callOf, holds } from '@/lib/write-hold'
 import type { WriteHoldClient } from '@bananapus/nana-sdk-core/review'
 import { useOnConfirmed } from '@/hooks/useOnConfirmed'
 import { TX_STATUS_LINES, TxStatus } from '@/components/ui/TxStatus'
+import { browserLocks } from '@bananapus/nana-sdk-core/review/locks'
 
 type Props = { state: FundProjectState; client: PublicClient; contextIndex: number }
 type Tx = ReturnType<typeof useReviewedAction>
@@ -699,9 +700,8 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
   async function withSubmissionLock(task: () => Promise<void>) {
     const active = planRef.current
     if (!active) throw new Error('Reload the saved linked ruleset plan before continuing.')
-    if (typeof navigator.locks?.request !== 'function') throw new Error('Use a browser with Web Locks support to coordinate linked ruleset submissions.')
     const key = recoveryKey(active.account)
-    await navigator.locks.request(key, { mode: 'exclusive', ifAvailable: true }, async lock => {
+    await browserLocks().request(key, { mode: 'exclusive', ifAvailable: true }, async lock => {
       if (!lock) throw new Error('This linked ruleset plan is being reviewed or submitted in another tab.')
       if (savedRecovery.current?.key !== key || window.localStorage.getItem(key) !== savedRecovery.current.raw) throw new Error('The linked ruleset recovery changed in another tab. Reload its saved progress before continuing.')
       await task()

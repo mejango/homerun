@@ -34,6 +34,7 @@ import {
 } from "@/lib/sticky-create";
 import { projectPath } from '@/lib/urn'
 import { TX_STATUS_LINES } from '@/components/ui/TxStatus'
+import { browserLocks } from "@bananapus/nana-sdk-core/review/locks";
 
 export type StickyCreateProps = {
   state: FundProjectState;
@@ -117,8 +118,7 @@ export function StickyCreate({
     async (record: StickyPending, hash: Hex, expectedProjectId?: string, proven?: { status: "confirmed"; projectId: bigint }) => {
       // A creation its saved-attempt recovery already proved is saved as proved, never verified twice.
       const result = proven ?? await verifyStickyCreationExecution(client, record, hash);
-      if (!navigator.locks) throw new Error("Use a browser with Web Locks support to coordinate Sticky recovery across tabs.");
-      await navigator.locks.request(`homerun-sticky-create:${record.chainId}:${record.projectId}`, () => {
+      await browserLocks().request(`homerun-sticky-create:${record.chainId}:${record.projectId}`, () => {
         if (result.status === "confirmed") {
           if (
             expectedProjectId &&
