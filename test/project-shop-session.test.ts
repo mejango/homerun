@@ -287,11 +287,12 @@ describe('durable live shop updates', () => {
     expect(() => startShopWriteSession(storage, key, plan())).toThrow('could not save')
   })
 
-  it('holds an exclusive project lock across asynchronous review and fails closed without cross-tab locks', async () => {
+  it('holds an exclusive project lock across asynchronous review, and runs on the fallback without Web Locks', async () => {
     vi.stubGlobal('navigator', {})
     const task = vi.fn(async () => 'submitted')
-    await expect(withShopWriteLock(key, task)).rejects.toThrow('Web Locks')
-    expect(task).not.toHaveBeenCalled()
+    await expect(withShopWriteLock(key, task)).resolves.toBe('submitted')
+    expect(task).toHaveBeenCalledOnce()
+    task.mockClear()
     let locked = false
     vi.stubGlobal('navigator', { locks: { request: async (_key: string, _options: unknown, run: (lock: object | null) => unknown) => {
       if (locked) return run(null)

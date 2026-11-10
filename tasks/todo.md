@@ -1,3 +1,33 @@
+# State machines wave 3: adopt the SDK owners, delete local copies (2026-11-09)
+
+Brief: scratchpad sm/BRIEF3.md; SDK signatures and settled differences: sm/sdk.md rounds 1 and 2. Builds against the packed SDK tarball; no package.json or lockfile change until publish.
+
+- [x] homerun-4: TxPhase from runner.status; the held step is `held` (was `submitted`); a confirming Safe execution reads `pending` (SDK `receipt`).
+- [x] homerun-12: TxProgress on useStartOnce.
+- [x] The inline pending lines in confirm-dialog statuses read TX_STATUS_LINES.pending.
+- [x] homerun-5: useSavedAttempt `clear` / `completion` replaces the hand-written gates.
+- [x] homerun-7: the Relayr launch journal on RelayrLaunchJournal, its phase groups and advanceRelayrLaunch.
+- [x] Review dialog queue on createReviewQueue; FeeBuybackNotice on useFeeBuybackReview; useMobileWallet from the SDK.
+- [x] Signa isSettledPayment / isFollowedPayment: switch written, then pinned core 6.1.0 and Signa 0.5.0 once published (lockfile integrity matches the registry).
+- [x] Re-evaluate homerun-6, 8, 14 to 17, 19, 24, 26 against the SDK owners.
+- [x] Gates against the tarball, draft PR on main (#75 merged).
+
+## Plan refinement
+
+- **Objective:** Homerun runs on the SDK's shared machines with its local copies deleted; no behavior change beyond sdk.md's settled differences.
+- **System fit:** The SDK owns run status, start-once, saved-attempt clearing, the review queue, the fee review and the launch journal; Homerun keeps labels, rendering and its session shape. Signa owns passkey payment statuses.
+- **Reuse and simplicity:** Every item is a deletion onto an SDK export; no local wrapper unless it adapts Homerun's display vocabulary. Any SDK gap is reported, not worked around.
+- **Evidence and unknowns:** SDK source at .worktrees/sm-sdk (PR #293) and the packed tarball in node_modules; existing suites prove behavior is kept. Signa 0.5.0 is unpublished, so its switch cannot typecheck here until the bump.
+- **Verification:** Existing UI and node suites, plus tests for the settled differences; full gate set against the tarball, with webpack cache moved aside.
+- **Resource budget:** One item per commit, tsc to find each rename site; replan if an SDK export does not fit Homerun's use.
+
+## Review
+
+- Done: homerun-4, 5, 7, 12 (start-once), the review queue, fee review, mobile wallet, Signa predicates, and the shared pending line in the FUND launch and holder dialogs.
+- Kept variants: the bridge pending line names the destination chain; the Center payment table separates Signa's `pending` from `confirming`; FundAssetWithdrawals and ProjectPayerAddresses say what is being verified.
+- Skipped: homerun-6, 8, 14 to 17, 19, 24, 26 have no SDK owner beyond what this wave adopted, so each would be a bug-free money-path rewrite. homerun-12's single phase prop gives no deletion.
+- SDK gaps: `useStartOnce` returns nothing, so "Review again" cannot tell its own start; `useSavedAttempt.clear` has no mode where a revert and an authenticated success both clear (FundDeploy setup, ProjectPayerAddresses).
+
 # State machines wave 1: reset on reopen, passkey polling, explicit unions (2026-11-09)
 
 Discovery: scratchpad sm/homerun.md (36 machines). Brief: scratchpad sm/BRIEF.md.

@@ -48,7 +48,7 @@ export const RELAYR_SIGNATURE_REFRESH_SECONDS = 15 * 60 + RELAYR_REQUEST_RUN_MAR
 /** Core's relayed signing, payment and polling, out of every page's first load. */
 const loadRelayrEngine = () => import(/* webpackExports: ["signReviewed", "payRelayrReviewed", "pollRelayrBundle", "ReviewedCallRevertedError"] */ '@bananapus/nana-sdk-core/review')
 
-export type { RelayrEntry, RelayrTransactionRecord, RelayrTransactionBinding } from '@bananapus/nana-sdk-core/review/relayr'
+export type { RelayrEntry, RelayrQuote, RelayrTransactionRecord, RelayrTransactionBinding } from '@bananapus/nana-sdk-core/review/relayr'
 
 export type RelayrCall = {
   chainId: JBChainId
@@ -65,10 +65,6 @@ export type RelayrCall = {
 
 /** A relayed call as one review shows it (core's `reviewPlan`): the request its signer sends through the forwarder. */
 export type RelayrPlanCall = ReviewedCall & { from: Address }
-
-/** Older saved launches may lack quote bindings; recovery must keep them unresolved. */
-export type RelayrQuote = Omit<SDKRelayrQuote, 'transactions' | 'expectedTransactions'> &
-  Partial<Pick<SDKRelayrQuote, 'transactions' | 'expectedTransactions'>>
 
 /**
  * The payment has a real transaction hash, but its receipt could not be
@@ -170,7 +166,7 @@ class RelayrHttpTimeoutError extends Error {
  */
 export async function relayrPostBundle(
   transactions: RelayrEntry[],
-): Promise<RelayrQuote> {
+): Promise<SDKRelayrQuote> {
   const request = relayrBundleRequest(transactions)
   let response: Response
   try {

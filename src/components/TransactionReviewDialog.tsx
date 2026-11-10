@@ -21,7 +21,9 @@ import {
 import { buildTransactionReviewPrompt } from '@/lib/transaction-review'
 import { chainName } from '@/lib/urn'
 
-import { FeeBuybackNotice, useFeeBuybackReview } from './FeeBuybackNotice'
+import { FeeBuybackNotice } from './FeeBuybackNotice'
+import { useFeeBuybackReview } from '@bananapus/nana-sdk-core/review/react'
+import { feeBuybackContext } from '@/lib/fee-buyback-client'
 
 import type { PendingReview, PendingFundingChainSelection, TransactionReviewDialogProps } from './TransactionReviewProvider'
 
@@ -520,7 +522,7 @@ function ReviewModal({
     ...(call.from ? { from: call.from } : {}),
     ...(call.functionName ? { functionName: call.functionName } : {}),
   })), [model])
-  const feeReview = useFeeBuybackReview(feeCalls)
+  const feeReview = useFeeBuybackReview(feeCalls, feeBuybackContext)
   const [agreed, setAgreed] = useState(false)
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
   // Core refuses a confirm once its simulation saw a revert: the dialog says why when core decoded it, and offers only Cancel.

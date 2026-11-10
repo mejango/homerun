@@ -1,8 +1,9 @@
 import { isAddress, isHex, type Address, type Hex } from 'viem'
 import { writeIntentKey, type SavedAttemptScope } from '@bananapus/nana-sdk-core/review'
 import { attempts, callOf } from './write-hold'
-import type { LaunchRelayrJournal } from './fund-launch-relayr'
+import { isRelayrLaunchPhase, type RelayrLaunchJournal } from '@bananapus/nana-sdk-core/review/machines'
 import type { FundLaunchInput, FundTransaction } from './fund-contracts'
+import { browserLocks } from '@bananapus/nana-sdk-core/review/locks'
 
 export const FUND_LAUNCH_KEY = 'homerun:fund-launch:v1'
 export type LaunchStatus = {
@@ -32,16 +33,12 @@ const UUID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i
 const ADDRESS = /^0x[\da-f]{40}$/i
 const DECIMAL = /^\d+$/
 
-/** The phases a saved Relayr journal may be in. */
-export const LAUNCH_JOURNAL_PHASES: readonly LaunchRelayrJournal['phase'][] =
-  ['signing', 'quoting', 'quoted', 'payment-signing', 'submitted', 'executing', 'payment-reverted']
-
 export type FundLaunchSession = {
   version: 1
   transport?: 'direct' | 'relayr' | 'intent'
   /** Juicebox Center's identifier for the published project. */
   intentId?: string
-  relayr?: LaunchRelayrJournal
+  relayr?: RelayrLaunchJournal
   paymentChainId?: number
   name: string
   input: FundLaunchInput
@@ -71,7 +68,7 @@ function validJournal(journal: unknown, chainIds: readonly number[]): boolean {
   if (!isRecord(journal)) return false
   const { account, phase, signed, superseded, records, published, abandonable, retryNonces } = journal
   return typeof account === 'string' && ADDRESS.test(account)
-    && LAUNCH_JOURNAL_PHASES.includes(phase as LaunchRelayrJournal['phase'])
+    && isRelayrLaunchPhase(phase)
     && Array.isArray(signed) && Array.isArray(records) && (superseded === undefined || Array.isArray(superseded))
     && (phase === 'signing' || published === true)
     && (published === undefined || published === true) && (abandonable === undefined || abandonable === true)
@@ -329,10 +326,9 @@ export function canCancelLaunch(session: FundLaunchSession): boolean {
  * while excluding writers in every browser tab. A published launch with no proof is never cancelled.
  */
 export async function cancelUnsubmittedLaunch(salt: Hex, requestsDead?: (session: FundLaunchSession) => Promise<boolean>): Promise<void> {
-  if (!navigator.locks) throw new Error('This browser cannot coordinate cancellation across tabs.')
-  await navigator.locks.request('homerun:fund-launch', { ifAvailable: true }, async relayLock => {
+  await browserLocks().request('homerun:fund-launch', { ifAvailable: true }, async relayLock => {
     if (!relayLock) throw new Error('Finish or close the active wallet request before cancelling.')
-    await navigator.locks.request(`homerun:fund-launch:${salt}`, { ifAvailable: true }, async directLock => {
+    await browserLocks().request(`homerun:fund-launch:${salt}`, { ifAvailable: true }, async directLock => {
       if (!directLock) throw new Error('Finish or close the active wallet request before cancelling.')
       const session = requireLaunch(salt)
       // A held deployment or setup keeps its launch, and its exit, until it settles or the user takes that exit.

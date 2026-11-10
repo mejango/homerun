@@ -5,6 +5,7 @@ import { parseProjectShopWrite, projectShopWriteRequest, serializeProjectShopWri
 import { verifyStickyExecution, type StickyPending } from './sticky-session'
 import { writeIntentKey, type SavedAttempt, type SavedAttemptScope } from '@bananapus/nana-sdk-core/review'
 import { attempts, callOf } from './write-hold'
+import { browserLocks } from '@bananapus/nana-sdk-core/review/locks'
 
 export type ShopWriteStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 export type ShopWriteSubmission = { afterBlock: string; safe: boolean; startedAt: number; hash?: Hex; attemptId?: string }
@@ -288,8 +289,7 @@ export function abandonShopWriteSession(storage: ShopWriteStorage, key: string, 
 /** Hold across review, simulation and wallet submission; unknown submissions remain durable after release. */
 export async function withShopWriteLock<T>(key: string, task: () => Promise<T>): Promise<T> {
   validateKey(key)
-  if (typeof navigator === 'undefined' || typeof navigator.locks?.request !== 'function') throw new Error('This browser cannot safely coordinate shop updates across tabs. Use a browser with Web Locks support.')
-  return navigator.locks.request(key, { mode: 'exclusive', ifAvailable: true }, async lock => {
+  return browserLocks().request(key, { mode: 'exclusive', ifAvailable: true }, async lock => {
     if (!lock) throw new Error('This project’s shop is being reviewed or submitted in another tab.')
     return task()
   })

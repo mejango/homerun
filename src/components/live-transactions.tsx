@@ -17,7 +17,7 @@ import { buildFundAllowlistChange, buildFundAllowlistOpen, parseAmount } from '@
 import { readableError } from '@/lib/readable-error'
 import { refreshIndexedProject } from '@/lib/refresh-indexed'
 import { useOnConfirmed } from '@/hooks/useOnConfirmed'
-import { TxStatus } from '@/components/ui/TxStatus'
+import { TX_STATUS_LINES, TxStatus } from '@/components/ui/TxStatus'
 
 /** Reject rounded, negative, exponent and over-precise financial inputs. */
 function positiveAmount(value: string, decimals: number): bigint {
@@ -39,10 +39,10 @@ type Tx = ReturnType<typeof useReviewedAction>
 
 /** What the confirm dialog says while a submitted transaction settles, as in Juicebox Money's flows. */
 function confirmStatus(tx: Tx, chainId: number): ReactNode {
-  if (tx.phase === 'submitted') return tx.notice
+  if (tx.phase === 'held') return tx.notice
   if (tx.phase !== 'pending') return null
   const url = tx.hash ? explorerTxUrl(chainId, tx.hash) : null
-  return <>Waiting for confirmation{url && <>{' '}(<a href={url} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">view transaction</a>)</>}</>
+  return <>{TX_STATUS_LINES.pending}{url && <>{' '}(<a href={url} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">view transaction</a>)</>}</>
 }
 
 /** One reviewed write, Juicebox Money's way: a frozen plan, then one action, then Done. */
@@ -209,7 +209,7 @@ export function CashOutPanel({ state, client, contextIndex, currencyChosen = fal
       start={() => void send()}
       busy={confirm.busy}
       complete={tx.phase === 'success'}
-      settled={tx.phase === 'submitted'}
+      settled={tx.phase === 'held'}
       held={tx.held}
       status={confirm.preparing ? 'Getting a fresh cash-out quote…' : confirmStatus(tx, state.chainId)}
       error={confirm.error ?? tx.error}
@@ -267,7 +267,7 @@ export function HolderActions({ state, client }: { state: FundProjectState; clie
       start={() => void send()}
       busy={confirm.busy}
       complete={tx.phase === 'success'}
-      settled={tx.phase === 'submitted'}
+      settled={tx.phase === 'held'}
       held={tx.held}
       status={confirmStatus(tx, state.chainId)}
       error={confirm.error ?? tx.error}

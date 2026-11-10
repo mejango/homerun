@@ -4,7 +4,7 @@
   "sites": [
     {
       "file": "src/components/FundDeploy.tsx",
-      "line": 268,
+      "line": 269,
       "api": "request",
       "boundary": "Web Locks, not a wallet: one tab at a time reviews and submits a saved FUND launch.",
       "test": "test/fund-deploy-hold-ui.test.tsx"
@@ -18,17 +18,31 @@
     },
     {
       "file": "src/components/StickyCreate.tsx",
-      "line": 120,
+      "line": 121,
       "api": "request",
       "boundary": "Web Locks, not a wallet: one tab at a time records a Sticky creation's proven result.",
       "test": "test/sticky-create.test.ts"
     },
     {
       "file": "src/components/TransactionReviewProvider.tsx",
-      "line": 120,
+      "line": 71,
       "api": "registerReviewHandler",
       "boundary": "The one review UI core's prompts reach: it returns core's confirmation only when the person confirms the dialog, and null on close or when core withdraws the prompt.",
       "test": "test/transaction-review-dialog.test.tsx"
+    },
+    {
+      "file": "src/components/TransactionReviewProvider.tsx",
+      "line": 72,
+      "api": "request",
+      "boundary": "The SDK review queue's request: core's prompt waits for the one review dialog, never a wallet RPC.",
+      "test": "test/transaction-review-dialog.test.tsx"
+    },
+    {
+      "file": "src/components/TransactionReviewProvider.tsx",
+      "line": 82,
+      "api": "request",
+      "boundary": "The SDK review queue's request for a funding chain choice, never a wallet RPC.",
+      "test": "test/runtime/transaction-review-funding.test.tsx"
     },
     {
       "file": "src/hooks/useProjectAdminTx.ts",
@@ -53,7 +67,7 @@
     },
     {
       "file": "src/lib/fund-launch-session.ts",
-      "line": 335,
+      "line": 331,
       "api": "request",
       "boundary": "Web Locks, not a wallet: cancelling a launch waits for its direct submission lock.",
       "test": "test/fund-launch-session.test.ts"

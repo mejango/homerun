@@ -1,8 +1,9 @@
 'use client'
 
-import { useEffect, useId, useRef, type ReactNode } from 'react'
+import { useEffect, useId, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { ReviewContextRow } from '@bananapus/nana-sdk-core/review'
+import { useStartOnce } from '@bananapus/nana-sdk-core/review/react'
 import {
   ModalCloseButton,
   ModalDialog,
@@ -82,16 +83,7 @@ export function TxProgress({
   const ready = open && !busy && !preparing && !complete && !settled && !error && !!start
   // Once per opening or preparation: a cancelled review leaves the progress to its site, never
   // reopens itself; a new preparation is a new write.
-  const started = useRef(false)
-  const startRef = useRef(start)
-  startRef.current = start
-  useEffect(() => {
-    if (!open || preparing) started.current = false
-    else if (ready && !started.current) {
-      started.current = true
-      startRef.current?.()
-    }
-  }, [open, preparing, ready])
+  useStartOnce(open, preparing, start, undefined, busy || complete || settled || !!error)
   // Inside a ModalShell already, the confirm replaces that card's content in
   // place: one scrim, one card, and closing brings the form back.
   const host = useEnclosingModalCard()
@@ -185,7 +177,7 @@ export function TxProgress({
                 {cancelLabel}
               </button>
               {/* After an error, or a review the person closed, the write starts again only from here. */}
-              {start && !busy && (error || (ready && started.current)) ? (
+              {start && !busy && (error || ready) ? (
                 <button
                   type="button"
                   className="btn-primary min-h-[44px] px-5 text-sm"

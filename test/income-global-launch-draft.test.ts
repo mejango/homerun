@@ -82,11 +82,12 @@ describe('frozen global INCOME launch descriptor', () => {
     const updated = readIncomeGlobalDraft(storage, 8453, 7n)!
     expect(updated.chains.filter(local => local.execution).map(local => local.chainId)).toEqual([1, 8453])
   })
-  it('requires a Web Lock before editing the shared draft collection', async () => {
+  it('locks the shared draft collection, on the fallback when Web Locks are missing', async () => {
     Object.defineProperty(navigator, 'locks', { configurable: true, value: undefined })
-    const task = vi.fn()
-    await expect(withIncomeGlobalDraftLock(task)).rejects.toThrow(/Web Locks/)
-    expect(task).not.toHaveBeenCalled()
+    const task = vi.fn(() => 'saved')
+    await expect(withIncomeGlobalDraftLock(task)).resolves.toBe('saved')
+    expect(task).toHaveBeenCalledOnce()
+    task.mockClear()
     Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: async (_name: string, _options: unknown, callback: (lock: unknown) => void) => callback(null) } })
     await expect(withIncomeGlobalDraftLock(task)).rejects.toThrow(/another tab/)
   })

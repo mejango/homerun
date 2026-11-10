@@ -21,6 +21,7 @@ import { transactionMessage, type SavedAttempt, type WriteHoldClient } from '@ba
 import { adoptSavedNonce, attempts, callOf } from '@/lib/write-hold'
 import { HeldNotice, retiringExit } from '@/components/ui/HeldWriteExit'
 import { SavedAttemptNotice } from '@/components/ui/SavedAttemptNotice'
+import { TX_STATUS_LINES } from '@/components/ui/TxStatus'
 import { launchRequestsDead, runRelayrLaunch } from '@/lib/fund-launch-relayr'
 import { displayChainName } from '@/lib/chainDisplay'
 import { SUPPORTED_CHAINS } from '@/lib/chains'
@@ -29,6 +30,7 @@ import { isSafeConnection, useSafeConnection, waitForSafeExecutionHash } from '@
 import { readSafeAppExecution } from '@bananapus/nana-sdk-core/safe-service'
 import { intentPath } from '@bananapus/nana-sdk-core/jbcenter'
 import { projectPath } from '@/lib/urn'
+import { browserLocks } from '@bananapus/nana-sdk-core/review/locks'
 
 const message = (error: unknown) => readableError(error, 'The request could not be completed.')
 function publicClient(chainId: number): PublicClient {
@@ -164,7 +166,7 @@ function LaunchChain({ session, chainId, request, status, update, refreshFee, ru
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setup.outcome])
   /** Sends wait until both recoveries say nothing is in flight or unexplained: none ran, or it ran and is recorded. */
-  const launchClear = ready && (!launchAttempt || !!launch.outcome && (launch.outcome.status === 'none' || (launch.outcome.status === 'done' && launch.outcome.result === 'failed')))
+  const launchClear = ready && launch.clear
   const setupClear = ready && (!setupAttempt || !!setup.outcome && (setup.outcome.status === 'none' || (setup.outcome.status === 'done' && (setup.outcome.result === 'failed' || setup.outcome.authenticated))))
   const clearRef = useRef(false)
   clearRef.current = launchClear && setupClear
@@ -264,8 +266,7 @@ function LaunchChain({ session, chainId, request, status, update, refreshFee, ru
     } catch (cause) { setError(message(cause)) }
   }
   async function launchNow() {
-    if (!navigator.locks) { setError('This browser cannot coordinate a resumable deployment. Open this launch in a browser with Web Locks support.'); return }
-    await navigator.locks.request(`homerun:fund-launch:${session.input.salt}`, { ifAvailable: true }, async lock => {
+    await browserLocks().request(`homerun:fund-launch:${session.input.salt}`, { ifAvailable: true }, async lock => {
       if (!lock) { setError('Another tab is reviewing this launch. Finish that review first.'); return }
       await submitLaunch()
     })
@@ -284,7 +285,7 @@ function LaunchChain({ session, chainId, request, status, update, refreshFee, ru
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runId])
   /** The launch or its setup is with the wallet, the chain or a Safe: no other is sent meanwhile. */
-  const sending = [tx.phase, setupTx.phase].some(phase => phase === 'submitted' || phase === 'pending')
+  const sending = [tx.phase, setupTx.phase].some(phase => phase === 'held' || phase === 'pending')
   return <section className="contract-panel">
     <h3>{chain.name}</h3>
     <p role="status">{status.phase === 'confirmed' ? 'FUND deployment verified onchain.' : status.phase === 'pending' ? status.safe ? 'Safe proposal awaiting execution.' : 'Transaction submitted; confirmation pending.' : status.phase === 'reverted' ? 'The deployment reverted. No project was created by this transaction.' : 'Ready for transaction review.'}</p>
@@ -294,8 +295,8 @@ function LaunchChain({ session, chainId, request, status, update, refreshFee, ru
     {status.phase === 'pending' && status.hash && <button type="button" disabled={verifying || launch.recovering} onClick={() => void launch.recover()}>{verifying || launch.recovering ? 'Checking execution…' : 'Check confirmation'}</button>}
     <SavedAttemptNotice attempt={launch} />
     <SavedAttemptNotice attempt={setup} title="Create project multisigs" />
-    {setupTx.phase === 'submitted' && <div role="status"><HeldNotice tx={setupHeld} /></div>}
-    {tx.phase === 'submitted' && <div role="status"><HeldNotice tx={launchHeld} /></div>}
+    {setupTx.phase === 'held' && <div role="status"><HeldNotice tx={setupHeld} /></div>}
+    {tx.phase === 'held' && <div role="status"><HeldNotice tx={launchHeld} /></div>}
     {request && ['ready', 'reverted'].includes(status.phase) && <button type="button" disabled={tx.busy || tx.phase === 'review'} onClick={() => void publicClient(chainId).readContract({ address: v6Address('JBProjects', chainId as JBChainId), abi: jbProjectsAbi, functionName: 'creationFee' }).then(refreshFee).catch(cause => setError(message(cause)))}>Refresh deployment fee</button>}
     {(error || tx.error || setupTx.error) && <p role="alert">{transactionMessage(error || tx.error || setupTx.error || '')}</p>}
   </section>
@@ -372,7 +373,7 @@ export function FundDeploy({ values, onLockChange, importedRecord, onRecordUsed 
   }
   const directFeedback = useCallback((phase: string, detail: string) => {
     if (detail) setError(detail)
-    const text: Record<string, string> = { review: 'Review the transaction to continue.', simulating: 'Checking the transaction before opening your wallet…', signing: 'Open MetaMask or your connected wallet to confirm the transaction.', pending: 'Transaction submitted. Waiting for confirmation…' }
+    const text: Record<string, string> = { review: 'Review the transaction to continue.', simulating: 'Checking the transaction before opening your wallet…', signing: 'Open MetaMask or your connected wallet to confirm the transaction.', pending: TX_STATUS_LINES.pending }
     if (detail) setProgress('')
     else if (text[phase]) setProgress(text[phase])
   }, [])

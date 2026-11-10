@@ -137,7 +137,7 @@ export function FundAssetWithdrawals({ state, client, contextIndex, onConfigureA
   const [intent, setIntent] = useState<WithdrawalIntent | null>(null)
   const [confirmedNet, setConfirmedNet] = useState<bigint | null>(null)
   const context = state.accountingContexts[contextIndex]
-  const ownsAction = preparing || tx.busy || (tx.phase === 'review' || tx.phase === 'submitted') || (tx.phase === 'success' && !!intent && confirmedNet === null)
+  const ownsAction = preparing || tx.busy || (tx.phase === 'review' || tx.phase === 'held') || (tx.phase === 'success' && !!intent && confirmedNet === null)
   const locked = disabled || ownsAction
   const closed = state.metadata.pausePay && state.metadata.cashOutTaxRate === FUND_CASH_OUTS_DISABLED
   const configuredAmount = context ? amount(allowanceAmount, context.decimals) : 0n
@@ -276,7 +276,7 @@ export function FundAssetWithdrawals({ state, client, contextIndex, onConfigureA
     </> : <p className="text-sm">Select a verified treasury currency to configure or use a purchase allowance.</p>}
     {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
     <div role="status" aria-live="polite" className="break-words text-sm">
-      {tx.phase === 'submitted' ? <HeldNotice tx={tx} />
+      {tx.phase === 'held' ? <HeldNotice tx={tx} />
         : confirmedNet !== null && intent ? <p>Asset withdrawal confirmed. The purchase recipient received {formatUnits(confirmedNet, intent.decimals)} {intent.symbol}.</p>
           : tx.phase === 'pending' ? <p>Submitted. Waiting for the withdrawal receipt…</p> : null}
       {tx.error && <p className="text-red-800">{tx.error}</p>}

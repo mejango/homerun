@@ -568,7 +568,7 @@ describe('INCOME transaction surfaces', () => {
 
   it('never presents a Safe proposal as confirmed reserved delivery', async () => {
     pendingReserved()
-    runtime.phase = 'submitted'; runtime.notice = 'Proposed to Safe. Execution and onchain confirmation are still required.'; runtime.safeProposalHash = `0x${'b'.repeat(64)}`
+    runtime.phase = 'held'; runtime.notice = 'Proposed to Safe. Execution and onchain confirmation are still required.'; runtime.safeProposalHash = `0x${'b'.repeat(64)}`
     await render()
     const reserved = section('Distribute reserved INCOME')
     expect(reserved.textContent).toContain('Execution and onchain confirmation are still required')

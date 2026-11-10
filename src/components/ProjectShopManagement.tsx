@@ -25,6 +25,7 @@ import { HeldNotice, retiringExit } from '@/components/ui/HeldWriteExit'
 import { SavedAttemptNotice } from '@/components/ui/SavedAttemptNotice'
 import { ShopItemEditor, type ShopItemEditorState } from '@/components/ShopItemEditor'
 import { ModalShell } from '@/components/ui/ModalShell'
+import { TX_STATUS_LINES } from '@/components/ui/TxStatus'
 
 const SESSION_EVENT = 'homerun-shop-session'
 const message = (error: unknown) => error instanceof Error ? error.message : 'The shop update could not be completed. Try again.'
@@ -127,7 +128,7 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [outcome])
   /** The next step can be reviewed only once its recovery says nothing ran. */
-  const recovered = !attempt || (!!outcome && (outcome.status === 'none' || (outcome.status === 'done' && outcome.result === 'failed')))
+  const recovered = recovery.clear
 
   // The SDK's hold settled the step: its exact execution is verified and recorded before the next one.
   const settledReceipt = tx.phase === 'success' ? tx.receipt : null
@@ -156,7 +157,7 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
   const canStart = ready && !storageError && !session && !unavailable && !state.isError && !!snapshot && !!address && isAddressEqual(snapshot.account, address)
   const busy = working || tx.busy || tx.phase === 'review' || !recovered
   /** A step is with the wallet, the chain or a Safe: nothing else is reviewed meanwhile. */
-  const stepActive = tx.busy || tx.phase === 'review' || tx.phase === 'submitted' || tx.phase === 'success'
+  const stepActive = tx.busy || tx.phase === 'review' || tx.phase === 'held' || tx.phase === 'success'
   const indices = session ? shopWriteRequestIndices(session) : []
   const complete = !!session && session.completed.length === indices.length && checkedProgress === progressKey
   const accountMatches = !!session && !!address && isAddressEqual(address, session.plan.snapshot.account)
@@ -261,7 +262,7 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
           {!stepActive && session.completed.length === 0 && <button type="button" className="ds-button ds-button-secondary" disabled={busy} onClick={() => void finish()}>Cancel update</button>}
           {!stepActive && !session.restoring && session.completed.length === 1 && session.plan.requestKinds.join(',') === 'grant,create,restore' && <button type="button" className="ds-button ds-button-secondary" disabled={busy || !accountMatches} onClick={() => void restore()}>Cancel creation and restore permissions</button>}
           <SavedAttemptNotice attempt={recovery} />
-          {(!stepActive || tx.phase === 'submitted') && recovered && <button type="button" className="ds-button ds-button-primary" disabled={busy || !accountMatches || checkedProgress !== progressKey || !!storageError} onClick={() => void submit()}>{txPhaseLabel(tx.phase, { idle: 'Review transaction', pending: 'Waiting for confirmation…' })}</button>}
+          {(!stepActive || tx.phase === 'held') && recovered && <button type="button" className="ds-button ds-button-primary" disabled={busy || !accountMatches || checkedProgress !== progressKey || !!storageError} onClick={() => void submit()}>{txPhaseLabel(tx.phase, { idle: 'Review transaction', pending: 'Waiting for confirmation…' })}</button>}
         </> : !working && <button type="button" className="ds-button ds-button-secondary" onClick={() => { setOpen(false); if (retryDraft) setEditor(retryDraft) }}>{retryDraft ? 'Back to items' : 'Close'}</button>}
     </div>}>
       <div className="grid gap-4 text-sm">
@@ -269,8 +270,8 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
           <p>{session.restoring ? 'Cancel shop creation by restoring the deployer’s previous permissions. Confirm the restoration transaction to finish.' : session.plan.notice}</p>
           <ol className="list-decimal space-y-3 pl-5">{indices.map((requestIndex, index) => <li key={requestIndex}>{session.plan.requests[requestIndex].label}<span className="ml-2">{index < session.completed.length ? checkedProgress === progressKey ? 'Confirmed' : 'Verifying…' : index === session.completed.length ? stepActive ? 'Waiting for confirmation' : 'Ready' : 'Next'}</span></li>)}</ol>
           {!accountMatches && !complete && <p>Connect {session.plan.snapshot.account} to continue this update.</p>}
-          {tx.phase === 'submitted' && <HeldNotice tx={{ notice: tx.notice, held: retiringExit(tx.held, recovery.retire) }} />}
-          {tx.phase === 'pending' && <p>Submitted. Waiting for onchain confirmation…</p>}
+          {tx.phase === 'held' && <HeldNotice tx={{ notice: tx.notice, held: retiringExit(tx.held, recovery.retire) }} />}
+          {tx.phase === 'pending' && <p>{TX_STATUS_LINES.pending}</p>}
           {complete && <p>{session.restoring ? 'The previous permissions have been restored. Shop creation was cancelled.' : session.plan.snapshot.mode === 'create' ? 'The shop and first items are created. They become available when the attached ruleset is active.' : 'Your inventory changes are confirmed onchain.'}</p>}
         </>}
         {progress && !complete && <p role="status">{progress}</p>}

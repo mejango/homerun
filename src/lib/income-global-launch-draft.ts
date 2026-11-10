@@ -4,6 +4,7 @@ import { FUND_CHAIN_IDS } from './fund-contracts'
 import { fundGlobalManifestHash, parseFundGlobalManifest, type FundGlobalManifest } from './fund-global-manifest'
 import { homerunDeployerAbi } from './income-contracts'
 import { exportIncomeLaunchPending, type IncomeLaunchPending } from './income-launch-session'
+import { browserLocks } from '@bananapus/nana-sdk-core/review/locks'
 
 export const INCOME_GLOBAL_DRAFT_KEY = 'homerun:income-global-launch:drafts:v1'
 export type IncomeGlobalChainDraft = {
@@ -93,6 +94,5 @@ export function saveIncomeGlobalDraft(storage: Store, value: IncomeGlobalLaunchD
 /** Serializes no holder list. Imported completion records remain evidence to verify, never success flags. */
 export function serializeIncomeGlobalDraft(draft: IncomeGlobalLaunchDraft): string { return `${JSON.stringify(parseIncomeGlobalDraft(draft), null, 2)}\n` }
 export async function withIncomeGlobalDraftLock<T>(task: () => Promise<T> | T): Promise<T> {
-  if (typeof navigator === 'undefined' || !navigator.locks?.request) throw new Error('Use a browser with Web Locks support to coordinate the global launch across tabs.')
-  return navigator.locks.request(INCOME_GLOBAL_DRAFT_KEY, { mode: 'exclusive' }, async lock => { if (!lock) throw new Error('The global INCOME plan is being updated in another tab.'); return task() })
+  return browserLocks().request(INCOME_GLOBAL_DRAFT_KEY, { mode: 'exclusive' }, async lock => { if (!lock) throw new Error('The global INCOME plan is being updated in another tab.'); return task() })
 }

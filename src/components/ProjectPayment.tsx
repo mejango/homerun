@@ -23,7 +23,7 @@ import { readableError } from '@/lib/readable-error'
 import { refreshIndexedProject } from '@/lib/refresh-indexed'
 import { AllowedDecreaseField } from '@/components/ui/AllowedDecreaseField'
 import { useOnConfirmed } from '@/hooks/useOnConfirmed'
-import { TxStatus } from '@/components/ui/TxStatus'
+import { TX_STATUS_LINES, TxStatus } from '@/components/ui/TxStatus'
 
 const CenterProjectPayment = lazyComponent(() => import('./CenterProjectPayment').then(m => m.default))
 export function ProjectPayment(props: Parameters<typeof ExternalProjectPayment>[0]) {
@@ -122,7 +122,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
   const quotedNow = useRef(quoted)
   quotedNow.current = quoted
   const busy = preparing || tx.busy || tx.phase === 'review'
-  const submitted = tx.phase === 'submitted' ? tx : undefined
+  const submitted = tx.phase === 'held' ? tx : undefined
   const tracking = busy || (!!tx.safeProposalHash && tx.phase !== 'success')
   // The wallet steps ahead, read before the first prompt as Juicebox Money's pay sequence does.
   // Unknown allowances count as needed; the sequence re-reads them before acting.
@@ -265,10 +265,10 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       complete={tx.phase === 'success'}
       settled={!!submitted}
       held={submitted?.held}
-      status={submitted?.notice ?? status ?? (tx.phase === 'pending' ? <>Submitted. Waiting for onchain confirmation{tx.hash && explorerTxUrl(chainId, tx.hash) ? <> (<a className="underline" href={explorerTxUrl(chainId, tx.hash)!} target="_blank" rel="noreferrer">view transaction</a>)</> : null}</> : null)}
+      status={submitted?.notice ?? status ?? (tx.phase === 'pending' ? <>{TX_STATUS_LINES.pending}{tx.hash && explorerTxUrl(chainId, tx.hash) ? <> (<a className="underline" href={explorerTxUrl(chainId, tx.hash)!} target="_blank" rel="noreferrer">view transaction</a>)</> : null}</> : null)}
       // A Safe's failure keeps the registry's own line, with its execution.
       error={error ?? failure?.message ?? (minedRevert && !tx.isSafe ? 'The payment reverted.' : null) ?? (staleRevert ? null : tx.error)}
-      onClose={() => { setOpen(false); if (tx.phase === 'submitted') tx.dismiss(); setStatus(null); attempt.current++; setRetryWhenQuoted(null); setPayerSlippage(null) }}
+      onClose={() => { setOpen(false); if (tx.phase === 'held') tx.dismiss(); setStatus(null); attempt.current++; setRetryWhenQuoted(null); setPayerSlippage(null) }}
     >
       <div className="text-sm text-smoke-600" aria-live="polite">
         {paused ? <p>This project has paused payments.</p> : zeroAllocation ? <p>This payment gives you no {tokenLabel}. All new tokens are allocated to the reserved recipients.</p> : quoted && quote.data?.quoteFailed

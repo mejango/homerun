@@ -35,7 +35,7 @@ export function TxStatus({ tx, chainId, hideError = false, retire, className = '
 }) {
   const explorer = tx.hash && !tx.safeProposalHash ? explorerTxUrl(chainId, tx.hash) : null
   return <div role="status" aria-live="polite" className={`${className} break-words text-sm`.trim()}>
-    {tx.phase === 'submitted' ? <HeldNotice tx={{ notice: tx.notice, held: retire ? retiringExit(tx.held, retire) : tx.held }} />
+    {tx.phase === 'held' ? <HeldNotice tx={{ notice: tx.notice, held: retire ? retiringExit(tx.held, retire) : tx.held }} />
       : tx.phase === 'pending' ? <p>{TX_STATUS_LINES.pending}</p>
         : tx.phase === 'success' ? <p>{TX_STATUS_LINES.success}</p>
           : tx.phase === 'review' ? <p>{TX_STATUS_LINES.review}</p> : null}

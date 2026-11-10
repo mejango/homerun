@@ -20,7 +20,7 @@ it.each([
 })
 
 it('shows a Safe proposal until its execution hash, and links the transaction once there is one', async () => {
-  await render({ tx: tx({ phase: 'submitted', notice: 'Held.', submissionHash: HASH }), chainId: 1 })
+  await render({ tx: tx({ phase: 'held', notice: 'Held.', submissionHash: HASH }), chainId: 1 })
   expect(host.textContent).toContain(`${TX_STATUS_LINES.safeProposal} ${HASH}`)
   expect(host.querySelector('a')).toBeNull()
   await render({ tx: tx({ phase: 'success', submissionHash: HASH, hash: HASH }), chainId: 1 })
@@ -37,7 +37,7 @@ it('hides an error only when the card asks', async () => {
 
 it("retires the saved attempt when the user takes the held write's exit", async () => {
   const release = vi.fn(async () => true), retire = vi.fn(async () => undefined)
-  await render({ tx: tx({ phase: 'submitted', notice: 'Held.', held: { kind: 'exit', line: 'Held.', label: 'Exit', release } }), chainId: 1, retire })
+  await render({ tx: tx({ phase: 'held', notice: 'Held.', held: { kind: 'exit', line: 'Held.', label: 'Exit', release } }), chainId: 1, retire })
   await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Exit')!.click())
   await vi.waitFor(() => expect(retire).toHaveBeenCalledWith({ by: 'exit' }))
   expect(release).toHaveBeenCalledOnce()
@@ -50,4 +50,10 @@ it('is the status line of every card that shows one', async () => {
     expect(/<TxStatus\b/.test(source), `${name} uses TxStatus`).toBe(true)
     expect(source.includes(TX_STATUS_LINES.success), `${name} writes no success line of its own`).toBe(false)
   }
+})
+
+it('owns the pending line: no flow writes its own', async () => {
+  const { readdirSync, readFileSync } = await import('node:fs')
+  const files = readdirSync('src', { recursive: true, encoding: 'utf8' }).filter(file => /\.tsx?$/.test(file) && !file.endsWith('TxStatus.tsx'))
+  for (const file of files) expect(readFileSync(`src/${file}`, 'utf8').includes('Waiting for onchain confirmation'), file).toBe(false)
 })

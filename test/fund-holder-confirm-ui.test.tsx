@@ -35,6 +35,7 @@ vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
 }))
 
 import { CashOutPanel, HolderActions } from '@/components/live-transactions'
+import { TX_STATUS_LINES } from '@/components/ui/TxStatus'
 
 const state = {
   chainId: 1, projectId: 7n, blockNumber: 100n, account: WALLET, controller: '0x2222222222222222222222222222222222222222',
@@ -146,7 +147,7 @@ describe('FUND holder actions confirm like Juicebox Money', () => {
     await render(<CashOutPanel state={state} client={{} as never} contextIndex={0} />)
     await type('FUND to cash out', '10'); await settle()
     await click('Review cash-out'); await settle()
-    Object.assign(runtime.tx, { phase: 'submitted', notice: 'Proposed to Safe. Other owners still need to sign.', busy: false, safeProposalHash: `0x${'b'.repeat(64)}` })
+    Object.assign(runtime.tx, { phase: 'held', notice: 'Proposed to Safe. Other owners still need to sign.', busy: false, safeProposalHash: `0x${'b'.repeat(64)}` })
     await render(<CashOutPanel state={state} client={{} as never} contextIndex={0} />)
     expect(dialogText()).toContain('Proposed to Safe')
     expect(button('Done')).toBeDefined()
@@ -166,7 +167,7 @@ describe('FUND holder actions confirm like Juicebox Money', () => {
     await click('Review cash-out'); await settle()
     Object.assign(runtime.tx, { phase: 'pending', busy: true, hash: `0x${'c'.repeat(64)}` })
     await render(<CashOutPanel state={state} client={{} as never} contextIndex={0} />)
-    expect(dialogText()).toContain('Waiting for confirmation')
+    expect(dialogText()).toContain(TX_STATUS_LINES.pending)
     expect(document.querySelector<HTMLButtonElement>('[data-tx-confirm] button[aria-label="Close"]')!.disabled).toBe(true)
   })
 

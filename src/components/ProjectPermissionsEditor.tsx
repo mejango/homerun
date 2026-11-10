@@ -94,7 +94,7 @@ export function ProjectPermissionsEditor({ chainId, projectId, client, unavailab
       start={review && !tx.pending ? () => void submit(review.state, review.selected, review.rootConfirmed) : undefined}
       busy={preparing || (tx.busy && !tx.pending)}
       complete={tx.phase === 'success'}
-      settled={tx.phase === 'submitted'}
+      settled={tx.phase === 'held'}
       error={error}
       onClose={() => { setReview(null); tx.dismiss() }}
     >

@@ -5,7 +5,7 @@ import { createConnectController, passkeyOption, type ConnectOption } from '@me.
 import { JBConnectModal, passkeyLabel } from '@me.jango/signa/react'
 import { WalletFallbackMark } from '@/components/BrandMarks'
 import { useWallet } from '@/hooks/useWallet'
-import { useMobileWallet } from '@/hooks/useMobileWallet'
+import { useMobileWallet } from '@bananapus/nana-sdk-core/review/react'
 import { mobileWalletLinks } from '@/lib/walletLinks'
 import { CENTER_WALLET_CONFIG, CENTER_WALLET_ENABLED } from './wallet-config'
 

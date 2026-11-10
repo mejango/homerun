@@ -2,10 +2,9 @@
 export function installRecoveryLocks() {
   const held = new Map<string, Promise<void>>()
   Object.defineProperty(navigator, 'locks', { configurable: true, value: {
-    request: async (name: string, given: { ifAvailable?: boolean } | ((lock: object | null) => unknown), callback?: (lock: object | null) => Promise<unknown>) => {
-      // Both forms: (name, callback) and (name, options, callback).
-      const options = typeof given === 'function' ? {} : given
-      const work = (typeof given === 'function' ? given : callback!) as (lock: object | null) => Promise<unknown>
+    request: async (name: string, options: { ifAvailable?: boolean }, work: (lock: object | null) => Promise<unknown>) => {
+      // Only (name, options, callback): the SDK's browserLocks() fallback has no two-argument form.
+      if (typeof work !== 'function') throw new TypeError('work is not a function')
       if (options.ifAvailable && held.has(name)) return work(null)
       while (held.has(name)) await held.get(name)
       let release!: () => void
