@@ -1,6 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { QueryClientContext } from '@tanstack/react-query'
 import { zeroAddress, type Abi, type Address, type Hex, type TransactionReceipt } from 'viem'
 import {
   ReviewedCallRevertedError,
@@ -16,6 +17,7 @@ import {
   type ReviewedRunStatus,
   type WriteHoldClient,
 } from '@bananapus/nana-sdk-core/review'
+import type { LockHandle } from '@bananapus/nana-sdk-core/review/locks'
 import { useHeldWrite, useReviewedRun } from '@bananapus/nana-sdk-core/review/react'
 import { loadReviewDialog } from '@/components/TransactionReviewProvider'
 import type { HeldWrite } from '@/components/ui/HeldWriteExit'
@@ -41,14 +43,17 @@ export type TxPhase =
   | 'success'
   | 'error'
 
-/** The phase a flow shows for the SDK's run status. Not yet run, cancelled, or between an action's steps reads idle. */
+/**
+ * The phase a flow shows for the SDK's run status. Not yet run, cancelled, or between an action's steps reads idle;
+ * closed after an earlier step was sent (`stopped`) reads error, with REVIEW_STOPPED_LINE.
+ */
 export function txPhaseOf(status: ReviewedRunStatus): TxPhase {
   switch (status) {
     case 'review': case 'simulating': case 'signing': return status
     case 'receipt': return 'pending'
     case 'proposed': case 'held': return 'held'
     case 'done': return 'success'
-    case 'failed': return 'error'
+    case 'failed': case 'stopped': return 'error'
     default: return 'idle'
   }
 }
@@ -96,6 +101,8 @@ export type TxSendOptions = {
   scope?: string
   /** A step's wallet reply, before its receipt (a flow's own journal, its progress). */
   onStepSubmitted?: (index: number, hash: Hex, safe: boolean) => void
+  /** The flow's own locks this send runs under: lost, nothing more is sent or written before the wallet. */
+  locks?: readonly LockHandle[]
 }
 
 /** What a saved multi-step action shows: the steps it continues are the ones the person reviewed. */
@@ -110,6 +117,8 @@ const loadReviewEngine = () => import(/* webpackExports: ["sendReviewed", "resum
 
 const CENTER_WALLET_REFUSED = 'This action needs an external wallet. Juicebox wallet payments use their own payment review.'
 const CLOSED_LINE = 'This review closed. Open the action again before sending.'
+/** A multi-step action closed after an earlier step was sent. The same line in every client. */
+export const REVIEW_STOPPED_LINE = 'The rest was not sent. Review it again when you are ready.'
 
 /**
  * The shared in-flight button copy: the fixed simulating/signing strings every
@@ -144,10 +153,13 @@ type Tracked = { chainId: number; account: Address; safe: boolean; namespace?: s
 export function useReviewedAction(chainId: number) {
   const { isConnected, isCenterWallet, address } = useWallet()
   const isSafe = useSafeConnection(wagmiConfig)
+  const queryClient = useContext(QueryClientContext)
   const runner = useReviewedRun({
     account: address,
     ...reviewedSendDeps,
     engine: loadReviewEngine,
+    // A held step the user closed later succeeded: every read of its chain refreshes.
+    onDismissedSettled: call => void queryClient?.invalidateQueries({ predicate: query => query.queryKey[1] === call.chainId }),
     guard: () => {
       if (isCenterWallet) throw new ReviewLineError(CENTER_WALLET_REFUSED)
       if (getViewAs()) throw new ReviewLineError(VIEW_AS_WRITE_BLOCKED)
@@ -180,10 +192,17 @@ export function useReviewedAction(chainId: number) {
   // The callbacks below keep one identity, as flows key effects on them, and read the latest render.
   const live = useRef({ runner, isConnected, isCenterWallet })
   live.current = { runner, isConnected, isCenterWallet }
-  const clear = useCallback(() => {
+  /**
+   * Closes what this hook shows. A dismissal never counts as evidence: a held step stays followed (a held last
+   * step stays shown), and nothing closes while the review or wallet is open. Once the user took a hold's exit
+   * (`exited`), the run resets.
+   */
+  const clear = useCallback((exited = false) => {
+    const { runner } = live.current
+    if (exited) runner.reset()
+    else if (!runner.dismiss()) return
     trackedReservation.current = null
     setLocalError(null); setSubmission(null); setResult(null); setTracking(null); setTrackReceipt(null)
-    live.current.runner.reset()
   }, [])
 
   /**
@@ -211,9 +230,6 @@ export function useReviewedAction(chainId: number) {
       setLocalError('Connect a wallet first.')
       return null
     }
-    inFlight.current = true
-    clear()
-    const viaSafe = isSafeConnection(wagmiConfig)
     // A lone request takes its hold keys from the options; each step of an action carries its own.
     const steps: readonly TxStep[] = 'address' in requested
       ? [{ ...(requested as TxRequest), recoveryNamespace: options.recoveryNamespace, recoveryLegacy: options.recoveryLegacy, simulationBlockNumber: options.simulationBlockNumber }]
@@ -226,7 +242,11 @@ export function useReviewedAction(chainId: number) {
       ...(step.recoveryLegacy ? { legacy: step.recoveryLegacy } : {}),
       ...(step.dependsOnPrior ? { dependsOnPrior: true } : step.simulationBlockNumber !== undefined ? { simulationBlockNumber: step.simulationBlockNumber } : {}),
     })
+    // Encoded before the send is taken: a call that can't be encoded throws with nothing held.
     const requestedCalls = steps.map(reviewedCall)
+    inFlight.current = true
+    clear()
+    const viaSafe = isSafeConnection(wagmiConfig)
     let calls = requestedCalls
     const last = steps.at(-1)!
     // A saved action with a step in flight continues exactly as reviewed; one with nothing in flight starts over.
@@ -255,6 +275,7 @@ export function useReviewedAction(chainId: number) {
         ...(description ? { description } : {}),
         ...(!saved && options.context?.length ? { context: options.context } : {}),
         ...(viaSafe ? { confirmLabel: 'Agree & continue to Safe' } : {}),
+        ...(options.locks?.length ? { locks: options.locks } : {}),
         // A step's recheck is the flow's for that request; a saved step that differs from it (another amount, say)
         // continues as reviewed, guarded by its simulation and hold.
         ...(options.reverify ? { reverify: async (call, index, prior) => {
@@ -297,7 +318,7 @@ export function useReviewedAction(chainId: number) {
     : shownPhase === 'idle' && localError ? 'error'
       : shownPhase
 
-  const afterExit = () => { if (mounted.current) clear() }
+  const afterExit = () => { if (mounted.current) clear(true) }
   const held: HeldWrite | null = shown && actions.exitAction
     ? {
         kind: 'exit', line: shown.line ?? '', label: actions.exitAction.label,
@@ -333,17 +354,18 @@ export function useReviewedAction(chainId: number) {
       : runner.receipt?.transactionHash ?? (submission && !submission.safe ? submission.hash : null)
   const safeProposalHash = phase === 'held' && heldSafe ? (tracking ? record?.hash ?? null : runner.safeTxHash ?? submission?.hash ?? null) : null
   const notice = [phase === 'held' ? shown?.line : null, shown?.notice].filter(Boolean).join(' ') || null
-  const error = localError ?? (phase === 'error' ? (trackSettled ? settledLine(trackSettled) : runner.error) : null)
+  const error = localError ?? (phase === 'error' ? (trackSettled ? settledLine(trackSettled) : runner.error ?? (runner.status === 'stopped' ? REVIEW_STOPPED_LINE : null)) : null)
 
+  // A run that only follows its sent step's hold can close; one still reviewing or signing can't.
   const reset = useCallback(() => {
-    if (inFlight.current) return
+    if (inFlight.current && !live.current.runner.following) return
     clear()
   }, [clear])
 
   return {
     phase,
-    /** True while the transaction is in flight: simulating/signing/pending. */
-    busy: phase === 'simulating' || phase === 'signing' || phase === 'pending',
+    /** True while the transaction is in flight: simulating, signing or confirming in place. Not while only its hold is followed. */
+    busy: runner.busy && phase !== 'review',
     /** The confirm can end on Done: the transaction succeeded, or a Safe or the hold has it. */
     settled: phase === 'success' || phase === 'held',
     /** The one line a `submitted` confirm shows: the hold's. */

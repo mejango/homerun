@@ -4,14 +4,14 @@
   "sites": [
     {
       "file": "src/components/FundDeploy.tsx",
-      "line": 269,
+      "line": 271,
       "api": "request",
       "boundary": "Web Locks, not a wallet: one tab at a time reviews and submits a saved FUND launch.",
       "test": "test/fund-deploy-hold-ui.test.tsx"
     },
     {
       "file": "src/components/FundOperatorActions.tsx",
-      "line": 704,
+      "line": 707,
       "api": "request",
       "boundary": "Web Locks, not a wallet: one tab at a time reviews and submits a linked ruleset plan.",
       "test": "test/fund-operator-recovery-ui.test.tsx"
@@ -46,21 +46,28 @@
     },
     {
       "file": "src/hooks/useProjectAdminTx.ts",
-      "line": 112,
+      "line": 115,
       "api": "request",
       "boundary": "Web Locks, not a wallet: one project update at a time across tabs, around its reservation.",
       "test": "test/project-admin-reservation.test.ts"
     },
     {
       "file": "src/hooks/useProjectAdminTx.ts",
-      "line": 159,
+      "line": 151,
+      "api": "request",
+      "boundary": "Web Locks, not a wallet: lists the account of a Safe proposal adopted after the project lock lapsed, under a fresh lock.",
+      "test": "test/project-admin-tx-ui.test.tsx"
+    },
+    {
+      "file": "src/hooks/useProjectAdminTx.ts",
+      "line": 169,
       "api": "request",
       "boundary": "Web Locks, not a wallet: prunes the project's settled admin reservations under the same lock.",
       "test": "test/project-admin-reservation.test.ts"
     },
     {
       "file": "src/lib/forwarder-authorization.ts",
-      "line": 17,
+      "line": 18,
       "api": "request",
       "boundary": "Web Locks, not a wallet: one tab at a time signs a wallet's forward requests per chain.",
       "test": "test/fund-launch-relayr.test.ts"
@@ -74,14 +81,14 @@
     },
     {
       "file": "src/lib/income-global-launch-draft.ts",
-      "line": 97,
+      "line": 98,
       "api": "request",
       "boundary": "Web Locks, not a wallet: one tab at a time updates the global INCOME launch draft.",
       "test": "test/income-global-launch-draft.test.ts"
     },
     {
       "file": "src/lib/project-shop-session.ts",
-      "line": 292,
+      "line": 298,
       "api": "request",
       "boundary": "Web Locks, not a wallet: one tab at a time reviews and submits a project's shop update.",
       "test": "test/project-shop-session.test.ts"

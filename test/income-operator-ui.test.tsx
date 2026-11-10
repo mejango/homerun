@@ -168,7 +168,7 @@ describe('Owner changes the INCOME Operator', () => {
     runtime.phase = 'pending'; runtime.busy = true; runtime.queryError = true; runtime.snapshot = undefined
     await render()
     expect(host.querySelector('input')!.value).toBe(NEXT)
-    expect(host.textContent).toContain('Waiting for onchain confirmation')
+    expect(host.textContent).toContain('Confirming your transaction')
     expect(button().disabled).toBe(true)
   })
   it('blocks legacy locks and failed fresh Owner reads without offering an impossible write', async () => {

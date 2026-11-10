@@ -46,6 +46,7 @@ import { initialFundRuleset } from '@/lib/fund-contracts'
 import { newDemoShopItem } from '@/lib/demo-shop'
 import { parseProjectShopWrite, type PreparedProjectShopWrite } from '@/lib/project-shop-write'
 import { shopStepIntent, shopWriteSessionKey, startShopWriteSession } from '@/lib/project-shop-session'
+import { HELD } from './support/locks'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as Address
 const DIGEST = `0x${'ab'.repeat(32)}` as const
@@ -88,7 +89,7 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); cache.clear(); localStorage.clear(); vi.unstubAllGlobals() })
 
 it('refuses the same step after a lost wallet reply until the user takes the exit', async () => {
-  startShopWriteSession(localStorage, KEY, plan())
+  await startShopWriteSession(localStorage, KEY, plan(), HELD)
   wallet.writeContract.mockRejectedValueOnce(new Error('Wallet reply was lost after broadcast'))
   await render()
   await click('Resume shop update')
@@ -102,7 +103,7 @@ it('refuses the same step after a lost wallet reply until the user takes the exi
 })
 
 it('asks for the user’s check on a hashless step the journal saved as pending before SDK holds: that check closes the update without sending', async () => {
-  startShopWriteSession(localStorage, KEY, plan())
+  await startShopWriteSession(localStorage, KEY, plan(), HELD)
   const saved = JSON.parse(localStorage.getItem(KEY)!)
   localStorage.setItem(KEY, JSON.stringify({ ...saved, pending: { safe: false, afterBlock: '100', startedAt: Date.now() - 31 * 60_000 } }))
   await render()
@@ -116,7 +117,7 @@ it('asks for the user’s check on a hashless step the journal saved as pending 
 })
 
 it('shows a held step and its exit after a reload, even when the shop can no longer be read', async () => {
-  startShopWriteSession(localStorage, KEY, plan())
+  await startShopWriteSession(localStorage, KEY, plan(), HELD)
   wallet.writeContract.mockRejectedValueOnce(new Error('Wallet reply was lost after broadcast'))
   await render()
   await click('Resume shop update')
@@ -134,7 +135,7 @@ it('shows a held step and its exit after a reload, even when the shop can no lon
 })
 
 it('refuses to cancel an update whose step reverted but is not final yet, and keeps it', async () => {
-  startShopWriteSession(localStorage, KEY, plan())
+  await startShopWriteSession(localStorage, KEY, plan(), HELD)
   // The chain's finalized block is still behind the revert.
   wallet.client.getBlock.mockImplementation(async ({ blockNumber, blockTag }: { blockNumber?: bigint; blockTag?: string }) => ({ number: blockTag === 'finalized' ? 5n : blockNumber ?? 1_000n, hash: `0x${'0b'.repeat(32)}`, timestamp: 1_000n }) as never)
   await render()
@@ -149,7 +150,7 @@ it('refuses to cancel an update whose step reverted but is not final yet, and ke
 })
 
 async function settleAway(blockNumber: bigint) {
-  const session = startShopWriteSession(localStorage, KEY, plan())
+  const session = await startShopWriteSession(localStorage, KEY, plan(), HELD)
   await render()
   await click('Resume shop update')
   await click('Review transaction')
@@ -185,7 +186,7 @@ it('keeps a step that settled while away as done when it cannot be shown: never 
 })
 
 it('records a first step once its hold settles, after the plan’s snapshot block', async () => {
-  startShopWriteSession(localStorage, KEY, plan())
+  await startShopWriteSession(localStorage, KEY, plan(), HELD)
   await render()
   await click('Resume shop update')
   await click('Review transaction')

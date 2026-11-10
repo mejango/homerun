@@ -7,6 +7,7 @@ import { usePublicClient } from 'wagmi'
 import { useReviewedAction, type TxRequest } from './useReviewedAction'
 import { useWallet } from './useWallet'
 import { assertNoViewAs } from '@/lib/viewAs'
+import { LockLostError } from '@bananapus/nana-sdk-core/review/locks'
 import { WRITE_EXIT_LABEL, browserLocks, hidesShownExit, writeExitMessage, type ReviewContextRow, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
 import { useHeldWrite } from '@bananapus/nana-sdk-core/review/react'
 import { holds } from '@/lib/write-hold'
@@ -108,6 +109,8 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
         const minimumBlock = cache.getQueryData<bigint>(['project-admin-confirmed-block', chainId, projectId.toString()])
         if (minimumBlock !== undefined && block.number < minimumBlock) throw new Error('The network has not reached the last confirmed project update. Wait for it to catch up before submitting another update.')
       }
+      /** A Safe proposal adopted after the lock lapsed: its account is listed under a fresh lock once this one ends. */
+      let listLater = false
       // The project check and the reservation run under one lock per chain and project.
       return await browserLocks().request(projectAdminLockName(chainId, projectId), { mode: 'exclusive', ifAvailable: true }, async lock => {
         if (!lock) throw new Error('Another tab is updating this project. Finish that update first.')
@@ -115,7 +118,7 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
         const holds = await otherProjectAdminHolds(localStorage, client, chainId, projectId, options.reviewedAccount)
         if (holds.length) { setOtherHold(holds[0]); return null }
         setOtherHold(null)
-        pruneProjectAdminAccounts(localStorage, chainId, projectId, options.reviewedAccount)
+        await pruneProjectAdminAccounts(localStorage, chainId, projectId, options.reviewedAccount, lock)
           setLabel(captured.label ?? 'Project update')
           handled.current = null
           resetTx()
@@ -124,8 +127,10 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
             reviewNotice: options.reviewNotice,
             context: options.context,
             recoveryNamespace: projectAdminNamespace(projectId),
+            locks: [lock],
         // Adopting a proposal the Safe already has skips the wallet, so the account is registered here, still under the lock.
-        onExistingProposal: () => { noteProjectAdminAccount(localStorage, chainId, projectId, options.reviewedAccount) },
+        onExistingProposal: () => noteProjectAdminAccount(localStorage, chainId, projectId, options.reviewedAccount, lock)
+          .catch(lapse => { if (!(lapse instanceof LockLostError)) throw lapse; listLater = true }),
             reverify: async reviewed => {
               await latestConfirmedBlock()
               await options.reverify(reviewed)
@@ -137,10 +142,15 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
               // Checked again right before the wallet opens: another wallet may have reserved the project meanwhile.
               const late = await otherProjectAdminHolds(localStorage, client, chainId, projectId, options.reviewedAccount)
               if (late.length) { setOtherHold(late[0]); throw new Error('Another wallet’s project update is still unresolved. Check it before sending another.') }
-              noteProjectAdminAccount(localStorage, chainId, projectId, options.reviewedAccount)
+              await noteProjectAdminAccount(localStorage, chainId, projectId, options.reviewedAccount, lock)
               await latestConfirmedBlock()
             },
           })
+      }).finally(async () => {
+        // Listing an account only lets other wallets find its hold, so it is applied whatever changed meanwhile.
+        if (listLater) await browserLocks().request(projectAdminLockName(chainId, projectId), async fresh => {
+          if (fresh) await noteProjectAdminAccount(localStorage, chainId, projectId, options.reviewedAccount, fresh)
+        }).catch(() => undefined)
       })
     } catch (reason) { setError(errorMessage(reason)); return null }
     finally { inFlight.current = false; setWorking(false) }
@@ -157,7 +167,7 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
     try {
       const holds = await otherProjectAdminHolds(localStorage, client, chainId, projectId, account)
       await browserLocks().request(projectAdminLockName(chainId, projectId), { mode: 'exclusive', ifAvailable: true }, async lock => {
-        if (lock) pruneProjectAdminAccounts(localStorage, chainId, projectId, account)
+        if (lock) await pruneProjectAdminAccounts(localStorage, chainId, projectId, account, lock)
       })
       setOtherHold(current => current?.hold !== shown.hold ? current : holds[0] ?? null)
     } catch { /* The next look asks again. */ }

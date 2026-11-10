@@ -1,12 +1,14 @@
 'use client'
 
 import { explorerTxUrl } from '@/lib/chainDisplay'
+import { HELD_CONFIRMING_LINE } from '@bananapus/nana-sdk-core/review'
 import { HeldNotice, retiringExit, type HeldWrite } from '@/components/ui/HeldWriteExit'
 
 /** What every card's status line says for each phase of its write. */
 export const TX_STATUS_LINES = {
   review: 'Review the exact transaction before continuing.',
-  pending: 'Submitted. Waiting for onchain confirmation…',
+  /** The SDK's line while a sent write is confirming, the one every client shows. */
+  pending: HELD_CONFIRMING_LINE,
   success: 'Confirmed onchain.',
   safeProposal: 'Safe proposal:',
   viewTransaction: 'View transaction',

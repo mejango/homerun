@@ -30,7 +30,7 @@ import { isSafeConnection, useSafeConnection, waitForSafeExecutionHash } from '@
 import { readSafeAppExecution } from '@bananapus/nana-sdk-core/safe-service'
 import { intentPath } from '@bananapus/nana-sdk-core/jbcenter'
 import { projectPath } from '@/lib/urn'
-import { browserLocks } from '@bananapus/nana-sdk-core/review/locks'
+import { browserLocks, type LockHandle } from '@bananapus/nana-sdk-core/review/locks'
 
 const message = (error: unknown) => readableError(error, 'The request could not be completed.')
 function publicClient(chainId: number): PublicClient {
@@ -204,7 +204,7 @@ function LaunchChain({ session, chainId, request, status, update, refreshFee, ru
   const launchHeld = { notice: tx.notice, held: retiringExit(tx.held, launch.retire, () => onStopped?.(false)) }
   const setupHeld = { notice: setupTx.notice, held: retiringExit(setupTx.held, setup.retire, () => onStopped?.(false)) }
 
-  async function ensureMultisigs() {
+  async function ensureMultisigs(lock: LockHandle) {
     if (!plans.length) return
     if (!setupRequest) throw new Error('This launch’s multisigs can no longer be built here.')
     const client = publicClient(chainId)
@@ -214,6 +214,7 @@ function LaunchChain({ session, chainId, request, status, update, refreshFee, ru
     const hash = await setupTx.send({ ...setupRequest, label: 'Create project multisigs' }, {
       reviewedAccount: sender,
       recoveryNamespace: setupKey,
+      locks: [lock],
       reviewNotice: multisigReview(plans),
       reverify: async () => { sameSender(getAccount(wagmiConfig).address, sender); await checkCreateMultisigs(client, plans) },
     })
@@ -233,7 +234,7 @@ function LaunchChain({ session, chainId, request, status, update, refreshFee, ru
     setupTx.reset()
   }
 
-  async function submitLaunch() {
+  async function submitLaunch(lock: LockHandle) {
     setError('')
     try {
       if (!request) throw new Error('This launch can no longer be built here. Its saved transactions are still checked above.')
@@ -245,11 +246,12 @@ function LaunchChain({ session, chainId, request, status, update, refreshFee, ru
       }
       sendable()
       sameSender(getAccount(wagmiConfig).address, sender)
-      await ensureMultisigs()
+      await ensureMultisigs(lock)
       const safe = isSafeConnection(wagmiConfig)
       const hash = await tx.send({ ...request, label }, {
         reviewedAccount: sender,
         recoveryNamespace: launchKey,
+        locks: [lock],
         // At the final boundary: recovery clear, and the saved launch exactly as it was when this send began.
         beforeWrite: async () => { sendable() },
         reverify: async () => {
@@ -268,7 +270,7 @@ function LaunchChain({ session, chainId, request, status, update, refreshFee, ru
   async function launchNow() {
     await browserLocks().request(`homerun:fund-launch:${session.input.salt}`, { ifAvailable: true }, async lock => {
       if (!lock) { setError('Another tab is reviewing this launch. Finish that review first.'); return }
-      await submitLaunch()
+      await submitLaunch(lock)
     })
   }
   const lastRun = useRef(0)

@@ -30,7 +30,7 @@ import { attempts, callOf, holds } from '@/lib/write-hold'
 import type { WriteHoldClient } from '@bananapus/nana-sdk-core/review'
 import { useOnConfirmed } from '@/hooks/useOnConfirmed'
 import { TX_STATUS_LINES, TxStatus } from '@/components/ui/TxStatus'
-import { browserLocks } from '@bananapus/nana-sdk-core/review/locks'
+import { browserLocks, type LockHandle } from '@bananapus/nana-sdk-core/review/locks'
 
 type Props = { state: FundProjectState; client: PublicClient; contextIndex: number }
 type Tx = ReturnType<typeof useReviewedAction>
@@ -677,10 +677,12 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
     setStorageChecked(true)
   }, [address, state.chainId, state.projectId, plan])
 
-  function recordSubmission(chainId: number, submission: RulesetSubmission) {
+  /** Under the plan's lock (`withSubmissionLock`), checked right before the journal saves. */
+  async function recordSubmission(chainId: number, submission: RulesetSubmission, lock: LockHandle) {
     const active = planRef.current
     if (!active) throw new Error('The linked ruleset plan is no longer available. Verify its transactions again.')
     const records = new Map(submissionsRef.current).set(chainId, submission)
+    await lock.assertHeld()
     persistIntent(active, records)
     submissionsRef.current = records; setSubmissions(records)
   }
@@ -689,22 +691,23 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
     if (JSON.stringify(submissionsRef.current.get(chainId) ?? null) !== JSON.stringify(expected)) throw new Error('This ruleset submission changed during recovery. Keep the current attempt pending.')
   }
 
-  function removeSubmission(chainId: number) {
+  async function removeSubmission(chainId: number, lock: LockHandle) {
     const active = planRef.current
     if (!active) return
     const records = new Map(submissionsRef.current); records.delete(chainId)
+    await lock.assertHeld()
     persistIntent(active, records)
     submissionsRef.current = records; setSubmissions(records)
   }
 
-  async function withSubmissionLock(task: () => Promise<void>) {
+  async function withSubmissionLock(task: (lock: LockHandle) => Promise<void>) {
     const active = planRef.current
     if (!active) throw new Error('Reload the saved linked ruleset plan before continuing.')
     const key = recoveryKey(active.account)
     await browserLocks().request(key, { mode: 'exclusive', ifAvailable: true }, async lock => {
       if (!lock) throw new Error('This linked ruleset plan is being reviewed or submitted in another tab.')
       if (savedRecovery.current?.key !== key || window.localStorage.getItem(key) !== savedRecovery.current.raw) throw new Error('The linked ruleset recovery changed in another tab. Reload its saved progress before continuing.')
-      await task()
+      await task(lock)
     })
   }
 
@@ -721,9 +724,9 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
    * A chain's verified write is recorded. Its settlement is followed only as the plan closes: until
    * then each reload proves it again from its saved submission, so a completion is never lost.
    */
-  const confirmChain = (active: RulesetPlan) => (chainId: number, result: RulesetCompletion) => withSubmissionLock(async () => {
+  const confirmChain = (active: RulesetPlan) => (chainId: number, result: RulesetCompletion) => withSubmissionLock(async lock => {
     if (planRef.current !== active) throw new Error('The linked plan changed during confirmation.')
-    recordSubmission(chainId, result.submission)
+    await recordSubmission(chainId, result.submission, lock)
     completedRef.current = new Map(completedRef.current).set(chainId, result)
     setCompleted(completedRef.current)
   })
@@ -736,7 +739,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
     const active = planRef.current
     if (!active) return
     try {
-      await withSubmissionLock(async () => {
+      await withSubmissionLock(async lock => {
         if (planRef.current !== active) throw new Error('The linked plan changed while closing. Keep its current submissions pending.')
         // A chain whose write its hold still holds keeps the plan, and its exit, until it settles or the user takes that exit;
         // one that settled keeps it until its result is recorded. A recorded chain is checked once it is followed, below.
@@ -760,6 +763,7 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
           if (!attempts.canDiscard(chainScope(active, index, result.submission))) throw new Error('Finish or exit the pending update first.')
         }
         const key = recoveryKey(active.account)
+        await lock.assertHeld()
         window.localStorage.removeItem(key)
         if (window.localStorage.getItem(key) !== null) throw new Error('The saved recovery plan could not be cleared.')
         savedRecovery.current = { key, raw: null }
@@ -996,14 +1000,14 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
         })}
       />
       {/* Every chain's hold is shown with its exit, while the plan is verified and after it resumes, except the chain its step shows. */}
-      {plan.states.map((peer, index) => (recovering || peer.chainId !== plan.states.find(next => !completed.has(next.chainId))?.chainId) && <PlanChainHold key={`${plan.startsAt}:${peer.chainId}`} plan={plan} index={index} submission={submissions.get(peer.chainId)} onConfirmed={confirmChain(plan)} done={completed.has(peer.chainId)} onAdopted={(chainId, submission) => withSubmissionLock(async () => { assertSubmission(chainId, submission); removeSubmission(chainId) })} confirmRetirable={chainRetirable(peer.chainId)} />)}
+      {plan.states.map((peer, index) => (recovering || peer.chainId !== plan.states.find(next => !completed.has(next.chainId))?.chainId) && <PlanChainHold key={`${plan.startsAt}:${peer.chainId}`} plan={plan} index={index} submission={submissions.get(peer.chainId)} onConfirmed={confirmChain(plan)} done={completed.has(peer.chainId)} onAdopted={(chainId, submission) => withSubmissionLock(async lock => { assertSubmission(chainId, submission); await removeSubmission(chainId, lock) })} confirmRetirable={chainRetirable(peer.chainId)} />)}
       {/* A plan that can no longer finish (its shared start passed, or recovery can't resume it) can always be closed. */}
       {(unresumable || (completed.size < plan.states.length && Date.now() / 1000 >= plan.startsAt - 60)) && <div role="status" className="grid gap-2 text-sm">
         <p>This plan can no longer finish. The chains not yet updated were not changed.</p>
         <button type="button" className="btn-secondary min-h-10 w-fit px-4" onClick={() => void closePlan(true)}>Close this plan</button>
       </div>}
       {recovering ? <RecoveryPanel plan={plan} submissions={submissions} recorded={chainId => completedRef.current.get(chainId)} onFailed={() => setUnresumable(true)} onResume={recovered => withSubmissionLock(async () => { if (planRef.current !== plan) throw new Error('The linked plan changed during recovery.'); for (const [chainId, submission] of submissions) assertSubmission(chainId, submission); if (submissionsRef.current.size !== submissions.size) throw new Error('A linked submission changed during recovery.'); completedRef.current = new Map([...completedRef.current, ...recovered.completed]); setCompleted(completedRef.current); setRecovering(false) })} />
-        : completed.size < plan.states.length ? <LinkedRulesetStep key={`${plan.startsAt}:${completed.size}`} plan={plan} index={plan.states.findIndex(peer => !completed.has(peer.chainId))} submission={submissions.get(plan.states.find(peer => !completed.has(peer.chainId))!.chainId)} confirmRetirable={chainRetirable(plan.states.find(peer => !completed.has(peer.chainId))!.chainId)} completed={completed} onConfirmed={confirmChain(plan)} onCancel={() => void closePlan()} onCloseChecked={() => void closePlan(true)} onAdopted={(chainId, submission) => withSubmissionLock(async () => { assertSubmission(chainId, submission); removeSubmission(chainId) })} />
+        : completed.size < plan.states.length ? <LinkedRulesetStep key={`${plan.startsAt}:${completed.size}`} plan={plan} index={plan.states.findIndex(peer => !completed.has(peer.chainId))} submission={submissions.get(plan.states.find(peer => !completed.has(peer.chainId))!.chainId)} confirmRetirable={chainRetirable(plan.states.find(peer => !completed.has(peer.chainId))!.chainId)} completed={completed} onConfirmed={confirmChain(plan)} onCancel={() => void closePlan()} onCloseChecked={() => void closePlan(true)} onAdopted={(chainId, submission) => withSubmissionLock(async lock => { assertSubmission(chainId, submission); await removeSubmission(chainId, lock) })} />
           : <><p role="status" className="text-sm">Every ruleset transaction is confirmed. The new rules take effect at the shared activation time.</p><button type="button" className="btn-secondary min-h-10 w-fit px-4" onClick={() => void closePlan()}>Done</button></>}
     </section>}
 

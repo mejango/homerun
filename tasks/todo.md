@@ -1,3 +1,33 @@
+# SDK core 6.2.0 adoption: run wrapper, lock fencing, shared confirming line (2026-11-10)
+
+Brief: scratchpad sm/ADOPTION_BRIEF.md; SDK #295 (fencing) and #296 (run wrapper) bodies; fencing map's homerun section. Read against the released 6.2.0 types in node_modules.
+
+- [x] Pin @bananapus/nana-sdk-core 6.2.0 (Node 26, npm 12). Homerun uses core's review/react, not nana-sdk-react.
+- [x] Wrapper: `txPhaseOf` maps `stopped` (shown as idle today); `clear()` calls `runner.dismiss()`; `onDismissedSettled` refreshes reads; `busy` from `runner.busy`; `TxSendOptions.locks` reaches the run.
+- [x] inFlight gap: `send` encodes its calls before taking the flag, and frees it in `finally` on every path. Failing-first test.
+- [x] Fence the 7 journal saves (await the lock right before each write): project-admin note/prune, shop persist, launch persist (bound journal: FundDeploy writes it unlocked), FUND ruleset intent, INCOME global draft, Sticky created.
+- [x] `locks` through `relayrPay`, `prepareForwardedTx`, and `withForwarderAuthorizationLock`'s `execute(assertAvailable, locks)`; every locked `tx.send` passes its lock.
+- [x] Stale comment in test/runtime/write-recovery-fixture.ts:6.
+- [x] Confirming line: TX_STATUS_LINES.pending is the SDK's HELD_CONFIRMING_LINE.
+- [x] Gates: `npm run check`, typecheck, browser suites; draft PR.
+
+## Plan refinement
+
+- **Objective:** Homerun runs on SDK 6.2.0: a stop after a sent step shows its outcome, a thrown encode never wedges the send, every journal write under a browser lock refuses once the lock is lost, and the confirming line matches the SDK's.
+- **System fit:** The SDK owns run status, dismissal and the wallet/signature fences (`locks`); Homerun owns its journals, so each locked save checks its own handle right before writing. Post-wallet evidence writes (hashes, receipts, polled records) stay unfenced as in the SDK.
+- **Reuse and simplicity:** `assertHeld`/`assertLocksHeld` from core, no local lock code; the wrapper drops its own reset for `runner.dismiss()`; the confirming line is the SDK's constant.
+- **Evidence and unknowns:** Released 6.2.0 .d.ts in node_modules; the fencing map's line numbers checked against origin/main bd3ff4c.
+- **Verification:** Failing-first tests for `stopped`, the inFlight throw, and a lost lock refusing each fenced save; full `npm run check` plus typecheck and browser suites.
+- **Resource budget:** One worktree, tsc to find call sites of each signature change; replan if a save has no lock handle in reach.
+
+
+## Review
+
+- Gates (Node 26): lint, wallet:check, check:indexer, test, build, budget, test:contracts all pass. test:live: 2977 of 2978; `safe-hold.test.ts` "shows a proven success only once the hold settles it" fails on 6.2.0 with the old src too: the SDK's `useReviewedRun` acknowledges a followed success with `safe` hard-coded false (useReviewedRun.js:305), so a Safe success is never acknowledged. Left failing; needs an SDK fix.
+- Lapses after the wallet returned: a Relayr launch refusal whose save lost the launch lock is kept and applied under a fresh lock only if the saved record is still the sending attempt; an adopted Safe proposal whose account note lost the project lock is listed under a fresh lock. Fences on chain-proven saves (shop confirm, Sticky created, ruleset submission, launch statuses) re-derive from chain after reload, covered by the existing recovery tests.
+- Budget: SDK 6.2.0 raised /create/recover 405 to 407, /create/success 262 to 264, /op:11 520 to 523 (recorded in check-client-budgets.mjs). Startup idle: /create 439 to 442 (440.2 measured; recorded in test/startup-downloads.mjs).
+- SDK 6.3.0 will keep lost-lock outcomes itself (coordinator, approved by jango): the Relayr launch keep (`lapsed` in runRelayrLaunch) and the admin `listLater` re-note are interim and are deleted in the 6.3.0 follow-up.
+
 # State machines wave 3: adopt the SDK owners, delete local copies (2026-11-09)
 
 Brief: scratchpad sm/BRIEF3.md; SDK signatures and settled differences: sm/sdk.md rounds 1 and 2. Builds against the packed SDK tarball; no package.json or lockfile change until publish.

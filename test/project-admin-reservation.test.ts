@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-
 import type { Address, Hex } from 'viem'
+import { LockLostError } from '@bananapus/nana-sdk-core/review/locks'
 import { createBrowserWriteRecovery } from '@bananapus/nana-sdk-core/review'
 import { adoptLegacyProjectAdminRecord, noteProjectAdminAccount, otherProjectAdminHolds, projectAdminNamespace, pruneProjectAdminAccounts } from '@/lib/project-admin-reservation'
 import { heldStorage } from '@/lib/write-hold'
 import { installRecoveryLocks, recoveryRecords } from './runtime/write-recovery-fixture'
+import { HELD, LOST } from './support/locks'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const BOB = '0x3333333333333333333333333333333333333333' as Address
@@ -93,7 +94,7 @@ describe('the project reservation across accounts', () => {
   async function hold(account: Address) {
     const journal = createBrowserWriteRecovery({ chainId: 8453, account, safe: false, namespace: projectAdminNamespace(7n), call: { to: TARGET, data: '0x12345678', value: 0n } })
     await journal.withLock(async () => { journal.reserve() })
-    noteProjectAdminAccount(localStorage, 8453, 7n, account)
+    await noteProjectAdminAccount(localStorage, 8453, 7n, account, HELD)
   }
 
   it('holds a second authorized account while the first account’s update is unresolved', async () => {
@@ -124,7 +125,7 @@ describe('the project reservation across accounts', () => {
     const [held] = await otherProjectAdminHolds(localStorage, client() as never, 8453, 7n, BOB)
     expect((await held.hold.exit(held.state, { checkedWallet: true }, client() as never)).released).toBe(true)
     expect(await otherProjectAdminHolds(localStorage, client() as never, 8453, 7n, BOB)).toHaveLength(0)
-    pruneProjectAdminAccounts(localStorage, 8453, 7n, BOB)
+    await pruneProjectAdminAccounts(localStorage, 8453, 7n, BOB, HELD)
     expect(localStorage.getItem('homerun:project-admin:accounts:v1:8453:7')).toBeNull()
   })
 
@@ -136,12 +137,12 @@ describe('the project reservation across accounts', () => {
     })
     const journal = createBrowserWriteRecovery({ chainId: 8453, account: ALICE, safe: false, namespace: projectAdminNamespace(7n), call: { to: TARGET, data: '0x12345678', value: 0n } }, { storage: heldStorage })
     await journal.withLock(async () => { journal.reserve() })
-    noteProjectAdminAccount(localStorage, 8453, 7n, ALICE)
+    await noteProjectAdminAccount(localStorage, 8453, 7n, ALICE, HELD)
     expect(recoveryRecords()).toHaveLength(0)
     const found = await otherProjectAdminHolds(localStorage, client() as never, 8453, 7n, BOB)
     expect(found).toHaveLength(1)
     expect(found[0].state.record.account).toBe(ALICE)
-    pruneProjectAdminAccounts(localStorage, 8453, 7n, BOB)
+    await pruneProjectAdminAccounts(localStorage, 8453, 7n, BOB, HELD)
     expect(JSON.parse(localStorage.getItem('homerun:project-admin:accounts:v1:8453:7')!)).toContain(ALICE.toLowerCase())
   })
 
@@ -156,7 +157,7 @@ describe('the project reservation across accounts', () => {
     async function holdSafe() {
       const journal = createBrowserWriteRecovery({ chainId: 8453, account: SAFE, safe: true, namespace: projectAdminNamespace(7n), call: { to: TARGET, data: '0x12345678', value: 0n } })
       await journal.withLock(async () => { journal.reserve(); journal.submitted(PROPOSAL) })
-      noteProjectAdminAccount(localStorage, 8453, 7n, SAFE)
+      await noteProjectAdminAccount(localStorage, 8453, 7n, SAFE, HELD)
     }
     const holds = () => otherProjectAdminHolds(localStorage, client() as never, 8453, 7n, BOB)
 
@@ -175,12 +176,12 @@ describe('the project reservation across accounts', () => {
     async function hold(account: Address) {
       const journal = createBrowserWriteRecovery({ chainId: 8453, account, safe: false, namespace: projectAdminNamespace(7n), call: { to: TARGET, data: '0x12345678', value: 0n } })
       await journal.withLock(async () => { journal.reserve() })
-      noteProjectAdminAccount(localStorage, 8453, 7n, account)
+      await noteProjectAdminAccount(localStorage, 8453, 7n, account, HELD)
     }
 
     it('does not write back a stale list over an account registered while its chain checks waited', async () => {
       await hold(ALICE)
-      noteProjectAdminAccount(localStorage, 8453, 7n, DAVE) // listed with nothing held: stale
+      await noteProjectAdminAccount(localStorage, 8453, 7n, DAVE, HELD) // listed with nothing held: stale
       let open!: () => void
       const gate = new Promise<void>(resolve => { open = resolve })
       const slow = { ...client(), getChainId: vi.fn(async () => { await gate; return 8453 }) }
@@ -196,10 +197,20 @@ describe('the project reservation across accounts', () => {
 
     it('prunes accounts that hold nothing from the list it reads at that moment, keeping the caller’s', async () => {
       await hold(ALICE)
-      noteProjectAdminAccount(localStorage, 8453, 7n, DAVE)
-      noteProjectAdminAccount(localStorage, 8453, 7n, BOB)
-      pruneProjectAdminAccounts(localStorage, 8453, 7n, BOB)
+      await noteProjectAdminAccount(localStorage, 8453, 7n, DAVE, HELD)
+      await noteProjectAdminAccount(localStorage, 8453, 7n, BOB, HELD)
+      await pruneProjectAdminAccounts(localStorage, 8453, 7n, BOB, HELD)
       expect(accounts()).toEqual([ALICE.toLowerCase(), BOB.toLowerCase()])
     })
+  })
+})
+
+describe('the account list under a lost project lock', () => {
+  it('writes nothing once another tab took the lock', async () => {
+    await expect(noteProjectAdminAccount(localStorage, 8453, 7n, ALICE, LOST)).rejects.toThrow(LockLostError)
+    expect(localStorage.getItem('homerun:project-admin:accounts:v1:8453:7')).toBeNull()
+    await noteProjectAdminAccount(localStorage, 8453, 7n, ALICE, HELD)
+    await expect(pruneProjectAdminAccounts(localStorage, 8453, 7n, '0x2222222222222222222222222222222222222222', LOST)).rejects.toThrow(LockLostError)
+    expect(localStorage.getItem('homerun:project-admin:accounts:v1:8453:7')).toContain(ALICE.toLowerCase())
   })
 })

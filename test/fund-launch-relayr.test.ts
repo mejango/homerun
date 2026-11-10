@@ -51,6 +51,7 @@ vi.mock('@/lib/relayr', async importOriginal => ({
 }))
 
 import { relayrDiscardLine, relayrHeldMessage as heldMessage } from '@bananapus/nana-sdk-core/review'
+import { LockLostError } from '@bananapus/nana-sdk-core/review/locks'
 import { relayrPaymentLabel } from '@/lib/relayr'
 const relayrHeldMessage = (until: number) => heldMessage(until, { action: 'launch' })
 import { predictMultisig, MULTICALL3, CREATE_BATCH_ABI, unbundleMultisigLaunch, type CreateMultisig } from '@/lib/create-multisig'
@@ -188,7 +189,7 @@ beforeEach(() => {
   m.pay.mockImplementation(async ({ payment, destinationChainIds, reverify, onSending, onSent }) => {
     expect(destinationChainIds).toEqual(entries.map(entry => entry.chain))
     await reverify()
-    onSending()
+    await onSending()
     expect(loadLaunchSession()?.relayr?.phase).toBe('payment-signing')
     const payments = [sentFor(payment, HASH)]
     onSent(payments)
@@ -199,6 +200,59 @@ beforeEach(() => {
 })
 
 describe('relayed launch execution and recovery', () => {
+  it('writes nothing more, signs nothing and pays nothing once another tab took the launch lock', async () => {
+    const lost = { name: 'lost', mode: 'exclusive', signal: new AbortController().signal, held: async () => false,
+      assertHeld: async () => { throw new LockLostError('homerun:fund-launch') } }
+    vi.stubGlobal('navigator', { locks: { request: async (name: string, _options: unknown, fn: (lock: object) => Promise<void>) => fn(name === 'homerun:fund-launch' ? lost : {}) } })
+    const before = storage.get(FUND_LAUNCH_KEY)
+    await expect(run()).rejects.toThrow(LockLostError)
+    expect(storage.get(FUND_LAUNCH_KEY)).toBe(before)
+    expect(m.forward).not.toHaveBeenCalled()
+    expect(m.pay).not.toHaveBeenCalled()
+  })
+
+  it.each([false, true])('keeps a wallet refusal that arrives after the launch lock lapsed, applying it under a fresh lock unless another tab moved on: moved=%s', async moved => {
+    let lost = false
+    const handle = { name: 'homerun:fund-launch', mode: 'exclusive', signal: new AbortController().signal, held: async () => !lost,
+      assertHeld: async () => { if (lost) throw new LockLostError('homerun:fund-launch') } }
+    vi.stubGlobal('navigator', { locks: { request: async (name: string, _options: unknown, fn: (lock: object) => Promise<void>) => {
+      if (name !== 'homerun:fund-launch') return fn({})
+      // The first hold lapses during the wallet prompt; the next one is a fresh, held lock.
+      if (lost) return fn({ ...handle, held: async () => true, assertHeld: async () => {} })
+      return fn(handle)
+    } } })
+    let sending: string | undefined
+    m.pay.mockImplementationOnce(async ({ reverify, onSending }) => {
+      await reverify(); await onSending()
+      sending = storage.get(FUND_LAUNCH_KEY)
+      lost = true
+      // Another tab saved its own progress meanwhile.
+      if (moved) storage.set(FUND_LAUNCH_KEY, sending + ' ')
+      throw Object.assign(new Error('User rejected the request.'), { code: 4001 })
+    })
+    await expect(run()).rejects.toThrow('User rejected')
+    if (moved) {
+      expect(storage.get(FUND_LAUNCH_KEY)).toBe(sending + ' ')
+      return
+    }
+    const saved = loadLaunchSession()!
+    expect(storage.get(FUND_LAUNCH_KEY)).not.toBe(sending)
+    expect(saved.relayr?.phase).not.toBe(JSON.parse(sending!).relayr.phase)
+    expect(saved.paymentChainId).toBeUndefined()
+  })
+
+  it('hands the launch lock and every signer lock to the authorization signatures and the payment', async () => {
+    const handles: object[] = []
+    vi.stubGlobal('navigator', { locks: { request: async (name: string, _options: unknown, fn: (lock: object) => Promise<void>) => {
+      const handle = { name, mode: 'exclusive', signal: new AbortController().signal, held: async () => true, assertHeld: async () => {} }
+      handles.push(handle)
+      return fn(handle)
+    } } })
+    await run(session([1, 10]))
+    expect(m.forward.mock.calls[0][3]).toEqual(handles)
+    expect(m.pay.mock.calls[0][0].locks).toEqual(handles)
+  })
+
   it('creates a single-chain owner Safe and project in one destination transaction and one payment', async () => {
     storage.clear()
     const value = session([1])
@@ -1465,13 +1519,13 @@ describe('paying a reverted launch quote again', () => {
   type Pay = { payment: RelayrPayment; sent?: unknown[]; reverify: () => Promise<void>; onSending: () => void; onSent: (payments: unknown[]) => void }
   /** The wallet sends the payment and the chain mines it reverted. */
   const reverting = async ({ payment, sent = [], reverify, onSending, onSent }: Pay) => {
-    await reverify(); onSending()
+    await reverify(); await onSending()
     onSent([...sent, sentFor(payment, HASH)])
     throw new RelayrPaymentRevertedError('The Relayr funding transaction reverted onchain.', HASH, payment.chain)
   }
   /** The wallet sends the payment again and the chain mines it. */
   const paying = async ({ payment, sent = [], reverify, onSending, onSent }: Pay) => {
-    await reverify(); onSending()
+    await reverify(); await onSending()
     const payments = [...sent, sentFor(payment, SECOND_PAYMENT)]
     onSent(payments)
     return { hash: SECOND_PAYMENT, payments }
@@ -1555,7 +1609,7 @@ describe('paying a reverted launch quote again', () => {
     m.pay.mockImplementationOnce(reverting)
     await expect(run()).rejects.toThrow(/reverted onchain/)
     m.pay.mockImplementation(async ({ reverify, onSending }: Pay) => {
-      await reverify(); onSending(); throw new Error('no hash returned')
+      await reverify(); await onSending(); throw new Error('no hash returned')
     })
     await expect(run()).rejects.toThrow('no hash returned')
     expect(loadLaunchSession()?.relayr?.phase).toBe('payment-signing')
@@ -1727,7 +1781,7 @@ describe('paying a reverted launch quote again', () => {
 
   it('finds a payment that reverted while the app was away, and pays again only on the retry rule', async () => {
     m.pay.mockImplementationOnce(async ({ payment, reverify, onSending, onSent }: Pay) => {
-      await reverify(); onSending(); onSent([sentFor(payment, HASH)]); throw new Error('reload after funding submission')
+      await reverify(); await onSending(); onSent([sentFor(payment, HASH)]); throw new Error('reload after funding submission')
     })
     await expect(run()).rejects.toThrow('reload after funding submission')
     expect(loadLaunchSession()?.relayr?.phase).toBe('submitted')
@@ -1743,7 +1797,7 @@ describe('paying a reverted launch quote again', () => {
 
   it('keeps a submitted payment that is not proven yet submitted, and waits on Relayr', async () => {
     m.pay.mockImplementationOnce(async ({ payment, reverify, onSending, onSent }: Pay) => {
-      await reverify(); onSending(); onSent([sentFor(payment, HASH)]); throw new Error('reload after funding submission')
+      await reverify(); await onSending(); onSent([sentFor(payment, HASH)]); throw new Error('reload after funding submission')
     })
     await expect(run()).rejects.toThrow('reload after funding submission')
     // The funding chain does not answer for the payment's hash.

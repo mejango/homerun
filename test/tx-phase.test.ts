@@ -7,7 +7,7 @@ describe("the phase a flow shows for the SDK's run status", () => {
     ['idle', 'idle'], ['cancelled', 'idle'], ['settled', 'idle'],
     ['review', 'review'], ['simulating', 'simulating'], ['signing', 'signing'],
     ['receipt', 'pending'], ['proposed', 'held'], ['held', 'held'],
-    ['done', 'success'], ['failed', 'error'],
+    ['done', 'success'], ['failed', 'error'], ['stopped', 'error'],
   ] as const)('%s reads %s', (status, phase) => expect(txPhaseOf(status)).toBe(phase))
 
   it('reads a Safe execution whose receipt is confirming as pending, not held', () => {

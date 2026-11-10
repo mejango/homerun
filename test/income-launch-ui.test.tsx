@@ -35,6 +35,7 @@ import { serializeFundGlobalManifest } from '../src/lib/fund-global-manifest'
 import { homerunDeployerAbi } from '../src/lib/income-contracts'
 import { incomeLaunchIntent, incomeLaunchRecord } from '../src/lib/income-launch-session'
 import { readIncomeGlobalDraft, saveIncomeGlobalDraft, serializeIncomeGlobalDraft } from '../src/lib/income-global-launch-draft'
+import { HELD } from './support/locks'
 import { displayChainName } from '../src/lib/chainDisplay'
 import { installRecoveryLocks } from './runtime/write-recovery-fixture'
 import { BLOCK_HASH, CHAIN_IDS, FUND_IDS, HELPER, OWNER, TOKEN, fundState, globalDraft, globalManifest, globalSnapshot, hashFor, launchInput, launchPlan } from './fixtures/income-global-launch'
@@ -78,7 +79,7 @@ describe('global INCOME launch flow', () => {
   async function settle(executionHash = hashFor(8453)) { await ready(); await click('Review Base deployment'); await holdReports('success', executionHash, executionHash) }
   async function setInput(field: HTMLInputElement, value: string) { await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, value); field.dispatchEvent(new Event('input', { bubbles: true })) }) }
   async function upload(field: Element, json: string) { Object.defineProperty(field, 'files', { configurable: true, value: [{ size: json.length, text: async () => json }] }); await act(async () => field.dispatchEvent(new Event('change', { bubbles: true }))) }
-  function restorePlan() { saveIncomeGlobalDraft(localStorage, globalDraft()) }
+  async function restorePlan() { await saveIncomeGlobalDraft(localStorage, globalDraft(), HELD) }
   /** Each chain's saved launch is mined and final where the SDK's hold reads it. */
   function minedLaunches() {
     for (const chainId of CHAIN_IDS) {
@@ -176,7 +177,7 @@ describe('global INCOME launch flow', () => {
   })
 
   it('restores frozen percentages before considering different metadata defaults', async () => {
-    restorePlan()
+    await restorePlan()
     const saved = serializeIncomeGlobalDraft(draft())
     await render(false, { reservedPercent: 65 })
     expect(serializeIncomeGlobalDraft(draft())).toBe(saved)
@@ -271,7 +272,7 @@ describe('global INCOME launch flow', () => {
   })
 
   it('accepts the downloaded manifest when IPFS restoration is unavailable', async () => {
-    restorePlan(); runtime.fetch.mockRejectedValue(new Error('IPFS unavailable')); await render()
+    await restorePlan(); runtime.fetch.mockRejectedValue(new Error('IPFS unavailable')); await render()
     await upload(host.querySelector('input[type="file"]')!, serializeFundGlobalManifest(globalManifest()))
     for (const chainId of CHAIN_IDS) section(chainId); expect(runtime.history).not.toHaveBeenCalled()
   })
@@ -292,18 +293,18 @@ describe('global INCOME launch flow', () => {
   })
 
   it('reverifies restored completed receipts rather than trusting the saved completion count', async () => {
-    restorePlan(); let shared = draft()
+    await restorePlan(); let shared = draft()
     for (const chainId of CHAIN_IDS) { const record = savedPending(chainId); shared = { ...shared, chains: shared.chains.map(row => row.chainId === chainId ? { ...row, execution: { hash: hashFor(chainId), record } } : row) } }
-    saveIncomeGlobalDraft(localStorage, shared); minedLaunches()
+    await saveIncomeGlobalDraft(localStorage, shared, HELD); minedLaunches()
     runtime.verify.mockImplementation(async (client: PublicClient) => { if (await client.getChainId() === 10) throw new Error('RPC unavailable'); return 'confirmed' })
     await render(); await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)) })
     expect(host.textContent).toContain('3 of 4 networks confirmed'); expect(host.textContent).not.toContain('Every network’s deployment'); expect(runtime.verify).toHaveBeenCalled()
   })
 
   it('does not count a saved completed network while its launch hold still holds a write', async () => {
-    restorePlan(); let shared = draft()
+    await restorePlan(); let shared = draft()
     for (const chainId of CHAIN_IDS) { const record = savedPending(chainId); shared = { ...shared, chains: shared.chains.map(row => row.chainId === chainId ? { ...row, execution: { hash: hashFor(chainId), record } } : row) } }
-    saveIncomeGlobalDraft(localStorage, shared)
+    await saveIncomeGlobalDraft(localStorage, shared, HELD)
     minedLaunches()
     // Base's launch is held unresolved: its saved completion waits for the hold.
     const { holds } = await import('../src/lib/write-hold')
@@ -316,9 +317,9 @@ describe('global INCOME launch flow', () => {
   })
 
   it('confirms all four recorded allocations, including the empty one, before declaring completion', async () => {
-    restorePlan(); let shared = draft()
+    await restorePlan(); let shared = draft()
     for (const chainId of CHAIN_IDS) { const record = savedPending(chainId); shared = { ...shared, chains: shared.chains.map(row => row.chainId === chainId ? { ...row, execution: { hash: hashFor(chainId), record } } : row) } }
-    saveIncomeGlobalDraft(localStorage, shared); minedLaunches(); await render(); await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)) })
+    await saveIncomeGlobalDraft(localStorage, shared, HELD); minedLaunches(); await render(); await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)) })
     expect(host.textContent).toContain('4 of 4 networks confirmed'); expect(host.textContent).toContain('Every network’s deployment and local initial allocation is confirmed')
   })
 
@@ -334,7 +335,7 @@ describe('global INCOME launch flow', () => {
 
 
   it('keeps verified INCOME operations available when a saved manifest cannot load', async () => {
-    restorePlan(); runtime.bindings.set(8453, 10n); runtime.fetch.mockRejectedValue(new Error('IPFS unavailable')); await render(true)
+    await restorePlan(); runtime.bindings.set(8453, 10n); runtime.fetch.mockRejectedValue(new Error('IPFS unavailable')); await render(true)
     expect(host.textContent).toContain('Existing INCOME 8453/10')
     runtime.bindings.clear(); runtime.bindingError = true; await render(true)
     expect(host.textContent).toContain('Existing INCOME 8453/10'); expect(runtime.send).not.toHaveBeenCalled()

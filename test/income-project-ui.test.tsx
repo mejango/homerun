@@ -431,7 +431,7 @@ describe('INCOME transaction surfaces', () => {
     expect(runtime.unmounted).toBe(0)
     expect(runtime.mounted).toBe(mounted)
     expect(host.querySelector('fieldset[aria-label="INCOME transactions"]')?.hasAttribute('disabled')).toBe(true)
-    expect(host.textContent).toContain('Waiting for onchain confirmation')
+    expect(host.textContent).toContain('Confirming your transaction')
   })
 
   it('preserves pending status and disables stale account data while another wallet loads', async () => {

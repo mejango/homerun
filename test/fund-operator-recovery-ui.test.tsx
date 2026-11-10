@@ -11,6 +11,7 @@ import type { RulesetSubmission } from '../src/components/FundOperatorActions'
 import type { FundProjectState } from '../src/lib/fund-state'
 import { safeExecutionLog } from './support/safe-logs'
 import { placeReceipt } from './support/recovery-receipt'
+import { LockLostError } from '@bananapus/nana-sdk-core/review/locks'
 import { installRecoveryLocks } from './runtime/write-recovery-fixture'
 
 const runtime = vi.hoisted(() => ({
@@ -215,6 +216,30 @@ describe('linked ruleset recovery of a Safe execution', () => {
     // Closed under the plan's owner lock (the hold's own locks follow each chain's settlement inside it).
     expect(locks.mock.calls.slice(callsBeforeClose).filter(([name]) => name === key)).toHaveLength(1)
     expect(localStorage.getItem(key)).toBe(replaced ? newer : null)
+  })
+
+  it('keeps a verified plan saved when another tab took its lock before it closed', async () => {
+    const saved = plan()
+    const first = successReceipt(saved, false, 0); const second = successReceipt(saved, false, 1)
+    const records = new Map([
+      [8453, { kind: 'transaction' as const, hash: first.receipt.transactionHash, attemptId: crypto.randomUUID() }],
+      [10, { kind: 'transaction' as const, hash: second.receipt.transactionHash, attemptId: crypto.randomUUID() }],
+    ])
+    localStorage.setItem(key, serializeRulesetRecovery(saved, records, ROOT))
+    runtime.receipt.mockImplementation(async ({ hash }: { hash: Hex }) => hash === first.receipt.transactionHash ? first.receipt : second.receipt)
+    runtime.transaction.mockImplementation(async ({ hash }: { hash: Hex }) => hash === first.receipt.transactionHash ? first.transaction : second.transaction)
+    runtime.states = saved.states.map(peer => ({ ...state(), chainId: peer.chainId, projectId: peer.projectId, blockNumber: 121n, blockTimestamp: 1_000n, rulesetSnapshot: { ...peer.rulesetSnapshot, upcomingRulesetId: 72n }, linkedChainIds: [8453, 10] }))
+    await act(async () => root.render(<FundOperatorActions state={state()} client={{} as PublicClient} contextIndex={0} />))
+    await act(async () => button('Verify and resume queued plan')!.click()); await settle()
+    expect(button('Done'), host.textContent ?? '').toBeDefined()
+    const request = navigator.locks.request.bind(navigator.locks) as (name: string, options: object, work: (lock: object | null) => unknown) => Promise<unknown>
+    vi.spyOn(navigator.locks, 'request').mockImplementation(((name: string, options: object, work: (lock: object | null) => unknown) => name !== key ? request(name, options, work)
+      : request(name, options, held => work(held && { name, mode: 'exclusive', signal: new AbortController().signal, held: async () => false, assertHeld: async () => { throw new LockLostError(name) } }))) as never)
+    const before = localStorage.getItem(key)
+    await act(async () => button('Done')!.click())
+    expect(before).not.toBeNull()
+    expect(localStorage.getItem(key)).toBe(before)
+    expect(host.textContent).toContain('lock was lost')
   })
 
   function savedChain(record: RulesetSubmission) {

@@ -8,6 +8,7 @@ import {
   type JBChainId,
 } from "@bananapus/nana-sdk-core";
 import { v6Address } from "@bananapus/nana-sdk-core/v6";
+import type { LockHandle } from "@bananapus/nana-sdk-core/review/locks";
 import {
   decodeEventLog,
   decodeFunctionData,
@@ -676,12 +677,14 @@ export function readStickyCreated(
     throw new Error("The saved Sticky creation belongs to a different FUND.");
   return { ...parsed, pending: record };
 }
-export function saveStickyCreated(
+/** Under the creation's lock, checked right before the record is saved. */
+export async function saveStickyCreated(
   storage: StickyStorage,
   record: StickyPending,
   executionHash: Hex,
   projectId: bigint,
-): void {
+  lock: Pick<LockHandle, "assertHeld">,
+): Promise<void> {
   const value: StickyCreatedRecord = {
     version: 1,
     pending: record,
@@ -690,6 +693,7 @@ export function saveStickyCreated(
   };
   const key = stickyCreatedKey(record.chainId, BigInt(record.projectId)),
     serialized = JSON.stringify(value);
+  await lock.assertHeld();
   storage.setItem(key, serialized);
   if (storage.getItem(key) !== serialized)
     throw new Error(
