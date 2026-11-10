@@ -23,10 +23,10 @@ Brief: scratchpad sm/ADOPTION_BRIEF.md; SDK #295 (fencing) and #296 (run wrapper
 
 ## Review
 
-- Gates (Node 26): lint, wallet:check, check:indexer, test, build, budget, test:contracts all pass. test:live: 2977 of 2978; `safe-hold.test.ts` "shows a proven success only once the hold settles it" fails on 6.2.0 with the old src too: the SDK's `useReviewedRun` acknowledges a followed success with `safe` hard-coded false (useReviewedRun.js:305), so a Safe success is never acknowledged. Left failing; needs an SDK fix.
+- Gates (Node 26): lint, wallet:check, check:indexer, test, build, budget, test:contracts all pass. test:live passes. `safe-hold.test.ts` "shows a proven success only once the hold settles it" first failed because test/runtime/write-recovery-fixture.ts counted 6.2.0's `:settled-by` settlement history as an active write (Codex pass 1); the fixture now excludes it. An earlier note blamed the SDK's `safe` flag at useReviewedRun.js:305; that was wrong.
 - Lapses after the wallet returned: a Relayr launch refusal whose save lost the launch lock is kept and applied under a fresh lock only if the saved record is still the sending attempt; an adopted Safe proposal whose account note lost the project lock is listed under a fresh lock. Fences on chain-proven saves (shop confirm, Sticky created, ruleset submission, launch statuses) re-derive from chain after reload, covered by the existing recovery tests.
 - Budget: SDK 6.2.0 raised /create/recover 405 to 407, /create/success 262 to 264, /op:11 520 to 523 (recorded in check-client-budgets.mjs). Startup idle: /create 439 to 442 (440.2 measured; recorded in test/startup-downloads.mjs).
-- SDK 6.3.0 will keep lost-lock outcomes itself (coordinator, approved by jango): the Relayr launch keep (`lapsed` in runRelayrLaunch) and the admin `listLater` re-note are interim and are deleted in the 6.3.0 follow-up.
+- SDK 6.3.0 will keep lost-lock outcomes itself (coordinator, approved by jango): the Relayr launch keep (`lapsed` in runRelayrLaunch) and the admin `listLater` re-note are interim and are deleted in the 6.3.0 follow-up. Codex pass 1 (Medium): the `lapsed` keep compares the full saved record, so a late 4001 is dropped when another tab saved an unrelated status; 6.3.0 matches on attempt identity and merges into the latest record, so it is left for that follow-up.
 
 # State machines wave 3: adopt the SDK owners, delete local copies (2026-11-09)
 
