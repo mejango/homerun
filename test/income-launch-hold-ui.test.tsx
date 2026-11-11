@@ -42,6 +42,7 @@ import { wallet } from './support/fake-wallet'
 import { IncomeLaunch } from '@/components/IncomeLaunch'
 import { incomeLaunchIntent, incomeLaunchSessionKey } from '@/lib/income-launch-session'
 import { saveIncomeGlobalDraft } from '@/lib/income-global-launch-draft'
+import { HELD } from './support/locks'
 
 const EXIT = 'I checked my wallet'
 const KEY = incomeLaunchSessionKey(8453, 7n)
@@ -62,12 +63,12 @@ async function review() {
   await click('Review Base deployment')
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   localStorage.clear(); installRecoveryLocks()
   wallet.reset(); wallet.connect(OWNER)
   wallet.client.getChainId.mockImplementation(async () => 8453)
   vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => globalManifest() })))
-  saveIncomeGlobalDraft(localStorage, globalDraft())
+  await saveIncomeGlobalDraft(localStorage, globalDraft(), HELD)
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); localStorage.clear(); vi.unstubAllGlobals() })

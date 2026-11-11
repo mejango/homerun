@@ -1,12 +1,14 @@
-import { transactionMessage } from '@bananapus/nana-sdk-core/review'
+import { errorLine, transactionMessage } from '@bananapus/nana-sdk-core/review'
 
 /**
  * A reader-facing sentence for a failure. viem's full `message` carries request
  * details (calldata, RPC URLs that may embed keys, library versions), so only its
- * `shortMessage` is shown. The app's own errors are already written for readers.
+ * `shortMessage` is shown. The app's own errors are already written for readers. An SDK error with a fixed line (a lost
+ * lock, a queued confirmation) shows that line.
  */
 export function readableError(error: unknown, fallback: string): string {
   if (!(error instanceof Error)) return fallback
+  if ('reviewFixedLine' in error) return errorLine(error)
   const short = (error as { shortMessage?: unknown }).shortMessage
   return transactionMessage(typeof short === 'string' && short ? short : error.message || fallback)
 }

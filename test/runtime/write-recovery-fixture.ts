@@ -2,9 +2,9 @@
 export function installRecoveryLocks() {
   const held = new Map<string, Promise<void>>()
   Object.defineProperty(navigator, 'locks', { configurable: true, value: {
-    request: async (name: string, options: { ifAvailable?: boolean }, work: (lock: object | null) => Promise<unknown>) => {
-      // Only (name, options, callback): the SDK's browserLocks() fallback has no two-argument form.
-      if (typeof work !== 'function') throw new TypeError('work is not a function')
+    request: async (name: string, ...args: [options: { ifAvailable?: boolean }, work: (lock: object | null) => Promise<unknown>] | [work: (lock: object | null) => Promise<unknown>]) => {
+      // (name, callback) or (name, options, callback), as navigator.locks takes them.
+      const [options, work] = args.length === 1 ? [{} as { ifAvailable?: boolean }, args[0]] : args
       if (options.ifAvailable && held.has(name)) return work(null)
       while (held.has(name)) await held.get(name)
       let release!: () => void
@@ -18,10 +18,10 @@ export function installRecoveryLocks() {
 
 /**
  * The held writes saved now: each record, without the SDK's markers beside it (its `:latest`
- * reservation pointer, `:settled` settlement and `:released:` and `:exited:` exit markers), and none the user released.
+ * reservation pointer, `:settled` settlement, `:settled-by` history, `:outcome-by` outcomes, and `:released:` and `:exited:` exit markers), and none the user released.
  */
 export const recoveryRecords = () => Object.keys(localStorage)
-  .filter(key => key.startsWith('nana-sdk:reviewed-write:v') && !/:(latest|settled|rejected)$|:(released|exited):/.test(key))
+  .filter(key => key.startsWith('nana-sdk:reviewed-write:v') && !/:(latest|settled|settled-by|outcome-by|rejected)$|:(released|exited):/.test(key))
   .map(key => ({ key, record: JSON.parse(localStorage.getItem(key)!) }))
   .filter(({ key, record }) => localStorage.getItem(`${key}:released:${record.id}`) === null)
   .map(({ record }) => record)

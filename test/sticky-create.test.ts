@@ -44,6 +44,8 @@ import {
   stickyCreatedKey,
   verifyStickyCreationExecution,
 } from "../src/lib/sticky-create";
+import { HELD, LOST } from "./support/locks";
+import { LockLostError } from "@bananapus/nana-sdk-core/review/locks";
 import { StickyCreate } from "../src/components/StickyCreate";
 
 vi.mock("../src/lib/fund-state", async (original) => ({
@@ -844,8 +846,13 @@ function executionClient(
 describe("creation recovery and duplicate protection", () => {
   it("keeps a completed creation so a reload rechecks it instead of creating again", async () => {
     const { storage, record } = await pendingFixture();
-    saveStickyCreated(storage, record, EXECUTION, 9n);
+    await saveStickyCreated(storage, record, EXECUTION, 9n, HELD);
     expect(readStickyCreated(storage, 1, 7n)?.projectId).toBe("9");
+  });
+  it("saves no completed creation once another tab took its lock", async () => {
+    const { storage, record } = await pendingFixture();
+    await expect(saveStickyCreated(storage, record, EXECUTION, 9n, LOST)).rejects.toThrow(LockLostError);
+    expect(readStickyCreated(storage, 1, 7n)).toBeNull();
   });
   it("holds a creation by its FUND, and adopts one the journal saved before SDK holds with its own evidence", async () => {
     const { prepared, record } = await pendingFixture();
@@ -1039,7 +1046,7 @@ describe("creation recovery and duplicate protection", () => {
   });
   it("does not show a saved creation as confirmed while its hold still holds a write", async () => {
     const { client, record } = await pendingFixture();
-    saveStickyCreated(localStorage, record, EXECUTION, 9n);
+    await saveStickyCreated(localStorage, record, EXECUTION, 9n, HELD);
     const verifiedClient = executionClient(client, record);
     // The creation's hold holds an unresolved write: the saved completion waits for it.
     const { holds } = await import("../src/lib/write-hold");
@@ -1066,7 +1073,7 @@ describe("creation recovery and duplicate protection", () => {
   });
   it("revalidates completed creation with no manifest and reports it once without a recovery loop", async () => {
     const { client, record } = await pendingFixture();
-    saveStickyCreated(localStorage, record, EXECUTION, 9n);
+    await saveStickyCreated(localStorage, record, EXECUTION, 9n, HELD);
     const container = document.createElement("div"),
       root = createRoot(container),
       onCreated = vi.fn();

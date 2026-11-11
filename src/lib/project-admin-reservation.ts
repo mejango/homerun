@@ -4,6 +4,7 @@ import {
   createBrowserWriteRecovery, parseReviewedWriteRecoveryRecord, readBrowserWriteRecovery, sameReviewedWrite,
   type WriteHeldState, type WriteHoldHandle, type WriteHoldState,
 } from '@bananapus/nana-sdk-core/review'
+import type { LockHandle } from '@bananapus/nana-sdk-core/review/locks'
 
 /** One reservation per chain and project, around the SDK's per-account records. */
 type Store = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
@@ -31,8 +32,12 @@ function writeAccounts(storage: Store, chainId: number, projectId: bigint, accou
   storage.setItem(key, raw)
   if (storage.getItem(key) !== raw) throw new Error('This browser could not save project update recovery. Do not submit until browser storage is available.')
 }
-/** Name an account that may hold this project's reservation. Call before its wallet opens. */
-export function noteProjectAdminAccount(storage: Store, chainId: number, projectId: bigint, account: Address): void {
+/** Name an account that may hold this project's reservation, under the project lock. Call before its wallet opens. */
+export async function noteProjectAdminAccount(storage: Store, chainId: number, projectId: bigint, account: Address, lock: Pick<LockHandle, 'assertHeld'>): Promise<void> {
+  await lock.assertHeld()
+  noteAccount(storage, chainId, projectId, account)
+}
+function noteAccount(storage: Store, chainId: number, projectId: bigint, account: Address): void {
   const accounts = accountsOf(storage, chainId, projectId)
   if (!accounts.some(item => item.toLowerCase() === account.toLowerCase())) writeAccounts(storage, chainId, projectId, [...accounts, account.toLowerCase() as Address])
 }
@@ -75,7 +80,8 @@ export async function adoptLegacyProjectAdminRecord(storage: Store, chainId: num
   })
   const saved = journal.read()
   if (!saved || (hash && saved.hash?.toLowerCase() !== hash.toLowerCase())) throw unreadable()
-  noteProjectAdminAccount(storage, chainId, projectId, input.account)
+  // Under the SDK journal's own lock, not the project's: a one-time move of a record from before it.
+  noteAccount(storage, chainId, projectId, input.account)
   storage.removeItem(key)
 }
 
@@ -83,7 +89,8 @@ export async function adoptLegacyProjectAdminRecord(storage: Store, chainId: num
  * Drop accounts that hold nothing from the list as it is now, keeping `account`. Call it under the
  * project lock: a scan reads the list and waits on the chain, so it never writes one back.
  */
-export function pruneProjectAdminAccounts(storage: Store, chainId: number, projectId: bigint, account: Address): void {
+export async function pruneProjectAdminAccounts(storage: Store, chainId: number, projectId: bigint, account: Address, lock: Pick<LockHandle, 'assertHeld'>): Promise<void> {
+  await lock.assertHeld()
   const namespace = projectAdminNamespace(projectId)
   const accounts = accountsOf(storage, chainId, projectId)
   const keep = accounts.filter(other => other.toLowerCase() === account.toLowerCase()

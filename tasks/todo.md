@@ -1,3 +1,60 @@
+# SDK core 6.3.0: the SDK keeps lost-lock outcomes, shared lines (2026-11-11)
+
+Brief: scratchpad sm/adopt-630-brief.md; API and deletion map: scratchpad pr298-final-body.md.
+
+- [x] Pin @bananapus/nana-sdk-core 6.3.0 (Node 26, npm 12).
+- [x] Admin listing: `listLater` and its fresh lock become `keepOutcome([lock], note, note)` (listing is idempotent, so `later` applies it whatever another tab did).
+- [x] Relayr launch: the `lapsed` keep becomes `payRelayrReviewed`'s `onUnsent` with `attemptScoped`; it matches the attempt (salt, bundle, payment count, `payment-signing`) and merges into the latest record (closes Codex pass 1's Medium). A proven revert is chain evidence, saved unfenced.
+- [x] Shared lines: `REVIEW_STOPPED_LINE` from the SDK; SDK fixed-line errors (`LOCK_LOST_LINE`, `CONFIRMATION_QUEUED_LINE`) shown through `errorLine`.
+- [x] Fixture excludes `:settled-by` and `:outcome-by`.
+- [x] Regressions through the SDK path with `lapsingLocksForTests`; each fails with its fix undone.
+- [x] Gates, Codex until MERGE (pass 3: MERGE).
+
+## Plan refinement
+
+- **Objective:** No client-side keep or reconcile code: the SDK keeps a wallet outcome past a lapsed lock, and Homerun only says how to write its own record.
+- **System fit:** The SDK owns retaking locks and when to retry; Homerun's `onUnsent` and note stay plain fenced writes. The `relayrPay` test mock models `payRelayrReviewed`'s unsent rule once, with the real `keepOutcome`.
+- **Reuse and simplicity:** `keepOutcome`, `attemptScoped`, `errorLine` and the SDK lines; no local constants for SDK wording.
+- **Evidence and unknowns:** 6.3.0 .d.ts and dist in node_modules.
+- **Verification:** lapsing-lock regressions (admin listing past another tab's routine lock; Relayr refusal with nobody, an unrelated other-tab save, and a cleared launch); full `npm run check`, browser suites in CI.
+- **Resource budget:** One worktree; stop and report if an SDK behavior blocks a gate.
+
+## Review
+
+- Gates (Node 26): lint, wallet:check, check:indexer, test, tsc, build, budget, test:contracts pass; test:live 2978 of 2979 (the SDK bug below). Budget for 6.3.0: /create/recover 407 to 410 (408.7), /op:11 523 to 525 (523.9), startup idle /create 442 to 445 (443.1 in CI).
+- Codex pass 2 (Medium, one lease lapse): closePlan's new fence sat after the settlements retired, so a lapse left a plan whose recovery reads `retired: 'settled'` as unfinished. Fixed: check before retiring, and the clear goes through `keepOutcome` (later only while the saved plan is unchanged). Regression with `lapsingLocksForTests`, failing on the previous code.
+- SDK 6.3.0 bug, reported, not worked around: `useReviewedRun.js` follow filter (dist ~640-653) returns false for an intent call whose earlier success is unacknowledged with the hold clear, before the exact-call match. A remounted form with a recovery namespace gets neither `held` nor `sendAgainAction` and every later send is refused ("This went through while you were away."). `reviewed-action-gates.test.tsx` "a payment that went through while the user was away..." fails on it; it passes without the namespace.
+
+# SDK core 6.2.0 adoption: run wrapper, lock fencing, shared confirming line (2026-11-10)
+
+Brief: scratchpad sm/ADOPTION_BRIEF.md; SDK #295 (fencing) and #296 (run wrapper) bodies; fencing map's homerun section. Read against the released 6.2.0 types in node_modules.
+
+- [x] Pin @bananapus/nana-sdk-core 6.2.0 (Node 26, npm 12). Homerun uses core's review/react, not nana-sdk-react.
+- [x] Wrapper: `txPhaseOf` maps `stopped` (shown as idle today); `clear()` calls `runner.dismiss()`; `onDismissedSettled` refreshes reads; `busy` from `runner.busy`; `TxSendOptions.locks` reaches the run.
+- [x] inFlight gap: `send` encodes its calls before taking the flag, and frees it in `finally` on every path. Failing-first test.
+- [x] Fence the 7 journal saves (await the lock right before each write): project-admin note/prune, shop persist, launch persist (bound journal: FundDeploy writes it unlocked), FUND ruleset intent, INCOME global draft, Sticky created.
+- [x] `locks` through `relayrPay`, `prepareForwardedTx`, and `withForwarderAuthorizationLock`'s `execute(assertAvailable, locks)`; every locked `tx.send` passes its lock.
+- [x] Stale comment in test/runtime/write-recovery-fixture.ts:6.
+- [x] Confirming line: TX_STATUS_LINES.pending is the SDK's HELD_CONFIRMING_LINE.
+- [x] Gates: `npm run check`, typecheck, browser suites; draft PR.
+
+## Plan refinement
+
+- **Objective:** Homerun runs on SDK 6.2.0: a stop after a sent step shows its outcome, a thrown encode never wedges the send, every journal write under a browser lock refuses once the lock is lost, and the confirming line matches the SDK's.
+- **System fit:** The SDK owns run status, dismissal and the wallet/signature fences (`locks`); Homerun owns its journals, so each locked save checks its own handle right before writing. Post-wallet evidence writes (hashes, receipts, polled records) stay unfenced as in the SDK.
+- **Reuse and simplicity:** `assertHeld`/`assertLocksHeld` from core, no local lock code; the wrapper drops its own reset for `runner.dismiss()`; the confirming line is the SDK's constant.
+- **Evidence and unknowns:** Released 6.2.0 .d.ts in node_modules; the fencing map's line numbers checked against origin/main bd3ff4c.
+- **Verification:** Failing-first tests for `stopped`, the inFlight throw, and a lost lock refusing each fenced save; full `npm run check` plus typecheck and browser suites.
+- **Resource budget:** One worktree, tsc to find call sites of each signature change; replan if a save has no lock handle in reach.
+
+
+## Review
+
+- Gates (Node 26): lint, wallet:check, check:indexer, test, build, budget, test:contracts all pass. test:live passes. `safe-hold.test.ts` "shows a proven success only once the hold settles it" first failed because test/runtime/write-recovery-fixture.ts counted 6.2.0's `:settled-by` settlement history as an active write (Codex pass 1); the fixture now excludes it. An earlier note blamed the SDK's `safe` flag at useReviewedRun.js:305; that was wrong.
+- Lapses after the wallet returned: a Relayr launch refusal whose save lost the launch lock is kept and applied under a fresh lock only if the saved record is still the sending attempt; an adopted Safe proposal whose account note lost the project lock is listed under a fresh lock. Fences on chain-proven saves (shop confirm, Sticky created, ruleset submission, launch statuses) re-derive from chain after reload, covered by the existing recovery tests.
+- Budget: SDK 6.2.0 raised /create/recover 405 to 407, /create/success 262 to 264, /op:11 520 to 523 (recorded in check-client-budgets.mjs). Startup idle: /create 439 to 442 (440.2 measured; recorded in test/startup-downloads.mjs).
+- SDK 6.3.0 will keep lost-lock outcomes itself (coordinator, approved by jango): the Relayr launch keep (`lapsed` in runRelayrLaunch) and the admin `listLater` re-note are interim and are deleted in the 6.3.0 follow-up. Codex pass 1 (Medium): the `lapsed` keep compares the full saved record, so a late 4001 is dropped when another tab saved an unrelated status; 6.3.0 matches on attempt identity and merges into the latest record, so it is left for that follow-up.
+
 # State machines wave 3: adopt the SDK owners, delete local copies (2026-11-09)
 
 Brief: scratchpad sm/BRIEF3.md; SDK signatures and settled differences: sm/sdk.md rounds 1 and 2. Builds against the packed SDK tarball; no package.json or lockfile change until publish.

@@ -76,3 +76,29 @@ it('a same-nonce replacement is not shown as this payment\'s success', async () 
   expect(ref.current!.hash).not.toBe(replacement)
   await act(async () => root.unmount())
 })
+
+it('a refusal after an earlier step was sent says the rest was not sent', async () => {
+  const { root, ref } = await mount()
+  const second = buildPayTx({ chainId: 10, terminal: TERMINAL, projectId: 4n, token: TOKEN, amount: 2n * 10n ** 16n, beneficiary: ALICE, minReturnedTokens: 7n, memo: 'Homerun FUND payment', metadata: '0x' })
+  wallet.writeContract.mockImplementationOnce(wallet.writeContract.getMockImplementation()!)
+    .mockRejectedValueOnce(Object.assign(new Error('User rejected the request.'), { code: 4001 }))
+  let sent: Promise<unknown> | undefined
+  await act(async () => { sent = ref.current!.send([{ ...PAY, recoveryNamespace: 'pay:a' }, { ...second, recoveryNamespace: 'pay:b', dependsOnPrior: true }], { reviewedAccount: ALICE, scope: 'two-pays' }) })
+  await vi.waitFor(() => expect(wallet.awaits(sentHash(1))).toBe(true))
+  await act(async () => { wallet.confirm(sentHash(1)) })
+  await act(async () => { await sent })
+  await vi.waitFor(() => expect(ref.current!.phase).toBe('error'))
+  expect(ref.current!.error).toBe('The rest was not sent. Review it again when you are ready.')
+  expect(ref.current!.reverted).toBe(false)
+  await act(async () => root.unmount())
+})
+
+it('a call that cannot be encoded leaves the send free for the next one', async () => {
+  const { root, ref } = await mount()
+  const unencodable = { ...PAY, functionName: 'notInTheAbi' }
+  await act(async () => { await expect(ref.current!.send(unencodable, { reviewedAccount: ALICE })).rejects.toThrow() })
+  let hash: `0x${string}` | null = null
+  await act(async () => { hash = await ref.current!.send(PAY, { reviewedAccount: ALICE }) })
+  expect(hash).toBe(sentHash(1))
+  await act(async () => root.unmount())
+})

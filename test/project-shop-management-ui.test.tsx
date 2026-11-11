@@ -9,6 +9,7 @@ import type { ProjectShopState } from '@/lib/project-shop'
 import type { PreparedProjectShopWrite, ProjectShopWriteState } from '@/lib/project-shop-write'
 import type { ShopWriteSession, ShopWriteStorage } from '@/lib/project-shop-session'
 import { installRecoveryLocks } from './runtime/write-recovery-fixture'
+import { HELD } from './support/locks'
 
 const runtime = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111' as Address | undefined,
@@ -139,7 +140,7 @@ beforeEach(() => {
   runtime.verify.mockReset().mockImplementation(async (_client, captured: ShopWriteSession) => captured.completed.length ? 111n : 0n)
   runtime.clear.mockReset().mockImplementation((_storage, key) => runtime.saved.delete(key))
   runtime.restore.mockReset().mockImplementation((_storage, key, captured) => store(key, { ...captured, restoring: true }))
-  runtime.lock.mockReset().mockImplementation(async (_key, task) => task())
+  runtime.lock.mockReset().mockImplementation(async (_key, task) => task(HELD))
   // The SDK's hold settles the step on its receipt when the chain has one: the phase turns success.
   runtime.send.mockReset().mockImplementation(async (request: TxRequest, options: TxSendOptions) => {
     await options.reverify?.(request)
@@ -328,7 +329,7 @@ describe('live project shop management', () => {
     runtime.receipt = 'confirmed'; runtime.phase = 'success'; runtime.txReceipt = { transactionHash: EXECUTION }
     await render()
     await settled(() => expect(host.textContent).toContain('Your inventory changes are confirmed onchain.'))
-    expect(runtime.confirm).toHaveBeenCalledWith(runtime.client, localStorage, KEY, expect.anything(), expect.objectContaining({ safe: false, hash: HASH }), EXECUTION)
+    expect(runtime.confirm).toHaveBeenCalledWith(runtime.client, localStorage, KEY, expect.anything(), expect.objectContaining({ safe: false, hash: HASH }), EXECUTION, HELD)
   })
 
   it('blocks the next reviewed step if the connected account changes', async () => {

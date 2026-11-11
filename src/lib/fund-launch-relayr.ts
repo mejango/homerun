@@ -79,7 +79,7 @@ import { withForwarderAuthorizationLock } from '@/lib/forwarder-authorization'
 import { requireFundingChainSelection } from '@/lib/transaction-review'
 import { reviewedSendDeps } from '@/lib/reviewed-send-deps'
 import type { ReviewedPlan } from '@bananapus/nana-sdk-core/review'
-import { browserLocks } from '@bananapus/nana-sdk-core/review/locks'
+import { assertLocksHeld, browserLocks, type LockHandle } from '@bananapus/nana-sdk-core/review/locks'
 
 /** Core's one review of the launch, out of every page's first load. */
 const loadPlanEngine = () => import(/* webpackExports: ["reviewPlan"] */ '@bananapus/nana-sdk-core/review')
@@ -207,33 +207,40 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     await browserLocks().request('homerun:fund-launch', { ifAvailable: true }, async lock => {
       if (!lock) throw new Error('This launch is already running in another tab.')
       await withForwarderAuthorizationLock({ account, chainIds: [...session.input.chainIds], owner: `launch:${session.input.salt}`,
-        execute: run })
+        execute: (assertAvailable, signerLocks) => run(assertAvailable, [lock, ...signerLocks]) })
     })
   } finally {
     activeLaunches.delete(session.input.salt)
   }
 
-  async function run(assertAuthorizationAvailable: (destinations?: number[]) => void) {
+  /** `locks`: the launch's and each signer's nonce lock. Every journal write before the wallet checks them. */
+  async function run(assertAuthorizationAvailable: (destinations?: number[]) => void, locks: readonly LockHandle[]) {
     const saved = loadLaunchSession({ strict: true })
     if (saved && saved.input.salt !== session.input.salt) throw new Error('Another launch is saved in this browser. Resume it before starting a different launch.')
     const current = saved?.input.salt === session.input.salt ? saved : session
     if (!canRelayrLaunch(current)) {
       throw new Error('The saved launch must use supported chains from the same network environment.')
     }
-    const persist = () => {
+    /** Saves the launch as it is now, unfenced: only for evidence the wallet or Relayr already returned. */
+    const record = () => {
       const latest = loadLaunchSession()
       if (latest && latest.input.salt !== current.input.salt) throw new Error('Another tab changed the active launch. Stop and recover the original launch before continuing.')
       if (!saveLaunchSession(current)) {
         throw new Error('Allow browser storage before launching so payment and destination transactions can be recovered safely.')
       }
     }
-    const status = (chainId: number, next: LaunchChainStatus & { error?: string }) => {
+    /** The launch journal bound to this run's locks: refused once another tab took one. */
+    const persist = async () => {
+      await assertLocksHeld(locks)
+      record()
+    }
+    const status = async (chainId: number, next: LaunchChainStatus & { error?: string }) => {
       // The React caller merges patches. Explicitly clear fields absent from this full
       // snapshot so a failed attempt's hash cannot attach itself to a newly signed bundle.
       const snapshot = { hash: undefined, projectId: undefined,
         error: undefined, ...next }
       current.statuses = { ...current.statuses, [chainId]: snapshot }
-      persist()
+      await persist()
       onStatus(chainId, snapshot)
     }
     const requireAccount = () => {
@@ -307,17 +314,17 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       return { outstanding, states, outcome }
     }
     /** A chain whose request may have run is never signed again: it reads unresolved, and the line says why. */
-    const markRan = ({ outstanding, states }: NonNullable<Awaited<ReturnType<typeof classify>>>) => {
+    const markRan = async ({ outstanding, states }: NonNullable<Awaited<ReturnType<typeof classify>>>) => {
       for (const chainId of new Set(outstanding.map(item => item.chainId))) {
         if (outstanding.some((item, index) => item.chainId === chainId && states[index] && !states[index].live && states[index].mayHaveRun)) {
-          status(chainId, { phase: 'unresolved', hash: current.statuses[chainId]?.hash, error: LAUNCH_MAY_HAVE_RUN })
+          await status(chainId, { phase: 'unresolved', hash: current.statuses[chainId]?.hash, error: LAUNCH_MAY_HAVE_RUN })
         }
       }
     }
     /** Marks the journal for cancelling and ends the run: every request it published is dead, and it is not signed again. */
-    const abandon = (target: RelayrLaunchJournal, line: string, cause?: unknown): never => {
+    const abandon = async (target: RelayrLaunchJournal, line: string, cause?: unknown): Promise<never> => {
       target.abandonable = true
-      persist()
+      await persist()
       throw new Error(line, cause === undefined ? undefined : { cause })
     }
     /**
@@ -325,7 +332,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
      * may have run, a finalized nonce below a saved one, a recheck the node could not answer, or every request dead and
      * the launch not to be signed again. Returns the outcomes that may go on.
      */
-    const requireGoOn = (target: RelayrLaunchJournal, outcome: RelayrSessionOutcome): Extract<RelayrSessionOutcome, { kind: 'refresh' | 're-sign' | 'discard' }> => {
+    const requireGoOn = async (target: RelayrLaunchJournal, outcome: RelayrSessionOutcome): Promise<Extract<RelayrSessionOutcome, { kind: 'refresh' | 're-sign' | 'discard' }>> => {
       if (outcome.kind === 'hold') throw new Error(launchHeld(outcome.until))
       if (outcome.kind === 'reorg-hold') throw new Error(launchHeld(0))
       if (outcome.kind === 'unchecked') {
@@ -361,7 +368,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
           advanceRelayrLaunch(journal, { type: 'released' })
           delete current.paymentChainId
         }
-        persist()
+        await persist()
       } catch (error) {
         unreleased = error
       }
@@ -374,8 +381,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     if (journal?.published && !fundedElsewhere && relayrLaunchUnfunded(journal.phase)) {
       const classified = await classify(journal)
       if (classified) {
-        if (classified.outcome.kind === 'discard' && classified.outcome.reason === 'ran') markRan(classified)
-        const outcome = requireGoOn(journal, classified.outcome)
+        if (classified.outcome.kind === 'discard' && classified.outcome.reason === 'ran') await markRan(classified)
+        const outcome = await requireGoOn(journal, classified.outcome)
         if (outcome.kind === 'refresh') {
           heldUntil = outcome.until
         } else {
@@ -384,7 +391,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
           if (journal.abandonable !== true) {
             // Every request expired unused and the recheck passed: the launch may be cancelled, or signed again at its saved nonces.
             journal.abandonable = true
-            persist()
+            await persist()
             throw new Error('All outstanding launch authorizations expired unused. You can change the setup or retry this launch; any earlier relay payments are not refunded automatically.')
           }
         }
@@ -397,7 +404,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         retryNonces: { ...previous.retryNonces, ...Object.fromEntries(previous.signed.map(item => [item.chainId, item.nonce])) },
         superseded: supersede(previous) })
       current.relayr = journal
-      persist()
+      await persist()
     }
     const requireQuoteBindings = () => {
       const bindings = journal?.quote?.expectedTransactions
@@ -447,12 +454,12 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
             if (!(error instanceof RelayrDestinationRevertedError)) throw error
             // A reverted execute leaves the nonce unused. Whether its old authorization can still run, or another
             // request used the nonce, is classified below at a canonical finalized block.
-            status(signed.chainId, { phase: 'reverted', hash, error: 'The destination launch reverted.' })
+            await status(signed.chainId, { phase: 'reverted', hash, error: 'The destination launch reverted.' })
             return 'reverted'
           }
           const projectId = (await verifyFundLaunch(client, requestFor(current, signed.chainId, request.value), current.input, receipt, false, signed.entry)).toString()
           if (!projectId) throw new Error('The launch confirmed but its project ID could not be verified.')
-          status(signed.chainId, { phase: 'confirmed', hash, projectId })
+          await status(signed.chainId, { phase: 'confirmed', hash, projectId })
           return 'confirmed'
         }
         // A chain tries the hash its record reports now, then the last hash it saw, and a hash that failed never
@@ -497,12 +504,12 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       const expired = (chainId: number) => ownStates(chainId).length > 0 && ownStates(chainId).every(state => state && !state.live && state.unused)
       for (const [chainId, { hash, error }] of waiting) {
         const seen = hash ? { hash } : {}
-        if (expired(chainId)) status(chainId, { phase: 'expired', ...seen, error: 'The unexecuted launch authorization expired.' })
-        else status(chainId, { phase: 'unresolved', ...seen, error })
+        if (expired(chainId)) await status(chainId, { phase: 'expired', ...seen, error: 'The unexecuted launch authorization expired.' })
+        else await status(chainId, { phase: 'unresolved', ...seen, error })
       }
-      markRan(classified)
+      await markRan(classified)
       if (outcome.kind === 'hold' || outcome.kind === 'reorg-hold') return false
-      const next = requireGoOn(original, outcome)
+      const next = await requireGoOn(original, outcome)
       // Requests that can still run are signed again only for chains that reverted or expired, at their saved nonces.
       if (next.kind === 'refresh' && ![...waiting.keys()].every(expired)) return false
       current.relayr = resignedRelayrLaunch({
@@ -512,7 +519,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
           .map(item => [item.chainId, item.nonce])),
       })
       delete current.paymentChainId
-      persist()
+      await persist()
       return false
     }
 
@@ -524,7 +531,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         try {
           await proveSavedRelayrPayment(relayrChainClient, resumed.payments, account, () => {
             advanceRelayrLaunch(resumed, { type: 'reverted' })
-            persist()
+            record()
           })
         } catch (error) {
           if (!(error instanceof RelayrProofError) || error instanceof RelayrPaymentRevertedError) throw error
@@ -533,8 +540,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
           const classified = await classify(resumed, { recheck: false })
           if (classified?.outcome.kind === 'discard') {
             const ran = classified.outcome.reason === 'ran'
-            if (ran) markRan(classified)
-            abandon(resumed, ran ? LAUNCH_MAY_HAVE_RUN : LAUNCH_PAYMENT_UNMATCHED, error)
+            if (ran) await markRan(classified)
+            await abandon(resumed, ran ? LAUNCH_MAY_HAVE_RUN : LAUNCH_PAYMENT_UNMATCHED, error)
           }
           throw error
         }
@@ -542,10 +549,10 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       onProgress('Checking the original payment and destination transactions. No new payment will be requested.')
       // Provider failure labels and timeouts still require independent onchain reconciliation.
       const polled = journal
-      const records = await relayrRecords(journal.quote!.bundle_uuid, journal.signed.length, { timeoutMs: 15_000, onRecords: seen => { polled.records = seen; persist() } }).catch(() => null)
+      const records = await relayrRecords(journal.quote!.bundle_uuid, journal.signed.length, { timeoutMs: 15_000, onRecords: seen => { polled.records = seen; record() } }).catch(() => null)
       if (records) {
         journal.records = records
-        persist()
+        record()
       }
       if (await reconcile()) return
       if (current.relayr === journal) {
@@ -559,7 +566,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         const classified = await classify(journal, { recheck: false })
         if (classified?.outcome.kind === 'discard' && classified.outcome.reason === 'expired' &&
             await originalPaymentExpired()) journal.abandonable = true
-        persist()
+        await persist()
         throw new Error(journal.abandonable === true
           ? 'The launch authorizations and payment quote expired. You may abandon this launch, but the earlier payment may have been charged; check your wallet. No refund is implied.'
           : 'Your wallet may have sent the payment without returning its hash. Check its activity before another payment.')
@@ -569,7 +576,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
 
     journal ??= resignedRelayrLaunch({ account })
     current.relayr = journal
-    persist()
+    await persist()
     const remaining = current.input.chainIds.filter(chainId => current.statuses[chainId]?.phase !== 'confirmed')
     if (!remaining.length) return
 
@@ -618,7 +625,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       const creationFee = await getProjectCreationFee(client, chainId as JBChainId)
       const request = requestFor(current, chainId, creationFee)
       current.input = { ...current.input, creationFees: { ...current.input.creationFees, [chainId]: creationFee } }
-      persist()
+      await persist()
       const forwarder = forwarderFor(chainId)
       const [code, forwarderCode, trusted, nonce] = await Promise.all([
         client.getCode({ address: account }), client.getCode({ address: forwarder }),
@@ -635,7 +642,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       const estimate = await estimateLaunch(client, account, request, creationFee)
       const prepared = await prepareForwardedTx({ chainId: chainId as JBChainId, target: request.address,
         data, value: request.value, gas: gasWithHeadroom(estimate + (current.input.multisigs?.length ? 200_000n : 0n)), abi: request.abi,
-        functionName: request.functionName, args: request.args, label: `Launch on ${chainName(chainId)}` }, account, nonce)
+        functionName: request.functionName, args: request.args, label: `Launch on ${chainName(chainId)}` }, account, nonce, locks)
       authorizations.push({ chainId, nonce, prepared })
     }
     /** The one review of every launch still to sign, and the Relayr round whose fee bound it shows. */
@@ -661,13 +668,13 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       requireAccount()
       assertAuthorizationAvailable(remaining)
       onProgress(`Sign the launch authorization for ${chainName(chainId)}.`)
-      status(chainId, { phase: 'signing' })
+      await status(chainId, { phase: 'signing' })
       const entry = await prepared.sign(planned!.plan)
       const signedRequest = relayrForwardRequest(entry)
       if (!signedRequest) throw new Error('Invalid launch authorization.')
       journal.signed.push({ chainId, entry: bundleMultisigLaunch(entry, current.input.multisigs), nonce: nonce.toString(), deadline: signedRequest.deadline })
-      persist()
-      status(chainId, { phase: 'authorized' })
+      await persist()
+      await status(chainId, { phase: 'authorized' })
     }
     try {
       await verifySigned()
@@ -689,7 +696,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
           retryNonces[signed.chainId] = signed.nonce
         }
         current.relayr = resignedRelayrLaunch({ account, retryNonces, ...(journal.published ? { superseded: supersede(journal) } : {}) })
-        persist()
+        await persist()
       }
       throw error
     }
@@ -697,10 +704,10 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       assertAuthorizationAvailable(remaining)
       advanceRelayrLaunch(journal!, { type: 'quoting' })
       delete current.paymentChainId
-      persist() // exact signed entries are durable BEFORE publishing them to Relayr
+      await persist() // exact signed entries are durable BEFORE publishing them to Relayr
       onProgress('Getting payment options for all selected chains.')
       advanceRelayrLaunch(journal!, { type: 'quoted', quote: await relayrPostBundle(journal!.signed.map(item => item.entry)) })
-      persist()
+      await persist()
     }
     const destinations = journal.signed.map(item => item.chainId)
     let payment: RelayrPayment | undefined
@@ -739,43 +746,58 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     }
     advanceRelayrLaunch(journal, { type: 'chosen', paymentChainId, paymentDeadline: details.deadline.toString() })
     current.paymentChainId = paymentChainId
-    persist()
+    await persist()
     onProgress(`Approve one payment on ${chainName(paymentChainId)} to launch on every selected chain.`)
     /** The wallet holds the payment and has returned no hash for it. */
     let sending = false
+    const bundleUuid = journal.quote!.bundle_uuid
+    const paidBefore = journal.payments?.length ?? 0
     try {
       ;({ hash: journal.paymentHash } = await relayrPay({
         payment, account, quote: { ...journal.quote!, transactions: journal.quote!.transactions ?? [], expectedTransactions: requireQuoteBindings() }, destinationChainIds: destinations,
         sent: journal.payments ?? [],
         ...(planned?.round && payment.chain === planned.chainId ? { planned: { plan: planned.plan, round: planned.round } } : {}),
         reverify: verifySigned,
-        onSending: () => {
+        locks,
+        onSending: async () => {
           advanceRelayrLaunch(journal!, { type: 'sending' })
-          persist() // reload during the wallet prompt cannot silently pay again
+          await persist() // reload during the wallet prompt cannot silently pay again
           sending = true
         },
+        // A definite unsent (4001, or a final gate before the wallet), kept by the SDK past a lapsed lock: it changes
+        // only this attempt's saved record and merges into the latest one, so another tab's progress stands.
+        onUnsent: async () => {
+          const latest = loadLaunchSession()
+          const relayr = latest?.input.salt === current.input.salt ? latest.relayr : undefined
+          if (!latest || relayr?.phase !== 'payment-signing' || relayr.quote?.bundle_uuid !== bundleUuid || (relayr.payments?.length ?? 0) !== paidBefore) return
+          // relayrPaymentAttemptOutcome's answer for a definite unsent after the sending marker was saved.
+          if (advanceRelayrLaunch(relayr, { type: 'unsent', outcome: paidBefore ? 'reverted' : 'unpaid' }) && !paidBefore) delete latest.paymentChainId
+          saveLaunchSession(latest)
+        },
+        attemptScoped: true,
         onSent: payments => {
           sending = false
           advanceRelayrLaunch(journal!, { type: 'sent', payments })
-          persist()
+          record()
         },
       }))
     } catch (error) {
       const outcome = relayrPaymentAttemptOutcome(error, { sending, paid: !!journal.payments?.length })
       if (advanceRelayrLaunch(journal, { type: 'unsent', outcome })) {
         if (outcome === 'unpaid') delete current.paymentChainId
-        persist()
+        // A definite unsent was saved by onUnsent; a revert proven onchain is evidence, saved as is.
+        if (error instanceof RelayrPaymentRevertedError) record()
       }
       throw error
     }
     advanceRelayrLaunch(journal, { type: 'executing' })
-    persist()
+    record()
     onProgress('Payment confirmed. Checking each destination launch onchain.')
     // Reconcile exact receipts even when the provider calls the bundle failed.
     const polled = journal
-    const records = await relayrRecords(journal.quote!.bundle_uuid, journal.signed.length, { onRecords: seen => { polled.records = seen; persist() } }).catch(() => null)
+    const records = await relayrRecords(journal.quote!.bundle_uuid, journal.signed.length, { onRecords: seen => { polled.records = seen; record() } }).catch(() => null)
     if (records) journal.records = records
-    persist()
+    record()
     if (!(await reconcile())) {
       throw new Error('Some destination launches are unfinished. Resume this launch to check them; confirmed projects are kept.')
     }

@@ -45,6 +45,7 @@ vi.mock('@/lib/sticky-create', async importOriginal => {
 import { wallet } from './support/fake-wallet'
 import { StickyCreate } from '@/components/StickyCreate'
 import { readStickyCreated, saveStickyCreated, stickyCreateAbi, stickyCreateIntent, stickyCreationRecord } from '@/lib/sticky-create'
+import { HELD } from './support/locks'
 import { stickySessionKey } from '@/lib/sticky-session'
 import type { FundProjectState } from '@/lib/fund-state'
 
@@ -147,7 +148,7 @@ it('records a creation its hold settled while the page was away, and never reope
 
 it('shows a held creation and its exit even when a completion is saved', async () => {
   const record = stickyCreationRecord(m.prepared as never, OWNER, false)
-  saveStickyCreated(localStorage, record, `0x${'ab'.repeat(32)}`, 9n)
+  await saveStickyCreated(localStorage, record, `0x${'ab'.repeat(32)}`, 9n, HELD)
   // An unresolved creation is held for this FUND, its exit due.
   const { holds } = await import('@/lib/write-hold')
   const hold = holds.open({ chainId: 1, account: OWNER, safe: false, namespace: stickyCreateIntent(7n), call: { to: DEPLOYER, data: encodeFunctionData(request), value: 1n } })

@@ -5,7 +5,7 @@ import { parseProjectShopWrite, projectShopWriteRequest, serializeProjectShopWri
 import { verifyStickyExecution, type StickyPending } from './sticky-session'
 import { writeIntentKey, type SavedAttempt, type SavedAttemptScope } from '@bananapus/nana-sdk-core/review'
 import { attempts, callOf } from './write-hold'
-import { browserLocks } from '@bananapus/nana-sdk-core/review/locks'
+import { browserLocks, type LockHandle } from '@bananapus/nana-sdk-core/review/locks'
 
 export type ShopWriteStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 export type ShopWriteSubmission = { afterBlock: string; safe: boolean; startedAt: number; hash?: Hex; attemptId?: string }
@@ -110,19 +110,23 @@ function matchingCurrent(storage: ShopWriteStorage, key: string, session: ShopWr
   return current
 }
 
-function persist(storage: ShopWriteStorage, key: string, session: ShopWriteSession): ShopWriteSession {
+/** The shop lock a write runs under: each write checks it right before it saves. */
+type ShopLock = Pick<LockHandle, 'assertHeld'>
+
+async function persist(storage: ShopWriteStorage, key: string, session: ShopWriteSession, lock: ShopLock): Promise<ShopWriteSession> {
   const next = validated(session, key)
   const raw = encode(next)
+  await lock.assertHeld()
   storage.setItem(key, raw)
   if (storage.getItem(key) !== raw) throw new Error('The browser could not save shop recovery data. Do not submit until the saved record is restored.')
   return next
 }
 
 /** Call while holding withShopWriteLock; an existing record must be resolved, regardless of its account. */
-export function startShopWriteSession(storage: ShopWriteStorage, key: string, plan: PreparedProjectShopWrite): ShopWriteSession {
+export async function startShopWriteSession(storage: ShopWriteStorage, key: string, plan: PreparedProjectShopWrite, lock: ShopLock): Promise<ShopWriteSession> {
   if (readShopWriteSession(storage, key)) throw new Error('Another shop update is already saved for this project. Resume or resolve it before starting another.')
   if (typeof globalThis.crypto?.randomUUID !== 'function') throw new Error('Secure browser shop recovery is unavailable. Use a supported secure browser.')
-  return persist(storage, key, { version: 1, id: globalThis.crypto.randomUUID(), plan, completed: [] })
+  return persist(storage, key, { version: 1, id: globalThis.crypto.randomUUID(), plan, completed: [] }, lock)
 }
 
 /** Canonical plan indices are preserved even when cleanup skips an unsubmitted creation step. */
@@ -135,13 +139,13 @@ export function shopWriteRequestIndex(session: ShopWriteSession): number | null 
 }
 
 /** Cleanup changes the next reviewed call, never claims the skipped creation was executed. */
-export function restoreShopWritePermissions(storage: ShopWriteStorage, key: string, session: ShopWriteSession): ShopWriteSession {
+export async function restoreShopWritePermissions(storage: ShopWriteStorage, key: string, session: ShopWriteSession, lock: ShopLock): Promise<ShopWriteSession> {
   const current = matchingCurrent(storage, key, session)
   if (shopUndiscardable(storage, current)) throw new Error(SHOP_HELD_LINE)
   if (current.restoring || current.pending || current.completed.length !== 1 || current.plan.requestKinds.join(',') !== 'grant,create,restore') {
     throw new Error('Verify any pending shop creation before switching to permission restoration.')
   }
-  return persist(storage, key, { ...current, restoring: true })
+  return persist(storage, key, { ...current, restoring: true }, lock)
 }
 
 function stickyRecord(session: ShopWriteSession, step: number, saved: ShopWriteSubmission): StickyPending {
@@ -184,7 +188,7 @@ export async function verifyShopWriteProgress(client: PublicClient, session: Sho
  * reviewed again. `submission` is what was sent: the Safe flag, its returned hash, and the block its
  * prerequisites were confirmed at.
  */
-export async function confirmShopWriteStep(client: PublicClient, storage: ShopWriteStorage, key: string, session: ShopWriteSession, submission: Pick<ShopWriteSubmission, 'safe' | 'hash'> & { afterBlock: bigint }, executionHash: Hex): Promise<{ session: ShopWriteSession; status: 'confirmed' | 'reverted' }> {
+export async function confirmShopWriteStep(client: PublicClient, storage: ShopWriteStorage, key: string, session: ShopWriteSession, submission: Pick<ShopWriteSubmission, 'safe' | 'hash'> & { afterBlock: bigint }, executionHash: Hex, lock: ShopLock): Promise<{ session: ShopWriteSession; status: 'confirmed' | 'reverted' }> {
   const current = matchingCurrent(storage, key, session)
   const index = shopWriteRequestIndex(current)
   if (index === null) throw new Error('This shop update has already completed.')
@@ -196,7 +200,7 @@ export async function confirmShopWriteStep(client: PublicClient, storage: ShopWr
   // A step the journal saved as pending before SDK holds is settled with it.
   const { pending: _pending, ...rest } = current
   void _pending
-  return { status, session: persist(storage, key, status === 'confirmed' ? { ...rest, completed: [...rest.completed, { submission: saved, executionHash: executionHash.toLowerCase() as Hex }] } : rest) }
+  return { status, session: await persist(storage, key, status === 'confirmed' ? { ...rest, completed: [...rest.completed, { submission: saved, executionHash: executionHash.toLowerCase() as Hex }] } : rest, lock) }
 }
 
 export const SHOP_HELD_LINE = 'Finish or exit the pending update first.'
@@ -253,15 +257,15 @@ export function shopStepIntent(session: ShopWriteSession, step: number): string 
 }
 
 /** Drop a pending step the SDK's hold now holds: the session keeps only its plan and completed steps. */
-export function dropShopWritePending(storage: ShopWriteStorage, key: string, session: ShopWriteSession): ShopWriteSession {
+export async function dropShopWritePending(storage: ShopWriteStorage, key: string, session: ShopWriteSession, lock: ShopLock): Promise<ShopWriteSession> {
   const current = matchingCurrent(storage, key, session)
   const { pending: _pending, ...next } = current
   void _pending
-  return persist(storage, key, next)
+  return persist(storage, key, next, lock)
 }
 
 /** Partial progress must survive until permission restoration completes. Finished records require fresh proof. */
-export async function clearShopWriteSession(storage: ShopWriteStorage, key: string, session: ShopWriteSession, client?: PublicClient): Promise<void> {
+export async function clearShopWriteSession(storage: ShopWriteStorage, key: string, session: ShopWriteSession, lock: ShopLock, client?: PublicClient): Promise<void> {
   const current = matchingCurrent(storage, key, session)
   // A held step keeps its update, and its exit, until it settles or the user takes that exit; a settled one until it is recorded.
   if (shopUndiscardable(storage, current)) throw new Error(SHOP_HELD_LINE)
@@ -269,8 +273,9 @@ export async function clearShopWriteSession(storage: ShopWriteStorage, key: stri
     if (shopWriteRequestIndex(current) !== null) throw new Error('This shop update still has unfinished steps. Complete them, including restoring deployer permissions, before clearing it.')
     if (!client) throw new Error('Verify every completed shop execution before clearing this update.')
     await verifyShopWriteProgress(client, current)
-    matchingCurrent(storage, key, session)
   }
+  await lock.assertHeld()
+  matchingCurrent(storage, key, session)
   storage.removeItem(key)
   if (storage.getItem(key) !== null) throw new Error('The browser could not clear the resolved shop update.')
 }
@@ -279,18 +284,19 @@ export async function clearShopWriteSession(storage: ShopWriteStorage, key: stri
  * Close an update whose step settled where this screen couldn't authenticate it, after the user checked
  * it themselves: nothing is recorded as completed, and nothing is sent again. A held step keeps it.
  */
-export function abandonShopWriteSession(storage: ShopWriteStorage, key: string, session: ShopWriteSession): void {
+export async function abandonShopWriteSession(storage: ShopWriteStorage, key: string, session: ShopWriteSession, lock: ShopLock): Promise<void> {
   const current = matchingCurrent(storage, key, session)
   if (shopUndiscardable(storage, current)) throw new Error(SHOP_HELD_LINE)
+  await lock.assertHeld()
   storage.removeItem(key)
   if (storage.getItem(key) !== null) throw new Error('The browser could not close this shop update.')
 }
 
 /** Hold across review, simulation and wallet submission; unknown submissions remain durable after release. */
-export async function withShopWriteLock<T>(key: string, task: () => Promise<T>): Promise<T> {
+export async function withShopWriteLock<T>(key: string, task: (lock: LockHandle) => Promise<T>): Promise<T> {
   validateKey(key)
   return browserLocks().request(key, { mode: 'exclusive', ifAvailable: true }, async lock => {
     if (!lock) throw new Error('This project’s shop is being reviewed or submitted in another tab.')
-    return task()
+    return task(lock)
   })
 }

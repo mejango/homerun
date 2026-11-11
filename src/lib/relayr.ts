@@ -7,6 +7,7 @@ import {
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import type { ReviewedCall, ReviewedPlan } from '@bananapus/nana-sdk-core/review'
+import type { LockHandle } from '@bananapus/nana-sdk-core/review/locks'
 import {
   MAX_RELAYR_SENT_PAYMENTS,
   RELAYR_API,
@@ -115,6 +116,8 @@ export async function prepareForwardedTx(
   call: RelayrCall,
   expectedAccount: Address,
   expectedNonce?: bigint,
+  /** The caller's locks: lost, the request is not signed. */
+  locks?: readonly LockHandle[],
 ): Promise<{ review: RelayrPlanCall; sign: (plan: ReviewedPlan) => Promise<RelayrEntry> }> {
   const forwarder = forwarderOf(call.chainId)
   const client = publicClient(call.chainId)
@@ -138,7 +141,7 @@ export async function prepareForwardedTx(
       requireFresh()
       const { signReviewed } = await loadRelayrEngine()
       const [signature] = await signReviewed([{ kind: 'forward-request', chainId: call.chainId, request }], {
-        account: expectedAccount, plan, reverify: async () => requireFresh(),
+        account: expectedAccount, plan, reverify: async () => requireFresh(), ...(locks ? { locks } : {}),
       }, { adapter: reviewedSendDeps.adapter })
       return {
         chain: call.chainId,
@@ -210,8 +213,11 @@ export async function relayrPay({
   sent = [],
   planned,
   reverify,
+  locks,
   onSending,
   onSent,
+  onUnsent,
+  attemptScoped,
 }: {
   /** One of the quote's payment options, as Relayr returned it. */
   payment: RelayrPayment
@@ -225,10 +231,16 @@ export async function relayrPay({
   planned?: { plan: ReviewedPlan; round: string }
   /** Re-prove the bundle's calls before the payment and right before the wallet opens. */
   reverify?: () => Promise<void>
+  /** The caller's locks: lost, nothing is saved as sending and the wallet never opens. */
+  locks?: readonly LockHandle[]
   /** Save the payment attempt before the wallet opens. */
   onSending?: () => unknown | Promise<unknown>
   /** Save every payment sent for the quote, again when this one is mined under another hash. */
   onSent?: (payments: RelayrSentPayment[]) => void
+  /** Restore the saved attempt once nothing was sent after `onSending` (payRelayrReviewed's `onUnsent`). */
+  onUnsent?: () => Promise<void>
+  /** `onUnsent` matches this attempt by its identity and merges into the latest record. */
+  attemptScoped?: boolean
 }): Promise<{ hash: Hex; payments: RelayrSentPayment[] }> {
   assertNoViewAs()
   // A Safe pays through its own execution, which no proof can read as this payment.
@@ -253,6 +265,9 @@ export async function relayrPay({
   try {
     await payRelayrReviewed(quote, details.chainId, {
       account,
+      ...(locks ? { locks } : {}),
+      ...(onUnsent ? { onUnsent } : {}),
+      ...(attemptScoped ? { attemptScoped } : {}),
       ...(planned && !sent.length ? { plan: planned.plan, relayrRound: planned.round } : {}),
       onSending: async () => {
         assertNoViewAs()

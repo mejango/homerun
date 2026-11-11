@@ -4,7 +4,7 @@ import { FUND_CHAIN_IDS } from './fund-contracts'
 import { fundGlobalManifestHash, parseFundGlobalManifest, type FundGlobalManifest } from './fund-global-manifest'
 import { homerunDeployerAbi } from './income-contracts'
 import { exportIncomeLaunchPending, type IncomeLaunchPending } from './income-launch-session'
-import { browserLocks } from '@bananapus/nana-sdk-core/review/locks'
+import { browserLocks, type LockHandle } from '@bananapus/nana-sdk-core/review/locks'
 
 export const INCOME_GLOBAL_DRAFT_KEY = 'homerun:income-global-launch:drafts:v1'
 export type IncomeGlobalChainDraft = {
@@ -75,8 +75,9 @@ export function readIncomeGlobalDraft(storage: Store, chainId: number, projectId
   return allDrafts(storage).find(draft => draft.chains.some(local => local.chainId === chainId && local.fundProjectId === projectId.toString())) ?? null
 }
 function stable(draft: IncomeGlobalLaunchDraft) { return JSON.stringify({ ...draft, chains: draft.chains.map(({ chainId, fundProjectId, initialIncomeAmount }) => ({ chainId, fundProjectId, initialIncomeAmount })) }) }
-/** Merge append-only verified progress; a stale tab cannot change shared terms or erase another chain. */
-export function saveIncomeGlobalDraft(storage: Store, value: IncomeGlobalLaunchDraft): IncomeGlobalLaunchDraft {
+/** Merge append-only verified progress under `withIncomeGlobalDraftLock`'s lock; a stale tab cannot change shared terms or erase another chain. */
+export async function saveIncomeGlobalDraft(storage: Store, value: IncomeGlobalLaunchDraft, lock: Pick<LockHandle, 'assertHeld'>): Promise<IncomeGlobalLaunchDraft> {
+  await lock.assertHeld()
   const next = parseIncomeGlobalDraft(value), drafts = allDrafts(storage)
   const prior = drafts.find(draft => draft.chains.some(left => next.chains.some(right => left.chainId === right.chainId && left.fundProjectId === right.fundProjectId)))
   if (prior && stable(prior) !== stable(next)) throw new Error('This FUND already has a frozen global INCOME launch. Restore that plan instead of changing its terms.')
@@ -93,6 +94,6 @@ export function saveIncomeGlobalDraft(storage: Store, value: IncomeGlobalLaunchD
 }
 /** Serializes no holder list. Imported completion records remain evidence to verify, never success flags. */
 export function serializeIncomeGlobalDraft(draft: IncomeGlobalLaunchDraft): string { return `${JSON.stringify(parseIncomeGlobalDraft(draft), null, 2)}\n` }
-export async function withIncomeGlobalDraftLock<T>(task: () => Promise<T> | T): Promise<T> {
-  return browserLocks().request(INCOME_GLOBAL_DRAFT_KEY, { mode: 'exclusive' }, async lock => { if (!lock) throw new Error('The global INCOME plan is being updated in another tab.'); return task() })
+export async function withIncomeGlobalDraftLock<T>(task: (lock: LockHandle) => Promise<T> | T): Promise<T> {
+  return browserLocks().request(INCOME_GLOBAL_DRAFT_KEY, { mode: 'exclusive' }, async lock => { if (!lock) throw new Error('The global INCOME plan is being updated in another tab.'); return task(lock) })
 }

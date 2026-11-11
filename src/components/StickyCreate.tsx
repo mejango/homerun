@@ -118,7 +118,7 @@ export function StickyCreate({
     async (record: StickyPending, hash: Hex, expectedProjectId?: string, proven?: { status: "confirmed"; projectId: bigint }) => {
       // A creation its saved-attempt recovery already proved is saved as proved, never verified twice.
       const result = proven ?? await verifyStickyCreationExecution(client, record, hash);
-      await browserLocks().request(`homerun-sticky-create:${record.chainId}:${record.projectId}`, { mode: "exclusive" }, () => {
+      await browserLocks().request(`homerun-sticky-create:${record.chainId}:${record.projectId}`, { mode: "exclusive" }, async (lock) => {
         if (result.status === "confirmed") {
           if (
             expectedProjectId &&
@@ -142,7 +142,7 @@ export function StickyCreate({
               "A different Sticky creation is already saved for this FUND. Resolve both executions before continuing.",
             );
           if (!existing) {
-            saveStickyCreated(localStorage, record, hash, result.projectId);
+            await saveStickyCreated(localStorage, record, hash, result.projectId, lock!);
             changed();
           }
           if (liveScope.current === `${record.chainId}:${record.projectId}`) {

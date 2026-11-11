@@ -10,6 +10,8 @@ import {
   clearShopWriteSession, confirmShopWriteStep, dropShopWritePending, readShopWriteSession, restoreShopWritePermissions, shopStepScope, shopStepIntent,
   shopWriteRequestIndex, shopWriteRequestIndices, shopWriteSessionKey, startShopWriteSession, verifyShopWriteProgress, withShopWriteLock, type ShopWriteSession,
 } from '../src/lib/project-shop-session'
+import { LockLostError } from '@bananapus/nana-sdk-core/review/locks'
+import { HELD, LOST } from './support/locks'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as const
 const OTHER = '0x2222222222222222222222222222222222222222' as const
@@ -93,26 +95,26 @@ function withPending(storage: ReturnType<typeof memory>, session: ShopWriteSessi
 const sentOf = (session: ShopWriteSession) => ({ safe: session.pending!.safe, hash: session.pending!.hash, afterBlock: BigInt(session.pending!.afterBlock) })
 /** The SDK's hold settled the step sent: its execution is verified and recorded. */
 const confirm = (client: unknown, storage: ReturnType<typeof memory>, session: ShopWriteSession, hash: Hex) =>
-  confirmShopWriteStep(client as PublicClient, storage, key, session, sentOf(session), hash)
-function pending(safe = false) {
+  confirmShopWriteStep(client as PublicClient, storage, key, session, sentOf(session), hash, HELD)
+async function pending(safe = false) {
   const storage = memory()
-  const session = withPending(storage, startShopWriteSession(storage, key, plan()), { safe, afterBlock: 100n })
+  const session = withPending(storage, await startShopWriteSession(storage, key, plan(), HELD), { safe, afterBlock: 100n })
   return { storage, session }
 }
 
 afterEach(() => vi.unstubAllGlobals())
 
 describe('durable live shop updates', () => {
-  it('persists canonical plan facts without executable ABIs or requests and resumes after reload', () => {
-    const { storage, session } = pending()
+  it('persists canonical plan facts without executable ABIs or requests and resumes after reload', async () => {
+    const { storage, session } = await pending()
     const raw = storage.getItem(key)!
     expect(raw).not.toMatch(/"abi"|"requests"|"requestKinds"/)
     expect(readShopWriteSession(storage, key)).toEqual(session)
-    expect(() => startShopWriteSession(storage, key, { ...plan(), snapshot: { ...plan().snapshot, account: OTHER } })).toThrow('already saved')
+    await expect(startShopWriteSession(storage, key, { ...plan(), snapshot: { ...plan().snapshot, account: OTHER } }, HELD)).rejects.toThrow('already saved')
   })
 
-  it('refuses corrupt, unknown-field, foreign-network, foreign-project and malformed submission data', () => {
-    const { storage } = pending()
+  it('refuses corrupt, unknown-field, foreign-network, foreign-project and malformed submission data', async () => {
+    const { storage } = await pending()
     const original = storage.getItem(key)!
     storage.setItem(key, '{broken')
     expect(() => readShopWriteSession(storage, key)).toThrow('unreadable')
@@ -133,7 +135,7 @@ describe('durable live shop updates', () => {
   })
 
   it('requires the saved EOA hash and the exact fresh, canonical transaction', async () => {
-    const f = pending()
+    const f = await pending()
     const session = withPending(f.storage, f.session, { ...sentOf(f.session), hash: executionHash(0) })
     await expect(confirm(rpc(session) as unknown as PublicClient, f.storage, session, executionHash(1))).rejects.toThrow('saved shop transaction hash')
     for (const opts of [{ wrongSender: true }, { wrongPayload: true }, { old: true }, { reorg: true }]) {
@@ -143,7 +145,7 @@ describe('durable live shop updates', () => {
   })
 
   it('verifies all three creation steps after reload and retains permission restoration until it confirms', async () => {
-    const { storage } = pending()
+    const { storage } = await pending()
     let session = readShopWriteSession(storage, key)!
     expect(session.plan.requestKinds).toEqual(['grant', 'create', 'restore'])
     expect(session.plan.votingPolicy).toBeUndefined()
@@ -159,15 +161,15 @@ describe('durable live shop updates', () => {
       expect(session.completed).toHaveLength(step + 1)
       expect(session.pending).toBeUndefined()
       expect(await verifyShopWriteProgress(rpc(session) as unknown as PublicClient, session)).toBe(101n + BigInt(step))
-      if (step < 2) await expect(clearShopWriteSession(storage, key, session)).rejects.toThrow('unfinished steps')
+      if (step < 2) await expect(clearShopWriteSession(storage, key, session, HELD)).rejects.toThrow('unfinished steps')
     }
-    await expect(clearShopWriteSession(storage, key, session)).rejects.toThrow('Verify every completed')
-    await clearShopWriteSession(storage, key, session, rpc(session) as unknown as PublicClient)
+    await expect(clearShopWriteSession(storage, key, session, HELD)).rejects.toThrow('Verify every completed')
+    await clearShopWriteSession(storage, key, session, HELD, rpc(session) as unknown as PublicClient)
     expect(readShopWriteSession(storage, key)).toBeNull()
   })
 
   it('retains a confirmed grant when creation reverts, so cleanup cannot be forgotten', async () => {
-    const f = pending()
+    const f = await pending()
     let session = (await confirm(rpc(f.session) as unknown as PublicClient, f.storage, f.session, executionHash(0))).session
     session = withPending(f.storage, session, { safe: false, afterBlock: 101n })
     session = withPending(f.storage, session, { ...sentOf(session), hash: executionHash(1) })
@@ -176,11 +178,11 @@ describe('durable live shop updates', () => {
     expect(result.session.pending).toBeUndefined()
     expect(result.session.completed).toHaveLength(1)
     expect(result.session.plan.requestKinds[result.session.completed.length]).toBe('create')
-    await expect(clearShopWriteSession(f.storage, key, result.session)).rejects.toThrow('restoring deployer permissions')
+    await expect(clearShopWriteSession(f.storage, key, result.session, HELD)).rejects.toThrow('restoring deployer permissions')
   })
 
   it('does not trust restored completion flags or reorged prerequisite receipts', async () => {
-    const f = pending()
+    const f = await pending()
     const completed = (await confirm(rpc(f.session) as unknown as PublicClient, f.storage, f.session, executionHash(0))).session
     for (const opts of [{ reverted: true }, { reorg: true }, { wrongPayload: true }, { wrongSender: true }]) {
       await expect(verifyShopWriteProgress(rpc(completed, { 0: opts }) as unknown as PublicClient, completed)).rejects.toThrow()
@@ -192,7 +194,7 @@ describe('durable live shop updates', () => {
   })
 
   it('requires a matching Safe call, operation, execution event and proposal hash', async () => {
-    const f = pending(true)
+    const f = await pending(true)
     const proposal = executionHash(8)
     const session = withPending(f.storage, f.session, { ...sentOf(f.session), hash: proposal })
     for (const opts of [{ wrongPayload: true }, { noEvent: true }, { delegateCall: true }, { proposalHash: executionHash(9) }]) {
@@ -204,19 +206,19 @@ describe('durable live shop updates', () => {
   })
 
   it('recognizes a Safe inner-call failure without treating a successful outer receipt as successful creation', async () => {
-    const { storage, session: initial } = pending(true)
+    const { storage, session: initial } = await pending(true)
     const session = withPending(storage, initial, { ...sentOf(initial), hash: executionHash(0) })
     const result = await confirm(rpc(session, { 0: { safeFailure: true } }) as unknown as PublicClient, storage, session, executionHash(0))
     expect(result.status).toBe('reverted')
     expect(result.session.completed).toEqual([])
-    await clearShopWriteSession(storage, key, result.session)
+    await clearShopWriteSession(storage, key, result.session, HELD)
     expect(readShopWriteSession(storage, key)).toBeNull()
   })
 
   describe('Safe execution events', () => {
     const proposal = executionHash(8)
-    const confirmWith = (logs: ReturnType<typeof safeExecutionLog>[]) => {
-      const f = pending(true)
+    const confirmWith = async (logs: ReturnType<typeof safeExecutionLog>[]) => {
+      const f = await pending(true)
       const session = withPending(f.storage, f.session, { ...sentOf(f.session), hash: proposal })
       return confirm(rpc(session, { 0: { logs } }) as unknown as PublicClient, f.storage, session, executionHash(0))
     }
@@ -235,41 +237,41 @@ describe('durable live shop updates', () => {
   })
 
   it('keeps a Safe proposal pending after an outer revert because that proposal can still execute', async () => {
-    const { storage, session } = pending(true)
+    const { storage, session } = await pending(true)
     await expect(confirm(rpc(session, { 0: { reverted: true } }) as unknown as PublicClient, storage, session, executionHash(0))).rejects.toThrow('before resolving its proposal')
     expect(readShopWriteSession(storage, key)).toEqual(session)
   })
 
   it('can abandon unsubmitted creation and restore the exact temporary grant, surviving reload until cleanup is proven', async () => {
-    const { storage, session } = pending()
+    const { storage, session } = await pending()
     const granted = (await confirm(rpc(session) as unknown as PublicClient, storage, session, executionHash(0))).session
-    const restore = restoreShopWritePermissions(storage, key, granted)
+    const restore = await restoreShopWritePermissions(storage, key, granted, HELD)
     expect(readShopWriteSession(storage, key)).toEqual(restore)
     expect(shopWriteRequestIndices(restore)).toEqual([0, 2])
     expect(shopWriteRequestIndex(restore)).toBe(2)
-    await expect(clearShopWriteSession(storage, key, restore)).rejects.toThrow('unfinished steps')
+    await expect(clearShopWriteSession(storage, key, restore, HELD)).rejects.toThrow('unfinished steps')
     const submitting = withPending(storage, restore, { safe: false, afterBlock: 101n })
     const resolved = (await confirm(rpc(submitting) as unknown as PublicClient, storage, submitting, executionHash(1))).session
     expect(resolved.completed).toHaveLength(2)
     expect(shopWriteRequestIndex(resolved)).toBeNull()
-    await clearShopWriteSession(storage, key, resolved, rpc(resolved) as unknown as PublicClient)
+    await clearShopWriteSession(storage, key, resolved, HELD, rpc(resolved) as unknown as PublicClient)
     expect(readShopWriteSession(storage, key)).toBeNull()
   })
 
   it('refuses to skip an uncertain creation and never accepts its execution as permission restoration', async () => {
-    const { storage, session } = pending()
-    expect(() => restoreShopWritePermissions(storage, key, session)).toThrow('pending shop creation')
+    const { storage, session } = await pending()
+    await expect(restoreShopWritePermissions(storage, key, session, HELD)).rejects.toThrow('pending shop creation')
     const granted = (await confirm(rpc(session), storage, session, executionHash(0))).session
     const creating = withPending(storage, granted, { safe: false, afterBlock: 101n })
-    expect(() => restoreShopWritePermissions(storage, key, creating)).toThrow('pending shop creation')
-    const restore = restoreShopWritePermissions(storage, key, dropShopWritePending(storage, key, creating))
+    await expect(restoreShopWritePermissions(storage, key, creating, HELD)).rejects.toThrow('pending shop creation')
+    const restore = await restoreShopWritePermissions(storage, key, await dropShopWritePending(storage, key, creating, HELD), HELD)
     const restoring = withPending(storage, restore, { safe: false, afterBlock: 101n })
     await expect(confirm(rpc(creating), storage, restoring, executionHash(1))).rejects.toThrow('does not match')
     expect(readShopWriteSession(storage, key)).toEqual(restoring)
   })
 
   it('rechecks storage after receipt verification instead of overwriting another tab', async () => {
-    const { storage, session } = pending()
+    const { storage, session } = await pending()
     const client = rpc(session)
     const getReceipt = client.getTransactionReceipt.getMockImplementation()!
     client.getTransactionReceipt.mockImplementation(async args => {
@@ -282,9 +284,9 @@ describe('durable live shop updates', () => {
     expect(readShopWriteSession(storage, key)?.completed).toEqual([])
   })
 
-  it('fails before signing when browser storage cannot save the exact recovery marker', () => {
+  it('fails before signing when browser storage cannot save the exact recovery marker', async () => {
     const storage = { getItem: () => null, setItem: () => undefined, removeItem: () => undefined }
-    expect(() => startShopWriteSession(storage, key, plan())).toThrow('could not save')
+    await expect(startShopWriteSession(storage, key, plan(), HELD)).rejects.toThrow('could not save')
   })
 
   it('holds an exclusive project lock across asynchronous review, and runs on the fallback without Web Locks', async () => {
@@ -311,23 +313,36 @@ describe('durable live shop updates', () => {
 
 
 describe('a step the journal saved as pending before SDK holds', () => {
-  it('is recovered with its own evidence under the step it was, then dropped from the journal', () => {
-    const { storage, session } = pending(true)
+  it('is recovered with its own evidence under the step it was, then dropped from the journal', async () => {
+    const { storage, session } = await pending(true)
     const hashed = withPending(storage, session, { ...sentOf(session), hash: executionHash(8) })
     const request = projectShopWriteRequest(hashed.plan, 0)
     expect(shopStepScope(storage, hashed, 0)).toMatchObject({ chainId: 8453, account: OWNER, safe: true, namespaces: [shopStepIntent(hashed, 0)], call: { to: request.address, data: encodeFunctionData(request), value: request.value },
       saved: { started: true, submittedAt: hashed.pending!.startedAt, safeTxHash: executionHash(8) } })
     expect(shopStepIntent(hashed, 1)).not.toBe(shopStepIntent(hashed, 0))
-    const dropped = dropShopWritePending(storage, key, hashed)
+    const dropped = await dropShopWritePending(storage, key, hashed, HELD)
     expect(dropped.pending).toBeUndefined()
     // With nothing pending, the step's hold alone says whether anything was sent.
     expect(shopStepScope(storage, dropped, 0).saved).toEqual({ started: false })
     expect(readShopWriteSession(storage, key)).toEqual(dropped)
   })
   it('settles with the step the hold confirmed', async () => {
-    const { storage, session } = pending()
+    const { storage, session } = await pending()
     const result = await confirm(rpc(session), storage, session, executionHash(0))
     expect(result.session.pending).toBeUndefined()
     expect(result.session.completed).toHaveLength(1)
+  })
+})
+
+describe('a shop update under a lost lock', () => {
+  it('writes nothing once another tab took the shop lock', async () => {
+    const storage = memory()
+    await expect(startShopWriteSession(storage, key, plan(), LOST)).rejects.toThrow(LockLostError)
+    expect(readShopWriteSession(storage, key)).toBeNull()
+    const f = await pending()
+    const before = f.storage.getItem(key)
+    await expect(dropShopWritePending(f.storage, key, f.session, LOST)).rejects.toThrow(LockLostError)
+    await expect(confirmShopWriteStep(rpc(f.session) as unknown as PublicClient, f.storage, key, f.session, sentOf(f.session), executionHash(0), LOST)).rejects.toThrow(LockLostError)
+    expect(f.storage.getItem(key)).toBe(before)
   })
 })

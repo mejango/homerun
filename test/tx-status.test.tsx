@@ -52,8 +52,10 @@ it('is the status line of every card that shows one', async () => {
   }
 })
 
-it('owns the pending line: no flow writes its own', async () => {
+it('owns the pending line, the SDK\'s confirming line every client shows: no flow writes its own', async () => {
+  const { HELD_CONFIRMING_LINE } = await import('@bananapus/nana-sdk-core/review')
+  expect(TX_STATUS_LINES.pending).toBe(HELD_CONFIRMING_LINE)
   const { readdirSync, readFileSync } = await import('node:fs')
-  const files = readdirSync('src', { recursive: true, encoding: 'utf8' }).filter(file => /\.tsx?$/.test(file) && !file.endsWith('TxStatus.tsx'))
-  for (const file of files) expect(readFileSync(`src/${file}`, 'utf8').includes('Waiting for onchain confirmation'), file).toBe(false)
+  const files = readdirSync('src', { recursive: true, encoding: 'utf8' }).filter(file => /\.tsx?$/.test(file))
+  for (const file of files) expect(readFileSync(`src/${file}`, 'utf8').includes(HELD_CONFIRMING_LINE), file).toBe(false)
 })

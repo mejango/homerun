@@ -104,11 +104,11 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
       sent.current = { session: captured.id, step, safe: record.safe, afterBlock: captured.pending ? BigInt(captured.pending.afterBlock) : 0n }
       track(projectShopWriteRequest(captured.plan, step), { reviewedAccount: captured.plan.snapshot.account, recoveryNamespace: shopStepIntent(captured, step), safe: record.safe, reservation: record.id })
       // The hold has the journal's pending submission now: the journal keeps only the plan and completed steps.
-      if (captured.pending) void withShopWriteLock(key, async () => { setSession(dropShopWritePending(localStorage, key, captured)); window.dispatchEvent(new Event(SESSION_EVENT)) }).catch(reason => setStorageError(message(reason)))
+      if (captured.pending) void withShopWriteLock(key, async lock => { setSession(await dropShopWritePending(localStorage, key, captured, lock)); window.dispatchEvent(new Event(SESSION_EVENT)) }).catch(reason => setStorageError(message(reason)))
     } else if (outcome.status === 'done' && outcome.result === 'success' && outcome.authenticated) {
-      void withShopWriteLock(key, async () => {
+      void withShopWriteLock(key, async lock => {
         const { hash, safe } = outcome.value
-        const result = await confirmShopWriteStep(client, localStorage, key, captured, { safe, hash: captured.pending?.hash ?? hash, afterBlock: 0n }, hash)
+        const result = await confirmShopWriteStep(client, localStorage, key, captured, { safe, hash: captured.pending?.hash ?? hash, afterBlock: 0n }, hash, lock)
         setSession(result.session); setCheckedProgress(`${result.session.id}:${result.session.completed.length}`)
         window.dispatchEvent(new Event(SESSION_EVENT))
         // Recorded: the step's settlement is followed.
@@ -117,12 +117,12 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
       }).catch(reason => setError(message(reason)))
     } else if (outcome.status === 'none' && outcome.retired === 'check') {
       // The user checked a step this screen couldn't show: the update closes without claiming it, and nothing is sent again.
-      void withShopWriteLock(key, async () => { abandonShopWriteSession(localStorage, key, captured); changed() })
+      void withShopWriteLock(key, async lock => { await abandonShopWriteSession(localStorage, key, captured, lock); changed() })
         .then(() => { tx.reset(); setOpen(false); setError(null); setProgress('Closed without confirming its last step. Check the shop before updating it again.') })
         .catch(reason => setError(message(reason)))
     } else if ((outcome.status === 'none' && outcome.retired) || (outcome.status === 'done' && outcome.result === 'failed')) {
       // Released, rejected or reverted: the pending submission is history, and the step can be reviewed again.
-      if (captured.pending) void withShopWriteLock(key, async () => { setSession(dropShopWritePending(localStorage, key, captured)); window.dispatchEvent(new Event(SESSION_EVENT)) }).catch(reason => setStorageError(message(reason)))
+      if (captured.pending) void withShopWriteLock(key, async lock => { setSession(await dropShopWritePending(localStorage, key, captured, lock)); window.dispatchEvent(new Event(SESSION_EVENT)) }).catch(reason => setStorageError(message(reason)))
     }
   // Each outcome is handled once, against the journal as it is now.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -138,8 +138,8 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
     if (!client || !settledReceipt || !session || !step || step.session !== session.id || shopWriteRequestIndex(session) !== step.step) return
     const captured = session
     let cancelled = false
-    void withShopWriteLock(key, async () => {
-      const result = await confirmShopWriteStep(client, localStorage, key, captured, { safe: step.safe, hash: submissionHash ?? undefined, afterBlock: step.afterBlock }, settledReceipt.transactionHash)
+    void withShopWriteLock(key, async lock => {
+      const result = await confirmShopWriteStep(client, localStorage, key, captured, { safe: step.safe, hash: submissionHash ?? undefined, afterBlock: step.afterBlock }, settledReceipt.transactionHash, lock)
       if (cancelled) return
       sent.current = null
       setSession(result.session)
@@ -173,8 +173,8 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
     try {
       assertNoViewAs()
       const plan = await prepareProjectShopWrite(client, { snapshot: captured, items, removeTierIds, onStatus: setProgress })
-      await withShopWriteLock(key, async () => {
-        const next = startShopWriteSession(localStorage, key, plan)
+      await withShopWriteLock(key, async lock => {
+        const next = await startShopWriteSession(localStorage, key, plan, lock)
         setSession(next); window.dispatchEvent(new Event(SESSION_EVENT))
       })
       setProgress('Ready to review the transaction.'); setRetryDraft(null)
@@ -188,7 +188,7 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
     action.current = true; setWorking(true); setError(null)
     try {
       assertNoViewAs()
-      await withShopWriteLock(key, async () => {
+      await withShopWriteLock(key, async lock => {
         let prerequisiteBlock = await verifyShopWriteProgress(client, captured)
         const index = shopWriteRequestIndex(captured)
         if (index === null) throw new Error('This shop update is already complete.')
@@ -199,6 +199,7 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
         await tx.send(request, {
           reviewedAccount: captured.plan.snapshot.account,
           recoveryNamespace: shopStepIntent(captured, index),
+          locks: [lock],
           reviewNotice: captured.restoring ? 'Cancel shop creation by restoring the shop deployer’s previous permissions for this project. No shop will be created.' : captured.plan.notice,
           reverify: async reviewed => {
             prerequisiteBlock = await verifyShopWriteProgress(client, captured)
@@ -219,8 +220,8 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
     if (!session || !client || action.current) return
     action.current = true; setWorking(true)
     try {
-      await withShopWriteLock(key, async () => {
-        await clearShopWriteSession(localStorage, key, session, client)
+      await withShopWriteLock(key, async lock => {
+        await clearShopWriteSession(localStorage, key, session, lock, client)
         changed()
       })
       tx.reset(); setOpen(false); setProgress(''); setError(null); setRetryDraft(null)
@@ -231,9 +232,9 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
     if (!client || !session || action.current || !accountMatches) return
     action.current = true; setWorking(true); setError(null)
     try {
-      await withShopWriteLock(key, async () => {
+      await withShopWriteLock(key, async lock => {
         await verifyShopWriteProgress(client, session)
-        const next = restoreShopWritePermissions(localStorage, key, session)
+        const next = await restoreShopWritePermissions(localStorage, key, session, lock)
         setSession(next); window.dispatchEvent(new Event(SESSION_EVENT))
       })
       resetTx(); setProgress('Review the transaction to restore the shop deployer’s previous permissions. No shop will be created.')

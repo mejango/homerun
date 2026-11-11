@@ -9,6 +9,8 @@ import { installRecoveryLocks, recoveryRecords } from './runtime/write-recovery-
 import { noteProjectAdminAccount, projectAdminLockName, projectAdminNamespace } from '@/lib/project-admin-reservation'
 import type { TxRequest, TxSendOptions } from '@/hooks/useReviewedAction'
 import type { ProjectAdminTx } from '@/hooks/useProjectAdminTx'
+import { HELD } from './support/locks'
+import { lapsingLocksForTests } from '@bananapus/nana-sdk-core/testing'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as Address
 const TARGET = '0x2222222222222222222222222222222222222222' as const
@@ -162,7 +164,7 @@ describe('project administrative writes', () => {
     const journal = createBrowserWriteRecovery({ chainId: 8453, account: first, safe: false, namespace: projectAdminNamespace(7n),
       call: { to: TARGET, data: '0x12345678', value: 0n } })
     await journal.withLock(async () => { journal.reserve() })
-    noteProjectAdminAccount(localStorage, 8453, 7n, first)
+    await noteProjectAdminAccount(localStorage, 8453, 7n, first, HELD)
     await render()
     await vi.waitFor(() => expect(handle.ready).toBe(true))
     await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })
@@ -180,7 +182,7 @@ describe('project administrative writes', () => {
     const journal = createBrowserWriteRecovery({ chainId: 8453, account: first, safe: false, namespace: projectAdminNamespace(7n),
       call: { to: TARGET, data: '0x12345678', value: 0n } })
     await journal.withLock(async () => { journal.reserve(undefined, { nonce: 5, blockNumber: 90n }); journal.submitted(EXECUTION) })
-    noteProjectAdminAccount(localStorage, 8453, 7n, first)
+    await noteProjectAdminAccount(localStorage, 8453, 7n, first, HELD)
     ;(runtime.client as Record<string, unknown>).getTransaction = vi.fn(async () => ({ hash: EXECUTION, blockNumber: null }))
     await render()
     await vi.waitFor(() => expect(handle.ready).toBe(true))
@@ -194,7 +196,7 @@ describe('project administrative writes', () => {
     const first = '0x3333333333333333333333333333333333333333' as Address
     const journal = createBrowserWriteRecovery({ chainId: 8453, account: first, safe: false, namespace: projectAdminNamespace(7n), call: { to: TARGET, data: '0x12345678', value: 0n } })
     await journal.withLock(async () => { journal.reserve() })
-    noteProjectAdminAccount(localStorage, 8453, 7n, first)
+    await noteProjectAdminAccount(localStorage, 8453, 7n, first, HELD)
     return { journal, first }
   }
 
@@ -296,6 +298,24 @@ describe('project administrative writes', () => {
     })
     await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })
     expect(JSON.parse(localStorage.getItem('homerun:project-admin:accounts:v1:8453:7')!)).toEqual([OWNER.toLowerCase()])
+  })
+
+  it('lists the account of a Safe proposal adopted after the project lock lapsed, kept by the SDK until the lock is free', async () => {
+    const tabs = lapsingLocksForTests()
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: tabs.locks })
+    await render()
+    await vi.waitFor(() => expect(handle.ready).toBe(true))
+    runtime.send.mockImplementation(async (reviewed: TxRequest, options: TxSendOptions) => {
+      await options.reverify?.(reviewed)
+      tabs.lapse()
+      // Another tab's routine look at the project, which lists nothing.
+      await tabs.otherTab().request(projectAdminLockName(8453, 7n), async () => undefined)
+      await options.onExistingProposal?.({ proposalHash: EXECUTION, call: { to: TARGET, data: '0x12345678', value: 0n } })
+      expect(localStorage.getItem('homerun:project-admin:accounts:v1:8453:7')).toBeNull()
+      return EXECUTION
+    })
+    await act(async () => { await handle.send(request(), { reviewedAccount: OWNER, reverify: runtime.reverify }) })
+    await vi.waitFor(() => expect(JSON.parse(localStorage.getItem('homerun:project-admin:accounts:v1:8453:7')!)).toEqual([OWNER.toLowerCase()]))
   })
 })
 

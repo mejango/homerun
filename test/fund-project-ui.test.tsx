@@ -503,7 +503,7 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     expect(buttons.map(button => button.textContent)).toEqual(['FUND', 'INCOME'])
     for (const button of [buttons[0], buttons[1], buttons[0]]) await act(async () => button.click())
     expect(runtime.unmounted).toBe(0)
-    expect(host.textContent).toContain('Waiting for onchain confirmation')
+    expect(host.textContent).toContain('Confirming your transaction')
   })
 
   it('offers only token transfers and burns to holders', async () => {
@@ -588,7 +588,7 @@ describe('live FUND transaction tracking survives refreshed data', () => {
     expect(runtime.mounted).toBe(mounted)
     expect(runtime.unmounted).toBe(0)
     expect(host.querySelector('fieldset[aria-label="Project transactions"]')?.hasAttribute('disabled')).toBe(true)
-    expect(host.textContent).toContain('Waiting for onchain confirmation')
+    expect(host.textContent).toContain('Confirming your transaction')
     const income = host.querySelector('[data-testid="income"]')!
     expect(income.closest('fieldset[disabled]')).toBeNull()
     expect(income.querySelector('button')?.disabled).toBe(true)

@@ -7,7 +7,7 @@ import { usePublicClient } from 'wagmi'
 import { useReviewedAction, type TxRequest } from './useReviewedAction'
 import { useWallet } from './useWallet'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { WRITE_EXIT_LABEL, browserLocks, hidesShownExit, writeExitMessage, type ReviewContextRow, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
+import { WRITE_EXIT_LABEL, browserLocks, keepOutcome, hidesShownExit, writeExitMessage, type ReviewContextRow, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
 import { useHeldWrite } from '@bananapus/nana-sdk-core/review/react'
 import { holds } from '@/lib/write-hold'
 import {
@@ -115,7 +115,7 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
         const holds = await otherProjectAdminHolds(localStorage, client, chainId, projectId, options.reviewedAccount)
         if (holds.length) { setOtherHold(holds[0]); return null }
         setOtherHold(null)
-        pruneProjectAdminAccounts(localStorage, chainId, projectId, options.reviewedAccount)
+        await pruneProjectAdminAccounts(localStorage, chainId, projectId, options.reviewedAccount, lock)
           setLabel(captured.label ?? 'Project update')
           handled.current = null
           resetTx()
@@ -124,8 +124,13 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
             reviewNotice: options.reviewNotice,
             context: options.context,
             recoveryNamespace: projectAdminNamespace(projectId),
-        // Adopting a proposal the Safe already has skips the wallet, so the account is registered here, still under the lock.
-        onExistingProposal: () => { noteProjectAdminAccount(localStorage, chainId, projectId, options.reviewedAccount) },
+            locks: [lock],
+        // Adopting a proposal the Safe already has skips the wallet, so the account is registered here. Past a lapsed
+        // lock the SDK keeps it for once the lock is free again: listing only lets other wallets find the hold.
+        onExistingProposal: async () => {
+          const note = () => noteProjectAdminAccount(localStorage, chainId, projectId, options.reviewedAccount, lock)
+          await keepOutcome([lock], note, note)
+        },
             reverify: async reviewed => {
               await latestConfirmedBlock()
               await options.reverify(reviewed)
@@ -137,7 +142,7 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
               // Checked again right before the wallet opens: another wallet may have reserved the project meanwhile.
               const late = await otherProjectAdminHolds(localStorage, client, chainId, projectId, options.reviewedAccount)
               if (late.length) { setOtherHold(late[0]); throw new Error('Another wallet’s project update is still unresolved. Check it before sending another.') }
-              noteProjectAdminAccount(localStorage, chainId, projectId, options.reviewedAccount)
+              await noteProjectAdminAccount(localStorage, chainId, projectId, options.reviewedAccount, lock)
               await latestConfirmedBlock()
             },
           })
@@ -157,7 +162,7 @@ export function useProjectAdminTx({ chainId, projectId, onConfirmed }: {
     try {
       const holds = await otherProjectAdminHolds(localStorage, client, chainId, projectId, account)
       await browserLocks().request(projectAdminLockName(chainId, projectId), { mode: 'exclusive', ifAvailable: true }, async lock => {
-        if (lock) pruneProjectAdminAccounts(localStorage, chainId, projectId, account)
+        if (lock) await pruneProjectAdminAccounts(localStorage, chainId, projectId, account, lock)
       })
       setOtherHold(current => current?.hold !== shown.hold ? current : holds[0] ?? null)
     } catch { /* The next look asks again. */ }
