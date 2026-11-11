@@ -8,7 +8,7 @@ Brief: scratchpad sm/adopt-630-brief.md; API and deletion map: scratchpad pr298-
 - [x] Shared lines: `REVIEW_STOPPED_LINE` from the SDK; SDK fixed-line errors (`LOCK_LOST_LINE`, `CONFIRMATION_QUEUED_LINE`) shown through `errorLine`.
 - [x] Fixture excludes `:settled-by` and `:outcome-by`.
 - [x] Regressions through the SDK path with `lapsingLocksForTests`; each fails with its fix undone.
-- [ ] Gates, Codex until MERGE.
+- [x] Gates, Codex until MERGE (pass 3: MERGE).
 
 ## Plan refinement
 
