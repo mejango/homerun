@@ -13,6 +13,7 @@ import { safeExecutionLog } from './support/safe-logs'
 import { placeReceipt } from './support/recovery-receipt'
 import { LockLostError } from '@bananapus/nana-sdk-core/review/locks'
 import { LOCK_LOST_LINE } from '@bananapus/nana-sdk-core/review'
+import { lapsingLocksForTests } from '@bananapus/nana-sdk-core/testing'
 import { installRecoveryLocks } from './runtime/write-recovery-fixture'
 
 const runtime = vi.hoisted(() => ({
@@ -241,6 +242,34 @@ describe('linked ruleset recovery of a Safe execution', () => {
     expect(before).not.toBeNull()
     expect(localStorage.getItem(key)).toBe(before)
     expect(host.textContent).toContain(LOCK_LOST_LINE)
+  })
+
+  it('clears a verified plan whose lock lapsed while its settlements retired, once the lock is free', async () => {
+    const saved = plan()
+    const first = successReceipt(saved, false, 0); const second = successReceipt(saved, false, 1)
+    const records = new Map([
+      [8453, { kind: 'transaction' as const, hash: first.receipt.transactionHash, attemptId: crypto.randomUUID() }],
+      [10, { kind: 'transaction' as const, hash: second.receipt.transactionHash, attemptId: crypto.randomUUID() }],
+    ])
+    localStorage.setItem(key, serializeRulesetRecovery(saved, records, ROOT))
+    runtime.receipt.mockImplementation(async ({ hash }: { hash: Hex }) => hash === first.receipt.transactionHash ? first.receipt : second.receipt)
+    runtime.transaction.mockImplementation(async ({ hash }: { hash: Hex }) => hash === first.receipt.transactionHash ? first.transaction : second.transaction)
+    runtime.states = saved.states.map(peer => ({ ...state(), chainId: peer.chainId, projectId: peer.projectId, blockNumber: 121n, blockTimestamp: 1_000n, rulesetSnapshot: { ...peer.rulesetSnapshot, upcomingRulesetId: 72n }, linkedChainIds: [8453, 10] }))
+    await act(async () => root.render(<FundOperatorActions state={state()} client={{} as PublicClient} contextIndex={0} />))
+    await act(async () => button('Verify and resume queued plan')!.click()); await settle()
+    expect(button('Done'), host.textContent ?? '').toBeDefined()
+    const tabs = lapsingLocksForTests()
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: tabs.locks })
+    // The lease lapses as the first settlement retires: past the close's check, before its clear.
+    const setItem = Storage.prototype.setItem
+    let lapsed = false
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, name: string, value: string) {
+      setItem.call(this, name, value)
+      if (!lapsed && name.includes(':settled')) { lapsed = true; tabs.lapse() }
+    })
+    await act(async () => button('Done')!.click()); await settle()
+    expect(lapsed).toBe(true)
+    await vi.waitFor(() => expect(localStorage.getItem(key)).toBeNull())
   })
 
   function savedChain(record: RulesetSubmission) {

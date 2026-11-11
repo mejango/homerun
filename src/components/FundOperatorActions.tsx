@@ -22,7 +22,7 @@ import {
 import { assertFundStateForWrite, readFundProjectState, readLinkedFundProjects, type FundProjectState } from '@/lib/fund-state'
 import { SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
 import { isSafeConnection, waitForSafeExecutionHash } from '@/lib/safe-connector'
-import { intent, verifyReviewedWriteReceipt, writeIntentKey, type SavedAttempt, type SavedAttemptScope } from '@bananapus/nana-sdk-core/review'
+import { intent, keepOutcome, verifyReviewedWriteReceipt, writeIntentKey, type SavedAttempt, type SavedAttemptScope } from '@bananapus/nana-sdk-core/review'
 import { wagmiConfig } from '@/providers/Providers'
 import { readableError } from '@/lib/readable-error'
 import { SavedAttemptNotice } from '@/components/ui/SavedAttemptNotice'
@@ -755,6 +755,10 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
             assertSubmission(project.chainId, result.submission)
           }
         }
+        const key = recoveryKey(active.account)
+        const raw = window.localStorage.getItem(key)
+        // A lapse before the settlements retire changes nothing.
+        await lock.assertHeld()
         // Every check passed: each recorded chain's settlement is followed now, as its plan closes, and nothing else holds it.
         for (const [chainId, result] of completedRef.current) {
           const index = active.states.findIndex(peer => peer.chainId === chainId)
@@ -762,10 +766,11 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
           await attempts.retire(chainScope(active, index, result.submission), { by: 'settled', hash: result.receipt.transactionHash })
           if (!attempts.canDiscard(chainScope(active, index, result.submission))) throw new Error('Finish or exit the pending update first.')
         }
-        const key = recoveryKey(active.account)
-        await lock.assertHeld()
-        window.localStorage.removeItem(key)
-        if (window.localStorage.getItem(key) !== null) throw new Error('The saved recovery plan could not be cleared.')
+        // Once retired, the plan's clear is their outcome: past a lapsed lock the SDK keeps it, and applies it while the
+        // saved plan is still this one.
+        const clear = async () => { await lock.assertHeld(); window.localStorage.removeItem(key) }
+        const cleared = await keepOutcome([lock], clear, () => { if (window.localStorage.getItem(key) === raw) window.localStorage.removeItem(key) })
+        if (cleared && window.localStorage.getItem(key) !== null) throw new Error('The saved recovery plan could not be cleared.')
         savedRecovery.current = { key, raw: null }
         planRef.current = null; submissionsRef.current = new Map()
         setPlan(null); setSubmissions(new Map()); completedRef.current = new Map(); setCompleted(completedRef.current); setRecovering(false); setUnresumable(false)

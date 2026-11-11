@@ -22,6 +22,7 @@ Brief: scratchpad sm/adopt-630-brief.md; API and deletion map: scratchpad pr298-
 ## Review
 
 - Gates (Node 26): lint, wallet:check, check:indexer, test, tsc, build, budget, test:contracts pass; test:live 2978 of 2979 (the SDK bug below). Budget for 6.3.0: /create/recover 407 to 410 (408.7), /op:11 523 to 525 (523.9), startup idle /create 442 to 445 (443.1 in CI).
+- Codex pass 2 (Medium, one lease lapse): closePlan's new fence sat after the settlements retired, so a lapse left a plan whose recovery reads `retired: 'settled'` as unfinished. Fixed: check before retiring, and the clear goes through `keepOutcome` (later only while the saved plan is unchanged). Regression with `lapsingLocksForTests`, failing on the previous code.
 - SDK 6.3.0 bug, reported, not worked around: `useReviewedRun.js` follow filter (dist ~640-653) returns false for an intent call whose earlier success is unacknowledged with the hold clear, before the exact-call match. A remounted form with a recovery namespace gets neither `held` nor `sendAgainAction` and every later send is refused ("This went through while you were away."). `reviewed-action-gates.test.tsx` "a payment that went through while the user was away..." fails on it; it passes without the namespace.
 
 # SDK core 6.2.0 adoption: run wrapper, lock fencing, shared confirming line (2026-11-10)
