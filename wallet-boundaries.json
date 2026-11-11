@@ -46,21 +46,14 @@
     },
     {
       "file": "src/hooks/useProjectAdminTx.ts",
-      "line": 115,
+      "line": 112,
       "api": "request",
       "boundary": "Web Locks, not a wallet: one project update at a time across tabs, around its reservation.",
       "test": "test/project-admin-reservation.test.ts"
     },
     {
       "file": "src/hooks/useProjectAdminTx.ts",
-      "line": 151,
-      "api": "request",
-      "boundary": "Web Locks, not a wallet: lists the account of a Safe proposal adopted after the project lock lapsed, under a fresh lock.",
-      "test": "test/project-admin-tx-ui.test.tsx"
-    },
-    {
-      "file": "src/hooks/useProjectAdminTx.ts",
-      "line": 169,
+      "line": 164,
       "api": "request",
       "boundary": "Web Locks, not a wallet: prunes the project's settled admin reservations under the same lock.",
       "test": "test/project-admin-reservation.test.ts"

@@ -216,6 +216,8 @@ export async function relayrPay({
   locks,
   onSending,
   onSent,
+  onUnsent,
+  attemptScoped,
 }: {
   /** One of the quote's payment options, as Relayr returned it. */
   payment: RelayrPayment
@@ -235,6 +237,10 @@ export async function relayrPay({
   onSending?: () => unknown | Promise<unknown>
   /** Save every payment sent for the quote, again when this one is mined under another hash. */
   onSent?: (payments: RelayrSentPayment[]) => void
+  /** Restore the saved attempt once nothing was sent after `onSending` (payRelayrReviewed's `onUnsent`). */
+  onUnsent?: () => Promise<void>
+  /** `onUnsent` matches this attempt by its identity and merges into the latest record. */
+  attemptScoped?: boolean
 }): Promise<{ hash: Hex; payments: RelayrSentPayment[] }> {
   assertNoViewAs()
   // A Safe pays through its own execution, which no proof can read as this payment.
@@ -260,6 +266,8 @@ export async function relayrPay({
     await payRelayrReviewed(quote, details.chainId, {
       account,
       ...(locks ? { locks } : {}),
+      ...(onUnsent ? { onUnsent } : {}),
+      ...(attemptScoped ? { attemptScoped } : {}),
       ...(planned && !sent.length ? { plan: planned.plan, relayrRound: planned.round } : {}),
       onSending: async () => {
         assertNoViewAs()

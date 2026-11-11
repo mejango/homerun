@@ -12,6 +12,7 @@ import type { FundProjectState } from '../src/lib/fund-state'
 import { safeExecutionLog } from './support/safe-logs'
 import { placeReceipt } from './support/recovery-receipt'
 import { LockLostError } from '@bananapus/nana-sdk-core/review/locks'
+import { LOCK_LOST_LINE } from '@bananapus/nana-sdk-core/review'
 import { installRecoveryLocks } from './runtime/write-recovery-fixture'
 
 const runtime = vi.hoisted(() => ({
@@ -239,7 +240,7 @@ describe('linked ruleset recovery of a Safe execution', () => {
     await act(async () => button('Done')!.click())
     expect(before).not.toBeNull()
     expect(localStorage.getItem(key)).toBe(before)
-    expect(host.textContent).toContain('lock was lost')
+    expect(host.textContent).toContain(LOCK_LOST_LINE)
   })
 
   function savedChain(record: RulesetSubmission) {

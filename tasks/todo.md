@@ -1,3 +1,29 @@
+# SDK core 6.3.0: the SDK keeps lost-lock outcomes, shared lines (2026-11-11)
+
+Brief: scratchpad sm/adopt-630-brief.md; API and deletion map: scratchpad pr298-final-body.md.
+
+- [x] Pin @bananapus/nana-sdk-core 6.3.0 (Node 26, npm 12).
+- [x] Admin listing: `listLater` and its fresh lock become `keepOutcome([lock], note, note)` (listing is idempotent, so `later` applies it whatever another tab did).
+- [x] Relayr launch: the `lapsed` keep becomes `payRelayrReviewed`'s `onUnsent` with `attemptScoped`; it matches the attempt (salt, bundle, payment count, `payment-signing`) and merges into the latest record (closes Codex pass 1's Medium). A proven revert is chain evidence, saved unfenced.
+- [x] Shared lines: `REVIEW_STOPPED_LINE` from the SDK; SDK fixed-line errors (`LOCK_LOST_LINE`, `CONFIRMATION_QUEUED_LINE`) shown through `errorLine`.
+- [x] Fixture excludes `:settled-by` and `:outcome-by`.
+- [x] Regressions through the SDK path with `lapsingLocksForTests`; each fails with its fix undone.
+- [ ] Gates, Codex until MERGE.
+
+## Plan refinement
+
+- **Objective:** No client-side keep or reconcile code: the SDK keeps a wallet outcome past a lapsed lock, and Homerun only says how to write its own record.
+- **System fit:** The SDK owns retaking locks and when to retry; Homerun's `onUnsent` and note stay plain fenced writes. The `relayrPay` test mock models `payRelayrReviewed`'s unsent rule once, with the real `keepOutcome`.
+- **Reuse and simplicity:** `keepOutcome`, `attemptScoped`, `errorLine` and the SDK lines; no local constants for SDK wording.
+- **Evidence and unknowns:** 6.3.0 .d.ts and dist in node_modules.
+- **Verification:** lapsing-lock regressions (admin listing past another tab's routine lock; Relayr refusal with nobody, an unrelated other-tab save, and a cleared launch); full `npm run check`, browser suites in CI.
+- **Resource budget:** One worktree; stop and report if an SDK behavior blocks a gate.
+
+## Review
+
+- Gates (Node 26): lint, wallet:check, check:indexer, test, tsc, build, budget, test:contracts pass; test:live 2978 of 2979 (the SDK bug below). Budget for 6.3.0: /create/recover 407 to 410 (408.7), /op:11 523 to 525 (523.9).
+- SDK 6.3.0 bug, reported, not worked around: `useReviewedRun.js` follow filter (dist ~640-653) returns false for an intent call whose earlier success is unacknowledged with the hold clear, before the exact-call match. A remounted form with a recovery namespace gets neither `held` nor `sendAgainAction` and every later send is refused ("This went through while you were away."). `reviewed-action-gates.test.tsx` "a payment that went through while the user was away..." fails on it; it passes without the namespace.
+
 # SDK core 6.2.0 adoption: run wrapper, lock fencing, shared confirming line (2026-11-10)
 
 Brief: scratchpad sm/ADOPTION_BRIEF.md; SDK #295 (fencing) and #296 (run wrapper) bodies; fencing map's homerun section. Read against the released 6.2.0 types in node_modules.

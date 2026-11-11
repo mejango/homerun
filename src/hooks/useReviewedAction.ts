@@ -7,6 +7,7 @@ import {
   ReviewedCallRevertedError,
   ReviewLineError,
   reviewedRunStatus,
+  REVIEW_STOPPED_LINE,
   settledLine,
   transactionMessage,
   writeExitMessage,
@@ -117,8 +118,6 @@ const loadReviewEngine = () => import(/* webpackExports: ["sendReviewed", "resum
 
 const CENTER_WALLET_REFUSED = 'This action needs an external wallet. Juicebox wallet payments use their own payment review.'
 const CLOSED_LINE = 'This review closed. Open the action again before sending.'
-/** A multi-step action closed after an earlier step was sent. The same line in every client. */
-export const REVIEW_STOPPED_LINE = 'The rest was not sent. Review it again when you are ready.'
 
 /**
  * The shared in-flight button copy: the fixed simulating/signing strings every

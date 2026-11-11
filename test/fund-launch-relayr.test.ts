@@ -40,18 +40,37 @@ vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => m.safe }))
 vi.mock('@/lib/wallet-core', () => ({ publicClient: m.client }))
 vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original<typeof import('@bananapus/nana-sdk-core/v6')>(), getProjectCreationFee: m.fee }))
 vi.mock('@/lib/fund-launch-verification', () => ({ verifyFundLaunch: m.projectId }))
-vi.mock('@/lib/relayr', async importOriginal => ({
+vi.mock('@/lib/relayr', async importOriginal => {
+  const { assertLocksHeld, keepOutcome } = await import('@bananapus/nana-sdk-core/review/locks')
+  const { RelayrPaymentRevertedError, relayrPaymentAttemptOutcome } = await import('@bananapus/nana-sdk-core/review/relayr')
+  type Args = { onSending?: () => Promise<void>; onUnsent?: () => Promise<void>; attemptScoped?: boolean; locks?: readonly import('@bananapus/nana-sdk-core/review/locks').LockHandle[] }
+  // payRelayrReviewed's unsent rule: a definite unsent after onSending runs onUnsent under the locks, kept past a lost one.
+  const relayrPay = async (args: Args) => {
+    let sending = false
+    try {
+      return await m.pay({ ...args, onSending: async () => { await args.onSending?.(); sending = true } })
+    } catch (error) {
+      if (sending && args.onUnsent && !(error instanceof RelayrPaymentRevertedError) && relayrPaymentAttemptOutcome(error, { sending, paid: false })) {
+        const unsent = async () => { await assertLocksHeld(args.locks); await args.onUnsent!() }
+        await keepOutcome(args.locks, unsent, args.attemptScoped ? unsent : undefined).catch(lost => { if (lost?.code !== 'LOCK_LOST') throw lost })
+      }
+      throw error
+    }
+  }
+  return {
   ...(await importOriginal<typeof import('@/lib/relayr')>()),
-  prepareForwardedTx: m.forward, relayrPostBundle: m.quote, relayrPay: m.pay,
+  prepareForwardedTx: m.forward, relayrPostBundle: m.quote, relayrPay,
   relayrRecords: m.poll,
   readRelayrPendingSessionsForAuthorization: () => {
     const session = m.pending()
     return session ? [{ scope: 'another-action', session }] : []
   },
-}))
+  }
+})
 
 import { relayrDiscardLine, relayrHeldMessage as heldMessage } from '@bananapus/nana-sdk-core/review'
 import { LockLostError } from '@bananapus/nana-sdk-core/review/locks'
+import { lapsingLocksForTests } from '@bananapus/nana-sdk-core/testing'
 import { relayrPaymentLabel } from '@/lib/relayr'
 const relayrHeldMessage = (until: number) => heldMessage(until, { action: 'launch' })
 import { predictMultisig, MULTICALL3, CREATE_BATCH_ABI, unbundleMultisigLaunch, type CreateMultisig } from '@/lib/create-multisig'
@@ -211,34 +230,27 @@ describe('relayed launch execution and recovery', () => {
     expect(m.pay).not.toHaveBeenCalled()
   })
 
-  it.each([false, true])('keeps a wallet refusal that arrives after the launch lock lapsed, applying it under a fresh lock unless another tab moved on: moved=%s', async moved => {
-    let lost = false
-    const handle = { name: 'homerun:fund-launch', mode: 'exclusive', signal: new AbortController().signal, held: async () => !lost,
-      assertHeld: async () => { if (lost) throw new LockLostError('homerun:fund-launch') } }
-    vi.stubGlobal('navigator', { locks: { request: async (name: string, _options: unknown, fn: (lock: object) => Promise<void>) => {
-      if (name !== 'homerun:fund-launch') return fn({})
-      // The first hold lapses during the wallet prompt; the next one is a fresh, held lock.
-      if (lost) return fn({ ...handle, held: async () => true, assertHeld: async () => {} })
-      return fn(handle)
-    } } })
-    let sending: string | undefined
+  it.each(['nobody', 'noted', 'cleared'] as const)('keeps a wallet refusal that arrives after the launch lock lapsed, through the SDK, for this attempt only: another tab %s', async other => {
+    const tabs = lapsingLocksForTests()
+    vi.stubGlobal('navigator', { locks: tabs.locks })
     m.pay.mockImplementationOnce(async ({ reverify, onSending }) => {
       await reverify(); await onSending()
-      sending = storage.get(FUND_LAUNCH_KEY)
-      lost = true
-      // Another tab saved its own progress meanwhile.
-      if (moved) storage.set(FUND_LAUNCH_KEY, sending + ' ')
+      tabs.lapse()
+      if (other !== 'nobody') await tabs.otherTab().request('homerun:fund-launch', async () => {
+        if (other === 'cleared') return storage.delete(FUND_LAUNCH_KEY)
+        const saved = loadLaunchSession()!
+        saveLaunchSession({ ...saved, statuses: { ...saved.statuses, 10: { ...saved.statuses[10], error: 'Checked in another tab.' } } })
+      })
       throw Object.assign(new Error('User rejected the request.'), { code: 4001 })
     })
     await expect(run()).rejects.toThrow('User rejected')
-    if (moved) {
-      expect(storage.get(FUND_LAUNCH_KEY)).toBe(sending + ' ')
-      return
+    if (other === 'cleared') {
+      await new Promise(resolve => setTimeout(resolve, 50))
+      return expect(storage.has(FUND_LAUNCH_KEY)).toBe(false)
     }
-    const saved = loadLaunchSession()!
-    expect(storage.get(FUND_LAUNCH_KEY)).not.toBe(sending)
-    expect(saved.relayr?.phase).not.toBe(JSON.parse(sending!).relayr.phase)
-    expect(saved.paymentChainId).toBeUndefined()
+    await vi.waitFor(() => expect(loadLaunchSession()?.relayr?.phase).toBe('quoted'))
+    expect(loadLaunchSession()!.paymentChainId).toBeUndefined()
+    expect(loadLaunchSession()!.statuses[10].error).toBe(other === 'noted' ? 'Checked in another tab.' : undefined)
   })
 
   it('hands the launch lock and every signer lock to the authorization signatures and the payment', async () => {
@@ -249,8 +261,10 @@ describe('relayed launch execution and recovery', () => {
       return fn(handle)
     } } })
     await run(session([1, 10]))
-    expect(m.forward.mock.calls[0][3]).toEqual(handles)
-    expect(m.pay.mock.calls[0][0].locks).toEqual(handles)
+    // The SDK's browserLocks hands its own handle for each lock taken.
+    const names = (locks: readonly { name: string }[]) => locks.map(lock => lock.name)
+    expect(names(m.forward.mock.calls[0][3])).toEqual(names(handles as { name: string }[]))
+    expect(m.pay.mock.calls[0][0].locks).toEqual(m.forward.mock.calls[0][3])
   })
 
   it('creates a single-chain owner Safe and project in one destination transaction and one payment', async () => {

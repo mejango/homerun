@@ -23,7 +23,7 @@ import {
 import { wagmiConfig } from '@/providers/Providers'
 import { buildFundLaunch, type FundTransaction } from '@/lib/fund-contracts'
 import { verifyFundLaunch } from '@/lib/fund-launch-verification'
-import { FUND_LAUNCH_KEY, loadLaunchSession, saveLaunch as saveLaunchSession, type LaunchStatus as LaunchChainStatus, type FundLaunchSession as LaunchSession } from '@/lib/fund-launch-session'
+import { loadLaunchSession, saveLaunch as saveLaunchSession, type LaunchStatus as LaunchChainStatus, type FundLaunchSession as LaunchSession } from '@/lib/fund-launch-session'
 import { gasWithHeadroom, relayrDiscardLine, relayrHeldMessage } from '@bananapus/nana-sdk-core/review'
 import {
   RelayrDestinationRevertedError,
@@ -79,7 +79,7 @@ import { withForwarderAuthorizationLock } from '@/lib/forwarder-authorization'
 import { requireFundingChainSelection } from '@/lib/transaction-review'
 import { reviewedSendDeps } from '@/lib/reviewed-send-deps'
 import type { ReviewedPlan } from '@bananapus/nana-sdk-core/review'
-import { assertLocksHeld, browserLocks, LockLostError, type LockHandle } from '@bananapus/nana-sdk-core/review/locks'
+import { assertLocksHeld, browserLocks, type LockHandle } from '@bananapus/nana-sdk-core/review/locks'
 
 /** Core's one review of the launch, out of every page's first load. */
 const loadPlanEngine = () => import(/* webpackExports: ["reviewPlan"] */ '@bananapus/nana-sdk-core/review')
@@ -203,8 +203,6 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
   }
   if (activeLaunches.has(session.input.salt)) throw new Error('This launch is already running.')
   activeLaunches.add(session.input.salt)
-  /** The wallet's answer to a payment, refused for a lock that lapsed meanwhile: applied under a fresh lock below. */
-  let lapsed: { sending: string; next: LaunchSession } | null = null
   try {
     await browserLocks().request('homerun:fund-launch', { ifAvailable: true }, async lock => {
       if (!lock) throw new Error('This launch is already running in another tab.')
@@ -213,12 +211,6 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     })
   } finally {
     activeLaunches.delete(session.input.salt)
-    // Applied only while the saved launch is still this attempt as it was sent: another tab's progress stands.
-    const kept = lapsed as { sending: string; next: LaunchSession } | null
-    if (kept) await browserLocks().request('homerun:fund-launch', async lock => {
-      await lock?.assertHeld()
-      if (localStorage.getItem(FUND_LAUNCH_KEY) === kept.sending) saveLaunchSession(kept.next)
-    }).catch(() => undefined)
   }
 
   /** `locks`: the launch's and each signer's nonce lock. Every journal write before the wallet checks them. */
@@ -758,8 +750,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     onProgress(`Approve one payment on ${chainName(paymentChainId)} to launch on every selected chain.`)
     /** The wallet holds the payment and has returned no hash for it. */
     let sending = false
-    /** The launch as saved when the wallet opened. */
-    let sendingRecord: string | null = null
+    const bundleUuid = journal.quote!.bundle_uuid
+    const paidBefore = journal.payments?.length ?? 0
     try {
       ;({ hash: journal.paymentHash } = await relayrPay({
         payment, account, quote: { ...journal.quote!, transactions: journal.quote!.transactions ?? [], expectedTransactions: requireQuoteBindings() }, destinationChainIds: destinations,
@@ -770,9 +762,19 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         onSending: async () => {
           advanceRelayrLaunch(journal!, { type: 'sending' })
           await persist() // reload during the wallet prompt cannot silently pay again
-          sendingRecord = localStorage.getItem(FUND_LAUNCH_KEY)
           sending = true
         },
+        // A definite unsent (4001, or a final gate before the wallet), kept by the SDK past a lapsed lock: it changes
+        // only this attempt's saved record and merges into the latest one, so another tab's progress stands.
+        onUnsent: async () => {
+          const latest = loadLaunchSession()
+          const relayr = latest?.input.salt === current.input.salt ? latest.relayr : undefined
+          if (!latest || relayr?.phase !== 'payment-signing' || relayr.quote?.bundle_uuid !== bundleUuid || (relayr.payments?.length ?? 0) !== paidBefore) return
+          // relayrPaymentAttemptOutcome's answer for a definite unsent after the sending marker was saved.
+          if (advanceRelayrLaunch(relayr, { type: 'unsent', outcome: paidBefore ? 'reverted' : 'unpaid' }) && !paidBefore) delete latest.paymentChainId
+          saveLaunchSession(latest)
+        },
+        attemptScoped: true,
         onSent: payments => {
           sending = false
           advanceRelayrLaunch(journal!, { type: 'sent', payments })
@@ -783,11 +785,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       const outcome = relayrPaymentAttemptOutcome(error, { sending, paid: !!journal.payments?.length })
       if (advanceRelayrLaunch(journal, { type: 'unsent', outcome })) {
         if (outcome === 'unpaid') delete current.paymentChainId
-        // The wallet answered after the lock lapsed: its answer is kept, never dropped, for a fresh lock to apply.
-        await persist().catch(lapse => {
-          if (!(lapse instanceof LockLostError) || sendingRecord === null) throw lapse
-          lapsed = { sending: sendingRecord, next: structuredClone(current) }
-        })
+        // A definite unsent was saved by onUnsent; a revert proven onchain is evidence, saved as is.
+        if (error instanceof RelayrPaymentRevertedError) record()
       }
       throw error
     }
