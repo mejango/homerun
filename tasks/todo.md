@@ -438,3 +438,22 @@ Applicability: Live FUND/INCOME treasury/accounting contexts and selectors are s
 Final verification: Node 26.12.1, npm 12.0.1, physical locked dependencies. The frozen final source passed all 3,053 component/integration tests across 179 files with two workers, the 340-test model/unit suite, lint, production build, standalone typecheck, all 13 unchanged route budgets, and the offline persisted indexer registry check for 17 documents. The production shop browser flow passed at 1440, 390 and 320 pixels, including upload, review, save, reload, edit, remove, overflow and axe accessibility checks; the review visibly states “Price-based.” Independent configuration review approved the final price/legacy-recovery behavior, and independent wallet approval remains valid. The final plan checker and whitespace check pass.
 
 Limits: No full multi-group browser run, contract/deployment tests, Docker smoke test, production dependency audit or live third-party schema/network check was run for these frontend-only changes. No contract source, SDK dependency, original-worktree file, push, merge, deployment or wallet transaction changed. Screenshots and complete check logs are local artifacts under /private/tmp/homerun-convergence-browser and /tmp/homerun-*-frozen.log. Earlier exploratory check failures were resolved; final source is the source described above.
+
+
+# 2026-11-12: Homerun Node 26.13.1 runtime update
+
+## Plan refinement
+- **Objective:** Move all active Homerun development, CI and hosted runtime pins to Node 26.13.1 while keeping npm12.0.1 and every application dependency unchanged.
+- **System fit:** The repository owns its runtime declarations, existing CI and Docker deployment. Node updates preserve application behavior, signing authority, contract source and hosting configuration. Root owns merge and deployed verification.
+- **Reuse and simplicity:** Update the existing .nvmrc, Docker base tag/digest, engine metadata and active setup instructions. Reuse CI's unit, browser and container checks; add no runtime abstraction or speculative test. Historical verification records remain historical.
+- **Evidence and unknowns:** Current main is a194d0d751cddc07cd87eb98b741e266f56e7232, with Node26.12.1 application runtime. Official Node release26.13.1 is a security release; Docker multi-platform digest needs fresh verification before pinning. npm12.0.1 is explicitly installed independently of the bundled npm.
+- **Verification:** Check exact runtime selection, compare lock entries to prove only owning engine metadata changes, run diff whitespace review, and require the existing full GitHub CI for the exact PR head including browser suites and Linux Docker smoke. Investigate failures without weakening assertions or deadlines.
+- **Resource budget:** Use isolated current-main checkout and the existing remote CI so local heavy service checks can run exclusively. Local validation is bounded metadata/source review unless CI failure requires reproduction; no dependency upgrade or contract deployment is in scope.
+
+- [x] Read required workspace resources and repository instructions, inspect current main and runtime flow.
+- [x] Update all active runtime declarations and matching Docker digest.
+- [x] Prove unchanged dependency graph and review focused diff.
+- [ ] Open pull request and collect exact-head CI results.
+
+## Review
+Metadata and whitespace validation passed. Comparing parsed lockfiles after normalizing only the root Node engine proves every dependency entry unchanged. Official Docker manifest digest was independently verified on 2026-11-12. Existing remote CI remains required for the exact pull request head; no local heavy checks duplicated the service test slot.
