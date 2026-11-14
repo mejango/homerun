@@ -20,6 +20,7 @@ const dist = resolve(distDir)
 // SDK 5.0.0 (in-place follow, run cancellation at dispatch): /op:11 measures 516.05 KiB.
 // SDK 6.2.0 (lock fencing, run dismissal; 2026-11-10): /create/recover 405.8, /create/success 262.5, /op:11 521.1, each raised to the measure rounded up plus 1.
 // SDK 6.3.0 (the SDK keeps lost-lock outcomes; 2026-11-11): /create/recover 408.7, /op:11 523.9, raised the same way.
+// SDK 6.7.0 candidate (2026-11-14): /create/success increases 184 bytes, from 270159 to 270343 gzip bytes, seven bytes above 264 KiB.
 const budgets = {
   '/': { js: 217, css: 16 },
   '/founderhaus': { js: 273, css: 27 },
@@ -28,7 +29,7 @@ const budgets = {
   '/create': { js: 231, css: 20 },
   '/create/preview': { js: 442, css: 27 },
   '/create/recover': { js: 410, css: 19 },
-  '/create/success': { js: 264, css: 14 },
+  '/create/success': { js: 265, css: 14 },
   '/center/callback': { js: 200, css: 13 },
   '/account/0x0000000000000000000000000000000000000001': { js: 271, css: 16 },
   '/intent/00000000-0000-4000-8000-000000000000': { js: 412, css: 27 },

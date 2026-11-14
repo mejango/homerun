@@ -457,3 +457,36 @@ Limits: No full multi-group browser run, contract/deployment tests, Docker smoke
 
 ## Review
 Metadata and whitespace validation passed. Comparing parsed lockfiles after normalizing only the root Node engine proves every dependency entry unchanged. Official Docker manifest digest was independently verified on 2026-11-12. Existing remote CI remains required for the exact pull request head; no local heavy checks duplicated the service test slot.
+
+## SDK Safe proxy packed-candidate verification
+
+## Plan refinement
+
+- **Objective:** Verify combined SDK PR307 and PR308 against this consumer before npm publication.
+- **System fit:** SDK owns transport; this isolated consumer supplies release evidence. No production edits or publishing authority is exercised.
+- **Reuse and simplicity:** Reuse existing full check and exact locked dependencies, replacing only the packed SDK.
+- **Evidence and unknowns:** Fresh origin/main is authoritative; combined tarball hash and full check result remain pending.
+- **Verification:** Record source SHA, tarball hash, unchanged non-SDK manifests and complete repository check output.
+- **Resource budget:** Prepare dependencies first, await Center exclusive gate, then run one consumer gate at a time with bounded workers and unchanged deadlines. Stop on unrelated failure for parent review.
+
+- [x] Prepare locked dependencies and record source SHA.
+- [x] Install combined candidate preserving nested dependencies.
+- [ ] Run full check and report exact evidence.
+
+## Homerun SDK release budget compatibility
+
+## Plan refinement
+
+- **Objective:** Keep the SDK release consumer gate green by accounting for the measured 184-byte addition on create success.
+- **System fit:** SDK owns the shipped code; Homerun owns route ceilings. Parent authorized this exact adjustment and owns PR merge review.
+- **Reuse and simplicity:** Reuse the route-budget script, raise only /create/success from 264 to 265 KiB, with no application change.
+- **Evidence and unknowns:** Fresh main86ef189 with locked6.3.1 measures270159 bytes; combined SDK85b2e33 candidate91b1f640 measures270343, seven bytes over270336 ceiling. All other route ceilings pass.
+- **Verification:** Rerun budget on the retained candidate build, retain all successful full-run tests/build/typecheck/contracts evidence, and run whitespace/plan checks before PR.
+- **Resource budget:** One tiny owner edit and existing built assets suffice; no repeated full suites or broad threshold increases.
+
+- [x] Adjust the one measured ceiling and rerun retained candidate budget.
+- [ ] Open compatibility PR for parent review, no merge.
+
+### Review
+
+Candidate SHA25691b1f6405530cf81760b28622f572f1b9ced87ea306577078c07cf388087eb41, SDK source85b2e33; consumer source86ef1896ec03137e7e69129d522e32c455bc9141. Node26.13.1/npm12.0.1. Exact-lock npm ci, all2671 non-core package manifests unchanged, nested dependencies preserved,1939 packed files verified. Lint, wallet inventory, persisted indexer registry,340 Node tests,2980 Vitest tests in187files, production build, separate TypeScript check and88 contract tests passed. Original budget check failed by seven bytes solely on /create/success. Locked6.3.1 tar matched lock SHA512 and baseline budget passed; the candidate adds184bytes on this route. Raising its ceiling alone to265KiB makes all13 route budgets pass on the retained candidate build. No application or dependency manifest changes. PR merge remains with parent reviewer.
