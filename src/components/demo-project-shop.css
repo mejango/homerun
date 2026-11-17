@@ -44,14 +44,6 @@
 .demo-shop-editor .ds-editor-notice, dialog.modal-dialog .demo-shop-editor .ds-editor-notice { margin: 0 0 24px; padding: 13px 15px; border: 1px solid #cbd7db; border-radius: var(--radius); background: #edf2f4; color: #425e68; font-size: 13px; }
 :is(.demo-project-shop, .demo-shop-editor, dialog.modal-dialog) .ds-editor-notice strong { display: block; margin-bottom: 3px; font-weight: 600; }
 .demo-shop-editor input:not([type=checkbox]):not([type=file]), dialog.modal-dialog .demo-shop-editor input:not([type=checkbox]):not([type=file]), .demo-shop-editor select, dialog.modal-dialog .demo-shop-editor select, .demo-shop-editor textarea, dialog.modal-dialog .demo-shop-editor textarea { display: block; width: 100%; min-width: 0; min-height: 44px; padding: 10px 12px; border: 1px solid #bfc9b5; border-radius: var(--radius); background: #fffefa; color: #2d4035; font: 400 14px/1.45 var(--sans, sans-serif); box-shadow: none; }
-.demo-shop-editor select, dialog.modal-dialog .demo-shop-editor select {
-  appearance: none;
-  -webkit-appearance: none;
-  padding-right: 40px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='m1 1 5 5 5-5' stroke='%23556659' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 12px center;
-}
 .demo-shop-editor textarea, dialog.modal-dialog .demo-shop-editor textarea { resize: vertical; }
 .demo-shop-editor input:focus, dialog.modal-dialog .demo-shop-editor input:focus, .demo-shop-editor textarea:focus, dialog.modal-dialog .demo-shop-editor textarea:focus, .demo-shop-editor select:focus, dialog.modal-dialog .demo-shop-editor select:focus { outline: 2px solid #42664d; outline-offset: 1px; }
 .demo-shop-editor input[aria-invalid=true], dialog.modal-dialog .demo-shop-editor input[aria-invalid=true], .demo-shop-editor textarea[aria-invalid=true], dialog.modal-dialog .demo-shop-editor textarea[aria-invalid=true] { border-color: #a34134 !important; }

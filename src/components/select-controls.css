@@ -1,12 +1,13 @@
-/* Keep one inset chevron on app-owned native selects. The explicit dialog
-   selector also wins over the shared modal's unlayered style reset. */
-:is(.home-page, .create-page, .simulator, .live-project, .live-contract-page, .contract-panel, .homerun-project-layout) select:not([multiple]):not([size]),
-dialog.modal-dialog select:not([multiple]):not([size]) {
-  appearance: none;
-  -webkit-appearance: none;
-  padding-right: var(--select-padding-right, 40px);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='m1 1 5 5 5-5' stroke='%23556659' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right var(--select-chevron-inset, 12px) center;
-  background-size: 12px 8px;
+/* One caret for every native dropdown, in every route and dialog. The rule is unlayered and important so that no
+   utility, component sheet or modal reset can bring back the browser arrow or let text run under the caret. A select
+   that needs a tighter caret (one set inline in a sentence) sets the two custom properties; nothing else opts in or
+   out. */
+select:not([multiple]):not([size]) {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  padding-right: var(--select-padding-right, 40px) !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='m1 1 5 5 5-5' stroke='%23556659' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important;
+  background-repeat: no-repeat !important;
+  background-position: right var(--select-chevron-inset, 12px) center !important;
+  background-size: 12px 8px !important;
 }
