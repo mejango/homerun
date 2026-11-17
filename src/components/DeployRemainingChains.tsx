@@ -21,7 +21,6 @@ export function DeployRemainingChains({ chainId, projectId, owner, intentId }: {
   const intent = useQuery({
     queryKey: ['project-intent', chainId, projectId, intentId ?? null, saved ?? null, owner ?? null],
     staleTime: 60_000,
-    retry: 1,
     queryFn: ({ signal }) => findProjectIntent(jbCenterClient, { chainId, projectId }, [intentId, saved], owner, { signal }),
   })
   if (!intent.data) return null

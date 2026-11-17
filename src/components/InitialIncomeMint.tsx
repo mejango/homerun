@@ -25,7 +25,7 @@ export function InitialIncomeMint({ chainId, fundProjectId, incomeProjectId, man
   const query = useQuery({
     queryKey: ['initial-income-allocation', chainId, fundProjectId.toString(), incomeProjectId.toString()], enabled: !!client,
     queryFn: () => readInitialIncomeAllocation(client!, { chainId, incomeProjectId, fundProjectId }),
-    retry: 1, placeholderData: keepPreviousData,
+    placeholderData: keepPreviousData,
   })
   const state = query.data?.chainId === chainId && query.data.incomeProjectId === incomeProjectId && query.data.fundProjectId === fundProjectId ? query.data : undefined
   useOnConfirmed(tx, () => {

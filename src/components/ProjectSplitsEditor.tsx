@@ -43,7 +43,7 @@ export function ProjectSplitsEditor({ chainId, projectId, phase, client, unavail
   // Juicebox Money's confirm dialog, over the editor card: the recipients as they will be saved, then one action.
   const [reviewing, setReviewing] = useState(false)
   const submitting = useRef(false)
-  const query = useQuery({ queryKey: ['project-splits-edit', chainId, projectId.toString(), phase, address ?? null], queryFn: () => readProjectSplitsSnapshot(client, { chainId, projectId, phase, account: address }), retry: 1 })
+  const query = useQuery({ queryKey: ['project-splits-edit', chainId, projectId.toString(), phase, address ?? null], queryFn: () => readProjectSplitsSnapshot(client, { chainId, projectId, phase, account: address }) })
   const onConfirmed = useCallback(async () => {
     setError(null)
     for (const key of ['project-splits-edit', 'project-operator-profile', 'income-operator', 'income-reserved', 'income-sticky-binding', 'fund-project', 'income-project']) await cache.invalidateQueries({ queryKey: [key, chainId, projectId.toString()] })

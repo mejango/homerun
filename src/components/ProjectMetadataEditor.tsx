@@ -59,7 +59,6 @@ function ProjectMetadataEditorContent({ chainId, projectId, client, unavailable 
     queryKey: ['project-metadata-edit', chainId, projectId.toString(), address ?? null],
     enabled: !!client && !!address && !unavailable,
     queryFn: async () => requireConfirmedBlock(await readProjectMetadataEditState(client!, { chainId, projectId, account: address! })),
-    retry: 1,
   })
   const active = snapshot.data && address && isAddressEqual(snapshot.data.account, address) ? snapshot.data : undefined
   const details = useQuery({
@@ -71,7 +70,7 @@ function ProjectMetadataEditorContent({ chainId, projectId, client, unavailable 
       const inherited = await readProjectMetadataDocument(inheritedMetadataUri)
       return projectMetadataDocument(document.raw, inherited)
     },
-    staleTime: Infinity, retry: 1,
+    staleTime: Infinity,
   })
   const busy = preparing || tx.busy || tx.pending || tx.phase === 'review'
   const fieldKeys = editing?.document.supportsPlan ? [...basicFields, 'ownerName', 'ownerIntroduction', 'ownerWallet', 'operatorName', 'operatorIntroduction', 'operatorWallet', ...planFields] as MetadataField[] : ['name', 'description'] as MetadataField[]

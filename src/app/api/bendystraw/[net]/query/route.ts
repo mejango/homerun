@@ -1,3 +1,4 @@
+import { isRateLimited } from '@bananapus/nana-sdk-core/jbcenter'
 import { bendystraw } from '@/lib/bendystraw'
 import { resolvePersistedBendystrawRequest } from '@/lib/bendystraw-proxy'
 
@@ -78,11 +79,11 @@ export async function POST(
 
   try {
     // Uncached: Next's fetch cache would keep a disk file for every distinct
-    // client query.
+    // client query. Tried once: the browser asks the relay again itself.
     const data = await bendystraw(
       persisted.query,
       persisted.variables,
-      { network: net, policy: 'no-store' },
+      { network: net, policy: 'no-store', retryDelaysMs: [] },
     )
     return Response.json(
       { data },
@@ -95,7 +96,7 @@ export async function POST(
     )
   } catch (error) {
     // The cause is logged, on one line, and never sent: the answer is the same
-    // whatever failed. Control characters go too, so an indexer's text cannot
+    // whatever failed, except a rate limit, which the caller must not retry. Control characters go too, so an indexer's text cannot
     // start a terminal sequence or forge a log line.
     console.error(
       'Bendystraw relay failed:',
@@ -103,7 +104,7 @@ export async function POST(
     )
     return Response.json(
       { error: 'Bendystraw unavailable' },
-      { status: 502 },
+      { status: isRateLimited(error) ? 429 : 502 },
     )
   }
 }

@@ -610,7 +610,6 @@ export function FundOperatorActions({ state, client, contextIndex }: Props) {
     enabled: mintKind === 'operator-share' && !linked && !connectedOwner,
     queryFn: () => client.readContract({ address: v6Address('JBTokens', state.chainId), abi: jbTokensAbi, functionName: 'totalBalanceOf', args: [state.owner, state.projectId], blockNumber: state.blockNumber }),
     staleTime: Infinity,
-    retry: 1,
   })
   const ownerBalance = connectedOwner ? state.creditBalance + state.erc20Balance : ownerHoldings.data
   let mintCount = 0n

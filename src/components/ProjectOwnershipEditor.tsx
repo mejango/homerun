@@ -26,7 +26,7 @@ export function ProjectOwnershipEditor({ chainId, projectId, client, unavailable
   const query = useQuery({
     queryKey: ['project-authority', chainId, projectId.toString(), address ?? null, valid ? recipient.trim().toLowerCase() : null],
     queryFn: () => readProjectAuthority(client!, { chainId, projectId, account: address, operator: valid ? recipient.trim() as Address : null }),
-    enabled: !!client && !unavailable, retry: 1,
+    enabled: !!client && !unavailable,
   })
   const tx = useProjectAdminTx({ chainId, projectId, onConfirmed: async () => { await query.refetch() } })
   const state = query.data

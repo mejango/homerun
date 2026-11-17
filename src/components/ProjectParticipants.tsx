@@ -27,7 +27,6 @@ function useDeployments(chainId: number, projectId: number) {
     meta: PERSIST,
     queryFn: ({ signal }) => getProject(chainId, projectId, { signal }),
     staleTime: 30_000,
-    retry: 1,
   })
   const row = hydrated && home.data?.version === 6 && home.data.chainId === chainId && home.data.projectId === projectId ? home.data : null
   const group = useQuery({
@@ -36,7 +35,6 @@ function useDeployments(chainId: number, projectId: number) {
     meta: PERSIST,
     queryFn: ({ signal }) => getSuckerGroupProjects(row!.suckerGroupId!, chainId, { signal }),
     staleTime: 300_000,
-    retry: 1,
   })
   // An unindexed or ungrouped project, or a failed group read, still lists this chain's holders.
   const settled = hydrated && (!home.isPending || home.isError) && (!row?.suckerGroupId || !group.isPending || group.isError)
@@ -56,7 +54,6 @@ function ParticipantsList({ chainId, projectId, tokenLabel }: { chainId: number;
     meta: PERSIST,
     queryFn: ({ signal }) => getProjectHolders(refs, { signal }),
     staleTime: 30_000,
-    retry: 1,
   })
   const holders = hydrated ? query.data?.holders : undefined
   const pageCount = Math.max(1, Math.ceil((holders?.length ?? 0) / PROJECT_PARTICIPANTS_PAGE_SIZE))

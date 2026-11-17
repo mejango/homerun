@@ -25,6 +25,7 @@ import {
 import { useWallet } from "@/hooks/useWallet";
 import { displayChainName } from "@/lib/chainDisplay";
 import { parseAmount } from "@/lib/fund-contracts";
+import { POLLED } from "@/lib/refresh";
 import {
   buildStickyApproval,
   buildStickyCreditClaim,
@@ -272,8 +273,7 @@ export function StickyHolder({
         tranchePage: page,
       }),
     staleTime: 10_000,
-    refetchInterval: 20_000,
-    retry: 1,
+    ...POLLED,
     placeholderData: keepPreviousData,
   });
   useEffect(() => {
@@ -511,7 +511,6 @@ function StickyRewardPanel({
     ],
     queryFn: () => readStickyRewards(client, state, incomeProjectId),
     staleTime: 10_000,
-    retry: 1,
     placeholderData: keepPreviousData,
   });
   useEffect(() => {

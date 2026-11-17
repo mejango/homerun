@@ -12,7 +12,6 @@ export function useAccountIdentity(address?: Address) {
     query: {
       enabled: !!address && !IS_DETERMINISTIC_BROWSER,
       staleTime: 5 * 60_000,
-      retry: 1,
     },
   })
   return {

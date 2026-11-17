@@ -20,6 +20,7 @@ import { prepareProjectPayQuote, readProjectPayTokenOptions } from '@/lib/projec
 import { intent as keyed, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import { lazyComponent } from '@/components/lazy-component'
 import { readableError } from '@/lib/readable-error'
+import { POLLED } from '@/lib/refresh'
 import { refreshIndexedProject } from '@/lib/refresh-indexed'
 import { AllowedDecreaseField } from '@/components/ui/AllowedDecreaseField'
 import { useOnConfirmed } from '@/hooks/useOnConfirmed'
@@ -114,7 +115,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
     queryKey: ['project-pay', chainId, projectId.toString(), context.terminal, context.token, count.toString(), address ?? zeroAddress, rulesetId, reservedPercent, slippageBps ?? null],
     enabled: !!client && count > 0n && !paused && (!quoteNeedsWallet || !!address),
     queryFn: () => prepareProjectPayQuote(client!, { chainId, projectId, terminal: context.terminal, token: context.token, amount: count, beneficiary: address ?? zeroAddress, slippageBps: slippage }),
-    staleTime: 10_000, refetchInterval: 15_000, retry: false,
+    staleTime: 10_000, ...POLLED, retry: false,
   })
   const minimum = quote.data?.minimumTokenCount ?? 0n
   const zeroAllocation = reservedPercent === 10_000 && !!quote.data && minimum === 0n && quote.data.reservedTokenCount > 0n
@@ -273,7 +274,7 @@ function ExternalProjectPayment({ chainId, projectId, tokenLabel, title, context
       <div className="text-sm text-smoke-600" aria-live="polite">
         {paused ? <p>This project has paused payments.</p> : zeroAllocation ? <p>This payment gives you no {tokenLabel}. All new tokens are allocated to the reserved recipients.</p> : quoted && quote.data?.quoteFailed
           // Without a market price the slippage line would promise protection the quote couldn't give.
-          // A tapped retry replaces the notice; the 15s background refresh keeps it, so it never flickers.
+          // A tapped retry replaces the notice; the background refresh keeps it, so it never flickers.
           ? <p>{requoting ? 'Refreshing the market price…' : !busy && !error && tx.phase === 'idle' ? <>{PAY_QUOTE_FAILED_MESSAGE} <button type="button" className="min-h-11 underline" onClick={() => { setRequoting(true); void quote.refetch().finally(() => setRequoting(false)) }}>Try again</button></> : 'Through the project payment terminal, using its current rules and buyback hook.'}</p>
           : quoted ? <p>Through the project payment terminal, using its current rules and buyback hook. {(slippageBps ?? Number(PAY_DEFAULT_SLIPPAGE_BPS)) / 100}% maximum slippage.</p>
           : quoteNeedsWallet && !address ? <p>Connect an allowed wallet to see your quote.</p>

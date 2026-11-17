@@ -26,7 +26,7 @@ type Network = 'mainnet' | 'testnet'
 const TABS = ['Activity', 'Holdings', 'Projects'] as const
 type Tab = typeof TABS[number]
 const NETWORK_CHAINS = { mainnet: [1, 10, 8453, 42161], testnet: [11155111, 11155420, 84532, 421614] }
-const INDEX_QUERY = { staleTime: 30_000, refetchInterval: 60_000, retry: 1 } as const
+const INDEX_QUERY = { staleTime: 30_000, refetchInterval: 60_000 } as const
 const PAGE_SIZE = 25
 const ACTIVITY_LABELS: Partial<Record<keyof BsActivityEvent, string>> = {
   payEvent: 'Payment', cashOutTokensEvent: 'Tokens cashed out', addToBalanceEvent: 'Treasury funded',

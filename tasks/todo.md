@@ -1,3 +1,36 @@
+# Lean network: fewer repeated reads (2026-11-16)
+
+Rule: a page loads what it needs once, then refreshes about every 30 seconds or on a user action. Faster polling only in a short bounded window after a sent transaction. No read that protects money or correctness changes.
+
+Audit, by requests per minute per open tab (origin/main):
+
+1. A rate-limited indexer read: up to 18 upstream requests for one read (relay retries 3, browser SDK retries the relay 3, React Query retries once), and the relay hides the 429 as a 502.
+2. Pay quote (ProjectPayment): every 15 s while an amount is entered.
+3. Sticky holder state (StickyHolder): every 20 s.
+4. Activity (ProjectActivity): one indexer read on every return to the tab, however fresh.
+5. Already within the rule, left alone: payer addresses 30 s, bridge movements 60 s, account lists 60 s, Center payment follow (2 s, 30 tries, paused hidden, after a send), Safe execution wait (5 s for 60 s after a send), INCOME launch proof recheck (10 s on failure, a proof read), refreshIndexedProject (three passes after a confirmed transaction).
+
+- [x] Relay: no server-side retry (the browser already retries the relay), and an indexer 429 is answered as 429 after one request; server reads never retry a 429.
+- [x] Query default: one retry, none for a 429; drop the explicit `retry: 1` copies so the default owns it.
+- [x] Pay quote and Sticky state poll every 30 s and refresh on return to the tab; one shared owner for the cadence, gated by a source test.
+- [x] Activity refreshes on return only when its answer is older than 30 s.
+- [x] `npm run check`.
+
+## Plan refinement
+
+- **Objective:** Fewer RPC and indexer requests per open Homerun tab without changing what any pre-wallet check, authority read or proof read asks. Success is the audit items above done with a failing-first test each and the full gate green.
+- **System fit:** Reads are owned by React Query defaults in `Providers.tsx`, the Bendystraw relay route and each component's `useQuery`; the SDK (6.3.1, not bumped) owns the indexer and RPC request loops. Submit paths re-read on their own (`prepareProjectPayQuote`, `verify`) and are untouched.
+- **Reuse and simplicity:** Reuse the SDK's `isRateLimited` and `requestBendystraw`'s `retryDelaysMs`, and React Query's `refetchInterval` and `refetchOnWindowFocus`. One new small module holds the cadence and the retry rule; redundant `retry: 1` options are deleted.
+- **Evidence and unknowns:** Read from source at origin/main 87bcc7b and the installed SDK dist. The browser SDK still retries a 429 from the relay twice, which only an SDK change removes; live request counts are not measured.
+- **Verification:** vitest cases for the relay (one upstream request, 429 passed through), the retry rule, the poll cadence gate, and the activity return refresh; then `npm run check` until it exits 0.
+- **Resource budget:** One worktree, one pass over the listed files, no browser suites unless the gate runs them; replan if a consumer of a slowed query turns out to gate a write on its freshness.
+
+## Review
+
+- `npm run check` (Node 26.13.0) exits 0: lint, wallet:check, check:indexer, node tests, vitest 2988 of 2988, build, route budgets, 88 contract tests. The first build stopped once on Next's own security-upgrade notice for 16.4.2 and passed on rerun with no change.
+- wallet-boundaries.json: the FundOperatorActions Web Locks site moved up one line with the deleted option.
+- Still open in the SDK: the browser request loop asks the relay again twice on a 429 (250 ms, 750 ms), so a rate-limited read costs 3 upstream requests where it cost up to 18.
+
 # SDK core 6.3.0: the SDK keeps lost-lock outcomes, shared lines (2026-11-11)
 
 Brief: scratchpad sm/adopt-630-brief.md; API and deletion map: scratchpad pr298-final-body.md.

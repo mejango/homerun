@@ -72,7 +72,6 @@ export function IntentProject({ intentId }: { intentId: string }) {
     queryKey: ['intent', intentId],
     queryFn: () => jbCenterClient.getIntent(intentId),
     staleTime: 30_000,
-    retry: 1,
   })
 
   let terms: Terms | null = null
@@ -97,7 +96,6 @@ export function IntentProject({ intentId }: { intentId: string }) {
     enabled: !!terms?.projectUri,
     queryFn: () => fetchFundProjectMetadata(terms!.projectUri),
     staleTime: 300_000,
-    retry: 1,
   })
   const name = details.data?.name ?? intent.data?.name ?? undefined
   const model = useMemo(

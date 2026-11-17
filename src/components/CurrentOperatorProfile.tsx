@@ -26,7 +26,6 @@ export function CurrentOperatorProfile({ chainId, incomeProjectId, fundDetails, 
     queryKey: [PROJECT_OPERATOR_PROFILE_QUERY, chainId, incomeProjectId?.toString()],
     enabled: !!client && incomeProjectId !== undefined && !bindingUnavailable,
     queryFn: () => readCurrentProjectOperator(client!, { chainId, incomeProjectId: incomeProjectId!, minimumBlockNumber: confirmed.data }),
-    retry: 1,
   })
   const profile = fundDetails?.operator
   const publishedAddress = fundDetails?.plan?.operatorWallet ?? null

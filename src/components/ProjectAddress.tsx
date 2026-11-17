@@ -36,7 +36,6 @@ export function ProjectAddress({ chainId, projectId, intentId, seed, incomeFund 
     queryFn: ({ signal }) => getProject(chainId, Number(projectId), { signal }),
     initialData: seed?.indexed ?? undefined,
     staleTime: 30_000,
-    retry: 1,
   })
   const row = hydrated ? indexed.data : seed?.indexed
   const income = row?.version === 6 && row.chainId === chainId && String(row.projectId) === projectId && row.isRevnet === true
@@ -49,7 +48,6 @@ export function ProjectAddress({ chainId, projectId, intentId, seed, incomeFund 
     // Fixed at launch: a found binding never needs reading again.
     staleTime: Infinity,
     meta: PERSIST,
-    retry: 1,
   })
   const fundId = hydrated ? fund.data : seededFundId
   useEffect(() => {

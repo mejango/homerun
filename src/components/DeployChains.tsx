@@ -98,7 +98,6 @@ function RelayCost({ intentId, chainId }: { intentId: string; chainId: number })
     // The relay route shares the deploy route's hourly bucket, so a label a
     // reader never acts on must not spend it again on every render.
     staleTime: 300_000,
-    retry: 1,
     queryFn: async () => {
       const request = await jbCenterClient.requestRelay(intentId, chainId) as FundRelayRequest
       const client = getPublicClient(wagmiConfig, { chainId: chainId as JBChainId })

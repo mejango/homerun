@@ -152,7 +152,6 @@ export function FundAssetWithdrawals({ state, client, contextIndex, onConfigureA
       return readAssetAllowance(client, state, context)
     },
     staleTime: Infinity,
-    retry: 1,
   })
 
   useEffect(() => { onBusyChange?.(ownsAction) }, [onBusyChange, ownsAction])

@@ -9,6 +9,7 @@ import { TransactionReviewProvider } from '@/components/TransactionReviewProvide
 import { SUPPORTED_CHAINS } from '@/lib/chains'
 import { jbCenterRpcTransport } from '@/lib/jbcenter-rpc'
 import { installQueryPersistence } from '@/lib/query-persist'
+import { REFRESH_MS, retryRead } from '@/lib/refresh'
 import { watchSafeWalletPeer } from '@/lib/safe-wallet-peer'
 import { WalletAuthContext } from './WalletAuthContext'
 import { lazyCenterConnector } from './lazy-center-connector'
@@ -36,7 +37,7 @@ export const wagmiConfig = createConfig({ chains: SUPPORTED_CHAINS, transports,
 
 export function Providers({ children }: PropsWithChildren) {
   const [queryClient] = useState(() => new QueryClient({ defaultOptions: { queries: {
-    staleTime: 30_000, gcTime: 10 * 60_000, retry: 1, refetchOnWindowFocus: false,
+    staleTime: REFRESH_MS, gcTime: 10 * 60_000, retry: retryRead, refetchOnWindowFocus: false,
   } } }))
   // Delay disk work until load; each persisted reader also preserves its own server render
   // with useHydrated because streamed children can hydrate after this event.
