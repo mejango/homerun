@@ -756,7 +756,7 @@ function FundingChainSelectionModal({
             id={selectId}
             value={selected}
             onChange={event => setSelected(event.target.value)}
-            className="select-caret mt-2 min-h-[44px] w-full rounded-lg border border-smoke-300 bg-white px-3 py-2 pr-9 text-sm text-ink"
+            className="mt-2 min-h-[44px] w-full rounded-lg border border-smoke-300 bg-white px-3 py-2 pr-9 text-sm text-ink"
           >
             <option value="" disabled>Choose a chain</option>
             {pending.options.map(option => (

@@ -1,3 +1,31 @@
+# One caret for every dropdown (2026-11-16)
+
+Rule: every native dropdown `<select>` in the app shows one inset caret, never the browser arrow flush against the edge. One global rule owns it; no call site opts in or out.
+
+Found at origin/main 85a583a: `src/components/select-controls.css` already draws the caret, but only under seven page wrapper classes and `dialog.modal-dialog`, so a select outside those wrappers shows the browser arrow, and a more specific sheet can undo its padding. `select-caret` (TransactionReviewDialog) is defined nowhere. `demo-project-shop.css` carries a second copy of the caret.
+
+- [x] Make the rule global (`select:not([multiple]):not([size])`), unlayered and `!important`, tuned only through `--select-padding-right` and `--select-chevron-inset`.
+- [x] Delete the second copy in `demo-project-shop.css` and the dead `select-caret` class.
+- [x] Source gate: the rule exists, is imported by `globals.css`, and no sheet or component under `src` or `web` sets `appearance` on a select or uses an important padding or background utility on one.
+- [x] Render create, project, account, home and the review dialog at 1280 and 390 wide; look at the screenshots.
+- [x] `npm run check`.
+
+## Plan refinement
+
+- **Objective:** No dropdown in Homerun shows the browser default arrow; the caret sits about 12px from the right edge, vertically centred, and text never runs under it. Native selects stay native. Success is seen in screenshots at desktop and 390px and held by a source test.
+- **System fit:** `globals.css` (root layout) imports `select-controls.css`, so the rule reaches every Next route and every dialog; Tailwind utilities sit in a layer and lose to it; the static prototype under `web/` loads its own sheets, which already draw their own carets, and is not changed. No wallet, read or submit path is touched.
+- **Reuse and simplicity:** Reuse the existing sheet, its SVG and its two custom properties (already used by the two inline selects); widen its selector instead of adding a class to 26 call sites; delete the duplicate caret and the dead class.
+- **Evidence and unknowns:** Source read at 85a583a; the only Content-Security-Policy headers are `frame-ancestors` (next.config.ts), so a `data:` background image is allowed. Selects behind a connected wallet or a live project cannot all be opened locally; the global selector covers them by construction, and the rendered check covers the reachable ones.
+- **Verification:** A vitest source gate (failing first against the scoped selector), a Playwright pass over the reachable pages that reads each select's computed appearance, padding and caret position plus screenshots, then `npm run check` until it exits 0.
+- **Resource budget:** One sheet, one test, one render script in the scratchpad; replan only if a select on a dark surface or an overlay select renders wrong with the shared caret.
+
+## Review
+
+- At origin/main the reachable selects already had the caret (same computed values before and after); the change closes the wrapper-scoped gap and makes the rule impossible to undo from another sheet.
+- Rendered at 1280 and 390: home, create (approval policy; the network select through a markup probe), the demo project (chain, currency, shop editor dialog), projects, account, plus a probe of bare, utility-classed, disabled, dialog and contract-panel selects with a long option. Caret 12px in, centred, text cut before it.
+- `npm run check` exits 0: vitest 2990 of 2990, build, budgets, 88 contract tests.
+- Not rendered: selects behind a connected wallet or a live project, and the review dialog's "Pay on" select (covered by the probe and the global selector). In forced-colors mode a background image is not drawn, so a dropdown there shows no caret.
+
 # Lean network: fewer repeated reads (2026-11-16)
 
 Rule: a page loads what it needs once, then refreshes about every 30 seconds or on a user action. Faster polling only in a short bounded window after a sent transaction. No read that protects money or correctness changes.
