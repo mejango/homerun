@@ -70,6 +70,14 @@ describe('same-origin persisted query proxy', () => {
     expect(result.status).toBe(429)
     expect(await result.json()).toEqual({ error: 'Bendystraw unavailable' })
     expect(fetcher).toHaveBeenCalledOnce()
+    expect(result.headers.get('retry-after')).toBeNull()
+  })
+
+  it('passes on how long a rate-limited indexer asked to wait, so the browser retries no sooner', async () => {
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockImplementation(async () => new Response('Too Many Requests', { status: 429, headers: { 'retry-after': '3' } })))
+    const result = await POST(makeRequest({ operation, variables: { chainId: 1, projectId: 11 } }), mainnet)
+    expect(result.status).toBe(429)
+    expect(result.headers.get('retry-after')).toBe('3')
   })
 
   it('answers 502 and only that when the indexer fails, and logs the cause once', async () => {

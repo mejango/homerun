@@ -1,4 +1,4 @@
-import { isRateLimited } from '@bananapus/nana-sdk-core/jbcenter'
+import { isRateLimited, retryAfterOf } from '@bananapus/nana-sdk-core/jbcenter'
 import { bendystraw } from '@/lib/bendystraw'
 import { resolvePersistedBendystrawRequest } from '@/lib/bendystraw-proxy'
 
@@ -102,9 +102,14 @@ export async function POST(
       'Bendystraw relay failed:',
       String(error).replace(/[\p{Cc}\s]+/gu, ' '),
     )
+    // A rate limit goes on with the wait the indexer asked for: the browser's one retry comes no sooner.
+    const wait = retryAfterOf(error)
     return Response.json(
       { error: 'Bendystraw unavailable' },
-      { status: isRateLimited(error) ? 429 : 502 },
+      {
+        status: isRateLimited(error) ? 429 : 502,
+        ...(wait !== undefined && { headers: { 'retry-after': String(wait) } }),
+      },
     )
   }
 }
