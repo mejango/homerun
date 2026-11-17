@@ -113,8 +113,9 @@ export async function bendystraw<T>(
         const response = await fetch(input, { ...init, ...cacheOptions })
         if (response.status !== 429) return response
         // Thrown from here, a rate limit keeps its status and is not asked again.
+        // Its headers go with it: the relay passes Retry-After on to the browser.
         await response.body?.cancel()
-        throw new BendystrawRequestError('Bendystraw rate limit', 429)
+        throw Object.assign(new BendystrawRequestError('Bendystraw rate limit', 429), { headers: response.headers })
       },
       operationName: contract.operationName,
       ...(opts.retryDelaysMs ? { retryDelaysMs: opts.retryDelaysMs } : {}),

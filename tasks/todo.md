@@ -1,3 +1,32 @@
+# SDK 6.10.2: leaner polling from the SDK (2026-11-17)
+
+Rule: the SDK owns send, sign and poll logic; Homerun owns UI. Bump `@bananapus/nana-sdk-core` 6.3.1 to 6.10.2 and adapt, without casts and without a retry stacked on the SDK's own 429 retry.
+
+- [x] Install 6.10.2 with Node 26 and npm 12 so the lockfile is real.
+- [x] Read the SDK changelog 6.3.1 to 6.10.2; adapt every breaking or behavior change that touches Homerun.
+- [x] Remove any Homerun retry that stacks on the SDK's single 429 retry for indexer queries.
+- [x] Prefer the SDK's version of anything Homerun copies locally when the swap is small and safe; list the rest.
+- [x] `npm run check` exits 0; browser suites on ports 3200-3210; budgets raised only by the measured amount.
+
+## Plan refinement
+
+- **Objective:** Homerun runs on SDK 6.10.2 and so gets its leaner polling (held write read once a poll, one Safe service read a look, hidden tabs quiet, a rate-limited indexer query retried once and no sooner than Retry-After), with no user flow redesigned. Success is the full gate and the browser suites green on the new version.
+- **System fit:** The SDK owns the indexer request loop, the held-write follower and Safe service reads; Homerun's `Providers.tsx` query defaults, the Bendystraw relay route and its components consume them. Contracts, deploy scripts and the static prototype are unaffected.
+- **Reuse and simplicity:** Reuse the SDK's retry and follower as shipped; delete Homerun retries or local copies they make redundant instead of adding adapters. No new abstraction is planned.
+- **Evidence and unknowns:** The SDK changelog and installed dist at 6.10.2 are the authority, plus Homerun source at origin/main e49a734. Unknown until installed: which type or behavior changes reach Homerun, and how far route bundles move. Live request counts are not measured.
+- **Verification:** `npm run check` (lint, wallet:check, check:indexer, node tests, vitest, build, budgets, contract tests) until it exits 0, then `npm run test:suites` against a local build. Tests that drove a held-write view by faking `setInterval` are moved to a focus event, since the follower now uses `setTimeout`.
+- **Resource budget:** One worktree, one install, one pass over compile and test failures; stop and report instead of forcing it if a flow needs a redesign rather than an adaptation.
+
+## Review
+
+- The bump compiles and passes as is: no type error, no test change needed. Homerun follows held writes only through the SDK's `useHeldWrite` and `useReviewedRun`, and no test fakes `setInterval` to drive one (the one `setInterval` fake drives Homerun's own Center payment follow).
+- No Homerun retry stacks on the SDK's 429 retry: the relay asks the indexer once (`retryDelaysMs: []`) and the query default (`retryRead`) never retries a 429. A rate-limited read now costs 2 upstream requests (was 3).
+- One adaptation: the relay dropped the indexer's `Retry-After`, so the browser's one retry would come after about a second whatever the indexer asked. The relay now passes it on (`retryAfterOf`), failing-first test in `test/bendystraw-proxy.test.ts`.
+- Local copy left in place: `prepareProjectPayQuote` (src/lib/project-pay-quote.ts) ranks routes by protected minimum, then reserved count; the SDK's `prepareBestUserPay` (6.8.0) ranks by previewed beneficiary count first and can run each route. Swapping changes which route a payer gets, so it is its own change.
+- Budgets unchanged; every route stays under its existing limit.
+- Browser suites, run by hand on 3200 (dev: browser 28 of 28, create 48 of 48, a11y 68 states, shop), 3202 and 3203 (intent), 3204 (Center build: center, startup): all pass.
+- Not verified: live request counts against the real indexer and Safe service; a held Safe proposal's slow pace and the hidden-tab pause in a real browser (SDK tests own them).
+
 # One caret for every dropdown (2026-11-16)
 
 Rule: every native dropdown `<select>` in the app shows one inset caret, never the browser arrow flush against the edge. One global rule owns it; no call site opts in or out.
