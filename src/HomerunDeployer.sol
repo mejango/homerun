@@ -97,10 +97,6 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
     /// @dev 10% while the campaign is open. The owner closes the campaign by raising it to the maximum.
     uint16 public constant override FUND_CASH_OUT_TAX_RATE = 1000;
 
-    /// @notice The CCIP gas allowance every FUND sucker mapping uses.
-    /// @dev Matches the Nana SDK default.
-    uint32 public constant override FUND_SUCKER_MIN_GAS = 200_000;
-
     /// @notice The FUND issued per unit of USD paid, as a fixed point number with 18 decimals.
     uint112 public constant override FUND_WEIGHT = 10_000e18;
 
@@ -135,6 +131,11 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
     //*********************************************************************//
     // --------------- public immutable stored properties ---------------- //
     //*********************************************************************//
+
+    /// @notice The gas every FUND sucker mapping reserves on the remote chain for a claim.
+    /// @dev Set at deployment: a gas number is tuned to one set of gas rules, so it belongs to the deployment
+    /// configuration, not to this code.
+    uint32 public immutable override FUND_SUCKER_MIN_GAS;
 
     /// @notice The pay hook installed on every FUND. Its owner-managed allowlist gates payment beneficiaries.
     IHomerunAllowlistHook public immutable override ALLOWLIST_HOOK;
@@ -225,14 +226,18 @@ contract HomerunDeployer is ERC2771Context, ReentrancyGuard, IERC721Receiver, IH
     /// @param omnichainDeployer The omnichain deployer every FUND is launched through.
     /// @param allowlistHook The pay hook installed on every FUND.
     /// @param deployer The address allowed to set the chain-specific constants, once.
+    /// @param fundSuckerMinGas The gas every FUND sucker mapping reserves on the remote chain for a claim. A number
+    /// tuned to one set of gas rules, so it lives in the deployment configuration rather than in this code.
     constructor(
         IREVDeployer revDeployer,
         IJBOmnichainDeployer omnichainDeployer,
         IHomerunAllowlistHook allowlistHook,
-        address deployer
+        address deployer,
+        uint32 fundSuckerMinGas
     )
         ERC2771Context(JBOmnichainDeployer(address(omnichainDeployer)).trustedForwarder())
     {
+        FUND_SUCKER_MIN_GAS = fundSuckerMinGas;
         REV_DEPLOYER = revDeployer;
         CONTROLLER = REV_DEPLOYER.CONTROLLER();
         PROJECTS = CONTROLLER.PROJECTS();

@@ -57,7 +57,7 @@ interface IHomerunDeployer is IJBPayerTracker {
     /// @return rate The tax rate.
     function FUND_CASH_OUT_TAX_RATE() external view returns (uint16 rate);
 
-    /// @notice The CCIP gas allowance every FUND sucker mapping uses.
+    /// @notice The gas every FUND sucker mapping reserves on the remote chain for a claim, set at deployment.
     /// @return minGas The gas allowance.
     function FUND_SUCKER_MIN_GAS() external view returns (uint32 minGas);
 

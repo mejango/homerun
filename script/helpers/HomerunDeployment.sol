@@ -64,6 +64,10 @@ abstract contract HomerunDeployment is Script {
     /// @notice The CREATE2 salt shared by the allowlist hook and the deployer.
     bytes32 public constant HOMERUN_SALT = "HomerunV6";
 
+    /// @notice The gas every FUND sucker mapping reserves on the remote chain for a claim. Deployment configuration,
+    /// tuned to the current gas rules; revisit at each repricing.
+    uint32 public constant FUND_SUCKER_MIN_GAS = 200_000;
+
     //*********************************************************************//
     // ------------------------ private constants ------------------------ //
     //*********************************************************************//
@@ -189,7 +193,7 @@ abstract contract HomerunDeployment is Script {
     /// @return args The ABI-encoded constructor arguments.
     function _deployerArgs(HomerunChainConfig[] memory chains, address hook) internal view returns (bytes memory args) {
         HomerunChainConfig memory local = _local(chains);
-        return abi.encode(local.revDeployer, local.omnichainDeployer, hook, HOMERUN_CONFIGURATOR);
+        return abi.encode(local.revDeployer, local.omnichainDeployer, hook, HOMERUN_CONFIGURATOR, FUND_SUCKER_MIN_GAS);
     }
 
     /// @notice The chains a deployment links, in ascending chain ID, for the group a chain belongs to.
@@ -556,6 +560,7 @@ abstract contract HomerunDeployment is Script {
                 || address(deployer.ROUTER_TERMINAL_REGISTRY()) != address(revDeployer.ROUTER_TERMINAL_REGISTRY())
                 || address(deployer.ALLOWLIST_HOOK()) != deployed.allowlistHook
                 || deployer.trustedForwarder() != _forwarderOf(chains)
+                || deployer.FUND_SUCKER_MIN_GAS() != FUND_SUCKER_MIN_GAS
         ) revert HomerunDeployment_BindingMismatch({target: deployed.deployer, binding: "deployer dependencies"});
     }
 
