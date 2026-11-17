@@ -29,13 +29,12 @@ export function IncomeOperatorActions({ state, client }: { state: IncomeProjectS
   const query = useQuery({
     queryKey: ['income-operator', state.chainId, state.projectId.toString(), address ?? null],
     queryFn: () => readIncomeOperatorSnapshot(client, { chainId: state.chainId, projectId: state.projectId, account: address }),
-    retry: 1,
   })
   const verified = useQuery({
     queryKey: ['income-operator-receipt', state.chainId, state.projectId.toString(), tx.receipt?.transactionHash, intent?.rulesetId.toString()],
     enabled: tx.phase === 'success' && !tx.safeProposalHash && !!tx.receipt && !!intent,
     queryFn: () => verifyIncomeOperatorReceipt(client, intent!.snapshot, intent!.rulesetId, intent!.recipient, intent!.account, tx.receipt!),
-    retry: 1, staleTime: Infinity,
+    staleTime: Infinity,
   })
   useOnConfirmed(tx, receipt => {
     const confirmedBlock = receipt.blockNumber

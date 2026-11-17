@@ -29,7 +29,7 @@ function ProjectShopContent({ chainId, projectId, tokenLabel }: { chainId: JBCha
   const restoredShop = useQuery({
     queryKey: ['project-shop', chainId, projectId.toString()], enabled: !!client,
     meta: PERSIST,
-    queryFn: () => readProjectShop(client!, { chainId, projectId }), staleTime: 30_000, retry: 1,
+    queryFn: () => readProjectShop(client!, { chainId, projectId }), staleTime: 30_000,
   })
   const shop = hydrated ? restoredShop : { ...restoredShop, data: undefined, isPending: true, isError: false }
   function onKey(event: KeyboardEvent<HTMLButtonElement>, next: 'inventory' | 'customers') {
@@ -73,7 +73,7 @@ function Inventory({ shop, itemActions }: { shop: ProjectShopState; itemActions:
 function ShopItem({ tier, pricing, children }: { tier: Project721Tier; pricing: ProjectShopState['pricing']; children: ReactNode }) {
   const cid = bytes32ToCidV0(tier.encodedIpfsUri)
   const uri = tier.resolvedUri || (cid ? `ipfs://${cid}` : '')
-  const details = useQuery({ queryKey: ['shop-item-metadata', uri], enabled: !!uri, queryFn: () => readShopItemMetadata(uri), staleTime: Infinity, retry: 1 })
+  const details = useQuery({ queryKey: ['shop-item-metadata', uri], enabled: !!uri, queryFn: () => readShopItemMetadata(uri), staleTime: Infinity })
   const [failedImage, setFailedImage] = useState<string | null>(null)
   const image = details.data?.image
   return <li className="min-w-0 rounded-md border border-[#d7ddcf] p-5">
@@ -95,7 +95,7 @@ function Customers({ chainId, projectId, shop }: { chainId: JBChainId; projectId
     queryKey: ['shop-customers', chainId, projectId.toString(), shop.hook, scope, owner ?? null],
     initialPageParam: 0, enabled: scope === 'all' || !!owner,
     queryFn: ({ pageParam, signal }) => readShopCustomers({ chainId, projectId, hook: shop.hook, owner, offset: pageParam, signal }),
-    getNextPageParam: page => page.nextOffset ?? undefined, staleTime: 30_000, retry: 1,
+    getNextPageParam: page => page.nextOffset ?? undefined, staleTime: 30_000,
   })
   const rows = items.data?.pages.flatMap(page => page.items) ?? []
   const skipped = items.data?.pages.some(page => page.skipped > 0)

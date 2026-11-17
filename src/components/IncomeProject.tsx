@@ -120,7 +120,7 @@ export function IncomeProjectRuntime({ chainId, projectId, fundProjectId, bindin
   const [lastState, setLastState] = useState<IncomeProjectState | null>(null)
   const source = useQuery({
     queryKey: ['income-fund-binding', chainId, projectId?.toString()], enabled: !!client && projectId !== undefined && fundProjectId === undefined,
-    queryFn: () => readIncomeFundBinding(client!, { chainId, incomeProjectId: projectId! }), staleTime: 300_000, retry: 1,
+    queryFn: () => readIncomeFundBinding(client!, { chainId, incomeProjectId: projectId! }), staleTime: 300_000,
   })
   const resolvedFundId = fundProjectId ?? source.data ?? undefined
   const confirmed = useQuery<bigint>({ queryKey: ['project-admin-confirmed-block', chainId, projectId?.toString()], queryFn: async () => 0n, enabled: false, initialData: 0n })
@@ -128,14 +128,14 @@ export function IncomeProjectRuntime({ chainId, projectId, fundProjectId, bindin
     queryKey: ['income-project', chainId, projectId?.toString(), address ?? null, fundProjectId?.toString()],
     enabled: !!client && projectId !== undefined,
     queryFn: () => readIncomeProjectState(client!, { chainId, projectId: projectId!, account: address, fundProjectId }),
-    retry: 1, placeholderData: keepPreviousData,
+    placeholderData: keepPreviousData,
   })
   useEffect(() => { if (query.data) setLastState(query.data) }, [query.data])
   const retained = query.data ?? lastState
   const displayState = retained?.chainId === chainId && retained.projectId === projectId ? retained : undefined
   const accountMatches = query.data?.account ? !!address && isAddressEqual(query.data.account, address) : !address
   const writesUnavailable = bindingUnavailable || query.isError || query.isPlaceholderData || !query.data || !accountMatches || query.data.blockNumber < (confirmed.data ?? 0n)
-  const details = useQuery({ queryKey: ['fund-project-metadata', displayState?.projectUri], enabled: !!displayState?.projectUri, queryFn: () => fetchFundProjectMetadata(displayState!.projectUri), staleTime: 300_000, retry: 1 })
+  const details = useQuery({ queryKey: ['fund-project-metadata', displayState?.projectUri], enabled: !!displayState?.projectUri, queryFn: () => fetchFundProjectMetadata(displayState!.projectUri), staleTime: 300_000 })
   const notice = projectId === undefined ? null : <>
     {query.isPending && <p role="status">Reading the INCOME contracts…</p>}
     {query.isError && <div role="alert"><p>INCOME could not be verified. Its transactions are unavailable.</p><p className="mt-2 text-xs text-[var(--muted)]">{message(query.error)}</p><button type="button" className="btn-secondary mt-4" onClick={() => void query.refetch()}>Try again</button></div>}
@@ -172,7 +172,7 @@ function StandaloneIncomeOverview({ chainId, slots }: { chainId: JBChainId; slot
     queryKey: ['income-fund-binding', chainId, slots.projectId?.toString()],
     enabled: !!client && slots.projectId !== undefined,
     queryFn: () => readIncomeFundBinding(client!, { chainId, incomeProjectId: slots.projectId! }),
-    staleTime: 300_000, retry: 1,
+    staleTime: 300_000,
   })
   // A URL's FUND hint cannot identify the asset's public Owner or Operator.
   const fundProjectId = binding.isError ? undefined : binding.data ?? undefined
@@ -180,7 +180,6 @@ function StandaloneIncomeOverview({ chainId, slots }: { chainId: JBChainId; slot
     queryKey: ['fund-project', chainId, fundProjectId?.toString()],
     enabled: !!client && fundProjectId !== undefined,
     queryFn: () => readFundProjectState(client!, { chainId, projectId: fundProjectId! }),
-    retry: 1,
   })
   const currentFund = fund.data?.chainId === chainId && fund.data.projectId === fundProjectId ? fund.data : undefined
   const confirmedFund = useQuery<bigint>({ queryKey: ['project-admin-confirmed-block', chainId, fundProjectId?.toString()], queryFn: async () => 0n, enabled: false, initialData: 0n })
@@ -188,7 +187,7 @@ function StandaloneIncomeOverview({ chainId, slots }: { chainId: JBChainId; slot
     queryKey: ['fund-project-metadata', currentFund?.projectUri],
     enabled: !!currentFund?.projectUri,
     queryFn: () => fetchFundProjectMetadata(currentFund!.projectUri),
-    staleTime: 300_000, retry: 1,
+    staleTime: 300_000,
   })
   const details = slots.details?.plan ? slots.details : fundDetails.data ?? slots.details
   const owner = currentFund?.knownOwnerWrapper ? currentFund.owner : null
@@ -537,7 +536,7 @@ export function IncomeLoansList({ state, client }: { state: IncomeProjectState; 
     if (repayTx.phase === 'success' || repayTx.phase === 'error') repayTx.reset()
     setRepaying(loanId)
   }
-  const loans = useQuery({ queryKey: ['loans', state.chainId, Number(state.projectId)], enabled: !!address, queryFn: ({ signal }) => getLoans(Number(state.projectId), state.chainId, { signal }), staleTime: 30_000, retry: 1 })
+  const loans = useQuery({ queryKey: ['loans', state.chainId, Number(state.projectId)], enabled: !!address, queryFn: ({ signal }) => getLoans(Number(state.projectId), state.chainId, { signal }), staleTime: 30_000 })
   const mine = (loans.data?.items ?? []).filter(loan => !!address && loan.owner.toLowerCase() === address.toLowerCase() && loan.collateral !== '0')
   const tokenOf = (token: string) => state.accountingContexts.find(context => isAddressEqual(context.token, (token === zeroAddress ? NATIVE_TOKEN : token) as Address))
   const typedId = /^\d+$/.test(byId.trim()) ? BigInt(byId.trim()) : 0n

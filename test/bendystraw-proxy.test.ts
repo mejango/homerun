@@ -55,6 +55,23 @@ describe('same-origin persisted query proxy', () => {
     expect(await result.json()).toEqual({ error: 'Bendystraw unavailable' })
   })
 
+  it('asks a failing indexer once: the browser retries the relay itself', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => new Response('Offline', { status: 503 }))
+    vi.stubGlobal('fetch', fetcher)
+    const result = await POST(makeRequest({ operation, variables: { chainId: 1, projectId: 11 } }), mainnet)
+    expect(result.status).toBe(502)
+    expect(fetcher).toHaveBeenCalledOnce()
+  })
+
+  it('answers a rate-limited indexer with 429 after one request, so no caller retries it as an outage', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => new Response('Too Many Requests', { status: 429 }))
+    vi.stubGlobal('fetch', fetcher)
+    const result = await POST(makeRequest({ operation, variables: { chainId: 1, projectId: 11 } }), mainnet)
+    expect(result.status).toBe(429)
+    expect(await result.json()).toEqual({ error: 'Bendystraw unavailable' })
+    expect(fetcher).toHaveBeenCalledOnce()
+  })
+
   it('answers 502 and only that when the indexer fails, and logs the cause once', async () => {
     vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockImplementation(async () => new Response(JSON.stringify({ errors: [{ message: 'relation "secret_table" does not exist' }] }), { headers: { 'content-type': 'application/json' } })))
     const result = await POST(makeRequest({ operation, variables: { chainId: 1, projectId: 11 } }), mainnet)

@@ -262,6 +262,19 @@ describe('indexed project activity', () => {
     expect([...host.querySelectorAll('li')].filter(row => !row.querySelector('a'))).toHaveLength(2)
   })
 
+  it('refreshes on return to the tab only when the answer is older than a refresh apart', async () => {
+    await render()
+    const loaded = mocks.exact.mock.calls.length
+    const show = async () => { await act(async () => { document.dispatchEvent(new Event('visibilitychange')) }); await settle() }
+    await show()
+    expect(mocks.exact).toHaveBeenCalledTimes(loaded)
+    const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 30_000)
+    try {
+      await show()
+      expect(mocks.exact).toHaveBeenCalledTimes(loaded + 1)
+    } finally { now.mockRestore() }
+  })
+
   it('ages events the way Juicebox Money does', () => {
     const now = 1_000_000_000
     expect(activityAge(now - 30, now)).toBe('now')

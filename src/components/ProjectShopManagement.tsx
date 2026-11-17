@@ -57,7 +57,6 @@ export function ProjectShopManagement({ chainId, projectId, client, unavailable,
     queryKey: ['project-shop-write', chainId, projectId.toString(), address ?? null],
     enabled: !!client && !!address && !unavailable,
     queryFn: () => readProjectShopWriteState(client!, { chainId, projectId, account: address! }),
-    retry: 1,
   })
 
   const refreshSession = useCallback(() => {

@@ -57,6 +57,13 @@ describe('server-side reads keep their revalidate window', () => {
     expect(init).not.toHaveProperty('cache')
   })
 
+  it('never asks a rate-limited indexer again, and keeps the 429 for its caller', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => new Response('Too Many Requests', { status: 429 }))
+    vi.stubGlobal('fetch', fetcher)
+    await expect(bendystraw(query, { chainId: 1, projectId: 11 })).rejects.toMatchObject({ status: 429 })
+    expect(fetcher).toHaveBeenCalledOnce()
+  })
+
   it('skips the cache only for a read that asks for no-store', async () => {
     const fetcher = indexerAnswers()
     await bendystraw(query, { chainId: 1, projectId: 11 }, { policy: 'no-store' })

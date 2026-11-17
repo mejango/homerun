@@ -65,14 +65,12 @@ export function FundProject({ chainId, projectId, intentId, seed }: { chainId: J
     queryKey: ['fund-project', chainId, projectId],
     enabled: !!client,
     queryFn: () => readFundProjectState(client!, { chainId, projectId: id }),
-    retry: 1,
     placeholderData: keepPreviousData,
   })
   const wallet = useQuery({
     queryKey: ['fund-project', chainId, projectId, 'account', address ?? null, project.data?.blockNumber.toString()],
     enabled: !!client && !!address && !!project.data,
     queryFn: () => readFundAccountState(client!, project.data!, address!),
-    retry: 1,
     placeholderData: keepPreviousData,
   })
   const query = {
@@ -111,7 +109,6 @@ export function FundProject({ chainId, projectId, intentId, seed }: { chainId: J
     queryFn: ({ signal }) => getProject(chainId, Number(projectId), { signal }),
     initialData: seed?.indexed ?? undefined,
     staleTime: 30_000,
-    retry: 1,
     meta: PERSIST,
   })
   const indexed = { ...restoredIndexed, data: hydrated ? restoredIndexed.data : seed?.indexed }
@@ -127,7 +124,6 @@ export function FundProject({ chainId, projectId, intentId, seed }: { chainId: J
     initialData: seededDetails,
     staleTime: 300_000,
     meta: PERSIST,
-    retry: 1,
   })
   const details = {
     data: hydrated ? restoredDetails.data : seededDetails,

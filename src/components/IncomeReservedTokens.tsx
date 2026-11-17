@@ -34,13 +34,12 @@ export function IncomeReservedTokens({ state, client }: { state: IncomeProjectSt
   const query = useQuery({
     queryKey: ['income-reserved', state.chainId, state.projectId.toString()],
     queryFn: () => readIncomeReservedTokens(client, { chainId: state.chainId, projectId: state.projectId }),
-    retry: 1,
   })
   const verified = useQuery({
     queryKey: ['income-reserved-receipt', state.chainId, state.projectId.toString(), tx.receipt?.transactionHash],
     enabled: tx.phase === 'success' && !!tx.receipt && !!intent,
     queryFn: () => verifyIncomeReservedReceipt(client, intent!.snapshot, intent!.account, tx.receipt!),
-    retry: 1, staleTime: Infinity,
+    staleTime: Infinity,
   })
   // Even a receipt whose event proof is unavailable should refresh current
   // reserves, so a retry cannot misleadingly offer an already-flushed amount.

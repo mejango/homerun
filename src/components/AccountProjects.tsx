@@ -21,7 +21,7 @@ import { projectPath } from '@/lib/urn'
 
 type Network = 'mainnet' | 'testnet'
 const PAGE_SIZE = 24
-const INDEX_QUERY = { staleTime: 30_000, refetchInterval: 60_000, retry: 1 } as const
+const INDEX_QUERY = { staleTime: 30_000, refetchInterval: 60_000 } as const
 
 const NETWORK_CHAIN_IDS: Record<Network, readonly number[]> = {
   mainnet: [1, 10, 8453, 42161],
@@ -204,14 +204,12 @@ function ProjectSearch({ network }: { network: Network }) {
     queryFn: ({ signal }) => searchProjects(debouncedText, PAGE_SIZE, { network, signal }),
     enabled: ready,
     staleTime: 30_000,
-    retry: 1,
   })
   const publishedSearch = useQuery({
     queryKey: ['account-projects', 'intent-search', network, debouncedText],
     queryFn: () => jbCenterClient.searchIntents({ query: debouncedText, limit: PAGE_SIZE }),
     enabled: ready,
     staleTime: 30_000,
-    retry: 1,
   })
   const rows = mergeSearch(projectRows(search.data), intentItems(publishedSearch.data, network)).slice(0, PAGE_SIZE)
   return <ProjectSection title="Find a project">

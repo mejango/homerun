@@ -13,6 +13,7 @@ import { displayChainName, displayChainSlug, explorerTxUrl } from '@/lib/chainDi
 import { ChainIcon } from '@/components/ChainIcon'
 import { SkeletonLines } from '@/components/ui/Skeleton'
 import { PERSIST } from '@/lib/query-persist'
+import { REFRESH_MS } from '@/lib/refresh'
 import { useHydrated } from '@/hooks/useHydrated'
 
 const ACTIVITY_PAGE = 20
@@ -150,9 +151,8 @@ function ActivityFeed({ chainId, projectId, suckerGroupId }: { chainId: number; 
     // As in Juicebox Money, activity loads with the page and after this visit's own
     // confirmed transactions (refreshIndexedProject), not on a timer.
     staleTime: 10_000,
-    retry: 1,
   })
-  const refresh = newest.refetch
+  const refresh = newest.refetch, updatedAt = newest.dataUpdatedAt
   useEffect(() => {
     if (!newest.data) return
     // Keep the exact-project fallback until the linked feed succeeds. On a
@@ -166,12 +166,12 @@ function ActivityFeed({ chainId, projectId, suckerGroupId }: { chainId: number; 
     }
     setTotal(newest.data.totalCount)
   }, [newest.data, scope])
-  // Match the reference's immediate refresh when a background tab becomes visible.
+  // A background tab that becomes visible refreshes at once, unless its answer is newer than a refresh apart.
   useEffect(() => {
-    const visible = () => { if (document.visibilityState === 'visible') void refresh() }
+    const visible = () => { if (document.visibilityState === 'visible' && Date.now() - updatedAt >= REFRESH_MS) void refresh() }
     document.addEventListener('visibilitychange', visible)
     return () => document.removeEventListener('visibilitychange', visible)
-  }, [refresh])
+  }, [refresh, updatedAt])
 
   async function loadMore() {
     if (loadLock.current || !newest.data || appliedScope.current !== scope) return
@@ -208,7 +208,6 @@ function ProjectActivitySource({ chainId, projectId }: { chainId: number; projec
     meta: PERSIST,
     queryFn: ({ signal }) => getProject(chainId, projectId, { signal }),
     staleTime: 30_000,
-    retry: 1,
   })
   const indexed = hydrated ? project.data : undefined
   const group = indexed?.version === 6 && indexed.chainId === chainId && indexed.projectId === projectId

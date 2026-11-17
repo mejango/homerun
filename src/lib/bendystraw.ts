@@ -4,6 +4,7 @@
  */
 
 import {
+  BendystrawRequestError,
   bendystrawCacheTtl,
   bendystrawProjectRefsFilters as projectRefsWheres,
   matchesBendystrawProjectRef as matchesProjectRef,
@@ -64,6 +65,8 @@ export async function bendystraw<T>(
     network?: BendystrawNetwork
     /** `'no-store'` bypasses Next's fetch cache, which keeps a disk file for every distinct request. */
     policy?: BendystrawCachePolicy | 'no-store'
+    /** The waits before each further try; none for the relay, whose browser caller already asks again. */
+    retryDelaysMs?: readonly number[]
     /** The caller's: when it aborts, the request under way stops and is not retried, and none is sent after. */
     signal?: AbortSignal
   } = {},
@@ -106,8 +109,15 @@ export async function bendystraw<T>(
     query,
     variables,
     {
-      fetch: (input, init) => fetch(input, { ...init, ...cacheOptions }),
+      fetch: async (input, init) => {
+        const response = await fetch(input, { ...init, ...cacheOptions })
+        if (response.status !== 429) return response
+        // Thrown from here, a rate limit keeps its status and is not asked again.
+        await response.body?.cancel()
+        throw new BendystrawRequestError('Bendystraw rate limit', 429)
+      },
       operationName: contract.operationName,
+      ...(opts.retryDelaysMs ? { retryDelaysMs: opts.retryDelaysMs } : {}),
       signal: opts.signal,
       validateData: (value): value is T => contract.validateData(value),
       validateVariables: contract.validateVariables,

@@ -10,6 +10,7 @@ import { useReviewedAction, txPhaseLabel } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { displayChainName, explorerAddressUrl, explorerTxUrl } from '@/lib/chainDisplay'
 import { buildPayerTransaction, checkPayerFactory, decodePayerAttempt, getProjectPayerAddresses, payerAttemptKey, payerIntent, payerSavedAttempt, payerSettingsOfCall, verifyPayerReceipt, type PayerAttempt, type PayerSettings, type ProjectPayerRow } from '@/lib/project-payers'
+import { POLLED } from '@/lib/refresh'
 import { attempts } from '@/lib/write-hold'
 import { HeldNotice, retiringExit } from '@/components/ui/HeldWriteExit'
 import { SavedAttemptNotice } from '@/components/ui/SavedAttemptNotice'
@@ -49,8 +50,8 @@ function ProjectPayerAddressContext({ chainId, projectId, tokenLabel = 'Project 
   const following = useRef<{ settings: PayerSettings; account: Address; safe: boolean } | null>(null)
   /** A deployment its hold settled while the page was away, authenticated by its saved-attempt recovery. */
   const [recovered, setRecovered] = useState<string | null>(null)
-  const rows = useQuery({ queryKey: ['project-payers', chainId, String(projectId)], queryFn: ({ signal }) => getProjectPayerAddresses(chainId, projectId, { signal }), staleTime: 30_000, refetchInterval: 30_000, retry: 1 })
-  const factory = useQuery({ queryKey: ['project-payer-factory', chainId, String(projectId)], enabled: !!client, queryFn: () => checkPayerFactory(client!, chainId, projectId), staleTime: 30_000, retry: 1 })
+  const rows = useQuery({ queryKey: ['project-payers', chainId, String(projectId)], queryFn: ({ signal }) => getProjectPayerAddresses(chainId, projectId, { signal }), ...POLLED })
+  const factory = useQuery({ queryKey: ['project-payer-factory', chainId, String(projectId)], enabled: !!client, queryFn: () => checkPayerFactory(client!, chainId, projectId), staleTime: 30_000 })
   const track = tx.track
 
   // The payer journal from before SDK holds: an attempt it saved is only evidence for the recovery below.
